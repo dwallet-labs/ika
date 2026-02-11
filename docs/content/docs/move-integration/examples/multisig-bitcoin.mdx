@@ -1,0 +1,464 @@
+---
+id: multisig-bitcoin-example
+title: Bitcoin Multisig Example
+description: A complete multi-signature wallet for Bitcoin transactions using Ika
+sidebar_position: 2
+sidebar_label: Bitcoin Multisig
+---
+
+# Bitcoin Multisig Example
+
+This example demonstrates a production-ready multi-signature wallet for Bitcoin transactions, showcasing all major Ika integration patterns.
+
+## Overview
+
+The Bitcoin Multisig contract enables:
+- Multiple members to collectively approve Bitcoin transactions
+- Configurable approval and rejection thresholds
+- Time-based request expiration
+- Irrevocable voting to prevent manipulation
+- Automatic presign pool management
+
+**Source Code**: `examples/multisig-bitcoin/contract/`
+
+## Architecture
+
+<MultisigFlowDiagram />
+
+## Key Data Structures
+
+### Multisig Contract
+
+```rust
+public struct Multisig has key, store {
+    id: UID,
+    /// Bitcoin dWallet capability
+    dwallet_cap: DWalletCap,
+    /// Member addresses who can vote
+    members: vector<address>,
+    /// Votes needed to approve
+    approval_threshold: u64,
+    /// Votes needed to reject
+    rejection_threshold: u64,
+    /// Pending requests
+    requests: Table<u64, Request>,
+    /// Request expiration time (ms)
+    expiration_duration: u64,
+    /// Request ID counter
+    request_id_counter: u64,
+    /// Presign pool for signing
+    presigns: vector<UnverifiedPresignCap>,
+    /// Protocol fee balances
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    /// Network encryption key
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Request Types
+
+```rust
+public enum RequestType has copy, drop, store {
+    Transaction(vector<u8>, vector<u8>, vector<u8>),  // preimage, sig, psbt
+    AddMember(address),
+    RemoveMember(address),
+    ChangeApprovalThreshold(u64),
+    ChangeRejectionThreshold(u64),
+    ChangeExpirationDuration(u64),
+}
+```
+
+## Workflow
+
+### 1. Create Multisig
+
+```rust
+public fun new_multisig(
+    coordinator: &mut DWalletCoordinator,
+    mut initial_ika: Coin<IKA>,
+    mut initial_sui: Coin<SUI>,
+    dwallet_network_encryption_key_id: ID,
+    // DKG parameters
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    session_identifier: vector<u8>,
+    // Governance config
+    members: vector<address>,
+    approval_threshold: u64,
+    rejection_threshold: u64,
+    expiration_duration: u64,
+    ctx: &mut TxContext,
+) {
+    // Validate thresholds
+    assert!(approval_threshold > 0, EInvalidThreshold);
+    assert!(rejection_threshold > 0, EInvalidThreshold);
+    assert!(approval_threshold <= members.length(), EThresholdTooHigh);
+    assert!(rejection_threshold <= members.length(), EThresholdTooHigh);
+
+    // Deduplicate members
+    let members = vec_set::from_keys(members).into_keys();
+
+    // Register session and perform DKG
+    let session = coordinator.register_session_identifier(session_identifier, ctx);
+
+    let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+        dwallet_network_encryption_key_id,
+        constants::curve!(),              // secp256k1
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        public_user_secret_key_share,
+        option::none(),
+        session,
+        &mut initial_ika,
+        &mut initial_sui,
+        ctx,
+    );
+
+    // Create multisig with initial presign
+    let mut multisig = Multisig { /* ... */ };
+
+    // Request initial presign
+    let presign_session = random_session(coordinator, ctx);
+    multisig.presigns.push_back(coordinator.request_global_presign(
+        dwallet_network_encryption_key_id,
+        constants::curve!(),
+        constants::signature_algorithm!(),  // Taproot
+        presign_session,
+        &mut initial_ika,
+        &mut initial_sui,
+        ctx,
+    ));
+
+    // Share the multisig
+    transfer::public_share_object(multisig);
+}
+```
+
+### 2. Create Transaction Request
+
+Uses **future signing** to create a partial signature that's stored with the request:
+
+```rust
+public fun transaction_request(
+    self: &mut Multisig,
+    coordinator: &mut DWalletCoordinator,
+    preimage: vector<u8>,              // Bitcoin transaction hash (BIP 341)
+    message_centralized_signature: vector<u8>,
+    psbt: vector<u8>,                  // Full transaction data
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // Pop and verify presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    let session = random_session(coordinator, ctx);
+
+    // Create partial signature (future sign - Phase 1)
+    let partial_cap = coordinator.request_future_sign(
+        self.dwallet_cap.dwallet_id(),
+        verified,
+        preimage,
+        constants::hash_scheme!(),  // SHA256
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Replenish presign pool
+    if (self.presigns.length() == 0) {
+        let replenish_session = random_session(coordinator, ctx);
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            constants::curve!(),
+            constants::signature_algorithm!(),
+            replenish_session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        ));
+    };
+
+    self.return_payment_coins(ika, sui);
+
+    // Create request with partial signature
+    self.new_request(
+        multisig_request::request_transaction(preimage, message_centralized_signature, psbt),
+        option::some(partial_cap),
+        clock,
+        ctx,
+    )
+}
+```
+
+### 3. Vote on Request
+
+Voting is irrevocable - once cast, votes cannot be changed:
+
+```rust
+public fun vote_request(
+    self: &mut Multisig,
+    request_id: u64,
+    vote: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(self.requests.contains(request_id), ERequestNotFound);
+
+    let request = self.requests.borrow_mut(request_id);
+
+    // Validate
+    assert!(request.status() == pending(), ERequestNotPending);
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+    assert!(!request.votes().contains(ctx.sender()), EAlreadyVoted);
+
+    // Check expiration
+    if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
+        self.reject_request(request_id);
+        return
+    };
+
+    // Record vote (irrevocable)
+    request.votes().add(ctx.sender(), vote);
+
+    if (vote) {
+        *request.approvers_count() = *request.approvers_count() + 1;
+    } else {
+        *request.rejecters_count() = *request.rejecters_count() + 1;
+    };
+
+    // Auto-reject if rejection threshold met
+    if (*request.rejecters_count() >= self.rejection_threshold) {
+        self.reject_request(request_id);
+    };
+}
+```
+
+### 4. Execute Approved Request
+
+Complete the signature using the stored partial signature:
+
+```rust
+public fun execute_request(
+    self: &mut Multisig,
+    coordinator: &mut DWalletCoordinator,
+    request_id: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let request = self.requests.borrow_mut(request_id);
+
+    // Validate
+    assert!(request.status() == pending(), ERequestNotPending);
+    assert!(*request.approvers_count() >= self.approval_threshold, EInsufficientApprovals);
+
+    // Check expiration
+    if (clock.timestamp_ms() > *request.created_at() + self.expiration_duration) {
+        self.reject_request(request_id);
+        return
+    };
+
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // Handle transaction request (future sign - Phase 2)
+    if (request.request_type().is_transaction()) {
+        let (preimage, _, _) = request.request_type().get_transaction_data();
+
+        // Extract and verify partial signature
+        let partial_cap = request.partial_sig_cap().extract();
+        let verified = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+
+        // Create message approval
+        let approval = coordinator.approve_message(
+            &self.dwallet_cap,
+            constants::signature_algorithm!(),
+            constants::hash_scheme!(),
+            preimage,
+        );
+
+        let session = random_session(coordinator, ctx);
+
+        // Complete signature
+        let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+            verified,
+            approval,
+            session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        );
+
+        // Store result
+        request.resolve(transaction_result(sign_id));
+    };
+
+    // Handle governance requests...
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Constants Configuration
+
+```rust
+module ika_btc_multisig::constants;
+
+/// Bitcoin uses secp256k1 curve
+public macro fun curve(): u32 { 0 }
+
+/// Taproot signature algorithm
+public macro fun signature_algorithm(): u32 { 1 }
+
+/// SHA256 hash for Taproot
+public macro fun hash_scheme(): u32 { 0 }
+```
+
+## Key Patterns Demonstrated
+
+### 1. Shared dWallet Ownership
+
+The contract owns the `DWalletCap`, enabling automated signing:
+
+```rust
+public struct Multisig has key, store {
+    dwallet_cap: DWalletCap,  // Contract owns this
+}
+```
+
+### 2. Presign Pool with Auto-Replenishment
+
+```rust
+// After using a presign, replenish if pool is empty
+if (self.presigns.length() == 0) {
+    self.presigns.push_back(coordinator.request_global_presign(...));
+};
+```
+
+### 3. Future Signing for Governance
+
+Transaction requests use future signing to separate commitment from execution:
+
+```rust
+// Phase 1: Create partial signature when request is made
+let partial_cap = coordinator.request_future_sign(...);
+
+// Phase 2: Complete signature after approval
+let verified = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+coordinator.request_sign_with_partial_user_signature(...);
+```
+
+### 4. Payment Management
+
+```rust
+fun withdraw_payment_coins(self: &mut Multisig, ctx: &mut TxContext): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(self: &mut Multisig, ika: Coin<IKA>, sui: Coin<SUI>) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+```
+
+### 5. Irrevocable Voting
+
+Using `Table` ensures votes cannot be modified:
+
+```rust
+// Once added, the entry cannot be changed
+request.votes().add(ctx.sender(), vote);
+```
+
+## File Structure
+
+```
+examples/multisig-bitcoin/contract/
+├── Move.toml
+└── sources/
+    ├── multisig.move        # Main contract logic
+    ├── request.move         # Request types and lifecycle
+    ├── events.move          # Event definitions
+    ├── constants.move       # Bitcoin protocol constants
+    ├── error.move           # Error codes
+    └── lib/
+        └── event_wrapper.move  # Event emission utility
+```
+
+## Testing
+
+### Build
+
+```bash
+cd examples/multisig-bitcoin/contract
+sui move build
+```
+
+### Test
+
+```bash
+sui move test
+```
+
+### Deploy to Testnet
+
+```bash
+sui client publish --gas-budget 100000000
+```
+
+## TypeScript Integration
+
+To interact with the deployed contract:
+
+```typescript
+import { IkaClient, IkaTransaction, prepareDKGAsync } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+
+// 1. Prepare DKG data
+const dkgData = await prepareDKGAsync(ikaClient, Curve.SECP256K1, ...);
+
+// 2. Create multisig
+const tx = new Transaction();
+tx.moveCall({
+    target: `${PACKAGE_ID}::multisig::new_multisig`,
+    arguments: [
+        tx.object(coordinatorId),
+        tx.object(ikaCoinId),
+        tx.splitCoins(tx.gas, [1000000]),
+        tx.pure.id(networkKeyId),
+        tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
+        tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
+        tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
+        tx.pure.vector('u8', Array.from(sessionIdentifier)),
+        tx.pure.vector('address', members),
+        tx.pure.u64(approvalThreshold),
+        tx.pure.u64(rejectionThreshold),
+        tx.pure.u64(expirationDuration),
+    ],
+});
+
+// 3. Execute
+await suiClient.signAndExecuteTransaction({ transaction: tx, signer: keypair });
+```
+
+## Security Considerations
+
+1. **Irrevocable Votes**: Once cast, votes cannot be changed
+2. **Expiration**: Requests automatically expire to prevent stale states
+3. **Threshold Validation**: Thresholds must be valid (greater than 0, at most member count)
+4. **Member Deduplication**: Duplicate members are automatically removed
+
+## Next Steps
+
+- Review the [full source code](https://github.com/dwallet-labs/ika/tree/main/examples/multisig-bitcoin/contract)
+- Check [Core Concepts](/docs/move-integration/core-concepts/overview) for fundamentals
+- See [Integration Patterns](/docs/move-integration/integration-patterns/overview) for more patterns

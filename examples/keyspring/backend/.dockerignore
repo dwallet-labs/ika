@@ -1,0 +1,45 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+.next
+out
+
+# Development
+.env
+.env.local
+.env.development
+.env.test
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage
+.nyc_output
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Railway
+railway.toml
+nixpacks.toml
+

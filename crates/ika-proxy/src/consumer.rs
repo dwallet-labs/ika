@@ -12,8 +12,8 @@ use fastcrypto::ed25519::Ed25519PublicKey;
 use multiaddr::Multiaddr;
 use once_cell::sync::Lazy;
 use prometheus::proto::{self, MetricFamily};
-use prometheus::{register_counter, register_counter_vec, register_histogram_vec};
 use prometheus::{Counter, CounterVec, HistogramVec};
+use prometheus::{register_counter, register_counter_vec, register_histogram_vec};
 use prost::Message;
 use protobuf::CodedInputStream;
 use std::io::Read;
@@ -76,7 +76,7 @@ pub struct NodeMetric {
 
 /// The ProtobufDecoder will decode message delimited protobuf messages from prom_model.proto types
 /// They are delimited by size, eg a format is such:
-/// []byte{size, data, size, data, size, data}, etc etc
+/// []byte{size, data, size, data, size, data}, etc
 pub struct ProtobufDecoder {
     buf: Reader<Bytes>,
 }
@@ -126,7 +126,11 @@ pub fn populate_labels(
     host_label.set_name("host".into());
     host_label.set_value(name);
 
-    let labels = vec![network_label, host_label];
+    let mut source_label = proto::LabelPair::default();
+    source_label.set_name("metrics_source".into());
+    source_label.set_value("ika-proxy".into());
+
+    let labels = vec![network_label, host_label, source_label];
 
     let mut data = data;
     // add our extra labels to our incoming metric data
@@ -375,6 +379,7 @@ mod tests {
             &create_labels(vec![
                 ("network", "unittest-network"),
                 ("host", "validator-0"),
+                ("metrics_source", "ika-proxy"),
             ])
         );
     }

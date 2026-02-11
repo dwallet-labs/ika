@@ -17,7 +17,8 @@ use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
 use byteorder::{BigEndian, ReadBytesExt};
-use consensus_core::BlockRef;
+use consensus_types::block::BlockRef;
+pub use consensus_types::block::TransactionIndex;
 use ika_protocol_config::Chain;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -25,7 +26,7 @@ use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 use sui_types::base_types::{ConciseableName, ObjectID};
-pub use sui_types::messages_consensus::{AuthorityIndex, Round, TimestampMs, TransactionIndex};
+pub use sui_types::messages_consensus::{AuthorityIndex, Round, TimestampMs};
 
 /// The position of a transaction in consensus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

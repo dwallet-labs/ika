@@ -24,7 +24,7 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 	V1: bcs.struct('UserShareEncryptionKeysV1', {
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
-		secretShareSigningSecretKey: bcs.vector(bcs.u8()),
+		secretShareSigningSecretKey: bcs.string(),
 		curve: bcs.u64(),
 	}),
 });
@@ -103,9 +103,7 @@ export class UserShareEncryptionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
-		const secretShareSigningKeypair = Ed25519Keypair.deriveKeypairFromSeed(
-			toHex(secretShareSigningSecretKey),
-		);
+		const secretShareSigningKeypair = Ed25519Keypair.fromSecretKey(secretShareSigningSecretKey);
 
 		return new UserShareEncryptionKeys(
 			encryptionKey,
@@ -188,13 +186,13 @@ export class UserShareEncryptionKeys {
 			dWallet.state.AwaitingKeyHolderSignature?.public_output,
 		);
 
-		if (
-			!userAndNetworkDKGOutputMatch(
-				fromNumberToCurve(dWallet.curve),
-				userPublicOutput,
-				dWalletPublicOutput,
-			)
-		) {
+		const isOutputMatch = await userAndNetworkDKGOutputMatch(
+			fromNumberToCurve(dWallet.curve),
+			userPublicOutput,
+			dWalletPublicOutput,
+		).catch(() => false);
+
+		if (!isOutputMatch) {
 			throw new Error('User public output does not match the DWallet public output');
 		}
 
@@ -286,9 +284,7 @@ export class UserShareEncryptionKeys {
 			V1: {
 				encryptionKey: this.encryptionKey,
 				decryptionKey: this.decryptionKey,
-				secretShareSigningSecretKey: Uint8Array.from(
-					this.#encryptedSecretShareSigningKeypair.getSecretKey(),
-				),
+				secretShareSigningSecretKey: this.#encryptedSecretShareSigningKeypair.getSecretKey(),
 				curve: fromCurveToNumber(this.curve),
 			},
 		}).toBytes();
@@ -302,7 +298,7 @@ export class UserShareEncryptionKeys {
 		return {
 			encryptionKey: new Uint8Array(encryptionKey),
 			decryptionKey: new Uint8Array(decryptionKey),
-			secretShareSigningSecretKey: new Uint8Array(secretShareSigningSecretKey),
+			secretShareSigningSecretKey,
 			curve: fromNumberToCurve(Number(curve)),
 		};
 	}

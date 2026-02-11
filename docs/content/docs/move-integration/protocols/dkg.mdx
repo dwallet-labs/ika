@@ -1,0 +1,331 @@
+---
+id: dkg-protocol
+title: DKG (Distributed Key Generation)
+description: Create a dWallet using the Distributed Key Generation protocol
+sidebar_position: 2
+sidebar_label: DKG
+---
+
+# DKG (Distributed Key Generation)
+
+The Distributed Key Generation (DKG) protocol creates a new dWallet by generating cryptographic key shares distributed between the user and the Ika network. This guide covers how to perform DKG from Move contracts.
+
+## Overview
+
+DKG creates:
+- A **DWalletCap** capability that authorizes signing operations
+- Key shares distributed between user and network (neither party has the full key)
+- A public key that can receive funds on other chains (Bitcoin, Ethereum, etc.)
+
+## dWallet Types
+
+### Shared dWallet (Recommended for Contracts)
+
+Uses a public user secret key share, allowing the network to sign without user interaction:
+
+```rust
+public fun request_dwallet_dkg_with_public_user_secret_key_share(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>)
+```
+
+### Zero-Trust dWallet
+
+Uses an encrypted user secret key share for maximum security:
+
+```rust
+public fun request_dwallet_dkg(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    encrypted_centralized_secret_share_and_proof: vector<u8>,
+    encryption_key_address: address,
+    user_public_output: vector<u8>,
+    signer_public_key: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>)
+```
+
+## Creating a Shared dWallet
+
+### Step 1: Prepare DKG Data (TypeScript)
+
+Use the SDK to prepare the cryptographic parameters:
+
+```typescript
+import {
+    IkaClient,
+    UserShareEncryptionKeys,
+    prepareDKGAsync,
+    createRandomSessionIdentifier,
+    Curve,
+} from '@ika.xyz/sdk';
+
+// Create user encryption keys
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+    new TextEncoder().encode('your-seed'),
+    Curve.SECP256K1,
+);
+
+// Create random session identifier
+const sessionIdentifier = createRandomSessionIdentifier();
+
+// Prepare DKG parameters
+const dkgData = await prepareDKGAsync(
+    ikaClient,
+    Curve.SECP256K1,
+    userShareEncryptionKeys,
+    sessionIdentifier,
+    signerAddress,
+);
+
+// Get network encryption key
+const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
+```
+
+### Step 2: Call Move Function
+
+```typescript
+const tx = new Transaction();
+
+tx.moveCall({
+    target: `${packageId}::my_module::create_dwallet`,
+    arguments: [
+        tx.object(coordinatorId),
+        tx.object(ikaCoinId),
+        tx.splitCoins(tx.gas, [1000000]),  // SUI for fees
+        tx.pure.id(networkKey.id),
+        tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
+        tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
+        tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
+        tx.pure.vector('u8', Array.from(sessionIdentifier)),
+    ],
+});
+```
+
+### Step 3: Move Contract Implementation
+
+```rust
+module my_protocol::treasury;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+const SECP256K1: u32 = 0;
+
+public struct Treasury has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+public fun create_treasury(
+    coordinator: &mut DWalletCoordinator,
+    initial_ika: Coin<IKA>,
+    initial_sui: Coin<SUI>,
+    dwallet_network_encryption_key_id: ID,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    session_identifier_bytes: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    let mut ika_coin = initial_ika;
+    let mut sui_coin = initial_sui;
+
+    // Register session identifier
+    let session = coordinator.register_session_identifier(
+        session_identifier_bytes,
+        ctx,
+    );
+
+    // Request DKG with public user share
+    let (dwallet_cap, _sign_id) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+        dwallet_network_encryption_key_id,
+        SECP256K1,
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        public_user_secret_key_share,
+        option::none(),  // No sign during DKG
+        session,
+        &mut ika_coin,
+        &mut sui_coin,
+        ctx,
+    );
+
+    // Create treasury with the dWallet capability
+    let treasury = Treasury {
+        id: object::new(ctx),
+        dwallet_cap,
+        presigns: vector::empty(),
+        ika_balance: ika_coin.into_balance(),
+        sui_balance: sui_coin.into_balance(),
+        dwallet_network_encryption_key_id,
+    };
+
+    // Share the treasury publicly
+    transfer::public_share_object(treasury);
+}
+```
+
+## Sign During DKG
+
+You can request a signature during DKG to save time. This requires a pre-existing presign.
+
+### Prepare Sign During DKG Request
+
+```rust
+// Create the sign during DKG request
+let sign_during_dkg = coordinator.sign_during_dkg_request(
+    verified_presign_cap,
+    hash_scheme,
+    message,
+    message_centralized_signature,
+);
+
+// Pass to DKG
+let (dwallet_cap, sign_id) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+    dwallet_network_encryption_key_id,
+    curve,
+    public_key_share_and_proof,
+    user_public_output,
+    public_user_secret_key_share,
+    option::some(sign_during_dkg),  // Include sign request
+    session,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+
+// sign_id will contain the signature session ID
+```
+
+## Complete Example: Bitcoin Multisig Initialization
+
+From the multisig-bitcoin example:
+
+```rust
+module ika_btc_multisig::multisig;
+
+use ika::ika::IKA;
+use ika_btc_multisig::constants;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI, vec_set};
+
+public struct Multisig has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    members: vector<address>,
+    approval_threshold: u64,
+    rejection_threshold: u64,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+public fun new_multisig(
+    coordinator: &mut DWalletCoordinator,
+    mut initial_ika: Coin<IKA>,
+    mut initial_sui: Coin<SUI>,
+    dwallet_network_encryption_key_id: ID,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    session_identifier: vector<u8>,
+    members: vector<address>,
+    approval_threshold: u64,
+    rejection_threshold: u64,
+    ctx: &mut TxContext,
+) {
+    // Validate thresholds
+    assert!(approval_threshold > 0 && approval_threshold <= members.length(), EInvalidThreshold);
+    assert!(rejection_threshold > 0 && rejection_threshold <= members.length(), EInvalidThreshold);
+
+    // Deduplicate members
+    let members = vec_set::from_keys(members).into_keys();
+
+    // Register session and perform DKG
+    let session = coordinator.register_session_identifier(session_identifier, ctx);
+
+    let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+        dwallet_network_encryption_key_id,
+        constants::curve!(),
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        public_user_secret_key_share,
+        option::none(),
+        session,
+        &mut initial_ika,
+        &mut initial_sui,
+        ctx,
+    );
+
+    // Create and share multisig
+    let multisig = Multisig {
+        id: object::new(ctx),
+        dwallet_cap,
+        members,
+        approval_threshold,
+        rejection_threshold,
+        presigns: vector::empty(),
+        ika_balance: initial_ika.into_balance(),
+        sui_balance: initial_sui.into_balance(),
+        dwallet_network_encryption_key_id,
+    };
+
+    transfer::public_share_object(multisig);
+}
+```
+
+## Getting the dWallet Public Key
+
+After DKG completes, you can get the public key from the dWallet:
+
+```typescript
+// Wait for DKG to complete
+const dWallet = await ikaClient.getDWallet(dwalletId);
+
+// Get public key for receiving funds
+const publicKey = publicKeyFromDWalletOutput(
+    Curve.SECP256K1,
+    dWallet.publicOutput,
+);
+```
+
+## Best Practices
+
+1. **Use Shared dWallets for Contracts**: They allow automated signing without user interaction
+2. **Store DWalletCap Securely**: It's the key to your dWallet - store it in your contract
+3. **Request Initial Presign**: After DKG, immediately request a presign for future operations
+4. **Deduplicate Members**: Use `vec_set::from_keys()` to remove duplicate addresses
+
+## Next Steps
+
+- Learn about [Presigning](/docs/move-integration/protocols/presigning) to prepare for signatures
+- See [Signing](/docs/move-integration/protocols/signing) for creating signatures

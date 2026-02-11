@@ -8,9 +8,10 @@ use crate::peers::{AllowedPeer, SuiNodeProvider};
 use crate::var;
 use anyhow::Error;
 use anyhow::Result;
-use axum::{extract::DefaultBodyLimit, middleware, routing::post, Extension, Router};
+use axum::{Extension, Router, extract::DefaultBodyLimit, middleware, routing::post};
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey};
 use fastcrypto::traits::{KeyPair, ToFromBytes};
+use hyper::StatusCode;
 use ika_sui_client::SuiConnectorClient;
 use std::env;
 use std::fs;
@@ -20,19 +21,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_tls::SUI_VALIDATOR_SERVER_NAME;
 use sui_tls::{
-    rustls::ServerConfig, AllowAll, ClientCertVerifier, SelfSignedCertificate, TlsAcceptor,
+    AllowAll, ClientCertVerifier, SelfSignedCertificate, TlsAcceptor, rustls::ServerConfig,
 };
 use tokio::signal;
 use tower::ServiceBuilder;
 use tower_http::{
+    LatencyUnit,
     timeout::TimeoutLayer,
     trace::{DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
-    LatencyUnit,
 };
-use tracing::{info, Level};
+use tracing::{Level, info};
 
 /// Configure our graceful shutdown scenarios
-pub async fn shutdown_signal(h: axum_server::Handle) {
+pub async fn shutdown_signal(h: axum_server::Handle<SocketAddr>) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -152,9 +153,10 @@ pub fn app(
         // Enforce on all routes.
         // If the request does not complete within the specified timeout, it will be aborted,
         // and a 408-Request Timeout response will be sent.
-        .layer(TimeoutLayer::new(Duration::from_secs(
-            timeout_secs.unwrap_or(20),
-        )))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(timeout_secs.unwrap_or(20)),
+        ))
         .layer(Extension(relay))
         .layer(Extension(labels))
         .layer(Extension(client))
@@ -167,19 +169,22 @@ pub async fn server(
     app: Router,
     acceptor: Option<TlsAcceptor>,
 ) -> std::io::Result<()> {
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+
     // setup our graceful shutdown
     let handle = axum_server::Handle::new();
     // Spawn a task to gracefully shutdown server.
     tokio::spawn(shutdown_signal(handle.clone()));
 
     if let Some(verify_peers) = acceptor {
-        axum_server::Server::from_tcp(listener)
+        axum_server::Server::from_listener(listener)
             .acceptor(verify_peers)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
     } else {
-        axum_server::Server::from_tcp(listener)
+        axum_server::Server::from_listener(listener)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await

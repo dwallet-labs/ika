@@ -1,0 +1,216 @@
+---
+id: move-integration-setup
+title: Getting Started
+description: Set up your Move project to integrate with Ika dWallet contracts
+sidebar_position: 1
+sidebar_label: Getting Started
+---
+
+# Getting Started
+
+This guide walks you through setting up a Sui Move project that integrates with the Ika dWallet 2PC-MPC protocol.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) installed
+- A Sui wallet with testnet SUI and IKA tokens
+- Basic familiarity with Sui Move development
+
+## Project Setup
+
+### 1. Create a New Move Project
+
+```bash
+sui move new my_ika_project
+cd my_ika_project
+```
+
+### 2. Add Ika Dependencies
+
+Update your `Move.toml` to include the Ika packages:
+
+```toml
+[package]
+name = "my_ika_project"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+ika_dwallet_2pc_mpc = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_dwallet_2pc_mpc", rev = "main" }
+ika = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika", rev = "main" }
+
+[addresses]
+my_ika_project = "0x0"
+```
+
+<Callout type="warn" title="Testnet Only">
+	The above configuration is for **testnet**. For mainnet deployment, update the paths to use
+	`deployed_contracts/mainnet/` when available.
+</Callout>
+
+### 3. Verify Dependencies
+
+Build your project to ensure dependencies resolve correctly:
+
+```bash
+sui move build
+```
+
+## Basic Contract Structure
+
+Here's the minimal structure for a contract that integrates with Ika:
+
+```rust
+module my_ika_project::my_contract;
+
+// Import IKA token for protocol fees
+use ika::ika::IKA;
+
+// Import coordinator and types from ika_dwallet_2pc_mpc
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{
+        DWalletCap,
+        UnverifiedPresignCap,
+        VerifiedPresignCap,
+        MessageApproval
+    },
+    sessions_manager::SessionIdentifier
+};
+
+// Import Sui standard library
+use sui::{
+    balance::Balance,
+    coin::Coin,
+    sui::SUI
+};
+
+/// Your contract that holds a dWallet
+public struct MyContract has key, store {
+    id: UID,
+    // Store the dWallet capability for signing authorization
+    dwallet_cap: DWalletCap,
+    // Pool of presigns for future signing operations
+    presigns: vector<UnverifiedPresignCap>,
+    // Balances for paying protocol fees
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    // Store the network encryption key ID for presign requests
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+## TypeScript SDK Setup
+
+Your Move contract handles on-chain logic, but you'll need the TypeScript SDK for off-chain coordination (preparing DKG data, creating signatures, etc.).
+
+### Install the SDK
+
+```bash
+pnpm add @ika.xyz/sdk
+```
+
+### Initialize the Client
+
+```typescript
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+
+// Create Sui client
+const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
+
+// Create Ika client
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
+});
+
+// Initialize the client (fetches network objects)
+await ikaClient.initialize();
+```
+
+## Key Network Objects
+
+When interacting with Ika, you'll need these network objects:
+
+| Object                     | Description                              | How to Get                                      |
+| -------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| **DWalletCoordinator**     | Shared object for all dWallet operations | `ikaClient.config.objects.dwalletCoordinatorId` |
+| **Network Encryption Key** | Current encryption key for the network   | `ikaClient.getLatestNetworkEncryptionKey()`     |
+
+## Protocol Fees
+
+All dWallet operations require fees paid in both IKA and SUI tokens:
+
+- **IKA**: Protocol fees for the Ika network
+- **SUI**: Gas fees for Sui transactions
+
+Your contract should maintain balances of both tokens:
+
+```rust
+public struct MyContract has key, store {
+    // ... other fields
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+}
+
+/// Add IKA to the contract balance
+public fun add_ika_balance(self: &mut MyContract, coin: Coin<IKA>) {
+    self.ika_balance.join(coin.into_balance());
+}
+
+/// Add SUI to the contract balance
+public fun add_sui_balance(self: &mut MyContract, coin: Coin<SUI>) {
+    self.sui_balance.join(coin.into_balance());
+}
+```
+
+## Supported Cryptographic Schemes
+
+Ika supports multiple curves and signature algorithms:
+
+### Curves
+
+| Curve     | ID  | Use Case                        |
+| --------- | --- | ------------------------------- |
+| SECP256K1 | 0   | Bitcoin, Ethereum               |
+| SECP256R1 | 1   | WebAuthn, Apple Secure Enclave  |
+| ED25519   | 2   | Solana, Substrate               |
+| RISTRETTO | 3   | Privacy-preserving applications |
+
+### Signature Algorithms
+
+Signature algorithm IDs are **relative to the curve**:
+
+| Curve     | Algorithm           | ID  |
+| --------- | ------------------- | --- |
+| SECP256K1 | ECDSASecp256k1      | 0   |
+| SECP256K1 | Taproot             | 1   |
+| SECP256R1 | ECDSASecp256r1      | 0   |
+| ED25519   | EdDSA               | 0   |
+| RISTRETTO | SchnorrkelSubstrate | 0   |
+
+### Hash Schemes
+
+Hash scheme IDs are **relative to the curve + signature algorithm**:
+
+| Curve     | Algorithm           | Hash                   | ID  |
+| --------- | ------------------- | ---------------------- | --- |
+| SECP256K1 | ECDSASecp256k1      | KECCAK256 (Ethereum)   | 0   |
+| SECP256K1 | ECDSASecp256k1      | SHA256                 | 1   |
+| SECP256K1 | ECDSASecp256k1      | DoubleSHA256 (Bitcoin) | 2   |
+| SECP256K1 | Taproot             | SHA256                 | 0   |
+| SECP256R1 | ECDSASecp256r1      | SHA256                 | 0   |
+| ED25519   | EdDSA               | SHA512                 | 0   |
+| RISTRETTO | SchnorrkelSubstrate | Merlin                 | 0   |
+
+## Next Steps
+
+Now that your project is set up:
+
+1. Learn about the [Coordinator Architecture](/docs/move-integration/core-concepts/coordinator-architecture)
+2. Understand [Capabilities and Approvals](/docs/move-integration/core-concepts/capabilities-and-approvals)
+3. Follow the [DKG Protocol](/docs/move-integration/protocols/dkg) to create your first dWallet

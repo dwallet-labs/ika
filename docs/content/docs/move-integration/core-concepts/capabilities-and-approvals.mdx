@@ -1,0 +1,247 @@
+---
+id: capabilities-and-approvals
+title: Capabilities and Approvals
+description: Understanding the capability-based authorization system for dWallet operations
+sidebar_position: 3
+sidebar_label: Capabilities & Approvals
+---
+
+# Capabilities and Approvals
+
+Ika uses a capability-based authorization system to control access to dWallet operations. Understanding these capabilities is essential for building secure Move contracts.
+
+## Overview
+
+Capabilities are objects that grant specific permissions:
+
+| Capability | Purpose | Created By |
+|------------|---------|------------|
+| `DWalletCap` | Authorize signing for a dWallet | DKG protocol |
+| `ImportedKeyDWalletCap` | Authorize signing for imported key dWallet | Import verification |
+| `UnverifiedPresignCap` | Reference to a presign (needs verification) | Presign request |
+| `VerifiedPresignCap` | Verified presign ready for signing | Presign verification |
+| `UnverifiedPartialUserSignatureCap` | Partial signature (needs verification) | Future sign request |
+| `VerifiedPartialUserSignatureCap` | Verified partial signature | Partial signature verification |
+| `MessageApproval` | Authorization to sign a specific message | `approve_message()` |
+| `ImportedKeyMessageApproval` | Message approval for imported keys | `approve_imported_key_message()` |
+
+## DWalletCap
+
+The `DWalletCap` is the primary authorization capability for a dWallet. It's created during DKG and must be stored securely.
+
+### Storage Pattern
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,  // Store the capability
+    // ...
+}
+```
+
+### Usage
+
+```rust
+// Use DWalletCap to approve messages
+let message_approval = coordinator.approve_message(
+    &self.dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    message,
+);
+```
+
+### Key Properties
+
+```rust
+// Get the dWallet ID from the capability
+let dwallet_id: ID = dwallet_cap.dwallet_id();
+```
+
+
+<Callout type="warn" title="Security">
+The `DWalletCap` controls who can sign with your dWallet. Never expose it outside your contract without proper access controls.
+</Callout>
+
+
+## ImportedKeyDWalletCap
+
+Similar to `DWalletCap` but for dWallets created by importing existing private keys.
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    imported_dwallet_cap: ImportedKeyDWalletCap,
+    // ...
+}
+
+// Approve message for imported key dWallet
+let approval = coordinator.approve_imported_key_message(
+    &self.imported_dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    message,
+);
+```
+
+## Presign Capabilities
+
+Presigns go through a verification lifecycle:
+
+<PresignLifecycleDiagram />
+
+### Storing Unverified Presigns
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    presigns: vector<UnverifiedPresignCap>,  // Pool of presigns
+    // ...
+}
+
+// Request and store presign
+let unverified_cap = coordinator.request_global_presign(
+    network_encryption_key_id,
+    curve,
+    signature_algorithm,
+    session_identifier,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+self.presigns.push_back(unverified_cap);
+```
+
+### Verifying Before Use
+
+```rust
+// Pop from pool and verify
+let unverified_cap = self.presigns.swap_remove(0);
+let verified_cap = coordinator.verify_presign_cap(unverified_cap, ctx);
+
+// Use verified cap for signing
+coordinator.request_sign(
+    verified_cap,  // Consumed here
+    message_approval,
+    message_centralized_signature,
+    session_identifier,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+### Checking Validity
+
+```rust
+// Check if presign is ready (network has completed it)
+let is_valid = coordinator.is_presign_valid(&unverified_cap);
+```
+
+## Partial User Signature Capabilities
+
+For two-phase (future) signing:
+
+<FutureSigningDiagram />
+
+### Storage Pattern for Governance
+
+```rust
+public struct Request has store {
+    id: u64,
+    message: vector<u8>,
+    partial_sig_cap: Option<UnverifiedPartialUserSignatureCap>,
+    votes: Table<address, bool>,
+}
+
+// Store partial signature with request
+let partial_cap = coordinator.request_future_sign(
+    dwallet_id,
+    verified_presign_cap,
+    message,
+    hash_scheme,
+    message_centralized_signature,
+    session_identifier,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+
+let request = Request {
+    id: next_id,
+    message,
+    partial_sig_cap: option::some(partial_cap),
+    votes: table::new(ctx),
+};
+```
+
+### Completing the Signature
+
+```rust
+// Extract and verify partial signature cap
+let partial_cap = request.partial_sig_cap.extract();
+let verified_partial = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+
+// Create message approval
+let approval = coordinator.approve_message(
+    &self.dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    request.message,
+);
+
+// Complete the signature
+let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+    verified_partial,
+    approval,
+    session_identifier,
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+## Message Approvals
+
+Message approvals are created just before signing and authorize signing a specific message.
+
+### Creating Approvals
+
+```rust
+// For standard dWallets
+let approval = coordinator.approve_message(
+    &dwallet_cap,
+    signature_algorithm,  // e.g., 1 for Taproot
+    hash_scheme,          // e.g., 0 for SHA256
+    message,              // The message bytes to sign
+);
+
+// For imported key dWallets
+let approval = coordinator.approve_imported_key_message(
+    &imported_dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    message,
+);
+```
+
+### Matching with Partial Signatures
+
+For future signing, you can verify that a partial signature matches a message approval:
+
+```rust
+let matches = coordinator.match_partial_user_signature_with_message_approval(
+    &verified_partial_cap,
+    &message_approval,
+);
+assert!(matches, EPartialSignatureDoesNotMatch);
+```
+
+## Capability Lifecycle Summary
+
+<CapabilityLifecycleDiagram />
+
+## Next Steps
+
+- Learn about [Session Management](/docs/move-integration/core-concepts/session-management) for unique operation identifiers
+- Understand [Payment Handling](/docs/move-integration/core-concepts/payment-handling) for managing fees

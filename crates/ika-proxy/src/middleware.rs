@@ -14,7 +14,7 @@ use axum_extra::typed_header::TypedHeader;
 use bytes::Buf;
 use hyper::header::CONTENT_ENCODING;
 use once_cell::sync::Lazy;
-use prometheus::{proto::MetricFamily, register_counter_vec, CounterVec};
+use prometheus::{CounterVec, proto::MetricFamily, register_counter_vec};
 use std::env;
 use std::sync::Arc;
 use sui_tls::TlsConnectionInfo;
@@ -25,15 +25,6 @@ static MIDDLEWARE_OPS: Lazy<CounterVec> = Lazy::new(|| {
         "middleware_operations",
         "Operations counters and status for axum middleware.",
         &["operation", "status"]
-    )
-    .unwrap()
-});
-
-static MIDDLEWARE_HEADERS: Lazy<CounterVec> = Lazy::new(|| {
-    register_counter_vec!(
-        "middleware_headers",
-        "Operations counters and status for axum middleware.",
-        &["header", "value"]
     )
     .unwrap()
 });
@@ -56,8 +47,6 @@ pub async fn expect_content_length(
             "Processing request with content-length header"
         );
     }
-
-    MIDDLEWARE_HEADERS.with_label_values(&["content-length", &format!("{}", content_length.0)]);
     Ok(next.run(request).await)
 }
 

@@ -1,0 +1,244 @@
+---
+id: session-management
+title: Session Management
+description: Understanding SessionIdentifiers for unique protocol operations
+sidebar_position: 4
+sidebar_label: Session Management
+---
+
+# Session Management
+
+Every dWallet protocol operation (DKG, presign, sign, future sign) requires a unique `SessionIdentifier`. This ensures each operation is processed exactly once and prevents replay attacks.
+
+## What is a SessionIdentifier?
+
+A `SessionIdentifier` is a registered unique identifier that:
+
+- Prevents duplicate operations
+- Enables the network to track and correlate requests with responses
+- Provides cryptographic binding between requests and results
+
+```rust
+use ika_dwallet_2pc_mpc::sessions_manager::SessionIdentifier;
+```
+
+## Creating Session Identifiers
+
+### Pattern 1: Using Fresh Object Address (Recommended)
+
+The most common pattern uses Sui's transaction context to generate unique bytes:
+
+```rust
+fun create_session_identifier(
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    )
+}
+```
+
+This approach:
+- Guarantees uniqueness within the transaction
+- Uses Sui's built-in randomness
+- Is simple and reliable
+
+### Pattern 2: Custom Bytes
+
+You can also provide custom bytes (must be unique):
+
+```rust
+fun create_session_with_custom_bytes(
+    coordinator: &mut DWalletCoordinator,
+    custom_bytes: vector<u8>,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(custom_bytes, ctx)
+}
+```
+
+
+<Callout type="warn" title="Uniqueness Required">
+If you use custom bytes, you must ensure they are unique across all operations. Duplicate session identifiers will cause the operation to fail.
+</Callout>
+
+
+## Using Session Identifiers
+
+Session identifiers are consumed by protocol operations:
+
+### DKG
+
+```rust
+let session = create_session_identifier(coordinator, ctx);
+
+let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+    network_encryption_key_id,
+    curve,
+    public_key_share_and_proof,
+    user_public_output,
+    public_user_secret_key_share,
+    option::none(),
+    session,  // Used here
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+### Presign
+
+```rust
+let session = create_session_identifier(coordinator, ctx);
+
+let presign_cap = coordinator.request_global_presign(
+    network_encryption_key_id,
+    curve,
+    signature_algorithm,
+    session,  // Used here
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+### Sign
+
+```rust
+let session = create_session_identifier(coordinator, ctx);
+
+coordinator.request_sign(
+    verified_presign_cap,
+    message_approval,
+    message_centralized_signature,
+    session,  // Used here
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+### Future Sign
+
+```rust
+let session = create_session_identifier(coordinator, ctx);
+
+let partial_cap = coordinator.request_future_sign(
+    dwallet_id,
+    verified_presign_cap,
+    message,
+    hash_scheme,
+    message_centralized_signature,
+    session,  // Used here
+    &mut payment_ika,
+    &mut payment_sui,
+    ctx,
+);
+```
+
+## Helper Function Pattern
+
+Create a reusable helper in your contract:
+
+```rust
+module my_protocol::my_contract;
+
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    sessions_manager::SessionIdentifier
+};
+
+/// Create a new unique session identifier
+fun random_session_identifier(
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    )
+}
+
+public fun some_operation(
+    coordinator: &mut DWalletCoordinator,
+    // ... other params
+    ctx: &mut TxContext,
+) {
+    let session = random_session_identifier(coordinator, ctx);
+    // Use session in protocol call
+}
+```
+
+## TypeScript SDK Integration
+
+When calling Move functions that need session identifiers, you have two options:
+
+### Option 1: Create in Move (Recommended)
+
+Let your Move contract create the session identifier:
+
+```rust
+// In your Move contract
+public fun create_dwallet(
+    coordinator: &mut DWalletCoordinator,
+    // DKG parameters...
+    ctx: &mut TxContext,
+) {
+    let session = random_session_identifier(coordinator, ctx);
+    // Use session...
+}
+```
+
+### Option 2: Pass from TypeScript
+
+For more control, create and pass the identifier:
+
+```typescript
+import { createRandomSessionIdentifier } from '@ika.xyz/sdk';
+
+// Create random bytes
+const sessionBytes = createRandomSessionIdentifier();
+
+// Pass to Move function
+tx.moveCall({
+    target: `${packageId}::my_module::create_dwallet`,
+    arguments: [
+        tx.object(coordinatorId),
+        tx.pure.vector('u8', sessionBytes),  // Session bytes
+        // ... other args
+    ],
+});
+```
+
+Then in Move:
+
+```rust
+public fun create_dwallet(
+    coordinator: &mut DWalletCoordinator,
+    session_bytes: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    let session = coordinator.register_session_identifier(session_bytes, ctx);
+    // Use session...
+}
+```
+
+## Best Practices
+
+1. **Create Just Before Use**: Create session identifiers immediately before the operation that uses them
+2. **Don't Reuse**: Each operation needs its own session identifier
+3. **Use Fresh Object Address**: The `ctx.fresh_object_address().to_bytes()` pattern is simple and reliable
+4. **Helper Functions**: Create a helper function in your contract for consistency
+
+## Common Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| Session already exists | Reusing session bytes | Generate new unique bytes |
+| Invalid session | Session not registered | Call `register_session_identifier` first |
+
+## Next Steps
+
+- Learn about [Payment Handling](/docs/move-integration/core-concepts/payment-handling) for managing protocol fees

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 use crate::admin::{Labels, ReqwestClient};
-use crate::consumer::{convert_to_remote_write, populate_labels, NodeMetric};
+use crate::consumer::{NodeMetric, convert_to_remote_write, populate_labels};
 use crate::histogram_relay::HistogramRelay;
 use crate::middleware::LenDelimProtobuf;
 use crate::peers::AllowedPeer;
@@ -12,8 +12,8 @@ use axum::{
 use hex;
 use multiaddr::Multiaddr;
 use once_cell::sync::Lazy;
-use prometheus::{register_counter_vec, register_histogram_vec};
 use prometheus::{CounterVec, HistogramVec};
+use prometheus::{register_counter_vec, register_histogram_vec};
 use std::env;
 use std::net::SocketAddr;
 use tracing::{debug, info};

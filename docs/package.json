@@ -1,51 +1,36 @@
 {
-	"name": "docs",
-	"version": "0.0.0",
-	"private": true,
-	"scripts": {
-		"docusaurus": "docusaurus",
-		"start": "docusaurus start",
-		"build": "docusaurus build",
-		"swizzle": "docusaurus swizzle",
-		"deploy": "docusaurus deploy",
-		"clear": "docusaurus clear",
-		"serve": "docusaurus serve",
-		"write-translations": "docusaurus write-translations",
-		"write-heading-ids": "docusaurus write-heading-ids",
-		"typecheck": "tsc"
-	},
-	"dependencies": {
-		"@docusaurus/core": "3.8.1",
-		"@docusaurus/plugin-client-redirects": "^3.8.1",
-		"@docusaurus/preset-classic": "3.8.1",
-		"@docusaurus/theme-mermaid": "3.8.1",
-		"@mdx-js/react": "^3.0.0",
-		"@types/prismjs": "^1.26.5",
-		"clsx": "^2.0.0",
-		"prism-react-renderer": "^2.3.0",
-		"prismjs": "^1.30.0",
-		"react": "^19.0.0",
-		"react-dom": "^19.0.0"
-	},
-	"devDependencies": {
-		"@docusaurus/module-type-aliases": "3.8.1",
-		"@docusaurus/tsconfig": "3.8.1",
-		"@docusaurus/types": "3.8.1",
-		"typescript": "~5.6.2"
-	},
-	"browserslist": {
-		"production": [
-			">0.5%",
-			"not dead",
-			"not op_mini all"
-		],
-		"development": [
-			"last 3 chrome version",
-			"last 3 firefox version",
-			"last 5 safari version"
-		]
-	},
-	"engines": {
-		"node": ">=18.0"
-	}
+  "name": "ika-docs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "postinstall": "fumadocs-mdx"
+  },
+  "dependencies": {
+    "@radix-ui/react-icons": "^1.3.2",
+    "clsx": "^2.1.1",
+    "fumadocs-core": "^14.5.4",
+    "fumadocs-mdx": "^11.4.9",
+    "fumadocs-ui": "^14.5.4",
+    "lucide-react": "^0.468.0",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0"
+  }
 }

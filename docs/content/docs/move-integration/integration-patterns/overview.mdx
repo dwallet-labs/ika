@@ -1,0 +1,153 @@
+---
+id: integration-patterns-overview
+title: Overview
+description: Common patterns for building Move contracts with Ika dWallet
+sidebar_position: 4
+sidebar_label: Integration Patterns
+---
+
+# Integration Patterns Overview
+
+This section covers common patterns and best practices for integrating Ika dWallet functionality into your Move contracts.
+
+## Available Patterns
+
+| Pattern                                                                                         | Description                                                | Use Case                            |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| **[Shared dWallet Contracts](/docs/move-integration/integration-patterns/shared-dwallet-contracts)** | Contract-owned dWallets that sign without user interaction | DAOs, treasuries, automated systems |
+| **[Presign Pool Management](/docs/move-integration/integration-patterns/presign-pool-management)**   | Maintain a pool of presigns for continuous operation       | Any contract that signs frequently  |
+
+## Pattern Overview
+
+### Shared dWallet for Smart Contracts
+
+The most common pattern for Move integration. The contract owns a shared dWallet and controls signing through its business logic.
+
+```rust
+public struct Treasury has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    // Contract controls signing
+    authorized_signers: vector<address>,
+}
+```
+
+Key characteristics:
+
+- Contract holds the `DWalletCap`
+- Uses public user share (shared mode)
+- Network can sign without user interaction
+- Access control through contract logic
+
+### Presign Pool Management
+
+Presigns are consumed during signing, so you need to maintain a pool for continuous operation.
+
+```rust
+public struct Contract has key, store {
+    id: UID,
+    presigns: vector<UnverifiedPresignCap>,
+}
+```
+
+Key characteristics:
+
+- Store multiple presigns
+- Replenish after each signature
+- Auto-replenish when pool gets low
+
+## Combining Patterns
+
+Most real-world contracts combine multiple patterns:
+
+```rust
+public struct Multisig has key, store {
+    id: UID,
+
+    // Shared dWallet pattern
+    dwallet_cap: DWalletCap,
+
+    // Presign pool pattern
+    presigns: vector<UnverifiedPresignCap>,
+
+    // Governance/access control
+    members: vector<address>,
+    approval_threshold: u64,
+
+    // Payment handling
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+
+    // Network reference
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+## Quick Reference
+
+### Essential Structure
+
+```rust
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+public struct MyContract has key, store {
+    id: UID,
+
+    // Authorization
+    dwallet_cap: DWalletCap,
+
+    // Presign pool
+    presigns: vector<UnverifiedPresignCap>,
+
+    // Payments
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+
+    // Network key
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Essential Helper Functions
+
+```rust
+// Session creation
+fun random_session(
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    )
+}
+
+// Payment handling
+fun withdraw_payment_coins(
+    self: &mut MyContract,
+    ctx: &mut TxContext,
+): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(
+    self: &mut MyContract,
+    ika: Coin<IKA>,
+    sui: Coin<SUI>,
+) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+```
+
+## Next Steps
+
+- Learn about [Shared dWallet Contracts](/docs/move-integration/integration-patterns/shared-dwallet-contracts) for DAO and treasury use cases
+- See [Presign Pool Management](/docs/move-integration/integration-patterns/presign-pool-management) for continuous signing operations

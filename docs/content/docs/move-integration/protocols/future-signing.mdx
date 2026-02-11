@@ -1,0 +1,443 @@
+---
+id: future-signing-protocol
+title: Future Signing
+description: Two-phase signing for governance, multisig, and delayed execution
+sidebar_position: 5
+sidebar_label: Future Signing
+---
+
+# Future Signing
+
+Future signing splits the signature process into two phases, allowing you to separate user commitment from final execution. This is essential for governance systems, multisig wallets, and any workflow requiring approval before signing.
+
+## Overview
+
+Future signing enables:
+- **Governance Workflows**: Vote on transactions before signing
+- **Multisig Approvals**: Require multiple parties to approve
+- **Time-Delayed Execution**: Commit now, execute later
+- **Conditional Signing**: Sign only when conditions are met
+
+## Two-Phase Process
+
+<FutureSigningDiagram />
+
+## Phase 1: Request Future Sign
+
+Create a partial user signature and store it for later:
+
+```rust
+public fun request_future_sign(
+    self: &mut DWalletCoordinator,
+    dwallet_id: ID,
+    presign_cap: VerifiedPresignCap,
+    message: vector<u8>,
+    hash_scheme: u32,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): UnverifiedPartialUserSignatureCap
+```
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `dwallet_id` | ID of the dWallet to sign with |
+| `presign_cap` | Verified presign (consumed) |
+| `message` | The message bytes to sign |
+| `hash_scheme` | Hash function (e.g., 0=SHA256) |
+| `message_centralized_signature` | User's partial signature from SDK |
+
+## Phase 2: Complete Signing
+
+After approval (voting, time-lock, etc.), complete the signature:
+
+### Verify Partial Signature
+
+```rust
+public fun verify_partial_user_signature_cap(
+    self: &mut DWalletCoordinator,
+    cap: UnverifiedPartialUserSignatureCap,
+    ctx: &mut TxContext,
+): VerifiedPartialUserSignatureCap
+```
+
+### Complete with Message Approval
+
+```rust
+public fun request_sign_with_partial_user_signature_and_return_id(
+    self: &mut DWalletCoordinator,
+    partial_user_signature_cap: VerifiedPartialUserSignatureCap,
+    message_approval: MessageApproval,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID
+```
+
+## Complete Example: Governance Workflow
+
+### Request Structure
+
+```rust
+public struct SignRequest has store {
+    id: u64,
+    message: vector<u8>,
+    partial_sig_cap: Option<UnverifiedPartialUserSignatureCap>,
+    approvals: u64,
+    required_approvals: u64,
+    voters: Table<address, bool>,
+    executed: bool,
+}
+```
+
+### Phase 1: Create Request
+
+```rust
+module my_protocol::governance;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{
+        DWalletCap,
+        UnverifiedPresignCap,
+        UnverifiedPartialUserSignatureCap,
+        VerifiedPartialUserSignatureCap,
+        MessageApproval
+    }
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI, table::{Self, Table}};
+
+const TAPROOT: u32 = 1;
+const SHA256: u32 = 0;
+
+public struct Governance has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    requests: Table<u64, SignRequest>,
+    next_request_id: u64,
+    required_approvals: u64,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+/// Create a new signing request (Phase 1)
+public fun create_sign_request(
+    self: &mut Governance,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): u64 {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Pop and verify presign
+    let unverified_presign = self.presigns.swap_remove(0);
+    let verified_presign = coordinator.verify_presign_cap(unverified_presign, ctx);
+
+    // Create session
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // Request future sign - creates partial signature
+    let partial_cap = coordinator.request_future_sign(
+        self.dwallet_cap.dwallet_id(),
+        verified_presign,
+        message,
+        SHA256,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Create request with partial signature
+    let request_id = self.next_request_id;
+    self.next_request_id = request_id + 1;
+
+    let request = SignRequest {
+        id: request_id,
+        message,
+        partial_sig_cap: option::some(partial_cap),
+        approvals: 0,
+        required_approvals: self.required_approvals,
+        voters: table::new(ctx),
+        executed: false,
+    };
+
+    self.requests.add(request_id, request);
+
+    // Replenish presign pool
+    let replenish_session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0, TAPROOT, replenish_session,
+        &mut ika, &mut sui, ctx,
+    ));
+
+    return_payment_coins(self, ika, sui);
+
+    request_id
+}
+```
+
+### Voting
+
+```rust
+/// Vote on a request
+public fun vote(
+    self: &mut Governance,
+    request_id: u64,
+    approve: bool,
+    ctx: &mut TxContext,
+) {
+    let request = self.requests.borrow_mut(request_id);
+
+    // Check not already voted
+    assert!(!request.voters.contains(ctx.sender()), EAlreadyVoted);
+    assert!(!request.executed, EAlreadyExecuted);
+
+    // Record vote
+    request.voters.add(ctx.sender(), approve);
+
+    if (approve) {
+        request.approvals = request.approvals + 1;
+    };
+}
+```
+
+### Phase 2: Execute After Approval
+
+```rust
+/// Execute a request after sufficient approvals (Phase 2)
+public fun execute_request(
+    self: &mut Governance,
+    coordinator: &mut DWalletCoordinator,
+    request_id: u64,
+    ctx: &mut TxContext,
+): ID {
+    let request = self.requests.borrow_mut(request_id);
+
+    // Check approval threshold met
+    assert!(request.approvals >= request.required_approvals, EInsufficientApprovals);
+    assert!(!request.executed, EAlreadyExecuted);
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Extract and verify partial signature
+    let partial_cap = request.partial_sig_cap.extract();
+    let verified_partial = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+
+    // Create message approval
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        SHA256,
+        request.message,
+    );
+
+    // Create session
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // Complete the signature
+    let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+        verified_partial,
+        approval,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    request.executed = true;
+
+    return_payment_coins(self, ika, sui);
+
+    sign_id
+}
+```
+
+## Matching Partial Signatures
+
+You can verify that a partial signature matches a message approval:
+
+```rust
+let matches = coordinator.match_partial_user_signature_with_message_approval(
+    &verified_partial_cap,
+    &message_approval,
+);
+assert!(matches, EMessageMismatch);
+```
+
+For imported keys:
+
+```rust
+let matches = coordinator.match_partial_user_signature_with_imported_key_message_approval(
+    &verified_partial_cap,
+    &imported_key_message_approval,
+);
+```
+
+## Checking Validity
+
+Check if a partial signature is ready for verification:
+
+```rust
+let is_ready = coordinator.is_partial_user_signature_valid(&unverified_cap);
+```
+
+## Real-World Example: Bitcoin Multisig
+
+From the multisig-bitcoin example:
+
+```rust
+/// Create a transaction request
+public fun transaction_request(
+    self: &mut Multisig,
+    coordinator: &mut DWalletCoordinator,
+    preimage: vector<u8>,              // Bitcoin transaction hash
+    message_centralized_signature: vector<u8>,
+    psbt: vector<u8>,                  // Full transaction data
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u64 {
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // Verify presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    let session = random_session(coordinator, ctx);
+
+    // Create partial signature (Phase 1)
+    let partial_cap = coordinator.request_future_sign(
+        self.dwallet_cap.dwallet_id(),
+        verified,
+        preimage,
+        constants::hash_scheme!(),
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Replenish presigns
+    if (self.presigns.length() == 0) {
+        let session = random_session(coordinator, ctx);
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            constants::curve!(),
+            constants::signature_algorithm!(),
+            session,
+            &mut ika, &mut sui, ctx,
+        ));
+    };
+
+    self.return_payment_coins(ika, sui);
+
+    // Create request with partial signature
+    self.new_request(
+        multisig_request::request_transaction(preimage, message_centralized_signature, psbt),
+        option::some(partial_cap),  // Store partial sig with request
+        clock,
+        ctx,
+    )
+}
+
+/// Execute after approval
+public fun execute_request(
+    self: &mut Multisig,
+    coordinator: &mut DWalletCoordinator,
+    request_id: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let request = self.requests.borrow_mut(request_id);
+
+    // Check approval threshold
+    assert!(request.approvals >= self.approval_threshold, EInsufficientApprovals);
+
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // Phase 2: Complete signature
+    let partial_cap = request.tx_partial_sig_cap.extract();
+    let verified = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        constants::signature_algorithm!(),
+        constants::hash_scheme!(),
+        request.message,
+    );
+
+    let session = random_session(coordinator, ctx);
+
+    let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+        verified,
+        approval,
+        session,
+        &mut ika, &mut sui, ctx,
+    );
+
+    // Store sign ID in request result
+    request.result = option::some(sign_id);
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Imported Key Future Signing
+
+For imported key dWallets:
+
+```rust
+// Phase 2 with imported key
+let sign_id = coordinator.request_imported_key_sign_with_partial_user_signature_and_return_id(
+    verified_partial_cap,
+    imported_key_message_approval,
+    session,
+    &mut ika,
+    &mut sui,
+    ctx,
+);
+```
+
+## Best Practices
+
+1. **Store Partial Caps Securely**: They're required for Phase 2
+2. **Validate Before Execute**: Check approval conditions in your contract
+3. **Handle Expiration**: Consider adding time limits to requests
+4. **Prevent Double Execution**: Mark requests as executed
+5. **Match Messages**: Verify partial signature matches message approval
+
+## When to Use Direct Signing Instead
+
+Use [Direct Signing](/docs/move-integration/protocols/signing) when:
+- You have immediate authority to sign
+- No approval workflow is needed
+- Simplicity is preferred
+
+## Next Steps
+
+- See the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin) for a complete implementation
+- Learn about [Key Importing](/docs/move-integration/protocols/key-importing) for existing private keys

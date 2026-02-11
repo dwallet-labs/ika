@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 use std::{cmp::Ordering, fmt::Display};
 
-use consensus_core::{BlockAPI, BlockRef, CommitDigest, TransactionIndex, VerifiedBlock};
+use consensus_core::{BlockAPI, CommitDigest, VerifiedBlock};
+use consensus_types::block::{BlockRef, TransactionIndex};
 use ika_types::{
     digests::ConsensusCommitDigest,
     messages_consensus::{AuthorityIndex, ConsensusTransaction},

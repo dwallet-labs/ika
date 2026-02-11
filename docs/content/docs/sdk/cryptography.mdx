@@ -1,0 +1,884 @@
+---
+id: cryptography
+title: Cryptography Functions
+description: Core cryptographic functions for dWallet creation, signing, and key management
+sidebar_position: 6
+sidebar_label: Cryptography Functions
+---
+
+import { Info, Warning } from '@/components/InfoBox';
+
+# Cryptography Functions
+
+The Ika SDK provides a comprehensive set of cryptographic functions for creating and managing dWallets. These low-level functions handle Distributed Key Generation (DKG), encryption, signing, and verification operations.
+
+<Warning title="Security Critical">
+The functions in this module handle extremely sensitive cryptographic material. Always follow security best practices, conduct thorough security reviews, and consider getting security audits for production applications. Secret key shares must NEVER be sent to anyone or stored anywhere unencrypted.
+</Warning>
+
+## Overview
+
+The cryptography module provides three main categories of functions:
+
+1. **DKG Operations** - Creating and managing distributed key generation
+2. **Encryption Operations** - Encrypting and decrypting secret shares
+3. **Signing Operations** - Creating and verifying signatures
+4. **Utility Functions** - Helper functions for key derivation and conversion
+
+## Core Interfaces
+
+### DKGRequestInput
+
+Prepared data for Distributed Key Generation (DKG). Contains all cryptographic outputs needed to complete the DKG process.
+
+```typescript
+interface DKGRequestInput {
+	// The user's public key share along with its zero-knowledge proof
+	userDKGMessage: Uint8Array;
+
+	// The user's public output from the DKG process
+	userPublicOutput: Uint8Array;
+
+	// The encrypted user share with its proof of correct encryption
+	encryptedUserShareAndProof: Uint8Array;
+
+	// The raw secret key share (user share)
+	userSecretKeyShare: Uint8Array;
+}
+```
+
+<Warning title="Security Warning">
+The `userSecretKeyShare` field contains your private key material. Never send it to anyone or store it anywhere unencrypted. Only use it for signing operations and immediately clear it from memory when done.
+</Warning>
+
+### ImportDWalletVerificationRequestInput
+
+Prepared data for importing an existing cryptographic key as a dWallet. Contains verification data needed to prove ownership of the imported key.
+
+```typescript
+interface ImportDWalletVerificationRequestInput {
+	// The public output that can be verified against the imported key
+	userPublicOutput: Uint8Array;
+
+	// The outgoing message for the verification protocol
+	userMessage: Uint8Array;
+
+	// The encrypted user share with proof for the imported key
+	encryptedUserShareAndProof: Uint8Array;
+}
+```
+
+## DKG Operations
+
+### createClassGroupsKeypair
+
+Create a class groups keypair from a seed for encryption/decryption operations. Uses SECP256k1, SECP256r1, Ristretto, or ED25519 curves with class groups for homomorphic encryption capabilities.
+
+```typescript
+async function createClassGroupsKeypair(
+	seed: Uint8Array,
+	curve: Curve,
+): Promise<{
+	encryptionKey: Uint8Array;
+	decryptionKey: Uint8Array;
+}>;
+```
+
+**Parameters:**
+
+- `seed` - The seed bytes to generate the keypair from (must be exactly 32 bytes)
+- `curve` - The curve to use for key generation
+
+**Returns:** Object containing the encryption key (public) and decryption key (private)
+
+**Example:**
+
+```typescript
+import { createClassGroupsKeypair, Curve } from '@ika.xyz/sdk';
+
+// Generate a random seed
+const seed = new Uint8Array(32);
+crypto.getRandomValues(seed);
+
+// Create keypair for SECP256K1
+const { encryptionKey, decryptionKey } = await createClassGroupsKeypair(seed, Curve.SECP256K1);
+
+console.log('Encryption key length:', encryptionKey.length);
+console.log('Decryption key length:', decryptionKey.length);
+```
+
+<Info title="Supported Curves">
+Currently supports: `SECP256K1`, `SECP256R1`, `RISTRETTO`, and `ED25519`. Other curves will throw an error.
+</Info>
+
+### prepareDKG
+
+Prepare all cryptographic data needed for DKG. This is the main function for creating a new dWallet through distributed key generation.
+
+```typescript
+async function prepareDKG(
+	protocolPublicParameters: Uint8Array,
+	curve: Curve,
+	encryptionKey: Uint8Array,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
+): Promise<DKGRequestInput>;
+```
+
+**Parameters:**
+
+- `protocolPublicParameters` - The protocol public parameters from the network
+- `curve` - The curve to use for key generation
+- `encryptionKey` - The user's public encryption key
+- `bytesToHash` - The bytes to hash for session identifier generation
+- `senderAddress` - The sender address for session identifier generation
+
+**Returns:** Complete prepared data for DKG including user message, public output, encrypted share, and secret key share
+
+**Example:**
+
+```typescript
+import { createRandomSessionIdentifier, Curve, prepareDKG } from '@ika.xyz/sdk';
+
+// Get protocol parameters from the network
+const protocolParams = await ikaClient.getProtocolPublicParameters(undefined, Curve.SECP256K1);
+
+// Create session identifier
+const sessionId = createRandomSessionIdentifier();
+
+// Prepare DKG data
+const dkgData = await prepareDKG(
+	protocolParams,
+	Curve.SECP256K1,
+	userShareKeys.encryptionKey,
+	sessionId,
+	senderAddress,
+);
+
+console.log('DKG message length:', dkgData.userDKGMessage.length);
+console.log('Public output length:', dkgData.userPublicOutput.length);
+
+// Use dkgData in your dWallet creation transaction
+```
+
+<Warning title="Security Warning">
+The returned `userSecretKeyShare` must be kept private. Store it securely or use it immediately in signing operations, then clear it from memory.
+</Warning>
+
+### prepareDKGAsync
+
+Prepare all cryptographic data needed for DKG (async version that fetches protocol parameters). This is a convenience wrapper around `prepareDKG` that automatically fetches the protocol parameters from the network.
+
+```typescript
+async function prepareDKGAsync(
+	ikaClient: IkaClient,
+	curve: Curve,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
+): Promise<DKGRequestInput>;
+```
+
+**Parameters:**
+
+- `ikaClient` - The IkaClient instance to fetch network parameters from
+- `curve` - The curve to use for key generation
+- `userShareEncryptionKeys` - The user's encryption keys for securing the user's share
+- `bytesToHash` - The bytes to hash for session identifier generation
+- `senderAddress` - The sender address for session identifier generation
+
+**Returns:** Promise resolving to complete prepared data for DKG
+
+**Example:**
+
+```typescript
+import { createRandomSessionIdentifier, Curve, prepareDKGAsync } from '@ika.xyz/sdk';
+
+// Automatically fetches protocol parameters
+const dkgData = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	userShareKeys,
+	createRandomSessionIdentifier(),
+	senderAddress,
+);
+
+// Use dkgData in your dWallet creation transaction
+```
+
+<Info title="Convenience Method">
+This function is a convenience wrapper that combines fetching protocol parameters and preparing DKG data in a single call. Use this for simpler code when you don't need to cache protocol parameters.
+</Info>
+
+### Generating Public Keys Without Creating dWallets
+
+You can use `prepareDKG` combined with `publicKeyFromCentralizedDKGOutput` to generate a public key locally without creating a dWallet on the network. This is useful for:
+
+- **Pre-computing addresses** - Generate addresses before deciding to create a dWallet
+- **Testing and development** - Test key generation without network transactions
+- **Address derivation** - Derive deterministic addresses from seeds
+- **Offline operations** - Generate keys in air-gapped or offline environments
+
+**Example:**
+
+```typescript
+import {
+	createRandomSessionIdentifier,
+	Curve,
+	prepareDKG,
+	publicKeyFromCentralizedDKGOutput,
+} from '@ika.xyz/sdk';
+
+// Get protocol parameters
+const protocolParams = await ikaClient.getProtocolPublicParameters(undefined, Curve.SECP256K1);
+
+// Prepare DKG data locally (no network transaction)
+const dkgData = await prepareDKG(
+	protocolParams,
+	Curve.SECP256K1,
+	userShareKeys.encryptionKey,
+	createRandomSessionIdentifier(),
+	senderAddress,
+);
+
+// Extract the public key from the DKG output
+const publicKey = await publicKeyFromCentralizedDKGOutput(
+	Curve.SECP256K1,
+	dkgData.userPublicOutput,
+);
+
+console.log('Generated public key:', Buffer.from(publicKey).toString('hex'));
+
+// You can now use this public key to derive addresses or for other purposes
+// WITHOUT having created a dWallet on the network yet
+```
+
+<Info title="No Network Transaction Required">
+This approach generates all cryptographic material locally. No dWallet is created on the network, and no transaction fees are incurred. You can later decide to create a dWallet using the same DKG data if needed.
+</Info>
+
+<Warning title="Important Notes">
+- Keep the `userSecretKeyShare` from `dkgData` secure if you plan to create a dWallet later
+- The generated public key is deterministic based on the session identifier and sender address
+- To create an actual dWallet with this public key later, you'll need to use the same `dkgData` in a dWallet creation transaction
+- The public key alone cannot be used for signing without creating a dWallet on the network
+</Warning>
+
+### prepareImportedKeyDWalletVerification
+
+Prepare verification data for importing an existing cryptographic key as a dWallet. This function creates all necessary proofs and encrypted data for the import process.
+
+```typescript
+async function prepareImportedKeyDWalletVerification(
+	ikaClient: IkaClient,
+	curve: Curve,
+	bytesToHash: Uint8Array,
+	senderAddress: string,
+	userShareEncryptionKeys: UserShareEncryptionKeys,
+	privateKey: Uint8Array,
+): Promise<ImportDWalletVerificationRequestInput>;
+```
+
+**Parameters:**
+
+- `ikaClient` - The IkaClient instance to fetch network parameters from
+- `curve` - The curve to use for key generation
+- `bytesToHash` - The bytes to hash for session identifier generation
+- `senderAddress` - The sender address for session identifier generation
+- `userShareEncryptionKeys` - The user's encryption keys for securing the imported share
+- `privateKey` - The existing private key to import as a dWallet
+
+**Returns:** Promise resolving to complete verification data for the import process
+
+**Example:**
+
+```typescript
+import {
+	createRandomSessionIdentifier,
+	Curve,
+	prepareImportedKeyDWalletVerification,
+} from '@ika.xyz/sdk';
+
+// Import an existing private key
+const existingPrivateKey = new Uint8Array(32); // Your existing private key
+
+const verificationData = await prepareImportedKeyDWalletVerification(
+	ikaClient,
+	Curve.SECP256K1,
+	createRandomSessionIdentifier(),
+	senderAddress,
+	userShareKeys,
+	existingPrivateKey,
+);
+
+// Use verificationData in your imported key dWallet transaction
+```
+
+<Warning title="Private Key Security">
+The `privateKey` parameter contains your complete private key. Handle it with extreme care and ensure it's sourced from a secure location. After import, the key material will be distributed across the network through secure multi-party computation.
+</Warning>
+
+## Encryption Operations
+
+### encryptSecretShare
+
+Encrypt a secret share using the provided encryption key. This creates an encrypted share that can only be decrypted by the corresponding decryption key.
+
+```typescript
+async function encryptSecretShare(
+	curve: Curve,
+	userSecretKeyShare: Uint8Array,
+	encryptionKey: Uint8Array,
+	protocolPublicParameters: Uint8Array,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for encryption
+- `userSecretKeyShare` - The secret key share to encrypt
+- `encryptionKey` - The public encryption key to encrypt with
+- `protocolPublicParameters` - The protocol public parameters for encryption
+
+**Returns:** The encrypted secret share with proof of correct encryption
+
+**Example:**
+
+```typescript
+import { Curve, encryptSecretShare } from '@ika.xyz/sdk';
+
+const encryptedShare = await encryptSecretShare(
+	Curve.SECP256K1,
+	userSecretKeyShare,
+	userShareKeys.encryptionKey,
+	protocolParams,
+);
+
+console.log('Encrypted share length:', encryptedShare.length);
+```
+
+<Info title="Verifiable Encryption">
+The returned data includes not just the encrypted share, but also a zero-knowledge proof that the encryption was performed correctly. This allows the network to verify the encryption without learning anything about the secret share.
+</Info>
+
+## Signing Operations
+
+### createUserSignMessageWithPublicOutput
+
+Create the user's sign message for the signature generation process. This function combines the user's secret key, presign, and message to create a sign message to be sent to the network.
+
+This function is used when you have access to the user's public output which should be verified before using this method.
+
+```typescript
+async function createUserSignMessageWithPublicOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
+	protocolPublicParameters: Uint8Array,
+	publicOutput: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `protocolPublicParameters` - The protocol public parameters
+- `publicOutput` - The user's public output
+- `userSecretKeyShare` - The user's secret key share
+- `presign` - The presignature data from a completed presign operation
+- `message` - The message bytes to sign
+- `hash` - The hash scheme to use for signing
+- `signatureAlgorithm` - The signature algorithm to use
+- `curve` - The curve to use
+
+**Returns:** The user's sign message that will be sent to the network for signature generation
+
+**Example:**
+
+```typescript
+import {
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	Hash,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
+
+// Get presign from the network
+const presign = await ikaClient.getPresign(presignId);
+
+// Message to sign
+const message = new TextEncoder().encode('Hello, Ika!');
+
+// Create sign message
+const signMessage = await createUserSignMessageWithPublicOutput(
+	protocolParams,
+	userPublicOutput,
+	userSecretKeyShare,
+	presign.presign,
+	message,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
+);
+
+// Send signMessage to the network for signature generation
+```
+
+### createUserSignMessageWithCentralizedOutput
+
+Create the user's sign message for the signature generation process. This function combines the user's secret key, presign, and message to create a sign message to be sent to the network.
+
+This function is used when you have access to the centralized DKG output which should be verified before using this method.
+
+```typescript
+async function createUserSignMessageWithCentralizedOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
+	protocolPublicParameters: Uint8Array,
+	centralizedDkgOutput: Uint8Array,
+	userSecretKeyShare: Uint8Array,
+	presign: Uint8Array,
+	message: Uint8Array,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `protocolPublicParameters` - The protocol public parameters
+- `centralizedDkgOutput` - The centralized DKG output
+- `userSecretKeyShare` - The user's secret key share
+- `presign` - The presignature data from a completed presign operation
+- `message` - The message bytes to sign
+- `hash` - The hash scheme to use for signing
+- `signatureAlgorithm` - The signature algorithm to use
+- `curve` - The curve to use
+
+**Returns:** The user's sign message that will be sent to the network for signature generation
+
+**Example:**
+
+```typescript
+import {
+	createUserSignMessageWithCentralizedOutput,
+	Curve,
+	Hash,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
+
+const signMessage = await createUserSignMessageWithCentralizedOutput(
+	protocolParams,
+	centralizedDkgOutput,
+	userSecretKeyShare,
+	presign.presign,
+	message,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
+);
+```
+
+<Info title="Two Sign Message Functions">
+The SDK provides two functions for creating sign messages:
+
+- Use `createUserSignMessageWithPublicOutput` when you have the user's public output
+- Use `createUserSignMessageWithCentralizedOutput` when you have the centralized DKG output
+
+Both functions produce the same result, they just accept different input formats for verification.
+</Info>
+
+## Verification Operations
+
+### verifyUserShare
+
+Verify a user's secret key share. This ensures that the decrypted user share is valid and matches the expected DKG outputs.
+
+```typescript
+async function verifyUserShare(
+	curve: Curve,
+	userSecretKeyShare: Uint8Array,
+	userDKGOutput: Uint8Array,
+	networkDkgPublicOutput: Uint8Array,
+): Promise<boolean>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for key generation
+- `userSecretKeyShare` - The user's unencrypted secret key share
+- `userDKGOutput` - The user's DKG output
+- `networkDkgPublicOutput` - The network DKG public output
+
+**Returns:** True if the user's secret key share is valid, false otherwise
+
+**Example:**
+
+```typescript
+import { Curve, verifyUserShare } from '@ika.xyz/sdk';
+
+const isValid = await verifyUserShare(
+	Curve.SECP256K1,
+	userSecretKeyShare,
+	userDkgOutput,
+	networkDkgOutput,
+);
+
+if (isValid) {
+	console.log('User share is valid');
+} else {
+	console.error('User share verification failed');
+}
+```
+
+### verifySecpSignature
+
+Verify a signature generated by a dWallet.
+
+```typescript
+async function verifySecpSignature<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+	H extends ValidHashForSignature<S>,
+>(
+	publicKey: Uint8Array,
+	signature: Uint8Array,
+	message: Uint8Array,
+	networkDkgPublicOutput: Uint8Array,
+	hash: H,
+	signatureAlgorithm: S,
+	curve: C,
+): Promise<boolean>;
+```
+
+**Parameters:**
+
+- `publicKey` - The public key bytes
+- `signature` - The signature bytes to verify
+- `message` - The message bytes that was signed
+- `networkDkgPublicOutput` - The network DKG public output
+- `hash` - The hash scheme to use for verification
+- `signatureAlgorithm` - The signature algorithm to use
+- `curve` - The curve to use
+
+**Returns:** True if the signature is valid, false otherwise
+
+**Example:**
+
+```typescript
+import { Curve, Hash, SignatureAlgorithm, verifySecpSignature } from '@ika.xyz/sdk';
+
+const message = new TextEncoder().encode('Hello, Ika!');
+
+const isValid = await verifySecpSignature(
+	publicKeyBytes,
+	signatureBytes,
+	message,
+	networkDkgOutput,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
+);
+
+console.log('Signature valid:', isValid);
+```
+
+### userAndNetworkDKGOutputMatch
+
+Verify that the user's public output matches the network's public output. This is critical for ensuring the DKG process completed correctly.
+
+```typescript
+async function userAndNetworkDKGOutputMatch(
+	curve: Curve,
+	userPublicOutput: Uint8Array,
+	networkDKGOutput: Uint8Array,
+): Promise<boolean>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use
+- `userPublicOutput` - The user's public output
+- `networkDKGOutput` - The network's public output
+
+**Returns:** True if the user's public output matches the network's public output, false otherwise
+
+**Example:**
+
+```typescript
+import { Curve, userAndNetworkDKGOutputMatch } from '@ika.xyz/sdk';
+
+const match = await userAndNetworkDKGOutputMatch(
+	Curve.SECP256K1,
+	userPublicOutput,
+	networkDkgOutput,
+);
+
+if (!match) {
+	throw new Error('DKG outputs do not match - possible security issue');
+}
+```
+
+<Warning title="Security Critical">
+Always verify that user and network DKG outputs match before using a dWallet. Mismatched outputs indicate a problem with the DKG process and could compromise security.
+</Warning>
+
+## Key Conversion Operations
+
+### publicKeyFromDWalletOutput
+
+Create a public key from a dWallet output. This extracts the public key from the dWallet's cryptographic output.
+
+```typescript
+async function publicKeyFromDWalletOutput(
+	curve: Curve,
+	dWalletOutput: Uint8Array,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for key generation
+- `dWalletOutput` - The dWallet output
+
+**Returns:** The BCS-encoded public key
+
+**Example:**
+
+```typescript
+import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
+
+const publicKey = await publicKeyFromDWalletOutput(
+	Curve.SECP256K1,
+	dWallet.state.Active.public_output,
+);
+
+console.log('Public key:', Buffer.from(publicKey).toString('hex'));
+```
+
+### publicKeyFromCentralizedDKGOutput
+
+Create a public key from a centralized DKG output. This extracts the public key from the DKG process output.
+
+This function is particularly useful when combined with `prepareDKG` to generate public keys without creating a dWallet on the network (see [Generating Public Keys Without Creating dWallets](#generating-public-keys-without-creating-dwallets)).
+
+```typescript
+async function publicKeyFromCentralizedDKGOutput(
+	curve: Curve,
+	centralizedDkgOutput: Uint8Array,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for key generation
+- `centralizedDkgOutput` - The centralized DKG output
+
+**Returns:** The BCS-encoded public key
+
+**Example (from existing dWallet):**
+
+```typescript
+import { Curve, publicKeyFromCentralizedDKGOutput } from '@ika.xyz/sdk';
+
+const publicKey = await publicKeyFromCentralizedDKGOutput(Curve.SECP256K1, centralizedDkgOutput);
+```
+
+**Example (generate without creating dWallet):**
+
+```typescript
+import {
+	createRandomSessionIdentifier,
+	Curve,
+	prepareDKG,
+	publicKeyFromCentralizedDKGOutput,
+} from '@ika.xyz/sdk';
+
+// Prepare DKG locally
+const dkgData = await prepareDKG(
+	protocolParams,
+	Curve.SECP256K1,
+	userShareKeys.encryptionKey,
+	createRandomSessionIdentifier(),
+	senderAddress,
+);
+
+// Extract public key from DKG output (no dWallet created on network)
+const publicKey = await publicKeyFromCentralizedDKGOutput(
+	Curve.SECP256K1,
+	dkgData.userPublicOutput,
+);
+
+console.log('Public key generated locally:', Buffer.from(publicKey).toString('hex'));
+```
+
+<Info title="Offline Key Generation">
+You can use this function with `prepareDKG` to generate public keys completely offline, without any network interaction. This is useful for pre-computing addresses, testing, or air-gapped key generation.
+</Info>
+
+### networkDkgPublicOutputToProtocolPublicParameters
+
+Convert a network DKG public output to the protocol public parameters. This is used to derive protocol parameters from the network's DKG output.
+
+```typescript
+async function networkDkgPublicOutputToProtocolPublicParameters(
+	curve: Curve,
+	network_dkg_public_output: Uint8Array,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for key generation
+- `network_dkg_public_output` - The network DKG public output
+
+**Returns:** The protocol public parameters
+
+### reconfigurationPublicOutputToProtocolPublicParameters
+
+Convert a reconfiguration DKG public output to the protocol public parameters. This is used after network reconfiguration events.
+
+```typescript
+async function reconfigurationPublicOutputToProtocolPublicParameters(
+	curve: Curve,
+	reconfiguration_public_output: Uint8Array,
+	network_dkg_public_output: Uint8Array,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use for key generation
+- `reconfiguration_public_output` - The reconfiguration DKG public output
+- `network_dkg_public_output` - The network DKG public output
+
+**Returns:** The protocol public parameters
+
+## Utility Functions
+
+### parseSignatureFromSignOutput
+
+Parse a signature from a sign output. This extracts the raw signature bytes from the network's signature generation output.
+
+```typescript
+async function parseSignatureFromSignOutput<
+	C extends Curve,
+	S extends ValidSignatureAlgorithmForCurve<C>,
+>(curve: C, signatureAlgorithm: S, signatureOutput: Uint8Array): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `curve` - The curve to use
+- `signatureAlgorithm` - The signature algorithm to use
+- `signatureOutput` - The signature output bytes from the network
+
+**Returns:** The parsed signature bytes
+
+**Example:**
+
+```typescript
+import { Curve, parseSignatureFromSignOutput, SignatureAlgorithm } from '@ika.xyz/sdk';
+
+const signature = await parseSignatureFromSignOutput(
+	Curve.SECP256K1,
+	SignatureAlgorithm.ECDSASecp256k1,
+	signOutput,
+);
+
+console.log('Signature:', Buffer.from(signature).toString('hex'));
+```
+
+### sessionIdentifierDigest
+
+Create a digest of the session identifier for cryptographic operations. This function creates a versioned, domain-separated hash of the session identifier.
+
+```typescript
+function sessionIdentifierDigest(
+	bytesToHash: Uint8Array,
+	senderAddressBytes: Uint8Array,
+): Uint8Array;
+```
+
+**Parameters:**
+
+- `bytesToHash` - The bytes to hash for session identifier generation
+- `senderAddressBytes` - The sender address bytes for session identifier generation
+
+**Returns:** The KECCAK-256 digest of the versioned and domain-separated session identifier
+
+<Info title="Internal Use">
+This function is typically used internally by higher-level functions like `prepareDKG`. You usually don't need to call it directly unless you're implementing custom cryptographic protocols.
+</Info>
+
+### createRandomSessionIdentifier
+
+Create a random session identifier. This generates cryptographically secure random bytes for use as a session identifier.
+
+```typescript
+function createRandomSessionIdentifier(): Uint8Array;
+```
+
+**Returns:** 32 random bytes for use as a session identifier
+
+**Example:**
+
+```typescript
+import { createRandomSessionIdentifier } from '@ika.xyz/sdk';
+
+const sessionId = createRandomSessionIdentifier();
+console.log('Session ID length:', sessionId.length); // 32
+```
+
+### verifyAndGetDWalletDKGPublicOutput
+
+Verify and get the DWallet DKG public output. The public key is used to verify the user's public output signature.
+
+```typescript
+async function verifyAndGetDWalletDKGPublicOutput(
+	dWallet: DWallet,
+	encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	publicKey: PublicKey,
+): Promise<Uint8Array>;
+```
+
+**Parameters:**
+
+- `dWallet` - The DWallet object containing the user's public output
+- `encryptedUserSecretKeyShare` - The encrypted user secret key share
+- `publicKey` - The user share encryption key's public key for verification
+
+**Returns:** The DKG public output
+
+**Example:**
+
+```typescript
+import { verifyAndGetDWalletDKGPublicOutput } from '@ika.xyz/sdk';
+
+const publicOutput = await verifyAndGetDWalletDKGPublicOutput(
+	dWallet,
+	encryptedShare,
+	userShareKeys.getPublicKey(),
+);
+```
+
+<Warning title="Security Warning">
+For withSecrets flows, the public key or public output must be saved by the developer during DKG, NOT fetched from the network, to ensure proper verification. Always verify signatures before using public outputs.
+</Warning>
+
+## Deprecated Functions
+
+The following functions are deprecated and should not be used in new code:
+
+- `prepareDKGSecondRound` - Use `prepareDKG` instead
+- `prepareDKGSecondRoundAsync` - Use `prepareDKGAsync` instead
+- `createDKGUserOutput` - Internal function, use higher-level APIs

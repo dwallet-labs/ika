@@ -11,6 +11,8 @@ import * as SystemInnerModule from '../generated/ika_system/system_inner.js';
 export interface IkaPackageConfig {
 	ikaPackage: string;
 	ikaCommonPackage: string;
+	ikaSystemOriginalPackage: string;
+	ikaDwallet2pcMpcOriginalPackage: string;
 	ikaDwallet2pcMpcPackage: string;
 	ikaSystemPackage: string;
 }

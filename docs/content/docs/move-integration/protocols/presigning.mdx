@@ -1,0 +1,305 @@
+---
+id: presigning-protocol
+title: Presigning
+description: Pre-compute cryptographic material required for signing
+sidebar_position: 3
+sidebar_label: Presigning
+---
+
+# Presigning
+
+Presigning creates cryptographic material (nonces) that are required before creating a signature. Each signature consumes one presign, so you need to manage a pool of presigns for your contract.
+
+## Overview
+
+Presigns:
+- Must be created **before** signing
+- Are **consumed** when used (one presign = one signature)
+- Go through **verification** before use
+- Can be **pooled** for future use
+
+## Presign Types
+
+### Global Presigns
+
+Not tied to a specific dWallet. Use for Schnorr, EdDSA, and Taproot signatures.
+
+```rust
+public fun request_global_presign(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    signature_algorithm: u32,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): UnverifiedPresignCap
+```
+
+**When to use**: Most cases, especially for Taproot (Bitcoin), EdDSA, Schnorr signatures.
+
+### dWallet-Specific Presigns
+
+Tied to a specific dWallet ID. Required for ECDSA with imported keys.
+
+```rust
+public fun request_presign(
+    self: &mut DWalletCoordinator,
+    dwallet_id: ID,
+    signature_algorithm: u32,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): UnverifiedPresignCap
+```
+
+**When to use**: ECDSA signatures with imported key dWallets.
+
+## Presign Lifecycle
+
+<PresignLifecycleDiagram />
+
+## Requesting Presigns
+
+### Basic Global Presign Request
+
+```rust
+public fun add_presign(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    let presign_cap = coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0,  // SECP256K1 curve
+        1,  // Taproot algorithm
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    self.presigns.push_back(presign_cap);
+    self.return_payment_coins(ika, sui);
+}
+```
+
+### dWallet-Specific Presign Request
+
+```rust
+public fun add_dwallet_presign(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    let presign_cap = coordinator.request_presign(
+        self.dwallet_cap.dwallet_id(),
+        0,  // ECDSA_SECP256K1 algorithm
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    self.presigns.push_back(presign_cap);
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Verifying Presigns
+
+Before using a presign, you must verify it's been completed by the network:
+
+```rust
+// Check if presign is ready
+let is_ready = coordinator.is_presign_valid(&unverified_cap);
+
+// Verify (will fail if not ready)
+let verified_cap = coordinator.verify_presign_cap(unverified_cap, ctx);
+```
+
+
+<Callout type="warn" title="Verification Timing">
+`verify_presign_cap()` will fail if the network hasn't completed the presign yet. Either check with `is_presign_valid()` first, or ensure enough time has passed.
+</Callout>
+
+
+## Presign Pool Management
+
+### Contract Structure
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,  // Pool of presigns
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Pool Management Functions
+
+```rust
+/// Get current pool size
+public fun presign_count(self: &MyContract): u64 {
+    self.presigns.length()
+}
+
+/// Pop a presign from pool
+fun pop_presign(self: &mut MyContract): UnverifiedPresignCap {
+    assert!(self.presigns.length() > 0, ENoPresignsAvailable);
+    self.presigns.swap_remove(0)
+}
+
+/// Add presigns to maintain pool size
+public fun refill_presigns(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    count: u64,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    let mut i = 0;
+    while (i < count) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            0, 1, session,
+            &mut ika, &mut sui, ctx,
+        ));
+
+        i = i + 1;
+    };
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+### Auto-Replenishment Pattern
+
+Automatically replenish presigns when pool gets low:
+
+```rust
+const MIN_PRESIGN_POOL: u64 = 3;
+
+public fun sign_with_auto_replenish(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // Pop and verify presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    // ... perform signing ...
+
+    // Auto-replenish if pool is low
+    if (self.presigns.length() < MIN_PRESIGN_POOL) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            0, 1, session,
+            &mut ika, &mut sui, ctx,
+        ));
+    };
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Complete Example: Bitcoin Multisig Presign Management
+
+From the multisig-bitcoin example:
+
+```rust
+module ika_btc_multisig::multisig;
+
+use ika_btc_multisig::constants;
+
+/// Add a presign to the pool
+public fun add_presign(
+    self: &mut Multisig,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    // Only members can add presigns
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        constants::curve!(),              // SECP256K1
+        constants::signature_algorithm!(), // Taproot
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    ));
+
+    self.return_payment_coins(ika, sui);
+
+    // Emit event
+    multisig_events::presign_added(self.id.to_inner());
+}
+```
+
+## Algorithm and Curve Compatibility
+
+| Signature Algorithm | Presign Type | Curve |
+|---------------------|--------------|-------|
+| Taproot | Global | SECP256K1 |
+| Schnorr | Global | SECP256K1 |
+| EdDSA | Global | ED25519 |
+| SchnorrkelSubstrate | Global | RISTRETTO |
+| ECDSASecp256k1 | Global | SECP256K1 |
+| ECDSASecp256k1 (Imported) | dWallet-specific | SECP256K1 |
+
+## Best Practices
+
+1. **Maintain a Pool**: Keep multiple presigns ready to avoid delays
+2. **Auto-Replenish**: Add new presigns when pool gets low
+3. **Use Global Presigns**: When possible, as they're more flexible
+4. **Check Before Verify**: Use `is_presign_valid()` to check network completion
+5. **Handle Failures**: If verification fails, the presign might not be ready yet
+
+## Next Steps
+
+- Learn about [Signing](/docs/move-integration/protocols/signing) to use your presigns
+- See [Future Signing](/docs/move-integration/protocols/future-signing) for two-phase signing workflows

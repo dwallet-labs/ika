@@ -9,6 +9,26 @@ edition = "2024"
 [lints]
 workspace = true
 
+# Default binary (auto-detects mode from config)
+[[bin]]
+name = "ika-node"
+path = "src/main.rs"
+
+# Validator binary (requires consensus_config)
+[[bin]]
+name = "ika-validator"
+path = "src/bin/ika-validator.rs"
+
+# Fullnode binary (no consensus, no notifier)
+[[bin]]
+name = "ika-fullnode"
+path = "src/bin/ika-fullnode.rs"
+
+# Notifier binary (requires notifier_client_key_pair)
+[[bin]]
+name = "ika-notifier"
+path = "src/bin/ika-notifier.rs"
+
 [dependencies]
 sui-json-rpc-types.workspace = true
 anemo.workspace = true
@@ -16,6 +36,7 @@ anemo-tower.workspace = true
 arc-swap.workspace = true
 axum.workspace = true
 anyhow.workspace = true
+bin-version.workspace = true
 clap.workspace = true
 consensus-core.workspace = true
 prometheus.workspace = true
@@ -26,7 +47,6 @@ tower.workspace = true
 reqwest.workspace = true
 tap.workspace = true
 serde.workspace = true
-bin-version.workspace = true
 humantime.workspace = true
 
 sui-macros.workspace = true

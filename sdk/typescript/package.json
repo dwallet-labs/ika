@@ -8,7 +8,7 @@
 		"directory": "sdk/typescript"
 	},
 	"homepage": "https://docs.ika.xyz/sdk",
-	"version": "0.2.3",
+	"version": "0.2.7",
 	"license": "BSD-3-Clause-Clear",
 	"sideEffects": false,
 	"files": [
@@ -45,12 +45,7 @@
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
 		"test:e2e": "vitest run e2e",
-		"prepare": "pnpm create-summaries && pnpm sui-ts-codegen generate",
-		"create-summaries:ika": "cd ../../contracts/ika && sui move summary",
-		"create-summaries:dwallet_2pc_mpc": "cd ../../contracts/ika_dwallet_2pc_mpc && sui move summary",
-		"create-summaries:common": "cd ../../contracts/ika_common && sui move summary",
-		"create-summaries:system": "cd ../../contracts/ika_system && sui move summary",
-		"create-summaries": "pnpm create-summaries:ika && pnpm create-summaries:dwallet_2pc_mpc && pnpm create-summaries:common && pnpm create-summaries:system"
+		"prepare": "pnpm sui-ts-codegen generate"
 	},
 	"bugs": {
 		"url": "https://github.com/dwallet-labs/ika/issues/new"
@@ -78,6 +73,6 @@
 		"@mysten/sui": "^1.44.0",
 		"@noble/curves": "^2.0.1",
 		"@noble/hashes": "^1.8.0",
-		"js-yaml": "^4.1.0"
+		"js-yaml": "^4.1.1"
 	}
 }

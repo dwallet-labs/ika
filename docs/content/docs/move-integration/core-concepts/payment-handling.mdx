@@ -1,0 +1,297 @@
+---
+id: payment-handling
+title: Payment Handling
+description: Managing IKA and SUI fees for dWallet protocol operations
+sidebar_position: 5
+sidebar_label: Payment Handling
+---
+
+# Payment Handling
+
+All dWallet protocol operations require fees paid in both **IKA** (protocol fees) and **SUI** (gas fees). This guide covers how to manage these payments in your Move contracts.
+
+## Fee Structure
+
+| Operation            | IKA Fee          | SUI Fee   |
+| -------------------- | ---------------- | --------- |
+| DKG (Create dWallet) | Protocol-defined | Gas costs |
+| Presign              | Protocol-defined | Gas costs |
+| Sign                 | Protocol-defined | Gas costs |
+| Future Sign          | Protocol-defined | Gas costs |
+
+Fee amounts are determined by the network and can be queried from the coordinator.
+
+## Balance Management Pattern
+
+The recommended pattern is to:
+
+1. Store IKA and SUI balances in your contract
+2. Withdraw coins before operations
+3. Return unused coins after operations
+
+### Contract Structure
+
+```rust
+use ika::ika::IKA;
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+public struct MyContract has key, store {
+    id: UID,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    // ... other fields
+}
+```
+
+### Funding Functions
+
+```rust
+/// Add IKA tokens to the contract balance
+public fun add_ika_balance(self: &mut MyContract, coin: Coin<IKA>) {
+    self.ika_balance.join(coin.into_balance());
+}
+
+/// Add SUI tokens to the contract balance
+public fun add_sui_balance(self: &mut MyContract, coin: Coin<SUI>) {
+    self.sui_balance.join(coin.into_balance());
+}
+```
+
+### Withdraw and Return Pattern
+
+```rust
+/// Withdraw all balances as coins for payment
+fun withdraw_payment_coins(
+    self: &mut MyContract,
+    ctx: &mut TxContext,
+): (Coin<IKA>, Coin<SUI>) {
+    let ika_coin = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui_coin = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika_coin, sui_coin)
+}
+
+/// Return unused coins to balances
+fun return_payment_coins(
+    self: &mut MyContract,
+    ika_coin: Coin<IKA>,
+    sui_coin: Coin<SUI>,
+) {
+    self.ika_balance.join(ika_coin.into_balance());
+    self.sui_balance.join(sui_coin.into_balance());
+}
+```
+
+## Using Payments in Operations
+
+Here's the complete pattern for a protocol operation:
+
+```rust
+public fun request_presign(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    // 1. Withdraw payment coins
+    let (mut payment_ika, mut payment_sui) = self.withdraw_payment_coins(ctx);
+
+    // 2. Create session identifier
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // 3. Perform operation (fees are deducted from coins)
+    let presign_cap = coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0,  // curve
+        1,  // signature algorithm
+        session,
+        &mut payment_ika,  // Fees deducted here
+        &mut payment_sui,  // Fees deducted here
+        ctx,
+    );
+
+    // 4. Store the result
+    self.presigns.push_back(presign_cap);
+
+    // 5. Return unused coins to balances
+    self.return_payment_coins(payment_ika, payment_sui);
+}
+```
+
+## Complete Example
+
+Here's a full contract with payment handling:
+
+```rust
+module my_protocol::treasury;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap},
+    sessions_manager::SessionIdentifier
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+public struct Treasury has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+// === Funding Functions ===
+
+public fun add_ika_balance(self: &mut Treasury, coin: Coin<IKA>) {
+    self.ika_balance.join(coin.into_balance());
+}
+
+public fun add_sui_balance(self: &mut Treasury, coin: Coin<SUI>) {
+    self.sui_balance.join(coin.into_balance());
+}
+
+// === Balance Queries ===
+
+public fun ika_balance(self: &Treasury): u64 {
+    self.ika_balance.value()
+}
+
+public fun sui_balance(self: &Treasury): u64 {
+    self.sui_balance.value()
+}
+
+// === Internal Helpers ===
+
+fun withdraw_payment_coins(
+    self: &mut Treasury,
+    ctx: &mut TxContext,
+): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(
+    self: &mut Treasury,
+    ika: Coin<IKA>,
+    sui: Coin<SUI>,
+) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+
+fun random_session(
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    )
+}
+
+// === Protocol Operations ===
+
+public fun add_presign(
+    self: &mut Treasury,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+    let session = random_session(coordinator, ctx);
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0,  // SECP256K1
+        1,  // Taproot
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    ));
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Querying Fee Amounts
+
+You can query the current pricing from the coordinator:
+
+```rust
+let pricing = coordinator.current_pricing();
+```
+
+From TypeScript:
+
+```typescript
+const pricing = await ikaClient.getPricing();
+// pricing contains fee amounts for each operation
+```
+
+## Handling Insufficient Funds
+
+Always check balances before operations or handle potential failures:
+
+```rust
+public fun add_presign(
+    self: &mut Treasury,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    // Check minimum balances (get actual amounts from pricing)
+    assert!(self.ika_balance.value() >= MIN_IKA_FOR_PRESIGN, EInsufficientIKA);
+    assert!(self.sui_balance.value() >= MIN_SUI_FOR_PRESIGN, EInsufficientSUI);
+
+    // Proceed with operation...
+}
+```
+
+## Auto-Replenishment Pattern
+
+For contracts that need continuous operation, implement auto-replenishment:
+
+```rust
+public fun add_presign_with_auto_replenish(
+    self: &mut Treasury,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+    let session = random_session(coordinator, ctx);
+
+    // Add presign
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0, 1, session,
+        &mut ika, &mut sui, ctx,
+    ));
+
+    // Check if pool is getting low, add more presigns
+    while (self.presigns.length() < MIN_PRESIGN_POOL_SIZE && self.has_sufficient_balance(&ika, &sui)) {
+        let session = random_session(coordinator, ctx);
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            0, 1, session,
+            &mut ika, &mut sui, ctx,
+        ));
+    };
+
+    self.return_payment_coins(ika, sui);
+}
+```
+
+## Best Practices
+
+1. **Always Return Unused Funds**: Protocol operations only deduct what's needed
+2. **Check Balances**: Verify sufficient funds before operations
+3. **Batch Operations**: Multiple operations in one transaction share the withdraw/return pattern
+4. **Monitor Balances**: Emit events when balances are low
+5. **Allow Refunding**: Provide admin functions to withdraw excess balances if needed
+
+## Next Steps
+
+- Continue to [Protocols](/docs/move-integration/protocols/overview) to learn about DKG, presigning, and signing

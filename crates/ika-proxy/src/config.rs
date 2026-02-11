@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 use anyhow::{Context, Result};
 use core::time::Duration;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_with::{serde_as, DurationSeconds};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_with::{DurationSeconds, serde_as};
 use std::net::SocketAddr;
 use sui_types::base_types::ObjectID;
 use tracing::debug;

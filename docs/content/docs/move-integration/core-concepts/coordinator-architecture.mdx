@@ -1,0 +1,236 @@
+---
+id: coordinator-architecture
+title: Coordinator Architecture
+description: Understanding the DWalletCoordinator - the central hub for all dWallet operations
+sidebar_position: 2
+sidebar_label: Coordinator Architecture
+---
+
+# Coordinator Architecture
+
+The `DWalletCoordinator` is the central shared object that manages all dWallet operations on the Ika network. Understanding how it works is essential for building Move contracts that integrate with Ika.
+
+## Overview
+
+The coordinator serves as:
+
+- **Entry Point**: All dWallet operations go through the coordinator
+- **State Manager**: Stores dWallets, presigns, and signing sessions
+- **Fee Handler**: Collects protocol fees for operations
+- **Event Emitter**: Emits events that the Ika network processes
+
+## Coordinator Structure
+
+```rust
+public struct DWalletCoordinator has key {
+    id: UID,
+    version: u64,
+    package_id: ID,
+    new_package_id: Option<ID>,
+    migration_epoch: Option<u64>,
+}
+```
+
+The coordinator uses dynamic fields to store its inner state, which includes:
+
+- **dWallets**: All created dWallet objects
+- **Presign sessions**: Requested and completed presigns
+- **Sign sessions**: Signature requests and results
+- **Network encryption keys**: Keys for each network epoch
+- **Pricing information**: Fee structure for operations
+
+## Using the Coordinator in Move
+
+The coordinator is a **shared object** that you reference by ID in your Move functions:
+
+```rust
+use ika_dwallet_2pc_mpc::coordinator::DWalletCoordinator;
+
+public fun my_function(
+    coordinator: &mut DWalletCoordinator,
+    // ... other parameters
+    ctx: &mut TxContext,
+) {
+    // Use coordinator for dWallet operations
+}
+```
+
+### Mutable vs Immutable Reference
+
+| Reference Type | Use When |
+|----------------|----------|
+| `&mut DWalletCoordinator` | Performing operations (DKG, presign, sign) |
+| `&DWalletCoordinator` | Reading state (checking dWallet existence, getting pricing) |
+
+Most operations require a mutable reference because they modify coordinator state.
+
+## Key Coordinator Functions
+
+### DKG (Create dWallet)
+
+```rust
+// Create dWallet with encrypted user share (zero-trust)
+public fun request_dwallet_dkg(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    encrypted_centralized_secret_share_and_proof: vector<u8>,
+    encryption_key_address: address,
+    user_public_output: vector<u8>,
+    signer_public_key: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>)
+
+// Create dWallet with public user share (shared mode)
+public fun request_dwallet_dkg_with_public_user_secret_key_share(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    sign_during_dkg_request: Option<SignDuringDKGRequest>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): (DWalletCap, Option<ID>)
+```
+
+### Presigning
+
+```rust
+// Request presign for a specific dWallet
+public fun request_presign(
+    self: &mut DWalletCoordinator,
+    dwallet_id: ID,
+    signature_algorithm: u32,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): UnverifiedPresignCap
+
+// Request global presign (not tied to specific dWallet)
+public fun request_global_presign(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    signature_algorithm: u32,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): UnverifiedPresignCap
+
+// Verify a presign capability before use
+public fun verify_presign_cap(
+    self: &mut DWalletCoordinator,
+    cap: UnverifiedPresignCap,
+    ctx: &mut TxContext,
+): VerifiedPresignCap
+```
+
+### Signing
+
+```rust
+// Approve a message for signing
+public fun approve_message(
+    self: &mut DWalletCoordinator,
+    dwallet_cap: &DWalletCap,
+    signature_algorithm: u32,
+    hash_scheme: u32,
+    message: vector<u8>,
+): MessageApproval
+
+// Request a signature
+public fun request_sign(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: MessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+)
+```
+
+### Session Management
+
+```rust
+// Register a session identifier
+public fun register_session_identifier(
+    self: &mut DWalletCoordinator,
+    bytes: vector<u8>,
+    ctx: &mut TxContext,
+): SessionIdentifier
+```
+
+### Query Functions
+
+```rust
+// Check if a dWallet exists
+public fun has_dwallet(self: &DWalletCoordinator, dwallet_id: ID): bool
+
+// Get a dWallet reference
+public fun get_dwallet(self: &DWalletCoordinator, dwallet_id: ID): &DWallet
+
+// Get current pricing information
+public fun current_pricing(self: &DWalletCoordinator): PricingInfo
+
+// Check if a presign is valid
+public fun is_presign_valid(self: &DWalletCoordinator, presign_cap: &UnverifiedPresignCap): bool
+```
+
+## Getting the Coordinator ID
+
+In your TypeScript code, get the coordinator ID from the Ika client:
+
+```typescript
+import { IkaClient, getNetworkConfig } from '@ika.xyz/sdk';
+
+const ikaClient = new IkaClient({
+    suiClient,
+    config: getNetworkConfig('testnet'),
+});
+await ikaClient.initialize();
+
+// Get coordinator ID
+const coordinatorId = ikaClient.config.objects.dwalletCoordinatorId;
+```
+
+Then pass it to your Move function:
+
+```typescript
+tx.moveCall({
+    target: `${packageId}::my_module::my_function`,
+    arguments: [
+        tx.object(coordinatorId),  // DWalletCoordinator
+        // ... other arguments
+    ],
+});
+```
+
+## Coordinator Versioning
+
+The coordinator supports upgrades through a versioning system:
+
+- The `version` field tracks the current inner state version
+- Upgrades migrate the inner state to new versions
+- Your code doesn't need to handle versioning directly
+
+
+<Callout type="info" title="The coordinator validates its version internally. If you encounter version errors, ensure you're using the latest Ika packages.">
+</Callout>
+
+
+## Next Steps
+
+- Learn about [Capabilities and Approvals](/docs/move-integration/core-concepts/capabilities-and-approvals) that control dWallet authorization
+- Understand [Session Management](/docs/move-integration/core-concepts/session-management) for protocol operations

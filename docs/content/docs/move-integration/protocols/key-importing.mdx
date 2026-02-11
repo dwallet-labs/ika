@@ -1,0 +1,320 @@
+---
+id: key-importing-protocol
+title: Key Importing
+description: Import existing private keys into Ika dWallet
+sidebar_position: 6
+sidebar_label: Key Importing
+---
+
+# Key Importing
+
+Key importing allows you to bring an existing private key (from Bitcoin, Ethereum, etc.) into the Ika dWallet system. This enables you to manage existing wallets with Ika's distributed signing capabilities.
+
+## Overview
+
+Key importing:
+- Converts existing private keys to dWallet format
+- Creates an `ImportedKeyDWalletCap` for authorization
+- Supports both zero-trust (encrypted) and shared (public) modes
+- Enables signing for wallets you already control
+
+
+<Callout type="warn" title="Security Consideration">
+When importing a key, you're trusting the network with a share of your existing private key. This is different from DKG where the key is generated in a distributed manner.
+</Callout>
+
+
+## Import Process
+
+<KeyImportDiagram />
+
+## Request Import Verification
+
+```rust
+public fun request_imported_key_dwallet_verification(
+    self: &mut DWalletCoordinator,
+    dwallet_network_encryption_key_id: ID,
+    curve: u32,
+    centralized_party_message: vector<u8>,
+    encrypted_centralized_secret_share_and_proof: vector<u8>,
+    encryption_key_address: address,
+    user_public_output: vector<u8>,
+    signer_public_key: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ImportedKeyDWalletCap
+```
+
+## TypeScript: Prepare Import
+
+```typescript
+import {
+    IkaClient,
+    UserShareEncryptionKeys,
+    prepareImportedKeyDWalletVerification,
+    createRandomSessionIdentifier,
+    Curve,
+} from '@ika.xyz/sdk';
+
+// Your existing private key
+const privateKey = new Uint8Array([/* your private key bytes */]);
+
+// Create encryption keys
+const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
+    new TextEncoder().encode('your-seed'),
+    Curve.SECP256K1,
+);
+
+const sessionIdentifier = createRandomSessionIdentifier();
+
+// Prepare import data
+const importData = await prepareImportedKeyDWalletVerification(
+    ikaClient,
+    Curve.SECP256K1,
+    sessionIdentifier,
+    signerAddress,
+    userShareEncryptionKeys,
+    privateKey,
+);
+
+// importData contains:
+// - userPublicOutput
+// - userMessage (centralized_party_message)
+// - encryptedUserShareAndProof
+```
+
+## Move Contract Integration
+
+### Contract Structure
+
+```rust
+public struct ImportedWallet has key, store {
+    id: UID,
+    imported_dwallet_cap: ImportedKeyDWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Import Function
+
+```rust
+module my_protocol::imported_wallet;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{ImportedKeyDWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+const SECP256K1: u32 = 0;
+
+public fun import_wallet(
+    coordinator: &mut DWalletCoordinator,
+    initial_ika: Coin<IKA>,
+    initial_sui: Coin<SUI>,
+    dwallet_network_encryption_key_id: ID,
+    centralized_party_message: vector<u8>,
+    encrypted_centralized_secret_share_and_proof: vector<u8>,
+    encryption_key_address: address,
+    user_public_output: vector<u8>,
+    signer_public_key: vector<u8>,
+    session_identifier_bytes: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    let mut ika = initial_ika;
+    let mut sui = initial_sui;
+
+    // Register session
+    let session = coordinator.register_session_identifier(
+        session_identifier_bytes,
+        ctx,
+    );
+
+    // Request import verification
+    let imported_cap = coordinator.request_imported_key_dwallet_verification(
+        dwallet_network_encryption_key_id,
+        SECP256K1,
+        centralized_party_message,
+        encrypted_centralized_secret_share_and_proof,
+        encryption_key_address,
+        user_public_output,
+        signer_public_key,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Create wallet object
+    let wallet = ImportedWallet {
+        id: object::new(ctx),
+        imported_dwallet_cap: imported_cap,
+        presigns: vector::empty(),
+        ika_balance: ika.into_balance(),
+        sui_balance: sui.into_balance(),
+        dwallet_network_encryption_key_id,
+    };
+
+    transfer::public_share_object(wallet);
+}
+```
+
+## Signing with Imported Keys
+
+Imported keys use different functions for message approval and signing:
+
+### Approve Message
+
+```rust
+let approval = coordinator.approve_imported_key_message(
+    &self.imported_dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    message,
+);
+```
+
+### Request Sign
+
+```rust
+let sign_id = coordinator.request_imported_key_sign_and_return_id(
+    verified_presign_cap,
+    approval,  // ImportedKeyMessageApproval
+    message_centralized_signature,
+    session,
+    &mut ika,
+    &mut sui,
+    ctx,
+);
+```
+
+### Complete Example
+
+```rust
+public fun sign_with_imported_key(
+    self: &mut ImportedWallet,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Verify presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    // Approve message (note: approve_imported_key_message)
+    let approval = coordinator.approve_imported_key_message(
+        &self.imported_dwallet_cap,
+        0,  // ECDSA
+        0,  // SHA256
+        message,
+    );
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // Sign (note: request_imported_key_sign_and_return_id)
+    let sign_id = coordinator.request_imported_key_sign_and_return_id(
+        verified,
+        approval,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    return_payment_coins(self, ika, sui);
+    sign_id
+}
+```
+
+## Presigning for Imported Keys
+
+Imported keys require **dWallet-specific presigns** for ECDSA:
+
+```rust
+public fun add_presign(
+    self: &mut ImportedWallet,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // Note: request_presign with dwallet_id, not request_global_presign
+    let presign_cap = coordinator.request_presign(
+        self.imported_dwallet_cap.dwallet_id(),
+        0,  // ECDSA_SECP256K1
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    self.presigns.push_back(presign_cap);
+    return_payment_coins(self, ika, sui);
+}
+```
+
+## Future Signing with Imported Keys
+
+For governance workflows with imported keys:
+
+```rust
+// Phase 2 completion with imported key
+let sign_id = coordinator.request_imported_key_sign_with_partial_user_signature_and_return_id(
+    verified_partial_cap,
+    imported_key_message_approval,
+    session,
+    &mut ika,
+    &mut sui,
+    ctx,
+);
+```
+
+## Converting to Shared Mode
+
+You can convert an imported key dWallet from zero-trust mode (encrypted user share) to shared mode (public user share). This enables contract-owned signing without user interaction.
+
+See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared) for the complete guide, including:
+- How to save and use the user secret key share
+- TypeScript SDK methods
+- Move contract integration
+- Security considerations
+
+## Key Differences from DKG dWallets
+
+| Aspect | DKG dWallet | Imported Key dWallet |
+|--------|-------------|---------------------|
+| Capability Type | `DWalletCap` | `ImportedKeyDWalletCap` |
+| Message Approval | `approve_message()` | `approve_imported_key_message()` |
+| Sign Function | `request_sign()` | `request_imported_key_sign()` |
+| Presign Type | Global (for Taproot/EdDSA) | dWallet-specific (for ECDSA) |
+| Key Origin | Generated distributed | Imported from user |
+
+## Best Practices
+
+1. **Secure Private Key Handling**: Never log or expose the private key
+2. **Use dWallet-Specific Presigns**: For ECDSA with imported keys
+3. **Consider Trust Model**: Imported keys have different security properties than DKG
+4. **Test Thoroughly**: Verify signatures work on the target chain
+
+## Next Steps
+
+- Learn about [Integration Patterns](/docs/move-integration/integration-patterns/overview) for common use cases
+- See the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin) for a complete implementation

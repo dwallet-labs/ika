@@ -1016,17 +1016,18 @@ impl SuiClientInner for SuiSdkClient {
         for validator in validators {
             let info = validator.verified_validator_info();
             let mpc_data_id = if read_next_mpc_data
-                && info.next_epoch_mpc_data_bytes.is_some()
+                && let Some(next_epoch_mpc_data_bytes) = info.next_epoch_mpc_data_bytes.as_ref()
                 && info.previous_mpc_data_bytes.is_none()
             {
-                info.next_epoch_mpc_data_bytes.as_ref().unwrap().contents.id
+                next_epoch_mpc_data_bytes.contents.id
             } else {
                 if info.next_epoch_mpc_data_bytes.is_some()
                     && info.previous_mpc_data_bytes.is_some()
                 {
                     error!(
+                        should_never_happen=true,
                         validator_id=?validator.id,
-                        "This should never happen, validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
+                        "Validator can't have both previous and next epoch MPC data bytes, using current data from epoch",
                     );
                 }
 
@@ -1436,7 +1437,7 @@ impl SuiClientInner for SuiSdkClient {
         Ok(ObjectArg::SharedObject {
             id: ika_system_object_id,
             initial_shared_version,
-            mutable: true,
+            mutability: sui_types::transaction::SharedObjectMutability::Mutable,
         })
     }
 
@@ -1457,7 +1458,7 @@ impl SuiClientInner for SuiSdkClient {
         Ok(ObjectArg::SharedObject {
             id: obj_id,
             initial_shared_version,
-            mutable: false,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
         })
     }
 
@@ -1507,7 +1508,7 @@ impl SuiClientInner for SuiSdkClient {
         match self.quorum_driver_api().execute_transaction_block(
             tx,
             SuiTransactionBlockResponseOptions::new().with_effects().with_events(),
-            Some(sui_types::quorum_driver_types::ExecuteTransactionRequestType::WaitForEffectsCert),
+            Some(sui_types::transaction_driver_types::ExecuteTransactionRequestType::WaitForEffectsCert),
         ).await {
             Ok(response) => Ok(response),
             Err(e) => Err(IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string())),

@@ -7,8 +7,7 @@ use anemo_tower::callback::CallbackLayer;
 use anemo_tower::trace::DefaultMakeSpan;
 use anemo_tower::trace::DefaultOnFailure;
 use anemo_tower::trace::TraceLayer;
-use anyhow::Result;
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
 use std::collections::HashMap;
@@ -18,6 +17,9 @@ use std::sync::Arc;
 #[cfg(msim)]
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+
+// Re-export NodeMode from ika-config
+pub use ika_config::NodeMode;
 
 use ika_core::consensus_adapter::ConsensusClient;
 use ika_core::consensus_manager::UpdatableConsensusClient;
@@ -46,7 +48,7 @@ use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
 };
-use ika_core::consensus_manager::{ConsensusManager, ConsensusManagerTrait};
+use ika_core::consensus_manager::ConsensusManager;
 use ika_core::consensus_throughput_calculator::{
     ConsensusThroughputCalculator, ConsensusThroughputProfiler, ThroughputProfileRanges,
 };
@@ -87,6 +89,9 @@ use crate::metrics::IkaNodeMetrics;
 pub mod admin;
 mod handle;
 pub mod metrics;
+mod node_runner;
+
+pub use node_runner::{NodeArgs, run_node, run_node_with_name};
 
 pub struct ValidatorComponents {
     consensus_manager: Arc<ConsensusManager>,
@@ -130,36 +135,6 @@ mod simulator {
             }
         }
     }
-
-    type JwkInjector = dyn Fn(AuthorityName, &OIDCProvider) -> IkaResult<Vec<(JwkId, JWK)>>
-        + Send
-        + Sync
-        + 'static;
-
-    fn default_fetch_jwks(
-        _authority: AuthorityName,
-        _provider: &OIDCProvider,
-    ) -> IkaResult<Vec<(JwkId, JWK)>> {
-        use fastcrypto_zkp::bn254::zk_login::parse_jwks;
-        // Just load a default Twitch jwk for testing.
-        parse_jwks(
-            ika_types::zk_login_util::DEFAULT_JWK_BYTES,
-            &OIDCProvider::Twitch,
-        )
-        .map_err(|_| IkaError::JWKRetrievalError)
-    }
-
-    thread_local! {
-        static JWK_INJECTOR: std::cell::RefCell<Arc<JwkInjector>> = std::cell::RefCell::new(Arc::new(default_fetch_jwks));
-    }
-
-    pub(super) fn get_jwk_injector() -> Arc<JwkInjector> {
-        JWK_INJECTOR.with(|injector| injector.borrow().clone())
-    }
-
-    pub fn set_jwk_injector(injector: Arc<JwkInjector>) {
-        JWK_INJECTOR.with(|cell| *cell.borrow_mut() = injector);
-    }
 }
 
 use ika_core::SuiDataReceivers;
@@ -193,7 +168,7 @@ pub struct IkaNode {
     metrics: Arc<IkaNodeMetrics>,
 
     _discovery: discovery::Handle,
-    _connection_monitor_handle: consensus_core::ConnectionMonitorHandle,
+    _connection_monitor_handle: mysten_network::anemo_connection_monitor::ConnectionMonitorHandle,
     state_sync_handle: state_sync::Handle,
     dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
     connection_monitor_status: Arc<ConnectionMonitorStatus>,
@@ -234,11 +209,28 @@ impl IkaNode {
         Self::start_async(config, registry_service, "unknown").await
     }
 
+    /// Start the node with automatic mode detection from config.
     pub async fn start_async(
         config: NodeConfig,
         registry_service: RegistryService,
-        _software_version: &'static str,
+        software_version: &'static str,
     ) -> Result<Arc<IkaNode>> {
+        let mode = NodeMode::detect_from_config(&config);
+        Self::start_with_mode(config, registry_service, software_version, mode).await
+    }
+
+    /// Start the node in a specific mode with validation.
+    /// This method validates that the configuration matches the expected mode.
+    pub async fn start_with_mode(
+        config: NodeConfig,
+        registry_service: RegistryService,
+        _software_version: &'static str,
+        mode: NodeMode,
+    ) -> Result<Arc<IkaNode>> {
+        // Validate the configuration matches the expected mode
+        mode.validate_config(&config)?;
+
+        info!("Starting Ika node in {} mode", mode);
         NodeConfigMetrics::new(&registry_service.default_registry()).record_metrics(&config);
         let mut config = config.clone();
         if config.supported_protocol_versions.is_none() {
@@ -520,7 +512,7 @@ impl IkaNode {
             sui_client.clone(),
             config.sui_connector_config.clone(),
             sui_connector_metrics,
-            state.is_validator(&epoch_store),
+            mode,
             next_epoch_committee_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),
@@ -536,18 +528,19 @@ impl IkaNode {
             .epoch_start_state()
             .get_authority_names_to_peer_ids();
 
-        let network_connection_metrics = consensus_core::QuinnConnectionMetrics::new(
+        let network_connection_metrics = mysten_network::quinn_metrics::QuinnConnectionMetrics::new(
             "ika",
             &registry_service.default_registry(),
         );
 
         let authority_names_to_peer_ids = ArcSwap::from_pointee(authority_names_to_peer_ids);
 
-        let connection_monitor_handle = consensus_core::AnemoConnectionMonitor::spawn(
-            p2p_network.downgrade(),
-            Arc::new(network_connection_metrics),
-            known_peers,
-        );
+        let connection_monitor_handle =
+            mysten_network::anemo_connection_monitor::AnemoConnectionMonitor::spawn(
+                p2p_network.downgrade(),
+                Arc::new(network_connection_metrics),
+                known_peers,
+            );
 
         let connection_monitor_status = ConnectionMonitorStatus {
             connection_statuses: connection_monitor_handle.connection_statuses(),
@@ -739,9 +732,12 @@ impl IkaNode {
                 .add_rpc_service(discovery_server)
                 .add_rpc_service(state_sync_server);
             let inbound_network_metrics =
-                consensus_core::NetworkRouteMetrics::new("ika", "inbound", prometheus_registry);
-            let outbound_network_metrics =
-                consensus_core::NetworkRouteMetrics::new("ika", "outbound", prometheus_registry);
+                mysten_network::metrics::NetworkMetrics::new("ika", "inbound", prometheus_registry);
+            let outbound_network_metrics = mysten_network::metrics::NetworkMetrics::new(
+                "ika",
+                "outbound",
+                prometheus_registry,
+            );
 
             let service = ServiceBuilder::new()
                 .layer(
@@ -750,7 +746,7 @@ impl IkaNode {
                         .on_failure(DefaultOnFailure::new().level(tracing::Level::WARN)),
                 )
                 .layer(CallbackLayer::new(
-                    consensus_core::MetricsMakeCallbackHandler::new(
+                    mysten_network::metrics::MetricsMakeCallbackHandler::new(
                         Arc::new(inbound_network_metrics),
                         config.p2p_config.excessive_message_size(),
                     ),
@@ -764,7 +760,7 @@ impl IkaNode {
                         .on_failure(DefaultOnFailure::new().level(tracing::Level::WARN)),
                 )
                 .layer(CallbackLayer::new(
-                    consensus_core::MetricsMakeCallbackHandler::new(
+                    mysten_network::metrics::MetricsMakeCallbackHandler::new(
                         Arc::new(outbound_network_metrics),
                         config.p2p_config.excessive_message_size(),
                     ),

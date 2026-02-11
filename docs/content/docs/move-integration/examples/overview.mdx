@@ -1,0 +1,120 @@
+---
+id: examples-overview
+title: Overview
+description: Complete example implementations using Ika Move integration
+sidebar_position: 5
+sidebar_label: Examples
+---
+
+# Examples Overview
+
+This section provides complete, production-ready examples of Move contracts integrated with Ika dWallet functionality.
+
+## Available Examples
+
+| Example                                                                     | Description                                     | Key Features                                         |
+| --------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------- |
+| **[Bitcoin Multisig](/docs/move-integration/examples/multisig-bitcoin)** | Multi-signature wallet for Bitcoin transactions | Governance voting, Taproot signatures, presign pools |
+| **[KeySpring](/docs/move-integration/examples/keyspring)** | Cross-chain wallet from any wallet or passkey | DKG, passkey auth, cross-chain ETH transactions |
+
+## Example Structure
+
+Each example includes:
+
+1. **Overview**: What the contract does and its use cases
+2. **Architecture**: How components work together
+3. **Key Code**: Annotated code snippets
+4. **Full Source**: Link to complete source code
+5. **Testing**: How to test the implementation
+
+## Quick Start
+
+### 1. Clone the Example
+
+The Bitcoin multisig example is located at:
+
+```
+examples/multisig-bitcoin/contract/
+```
+
+### 2. Build the Contract
+
+```bash
+cd examples/multisig-bitcoin/contract
+sui move build
+```
+
+### 3. Deploy to Testnet
+
+```bash
+sui client publish --gas-budget 100000000
+```
+
+## Common Patterns Across Examples
+
+All examples demonstrate these core patterns:
+
+### Contract Structure
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Payment Handling
+
+```rust
+fun withdraw_payment_coins(
+    self: &mut MyContract,
+    ctx: &mut TxContext,
+): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(
+    self: &mut MyContract,
+    ika: Coin<IKA>,
+    sui: Coin<SUI>,
+) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+```
+
+### Session Management
+
+```rust
+fun random_session(
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+): SessionIdentifier {
+    coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    )
+}
+```
+
+## Building Your Own
+
+Use these examples as templates for your own contracts:
+
+1. Copy the example structure
+2. Modify the business logic
+3. Adjust access controls
+4. Add your specific features
+
+## Next Steps
+
+- Start with the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin)
+- Try the [KeySpring Cross-Chain Wallet](/docs/move-integration/examples/keyspring)
+- Review [Core Concepts](/docs/move-integration/core-concepts/overview) for fundamentals
+- Check [Integration Patterns](/docs/move-integration/integration-patterns/overview) for common patterns

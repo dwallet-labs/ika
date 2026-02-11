@@ -1,0 +1,34 @@
+---
+id: ika-client
+title: Creating a Ika Client
+description: Creating a Ika Client
+sidebar_position: 1
+sidebar_label: Creating a Ika Client
+---
+
+import { Info } from '@/components/InfoBox';
+
+# Creating a Ika Client
+
+Ika Client is the main entry point for interacting with the Ika protocol. It provides an easy way to query for the Ika protocol state and objects.
+
+<Info title="Info">
+	We recommend you to have a single instance of Ika Client for your application. This enables
+	caching of the Ika protocol state and objects.
+</Info>
+
+## Create a Ika Client
+
+```typescript
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+
+const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
+
+const ikaClient = new IkaClient({
+	suiClient: client,
+	config: getNetworkConfig('testnet'), // mainnet / testnet
+});
+
+await ikaClient.initialize(); // This will initialize the Ika Client and fetch the Ika protocol state and objects.
+```

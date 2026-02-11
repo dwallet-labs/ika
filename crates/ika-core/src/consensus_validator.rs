@@ -8,7 +8,8 @@ use crate::{
     dwallet_checkpoints::DWalletCheckpointServiceNotify,
     system_checkpoints::SystemCheckpointServiceNotify,
 };
-use consensus_core::{TransactionIndex, TransactionVerifier, ValidationError};
+use consensus_core::{TransactionVerifier, ValidationError};
+use consensus_types::block::TransactionIndex;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthoritySignInfoTrait;
 use ika_types::crypto::VerificationObligation;
@@ -257,6 +258,7 @@ impl TransactionVerifier for IkaTxValidator {
 
     fn verify_and_vote_batch(
         &self,
+        _block_ref: &consensus_types::block::BlockRef,
         batch: &[&[u8]],
     ) -> Result<Vec<TransactionIndex>, ValidationError> {
         let _scope = monitored_scope("VerifyAndVoteBatch");

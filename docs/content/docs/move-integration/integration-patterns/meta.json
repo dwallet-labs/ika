@@ -1,0 +1,4 @@
+{
+	"title": "Integration Patterns",
+	"pages": ["overview", "shared-dwallet-contracts", "presign-pool-management"]
+}

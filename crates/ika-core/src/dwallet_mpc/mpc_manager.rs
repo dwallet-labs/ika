@@ -584,7 +584,7 @@ impl DWalletMPCManager {
                 } = &session.status
                 else {
                     error!(
-                        should_never_happen =? true,
+                        should_never_happen=true,
                         session_identifier=?session.session_identifier,
                         "session is not active, cannot perform cryptographic computation",
                     );

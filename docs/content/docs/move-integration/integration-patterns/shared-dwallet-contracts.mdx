@@ -1,0 +1,463 @@
+---
+id: shared-dwallet-contracts
+title: Shared dWallet Contracts
+description: Build contracts that own and control dWallets for automated signing
+sidebar_position: 2
+sidebar_label: Shared dWallet Contracts
+---
+
+# Shared dWallet Contracts
+
+Shared dWallet contracts hold a dWallet capability and control signing through smart contract logic. This pattern is ideal for DAOs, treasuries, and any system that needs programmable, automated signing.
+
+## Overview
+
+In this pattern:
+- The contract owns the `DWalletCap`
+- Uses **public user share** (shared mode) - network can sign without user interaction
+- Contract logic controls who can sign and when
+- Perfect for governance, treasuries, and automated systems
+
+
+<Callout type="info" title="Already Have a Zero-Trust dWallet?">
+You can convert an existing zero-trust dWallet to shared mode using `request_make_dwallet_user_secret_key_shares_public()`. This also works for imported key dWallets. See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared) for details.
+</Callout>
+
+
+## Architecture
+
+<SharedDWalletFlowDiagram />
+
+## Basic Implementation
+
+### Contract Structure
+
+```rust
+module my_protocol::treasury;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+/// A treasury that can sign cross-chain transactions
+public struct Treasury has key, store {
+    id: UID,
+    /// The dWallet capability - grants signing authority
+    dwallet_cap: DWalletCap,
+    /// Pool of presigns for signing operations
+    presigns: vector<UnverifiedPresignCap>,
+    /// Addresses authorized to request signatures
+    authorized_signers: vector<address>,
+    /// Protocol fee balances
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    /// Network encryption key reference
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+### Initialization
+
+```rust
+const SECP256K1: u32 = 0;
+
+/// Create a new treasury with a shared dWallet
+public fun create_treasury(
+    coordinator: &mut DWalletCoordinator,
+    initial_ika: Coin<IKA>,
+    initial_sui: Coin<SUI>,
+    dwallet_network_encryption_key_id: ID,
+    // DKG parameters from SDK
+    centralized_public_key_share_and_proof: vector<u8>,
+    user_public_output: vector<u8>,
+    public_user_secret_key_share: vector<u8>,
+    session_identifier_bytes: vector<u8>,
+    // Access control
+    authorized_signers: vector<address>,
+    ctx: &mut TxContext,
+) {
+    let mut ika = initial_ika;
+    let mut sui = initial_sui;
+
+    // Register session
+    let session = coordinator.register_session_identifier(
+        session_identifier_bytes,
+        ctx,
+    );
+
+    // Create shared dWallet (public user share)
+    let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+        dwallet_network_encryption_key_id,
+        SECP256K1,
+        centralized_public_key_share_and_proof,
+        user_public_output,
+        public_user_secret_key_share,
+        option::none(),
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    let treasury = Treasury {
+        id: object::new(ctx),
+        dwallet_cap,
+        presigns: vector::empty(),
+        authorized_signers,
+        ika_balance: ika.into_balance(),
+        sui_balance: sui.into_balance(),
+        dwallet_network_encryption_key_id,
+    };
+
+    // Share the treasury - anyone can interact (access controlled internally)
+    transfer::public_share_object(treasury);
+}
+```
+
+### Access Control
+
+```rust
+const ENotAuthorized: u64 = 1;
+
+/// Check if sender is authorized
+fun assert_authorized(self: &Treasury, ctx: &TxContext) {
+    assert!(
+        self.authorized_signers.contains(&ctx.sender()),
+        ENotAuthorized
+    );
+}
+
+/// Add a new authorized signer (only existing signers can add)
+public fun add_signer(
+    self: &mut Treasury,
+    new_signer: address,
+    ctx: &TxContext,
+) {
+    assert_authorized(self, ctx);
+    if (!self.authorized_signers.contains(&new_signer)) {
+        self.authorized_signers.push_back(new_signer);
+    };
+}
+
+/// Remove an authorized signer
+public fun remove_signer(
+    self: &mut Treasury,
+    signer: address,
+    ctx: &TxContext,
+) {
+    assert_authorized(self, ctx);
+    let (found, idx) = self.authorized_signers.index_of(&signer);
+    if (found) {
+        self.authorized_signers.swap_remove(idx);
+    };
+}
+```
+
+### Signing Operation
+
+```rust
+const TAPROOT: u32 = 1;
+const SHA256: u32 = 0;
+
+/// Sign a message (only authorized signers)
+public fun sign_message(
+    self: &mut Treasury,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    // Access control
+    assert_authorized(self, ctx);
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Verify presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    // Approve message
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        SHA256,
+        message,
+    );
+
+    // Create session
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // Request signature
+    let sign_id = coordinator.request_sign_and_return_id(
+        verified,
+        approval,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Replenish presign pool
+    let replenish_session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        SECP256K1,
+        TAPROOT,
+        replenish_session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    ));
+
+    return_payment_coins(self, ika, sui);
+
+    sign_id
+}
+```
+
+## DAO Treasury Example
+
+A more complete example with voting:
+
+```rust
+module my_protocol::dao_treasury;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{
+        DWalletCap,
+        UnverifiedPresignCap,
+        UnverifiedPartialUserSignatureCap
+    }
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI, table::{Self, Table}};
+
+public struct DAOTreasury has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    // Governance
+    members: vector<address>,
+    voting_threshold: u64,  // e.g., 3 out of 5
+    proposals: Table<u64, Proposal>,
+    next_proposal_id: u64,
+    // Balances
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+public struct Proposal has store {
+    id: u64,
+    message: vector<u8>,
+    description: vector<u8>,
+    partial_sig_cap: Option<UnverifiedPartialUserSignatureCap>,
+    votes_for: u64,
+    votes_against: u64,
+    voters: Table<address, bool>,
+    executed: bool,
+}
+
+/// Create a spending proposal
+public fun create_proposal(
+    self: &mut DAOTreasury,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    description: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): u64 {
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Create partial signature (future sign)
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    let session = random_session(coordinator, ctx);
+
+    let partial_cap = coordinator.request_future_sign(
+        self.dwallet_cap.dwallet_id(),
+        verified,
+        message,
+        SHA256,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Create proposal
+    let proposal_id = self.next_proposal_id;
+    self.next_proposal_id = proposal_id + 1;
+
+    let proposal = Proposal {
+        id: proposal_id,
+        message,
+        description,
+        partial_sig_cap: option::some(partial_cap),
+        votes_for: 1,  // Proposer votes for
+        votes_against: 0,
+        voters: table::new(ctx),
+        executed: false,
+    };
+
+    // Proposer auto-votes for
+    proposal.voters.add(ctx.sender(), true);
+
+    self.proposals.add(proposal_id, proposal);
+
+    // Replenish presign
+    replenish_presign(self, coordinator, &mut ika, &mut sui, ctx);
+
+    return_payment_coins(self, ika, sui);
+
+    proposal_id
+}
+
+/// Vote on a proposal
+public fun vote(
+    self: &mut DAOTreasury,
+    proposal_id: u64,
+    approve: bool,
+    ctx: &TxContext,
+) {
+    assert!(self.members.contains(&ctx.sender()), ENotMember);
+
+    let proposal = self.proposals.borrow_mut(proposal_id);
+    assert!(!proposal.voters.contains(ctx.sender()), EAlreadyVoted);
+    assert!(!proposal.executed, EAlreadyExecuted);
+
+    proposal.voters.add(ctx.sender(), approve);
+
+    if (approve) {
+        proposal.votes_for = proposal.votes_for + 1;
+    } else {
+        proposal.votes_against = proposal.votes_against + 1;
+    };
+}
+
+/// Execute a passed proposal
+public fun execute_proposal(
+    self: &mut DAOTreasury,
+    coordinator: &mut DWalletCoordinator,
+    proposal_id: u64,
+    ctx: &mut TxContext,
+): ID {
+    let proposal = self.proposals.borrow_mut(proposal_id);
+
+    assert!(proposal.votes_for >= self.voting_threshold, EInsufficientVotes);
+    assert!(!proposal.executed, EAlreadyExecuted);
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Complete signature
+    let partial_cap = proposal.partial_sig_cap.extract();
+    let verified = coordinator.verify_partial_user_signature_cap(partial_cap, ctx);
+
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        SHA256,
+        proposal.message,
+    );
+
+    let session = random_session(coordinator, ctx);
+
+    let sign_id = coordinator.request_sign_with_partial_user_signature_and_return_id(
+        verified,
+        approval,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    proposal.executed = true;
+
+    return_payment_coins(self, ika, sui);
+
+    sign_id
+}
+```
+
+## Use Cases
+
+### 1. Multi-Chain Treasury
+
+A treasury that holds and manages assets across multiple chains:
+
+```rust
+// Sign Bitcoin transactions from Sui
+let sign_id = treasury.sign_bitcoin_tx(coordinator, btc_tx_hash, sig, ctx);
+
+// Sign Ethereum transactions from Sui
+let sign_id = treasury.sign_ethereum_tx(coordinator, eth_tx_hash, sig, ctx);
+```
+
+### 2. Automated Trading Bot
+
+A contract that signs trades based on oracle data:
+
+```rust
+public fun execute_trade(
+    self: &mut TradingBot,
+    coordinator: &mut DWalletCoordinator,
+    oracle: &PriceOracle,
+    trade_params: TradeParams,
+    ctx: &mut TxContext,
+) {
+    // Check oracle conditions
+    let price = oracle.get_price();
+    assert!(meets_trade_criteria(price, &trade_params), EConditionsNotMet);
+
+    // Execute trade (sign transaction)
+    self.sign_trade(coordinator, trade_params, ctx);
+}
+```
+
+### 3. Cross-Chain Bridge
+
+A bridge contract that signs release transactions:
+
+```rust
+public fun process_deposit(
+    self: &mut Bridge,
+    coordinator: &mut DWalletCoordinator,
+    deposit_proof: DepositProof,
+    ctx: &mut TxContext,
+) {
+    // Verify deposit on source chain
+    verify_deposit(&deposit_proof);
+
+    // Sign release transaction on destination chain
+    let sign_id = self.sign_release(coordinator, deposit_proof, ctx);
+}
+```
+
+## Best Practices
+
+1. **Clear Access Control**: Define who can sign and under what conditions
+2. **Use Future Signing for Governance**: Separate proposal creation from execution
+3. **Maintain Presign Pool**: Keep enough presigns for expected operations
+4. **Emit Events**: Track all signing operations for transparency
+5. **Handle Failures**: Plan for presign or signing failures
+
+## Next Steps
+
+- See [Presign Pool Management](/docs/move-integration/integration-patterns/presign-pool-management) for managing presigns
+- Check the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin) for a complete implementation

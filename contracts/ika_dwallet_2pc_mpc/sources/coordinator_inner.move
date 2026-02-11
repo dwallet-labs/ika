@@ -5292,6 +5292,37 @@ public fun get_sign_signature(self: &SignSession): Option<vector<u8>> {
     }
 }
 
+// === Alias Functions ===
+
+public use fun unverified_presign_id as UnverifiedPresignCap.presign_id;
+public use fun verified_presign_id as VerifiedPresignCap.presign_id;
+
+// === Private Functions ===
+
+/// Returns the presign ID of the unverified presign cap.
+///
+/// ### Parameters
+/// - `self`: Reference to the unverified presign cap
+///
+/// ### Returns
+/// The presign ID of the unverified presign cap
+#[allow(unused_function)]
+fun unverified_presign_id(self: &UnverifiedPresignCap): ID {
+    self.presign_id
+}
+
+/// Returns the presign ID of the verified presign cap.
+///
+/// ### Parameters
+/// - `self`: Reference to the verified presign cap
+///
+/// ### Returns
+/// The presign ID of the verified presign cap
+#[allow(unused_function)]
+fun verified_presign_id(self: &VerifiedPresignCap): ID {
+    self.presign_id
+}
+
 // === Test Functions ===
 
 #[test_only]
@@ -5302,4 +5333,12 @@ public fun last_processed_checkpoint_sequence_number(self: &DWalletCoordinatorIn
 #[test_only]
 public(package) fun sessions_manager(self: &DWalletCoordinatorInner): &SessionsManager {
     &self.sessions_manager
+}
+
+#[test_only]
+public fun dwallet_cap_for_testing(dwallet_id: ID, ctx: &mut TxContext): DWalletCap {
+    DWalletCap {
+        id: object::new(ctx),
+        dwallet_id,
+    }
 }

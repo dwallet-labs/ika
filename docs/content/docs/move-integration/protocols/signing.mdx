@@ -1,0 +1,342 @@
+---
+id: signing-protocol
+title: Signing
+description: Create signatures using the dWallet 2PC-MPC protocol
+sidebar_position: 4
+sidebar_label: Signing
+---
+
+# Signing
+
+Direct signing creates a signature immediately in a single transaction. Use this when you have authority to sign and don't need governance approval.
+
+## Overview
+
+Signing requires:
+1. A **VerifiedPresignCap** (from presigning)
+2. A **MessageApproval** (authorizes signing the specific message)
+3. A **message_centralized_signature** (user's partial signature from SDK)
+
+## Signing Flow
+
+<SigningFlowDiagram />
+
+## Message Approval
+
+Before signing, you must approve the specific message:
+
+```rust
+// For standard dWallets
+let approval = coordinator.approve_message(
+    &dwallet_cap,
+    signature_algorithm,  // e.g., 1 for Taproot
+    hash_scheme,          // e.g., 0 for SHA256
+    message,              // The message bytes to sign
+);
+
+// For imported key dWallets
+let approval = coordinator.approve_imported_key_message(
+    &imported_dwallet_cap,
+    signature_algorithm,
+    hash_scheme,
+    message,
+);
+```
+
+### Parameters
+
+| Parameter | Description | Example Values |
+|-----------|-------------|----------------|
+| `signature_algorithm` | Algorithm to use | 0=ECDSA, 1=Taproot, 4=EdDSA |
+| `hash_scheme` | Hash function | 0=SHA256, 1=KECCAK256 |
+| `message` | Bytes to sign | Transaction hash, message bytes |
+
+## Request Sign
+
+### Standard dWallet Signing
+
+```rust
+public fun request_sign(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: MessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+)
+```
+
+### With Return ID
+
+```rust
+public fun request_sign_and_return_id(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: MessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID
+```
+
+### Imported Key Signing
+
+```rust
+public fun request_imported_key_sign_and_return_id(
+    self: &mut DWalletCoordinator,
+    presign_cap: VerifiedPresignCap,
+    message_approval: ImportedKeyMessageApproval,
+    message_centralized_signature: vector<u8>,
+    session_identifier: SessionIdentifier,
+    payment_ika: &mut Coin<IKA>,
+    payment_sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+): ID
+```
+
+## Complete Signing Example
+
+### Move Contract
+
+```rust
+module my_protocol::signer;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap, MessageApproval}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+const TAPROOT: u32 = 1;
+const SHA256: u32 = 0;
+
+public struct Signer has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+/// Sign a message directly
+public fun sign_message(
+    self: &mut Signer,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+
+    // 1. Pop and verify presign
+    let unverified_presign = self.presigns.swap_remove(0);
+    let verified_presign = coordinator.verify_presign_cap(unverified_presign, ctx);
+
+    // 2. Create message approval
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        SHA256,
+        message,
+    );
+
+    // 3. Create session identifier
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    // 4. Request signature
+    let sign_id = coordinator.request_sign_and_return_id(
+        verified_presign,
+        approval,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // 5. Replenish presign pool
+    let replenish_session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        0, TAPROOT,
+        replenish_session,
+        &mut ika, &mut sui, ctx,
+    ));
+
+    self.return_payment_coins(ika, sui);
+
+    sign_id
+}
+
+// Helper functions
+fun withdraw_payment_coins(self: &mut Signer, ctx: &mut TxContext): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(self: &mut Signer, ika: Coin<IKA>, sui: Coin<SUI>) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+```
+
+### TypeScript: Prepare and Call
+
+```typescript
+import {
+    IkaClient,
+    IkaTransaction,
+    createUserSignMessageWithPublicOutput,
+    Curve,
+    SignatureAlgorithm,
+    Hash,
+} from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+
+async function signMessage(
+    signer: Signer,
+    message: Uint8Array,
+    presign: Presign,
+    dWallet: SharedDWallet,
+) {
+    // Get completed presign data
+    const completedPresign = await ikaClient.getPresignInParticularState(
+        presign.id,
+        'Completed',
+    );
+
+    // Create user's partial signature
+    const messageCentralizedSignature = createUserSignMessageWithPublicOutput(
+        Curve.SECP256K1,
+        completedPresign.presign,
+        message,
+        dWallet.publicOutput,
+        dWallet.publicUserSecretKeyShare,
+    );
+
+    // Build transaction
+    const tx = new Transaction();
+
+    tx.moveCall({
+        target: `${packageId}::signer::sign_message`,
+        arguments: [
+            tx.object(signerId),
+            tx.object(coordinatorId),
+            tx.pure.vector('u8', Array.from(message)),
+            tx.pure.vector('u8', Array.from(messageCentralizedSignature)),
+        ],
+    });
+
+    const result = await suiClient.signAndExecuteTransaction({
+        transaction: tx,
+        signer: keypair,
+    });
+
+    // Extract sign ID from events
+    const signId = extractSignIdFromEvents(result.events);
+    return signId;
+}
+```
+
+### TypeScript: Retrieve Signature
+
+```typescript
+// Wait for signature to complete
+const signSession = await ikaClient.waitForSignCompletion(signId);
+
+// Get the signature
+const signature = signSession.signature;
+
+// Parse signature if needed
+const parsedSignature = parseSignatureFromSignOutput(
+    SignatureAlgorithm.Taproot,
+    signature,
+);
+```
+
+## Signing for Bitcoin Taproot
+
+For Bitcoin Taproot transactions:
+
+```rust
+const SECP256K1: u32 = 0;
+const TAPROOT: u32 = 1;
+const SHA256: u32 = 0;
+
+public fun sign_bitcoin_transaction(
+    self: &mut Signer,
+    coordinator: &mut DWalletCoordinator,
+    transaction_hash: vector<u8>,  // BIP 341 transaction hash
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    // ... same pattern as above with:
+    // - signature_algorithm = TAPROOT (1)
+    // - hash_scheme = SHA256 (0)
+    // - message = transaction_hash
+}
+```
+
+## Signing for Ethereum
+
+For Ethereum transactions:
+
+```rust
+const SECP256K1: u32 = 0;
+const ECDSA_SECP256K1: u32 = 0;
+const KECCAK256: u32 = 1;
+
+public fun sign_ethereum_transaction(
+    self: &mut Signer,
+    coordinator: &mut DWalletCoordinator,
+    transaction_hash: vector<u8>,  // Keccak256 of RLP-encoded tx
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    // ... same pattern with:
+    // - signature_algorithm = ECDSA_SECP256K1 (0)
+    // - hash_scheme = KECCAK256 (1)
+    // - message = transaction_hash
+}
+```
+
+## Error Handling
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| Presign not valid | Network hasn't completed presign | Wait and retry, or check with `is_presign_valid()` |
+| Invalid message approval | Capability doesn't match dWallet | Use correct DWalletCap |
+| Insufficient funds | Not enough IKA/SUI | Fund the contract |
+
+## Best Practices
+
+1. **Verify Presign First**: Always verify presign before signing
+2. **Replenish Pool**: Add new presign after each signature
+3. **Store Sign ID**: Keep the sign ID to retrieve the signature later
+4. **Handle Async**: Signature creation is async - poll for completion
+
+## When to Use Future Signing Instead
+
+Use [Future Signing](/docs/move-integration/protocols/future-signing) when:
+- You need governance approval before signing
+- Multiple parties must approve the transaction
+- You want to separate commitment from execution
+
+## Next Steps
+
+- Learn about [Future Signing](/docs/move-integration/protocols/future-signing) for two-phase signing
+- See the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin) for a complete implementation

@@ -1,0 +1,26 @@
+{
+  "name": "@demo/backend",
+  "version": "1.0.0",
+  "description": "Demo backend for ephemeral keys + DKG with Phantom",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.0",
+    "@ika.xyz/sdk": "^0.2.3",
+    "@mysten/sui": "^1.45.2",
+    "@noble/curves": "^1.8.2",
+    "@noble/hashes": "^1.7.2",
+    "elysia": "^1.2.25",
+    "ethers": "^6.16.0",
+    "pino": "^10.1.0",
+    "pino-pretty": "^13.1.2",
+    "viem": "^2.23.10",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

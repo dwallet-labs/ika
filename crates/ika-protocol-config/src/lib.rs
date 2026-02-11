@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 3;
-const MAX_PROTOCOL_VERSION: u64 = 3;
+const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
@@ -77,11 +77,14 @@ impl std::ops::Add<u64> for ProtocolVersion {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Copy, PartialOrd, Ord, Eq, ValueEnum)]
+#[derive(
+    Clone, Serialize, Deserialize, Debug, PartialEq, Copy, PartialOrd, Ord, Eq, ValueEnum, Default,
+)]
 pub enum Chain {
     Mainnet,
     Testnet,
     Devnet,
+    #[default]
     Unknown,
 }
 
@@ -93,12 +96,6 @@ impl From<String> for Chain {
             "mainnet" => Chain::Mainnet,
             _ => Chain::Unknown,
         }
-    }
-}
-
-impl Default for Chain {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 
@@ -143,6 +140,10 @@ struct FeatureFlags {
     // If true, enabled batched block sync in consensus.
     #[serde(skip_serializing_if = "is_false")]
     consensus_batched_block_sync: bool,
+
+    // If true, skip GC'ed blocks in direct finalization.
+    #[serde(skip_serializing_if = "is_false")]
+    consensus_skip_gced_blocks_in_direct_finalization: bool,
 
     // If true, enforces checkpoint timestamps are non-decreasing.
     #[serde(skip_serializing_if = "is_false")]
@@ -212,6 +213,8 @@ pub struct ProtocolConfig {
     pub version: ProtocolVersion,
 
     feature_flags: FeatureFlags,
+
+    sui_protocol_version: Option<u64>,
 
     // === Core Protocol ===
     /// Max number of transactions per dwallet checkpoint.
@@ -315,6 +318,11 @@ impl ProtocolConfig {
 
     pub fn consensus_batched_block_sync(&self) -> bool {
         self.feature_flags.consensus_batched_block_sync
+    }
+
+    pub fn consensus_skip_gced_blocks_in_direct_finalization(&self) -> bool {
+        self.feature_flags
+            .consensus_skip_gced_blocks_in_direct_finalization
     }
 
     pub fn enforce_checkpoint_timestamp_monotonicity(&self) -> bool {
@@ -458,6 +466,8 @@ impl ProtocolConfig {
             // All flags are disabled in V1
             feature_flags: Default::default(),
 
+            sui_protocol_version: Some(87),
+
             max_messages_per_dwallet_checkpoint: Some(500),
             max_messages_per_system_checkpoint: Some(500),
 
@@ -503,6 +513,8 @@ impl ProtocolConfig {
         cfg.feature_flags.consensus_round_prober = true;
         cfg.feature_flags.consensus_zstd_compression = true;
         cfg.feature_flags.consensus_batched_block_sync = true;
+        cfg.feature_flags
+            .consensus_skip_gced_blocks_in_direct_finalization = false;
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
 
         #[allow(clippy::never_loop)]
@@ -514,6 +526,11 @@ impl ProtocolConfig {
                 }
                 3 => {
                     cfg.reconfiguration_message_version = Some(2);
+                }
+                4 => {
+                    cfg.sui_protocol_version = Some(108);
+                    cfg.feature_flags
+                        .consensus_skip_gced_blocks_in_direct_finalization = true;
                 }
                 // Use this template when making changes:
                 //
@@ -564,6 +581,11 @@ impl ProtocolConfig {
 
     pub fn set_consensus_batched_block_sync_for_testing(&mut self, val: bool) {
         self.feature_flags.consensus_batched_block_sync = val;
+    }
+
+    pub fn set_consensus_skip_gced_blocks_in_direct_finalization(&mut self, val: bool) {
+        self.feature_flags
+            .consensus_skip_gced_blocks_in_direct_finalization = val;
     }
 
     pub fn set_enforce_checkpoint_timestamp_monotonicity_for_testing(&mut self, val: bool) {

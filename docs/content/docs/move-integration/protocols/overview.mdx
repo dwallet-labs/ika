@@ -1,0 +1,160 @@
+---
+id: protocols-overview
+title: Overview
+description: Understanding the dWallet protocol lifecycle - DKG, Presign, Sign, and Future Sign
+sidebar_position: 3
+sidebar_label: Protocols
+---
+
+# Protocols Overview
+
+This section covers the core protocols that power dWallet operations. Understanding these protocols is essential for building robust Move contract integrations.
+
+## Protocol Lifecycle
+
+<ProtocolLifecycleDiagram />
+
+## Protocol Overview
+
+| Protocol                                                                     | Purpose                        | When to Use                             |
+| ---------------------------------------------------------------------------- | ------------------------------ | --------------------------------------- |
+| **[DKG](/docs/move-integration/protocols/dkg)**                          | Create a new dWallet           | Once per dWallet                        |
+| **[Presigning](/docs/move-integration/protocols/presigning)**            | Pre-compute signing material   | Before each signature                   |
+| **[Signing](/docs/move-integration/protocols/signing)**                  | Create a signature immediately | Direct signing without governance       |
+| **[Future Signing](/docs/move-integration/protocols/future-signing)**    | Create signature in two phases | Governance, multisig, delayed execution |
+| **[Key Importing](/docs/move-integration/protocols/key-importing)**      | Import existing private key    | When migrating existing keys            |
+| **[Converting to Shared](/docs/move-integration/protocols/converting-to-shared)** | Make user share public         | Converting zero-trust to shared mode    |
+
+## Choosing Between Sign and Future Sign
+
+### Use Direct Signing When:
+
+- You need the signature immediately
+- No approval workflow is required
+- The signer has full authority
+
+### Use Future Signing When:
+
+- You need governance approval before signing
+- Multiple parties must approve the transaction
+- You want to separate commitment from execution
+- Building multisig or DAO treasury systems
+
+## dWallet Types
+
+Ika supports two types of dWallets based on how user shares are handled:
+
+### Shared dWallet (Public User Share)
+
+- User secret share is made public
+- Network can sign without user interaction
+- **Best for**: DAOs, treasuries, automated systems, Move contract integration
+
+```rust
+// Create shared dWallet
+let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
+    // ... parameters
+);
+```
+
+### Zero-Trust dWallet (Encrypted User Share)
+
+- User secret share remains encrypted
+- User must participate in every signature
+- **Best for**: Personal wallets, maximum security
+
+```rust
+// Create zero-trust dWallet
+let (dwallet_cap, _) = coordinator.request_dwallet_dkg(
+    // ... parameters including encrypted share
+);
+```
+
+<Callout type="info" title="Converting Between Modes">
+	You can convert a zero-trust dWallet to shared mode later using
+	`request_make_dwallet_user_secret_key_shares_public()`. This is **irreversible** - see [Converting
+	to Shared](/docs/move-integration/protocols/converting-to-shared) for details.
+</Callout>
+
+<Callout type="info" title="For Move Contracts">
+	Most Move contract integrations use **shared dWallets** because they allow the contract to sign
+	without external user interaction.
+</Callout>
+
+## Protocol Constants
+
+These constants identify curves, algorithms, and hash schemes:
+
+### Curves
+
+```rust
+const SECP256K1: u32 = 0;  // Bitcoin, Ethereum
+const SECP256R1: u32 = 1;  // WebAuthn
+const ED25519: u32 = 2;    // Solana, Substrate
+const RISTRETTO: u32 = 3;  // Privacy applications
+```
+
+### Signature Algorithms
+
+IDs are **relative to the curve**:
+
+```rust
+// For SECP256K1:
+const ECDSA_SECP256K1: u32 = 0;
+const TAPROOT: u32 = 1;
+
+// For SECP256R1:
+const ECDSA_SECP256R1: u32 = 0;
+
+// For ED25519:
+const EDDSA: u32 = 0;
+
+// For RISTRETTO:
+const SCHNORRKEL_SUBSTRATE: u32 = 0;
+```
+
+### Hash Schemes
+
+IDs are **relative to the curve + signature algorithm**:
+
+```rust
+// For SECP256K1 + ECDSA:
+const KECCAK256: u32 = 0;  // Ethereum
+const SHA256: u32 = 1;
+const DOUBLE_SHA256: u32 = 2;  // Bitcoin
+
+// For SECP256K1 + Taproot:
+const SHA256: u32 = 0;
+
+// For SECP256R1 + ECDSA:
+const SHA256: u32 = 0;
+
+// For ED25519 + EdDSA:
+const SHA512: u32 = 0;
+
+// For RISTRETTO + Schnorrkel:
+const MERLIN: u32 = 0;
+```
+
+## Example: Bitcoin Taproot Configuration
+
+For Bitcoin Taproot signatures, use:
+
+```rust
+module my_protocol::constants;
+
+/// Bitcoin uses secp256k1 curve
+public macro fun curve(): u32 { 0 }
+
+/// Taproot signature algorithm
+public macro fun signature_algorithm(): u32 { 1 }
+
+/// SHA256 hash for Taproot
+public macro fun hash_scheme(): u32 { 0 }
+```
+
+## Next Steps
+
+1. Start with [DKG](/docs/move-integration/protocols/dkg) to create your first dWallet
+2. Learn [Presigning](/docs/move-integration/protocols/presigning) to prepare for signatures
+3. Choose between [Signing](/docs/move-integration/protocols/signing) or [Future Signing](/docs/move-integration/protocols/future-signing) based on your use case

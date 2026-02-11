@@ -1,0 +1,491 @@
+---
+id: presign-pool-management
+title: Presign Pool Management
+description: Maintain a pool of presigns for continuous signing operations
+sidebar_position: 3
+sidebar_label: Presign Pool Management
+---
+
+# Presign Pool Management
+
+Presigns are consumed during signing, so contracts that sign frequently need to maintain a pool of presigns. This guide covers patterns for effective presign pool management.
+
+## Overview
+
+Presign pools:
+- Store multiple `UnverifiedPresignCap` objects
+- Ensure presigns are available when needed
+- Automatically replenish when pool gets low
+- Prevent signing delays due to presign unavailability
+
+## Basic Pool Structure
+
+```rust
+public struct MyContract has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    /// Pool of presigns ready for use
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+```
+
+## Pool Management Functions
+
+### Add Presign to Pool
+
+```rust
+const SECP256K1: u32 = 0;
+const TAPROOT: u32 = 1;
+
+/// Add a single presign to the pool
+public fun add_presign(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    self.presigns.push_back(coordinator.request_global_presign(
+        self.dwallet_network_encryption_key_id,
+        SECP256K1,
+        TAPROOT,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    ));
+
+    return_payment_coins(self, ika, sui);
+}
+
+/// Add multiple presigns to the pool
+public fun add_presigns(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    count: u64,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    let mut i = 0;
+    while (i < count) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            SECP256K1,
+            TAPROOT,
+            session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        ));
+
+        i = i + 1;
+    };
+
+    return_payment_coins(self, ika, sui);
+}
+```
+
+### Query Pool Status
+
+```rust
+/// Get current pool size
+public fun presign_count(self: &MyContract): u64 {
+    self.presigns.length()
+}
+
+/// Check if pool has presigns available
+public fun has_presigns(self: &MyContract): bool {
+    self.presigns.length() > 0
+}
+
+/// Check if pool is below minimum threshold
+public fun needs_replenishment(self: &MyContract, min_size: u64): bool {
+    self.presigns.length() < min_size
+}
+```
+
+### Consume from Pool
+
+```rust
+const ENoPresignsAvailable: u64 = 1;
+
+/// Pop a presign from the pool (internal use)
+fun pop_presign(self: &mut MyContract): UnverifiedPresignCap {
+    assert!(self.presigns.length() > 0, ENoPresignsAvailable);
+    self.presigns.swap_remove(0)
+}
+```
+
+## Auto-Replenishment Pattern
+
+Automatically add presigns when pool gets low:
+
+```rust
+const MIN_PRESIGN_POOL: u64 = 3;
+
+/// Internal helper to replenish pool if needed
+fun replenish_if_needed(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ika: &mut Coin<IKA>,
+    sui: &mut Coin<SUI>,
+    ctx: &mut TxContext,
+) {
+    if (self.presigns.length() < MIN_PRESIGN_POOL) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            SECP256K1,
+            TAPROOT,
+            session,
+            ika,
+            sui,
+            ctx,
+        ));
+    };
+}
+
+/// Sign with automatic replenishment
+public fun sign_with_replenish(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Pop and verify presign
+    let unverified = pop_presign(self);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    // ... signing logic ...
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        0,  // SHA256
+        message,
+    );
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    let sign_id = coordinator.request_sign_and_return_id(
+        verified,
+        approval,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Auto-replenish
+    replenish_if_needed(self, coordinator, &mut ika, &mut sui, ctx);
+
+    return_payment_coins(self, ika, sui);
+
+    sign_id
+}
+```
+
+## Batch Replenishment Pattern
+
+For high-throughput systems, replenish multiple presigns at once:
+
+```rust
+const TARGET_PRESIGN_POOL: u64 = 10;
+const BATCH_SIZE: u64 = 5;
+
+/// Replenish pool up to target size
+public fun batch_replenish(
+    self: &mut MyContract,
+    coordinator: &mut DWalletCoordinator,
+    ctx: &mut TxContext,
+) {
+    let current = self.presigns.length();
+    if (current >= TARGET_PRESIGN_POOL) {
+        return  // Pool is full
+    };
+
+    let needed = TARGET_PRESIGN_POOL - current;
+    let to_add = if (needed > BATCH_SIZE) { BATCH_SIZE } else { needed };
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    let mut i = 0;
+    while (i < to_add) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            SECP256K1,
+            TAPROOT,
+            session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        ));
+
+        i = i + 1;
+    };
+
+    return_payment_coins(self, ika, sui);
+}
+```
+
+## Complete Example
+
+```rust
+module my_protocol::managed_signer;
+
+use ika::ika::IKA;
+use ika_dwallet_2pc_mpc::{
+    coordinator::DWalletCoordinator,
+    coordinator_inner::{DWalletCap, UnverifiedPresignCap}
+};
+use sui::{balance::Balance, coin::Coin, sui::SUI};
+
+const SECP256K1: u32 = 0;
+const TAPROOT: u32 = 1;
+const SHA256: u32 = 0;
+
+const MIN_POOL_SIZE: u64 = 3;
+const ENoPresigns: u64 = 1;
+const EInsufficientBalance: u64 = 2;
+
+public struct ManagedSigner has key, store {
+    id: UID,
+    dwallet_cap: DWalletCap,
+    presigns: vector<UnverifiedPresignCap>,
+    ika_balance: Balance<IKA>,
+    sui_balance: Balance<SUI>,
+    dwallet_network_encryption_key_id: ID,
+}
+
+// === Pool Management ===
+
+public fun presign_count(self: &ManagedSigner): u64 {
+    self.presigns.length()
+}
+
+public fun add_presigns(
+    self: &mut ManagedSigner,
+    coordinator: &mut DWalletCoordinator,
+    count: u64,
+    ctx: &mut TxContext,
+) {
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    let mut i = 0;
+    while (i < count) {
+        let session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            SECP256K1,
+            TAPROOT,
+            session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        ));
+
+        i = i + 1;
+    };
+
+    return_payment_coins(self, ika, sui);
+}
+
+// === Signing with Auto-Replenish ===
+
+public fun sign(
+    self: &mut ManagedSigner,
+    coordinator: &mut DWalletCoordinator,
+    message: vector<u8>,
+    message_centralized_signature: vector<u8>,
+    ctx: &mut TxContext,
+): ID {
+    assert!(self.presigns.length() > 0, ENoPresigns);
+
+    let (mut ika, mut sui) = withdraw_payment_coins(self, ctx);
+
+    // Consume presign
+    let unverified = self.presigns.swap_remove(0);
+    let verified = coordinator.verify_presign_cap(unverified, ctx);
+
+    // Sign
+    let approval = coordinator.approve_message(
+        &self.dwallet_cap,
+        TAPROOT,
+        SHA256,
+        message,
+    );
+
+    let session = coordinator.register_session_identifier(
+        ctx.fresh_object_address().to_bytes(),
+        ctx,
+    );
+
+    let sign_id = coordinator.request_sign_and_return_id(
+        verified,
+        approval,
+        message_centralized_signature,
+        session,
+        &mut ika,
+        &mut sui,
+        ctx,
+    );
+
+    // Auto-replenish if pool is low
+    if (self.presigns.length() < MIN_POOL_SIZE) {
+        let replenish_session = coordinator.register_session_identifier(
+            ctx.fresh_object_address().to_bytes(),
+            ctx,
+        );
+
+        self.presigns.push_back(coordinator.request_global_presign(
+            self.dwallet_network_encryption_key_id,
+            SECP256K1,
+            TAPROOT,
+            replenish_session,
+            &mut ika,
+            &mut sui,
+            ctx,
+        ));
+    };
+
+    return_payment_coins(self, ika, sui);
+
+    sign_id
+}
+
+// === Balance Management ===
+
+public fun add_ika(self: &mut ManagedSigner, coin: Coin<IKA>) {
+    self.ika_balance.join(coin.into_balance());
+}
+
+public fun add_sui(self: &mut ManagedSigner, coin: Coin<SUI>) {
+    self.sui_balance.join(coin.into_balance());
+}
+
+fun withdraw_payment_coins(
+    self: &mut ManagedSigner,
+    ctx: &mut TxContext,
+): (Coin<IKA>, Coin<SUI>) {
+    let ika = self.ika_balance.withdraw_all().into_coin(ctx);
+    let sui = self.sui_balance.withdraw_all().into_coin(ctx);
+    (ika, sui)
+}
+
+fun return_payment_coins(
+    self: &mut ManagedSigner,
+    ika: Coin<IKA>,
+    sui: Coin<SUI>,
+) {
+    self.ika_balance.join(ika.into_balance());
+    self.sui_balance.join(sui.into_balance());
+}
+```
+
+## Global vs dWallet-Specific Presigns
+
+Choose the right presign type for your use case:
+
+### Global Presigns (Most Common)
+
+```rust
+// For Taproot, Schnorr, EdDSA
+coordinator.request_global_presign(
+    dwallet_network_encryption_key_id,
+    curve,
+    signature_algorithm,
+    session,
+    &mut ika,
+    &mut sui,
+    ctx,
+)
+```
+
+### dWallet-Specific Presigns
+
+```rust
+// For ECDSA with imported keys
+coordinator.request_presign(
+    dwallet_id,
+    signature_algorithm,
+    session,
+    &mut ika,
+    &mut sui,
+    ctx,
+)
+```
+
+## Best Practices
+
+1. **Set Appropriate Pool Size**: Based on expected signing frequency
+2. **Replenish Proactively**: Don't wait until pool is empty
+3. **Monitor Pool Levels**: Emit events when pool is low
+4. **Budget for Presigns**: Include presign fees in your economics
+5. **Handle Empty Pools**: Fail gracefully with clear errors
+
+## Monitoring and Events
+
+Add events to monitor pool health:
+
+```rust
+use sui::event;
+
+public struct PresignPoolLow has copy, drop {
+    contract_id: ID,
+    current_size: u64,
+    min_size: u64,
+}
+
+public struct PresignAdded has copy, drop {
+    contract_id: ID,
+    new_size: u64,
+}
+
+fun emit_pool_low_warning(self: &ManagedSigner) {
+    if (self.presigns.length() < MIN_POOL_SIZE) {
+        event::emit(PresignPoolLow {
+            contract_id: self.id.to_inner(),
+            current_size: self.presigns.length(),
+            min_size: MIN_POOL_SIZE,
+        });
+    };
+}
+```
+
+## Next Steps
+
+- See [Shared dWallet Contracts](/docs/move-integration/integration-patterns/shared-dwallet-contracts) for DAO patterns
+- Check the [Bitcoin Multisig Example](/docs/move-integration/examples/multisig-bitcoin) for a complete implementation

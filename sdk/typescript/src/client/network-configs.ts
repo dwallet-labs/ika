@@ -24,9 +24,13 @@ export function getNetworkConfig(network: Network): IkaConfig {
 				packages: {
 					ikaPackage: '0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a',
 					ikaCommonPackage: '0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0',
-					ikaSystemPackage: '0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553',
+					ikaSystemOriginalPackage:
+						'0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148',
+					ikaSystemPackage: '0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b',
+					ikaDwallet2pcMpcOriginalPackage:
+						'0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730',
 					ikaDwallet2pcMpcPackage:
-						'0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77',
+						'0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293',
 				},
 				objects: {
 					ikaSystemObject: {
@@ -44,9 +48,13 @@ export function getNetworkConfig(network: Network): IkaConfig {
 				packages: {
 					ikaPackage: '0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa',
 					ikaCommonPackage: '0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175',
-					ikaSystemPackage: '0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486',
-					ikaDwallet2pcMpcPackage:
+					ikaSystemOriginalPackage:
+						'0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486',
+					ikaSystemPackage: '0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553',
+					ikaDwallet2pcMpcOriginalPackage:
 						'0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317',
+					ikaDwallet2pcMpcPackage:
+						'0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77',
 				},
 				objects: {
 					ikaSystemObject: {
