@@ -569,7 +569,6 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
-            // TODO: add to db internal presign session ids that was used, never use again.
             // TODO: check protocol version here
             // Instantiate internal presign sessions based on consensus round and idle status.
             self.dwallet_mpc_manager
