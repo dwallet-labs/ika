@@ -568,8 +568,8 @@ impl DWalletMPCManager {
             .network_encryption_keys
             .iter()
             .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+            .copied()
         {
-            let dwallet_network_encryption_key_id = *dwallet_network_encryption_key_id;
             for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
             {
                 for signature_algorithm in signature_algorithms {
@@ -668,8 +668,9 @@ impl DWalletMPCManager {
             .network_encryption_keys
             .iter()
             .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+            .copied()
         {
-            Some((key_id, _)) => *key_id,
+            Some((key_id, _)) => key_id,
             None => {
                 warn!(
                     checkpoint_sequence_number,
