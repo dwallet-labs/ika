@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 3;
-const MAX_PROTOCOL_VERSION: u64 = 3;
+const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
@@ -561,6 +561,12 @@ impl ProtocolConfig {
                 }
                 3 => {
                     cfg.reconfiguration_message_version = Some(2);
+                }
+                4 => {
+                    cfg.feature_flags.internal_presign_sessions = true;
+                    // TODO: set internal presign config values (pool minimum sizes,
+                    // consensus round delays, sessions to instantiate) for all
+                    // algorithm variants.
                 }
                 // Use this template when making changes:
                 //
