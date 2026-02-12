@@ -22,7 +22,7 @@ use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
-use group::{HashScheme, PartyID};
+use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
@@ -555,6 +555,15 @@ impl DWalletMPCManager {
         ]
     }
 
+    /// Returns the network encryption key ID used for checkpoint signing (the oldest by DKG epoch).
+    fn checkpoint_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
+        self.network_keys
+            .network_encryption_keys
+            .iter()
+            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
+            .map(|(id, _)| *id)
+    }
+
     /// Instantiates internal presign sessions based on predefined logic that is
     /// synced with the consensus and thus with the other validators.
     pub(super) fn instantiate_internal_presign_sessions(
@@ -563,12 +572,8 @@ impl DWalletMPCManager {
         number_of_consensus_rounds: u64,
         network_is_idle: bool,
     ) {
-        if let Some((dwallet_network_encryption_key_id, _)) = self
-            .network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
-            .copied()
+        if let Some(dwallet_network_encryption_key_id) =
+            self.checkpoint_signing_network_encryption_key_id()
         {
             for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
             {
@@ -663,35 +668,23 @@ impl DWalletMPCManager {
         checkpoint_message: Vec<u8>,
     ) -> bool {
         // Get the network encryption key ID (same as internal presign sessions)
-        let dwallet_network_encryption_key_id = match self
-            .network_keys
-            .network_encryption_keys
-            .iter()
-            .min_by(|(_, a), (_, b)| a.dkg_at_epoch.cmp(&b.dkg_at_epoch))
-            .copied()
-        {
-            Some((key_id, _)) => key_id,
-            None => {
-                warn!(
-                    checkpoint_sequence_number,
-                    "No network encryption key available for internal checkpoint signing"
-                );
-                return false;
-            }
-        };
+        let dwallet_network_encryption_key_id =
+            match self.checkpoint_signing_network_encryption_key_id() {
+                Some(key_id) => key_id,
+                None => {
+                    warn!(
+                        checkpoint_sequence_number,
+                        "No network encryption key available for internal checkpoint signing"
+                    );
+                    return false;
+                }
+            };
 
         // Get the checkpoint signing algorithm and curve from protocol config
         let signature_algorithm = self.protocol_config.checkpoint_signing_algorithm();
         let curve = self.protocol_config.checkpoint_signing_curve();
 
-        // Get the hash scheme for the signature algorithm
-        let hash_scheme = match signature_algorithm {
-            DWalletSignatureAlgorithm::EdDSA
-            | DWalletSignatureAlgorithm::SchnorrkelSubstrate
-            | DWalletSignatureAlgorithm::ECDSASecp256k1
-            | DWalletSignatureAlgorithm::ECDSASecp256r1
-            | DWalletSignatureAlgorithm::Taproot => HashScheme::Keccak256,
-        };
+        let hash_scheme = self.protocol_config.checkpoint_signing_hash_scheme().into();
 
         // Try to get a presign from the internal presign pool
         let (presign_session_id, presign) = match self.epoch_store.pop_presign(signature_algorithm)

@@ -204,6 +204,46 @@ pub enum DWalletSignatureAlgorithm {
     SchnorrkelSubstrate,
 }
 
+#[derive(
+    strum_macros::Display,
+    strum_macros::EnumString,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+    schemars::JsonSchema,
+)]
+pub enum DWalletHashScheme {
+    #[strum(to_string = "Keccak256")]
+    Keccak256,
+    #[strum(to_string = "SHA256")]
+    SHA256,
+    #[strum(to_string = "DoubleSHA256")]
+    DoubleSHA256,
+    #[strum(to_string = "SHA512")]
+    SHA512,
+    #[strum(to_string = "Merlin")]
+    Merlin,
+}
+
+impl From<DWalletHashScheme> for group::HashScheme {
+    fn from(scheme: DWalletHashScheme) -> Self {
+        match scheme {
+            DWalletHashScheme::Keccak256 => group::HashScheme::Keccak256,
+            DWalletHashScheme::SHA256 => group::HashScheme::SHA256,
+            DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
+            DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
+            DWalletHashScheme::Merlin => group::HashScheme::Merlin,
+        }
+    }
+}
+
 // We can't import ika-types here since we import this module in there.
 // Therefore, we use `thiserror` `#from` to convert this error.
 #[derive(Debug, Error, Clone)]
