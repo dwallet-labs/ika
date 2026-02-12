@@ -687,7 +687,9 @@ impl DWalletMPCManager {
         let hash_scheme = self.protocol_config.checkpoint_signing_hash_scheme().into();
 
         // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign) = match self.epoch_store.pop_presign(signature_algorithm)
+        let (presign_session_id, presign) = match self
+            .epoch_store
+            .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
         {
             Ok(Some((session_id, presign))) => (session_id, presign),
             Ok(None) => {
@@ -767,13 +769,12 @@ impl DWalletMPCManager {
 
     fn internal_presign_pool_size(
         &self,
-        _dwallet_network_encryption_key_id: ObjectID,
+        dwallet_network_encryption_key_id: ObjectID,
         _curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) -> u64 {
-        // todo: use dwallet_network_encryption_key_id
         self.epoch_store
-            .presign_pool_size(signature_algorithm)
+            .presign_pool_size(signature_algorithm, dwallet_network_encryption_key_id)
             .unwrap_or_else(|e| {
                 error!(error=?e, ?signature_algorithm, "Failed to get presign pool size");
                 0
