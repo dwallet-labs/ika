@@ -619,6 +619,21 @@ impl DWalletMPCManager {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) {
+        let network_dkg_output_bytes = match self
+            .network_keys
+            .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
+        {
+            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            Err(e) => {
+                error!(
+                    ?dwallet_network_encryption_key_id,
+                    error = ?e,
+                    "Failed to get network encryption key data for internal presign session"
+                );
+                return;
+            }
+        };
+
         let session_sequence_number = self.next_internal_presign_sequence_number;
         let request = DWalletSessionRequest::new_internal_presign(
             self.epoch_id,
@@ -627,6 +642,7 @@ impl DWalletMPCManager {
             curve,
             signature_algorithm,
             dwallet_network_encryption_key_id,
+            &network_dkg_output_bytes,
         );
 
         let session_identifier = request.session_identifier;
@@ -686,6 +702,22 @@ impl DWalletMPCManager {
 
         let hash_scheme = self.protocol_config.checkpoint_signing_hash_scheme().into();
 
+        let network_dkg_output_bytes = match self
+            .network_keys
+            .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
+        {
+            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            Err(e) => {
+                error!(
+                    ?dwallet_network_encryption_key_id,
+                    checkpoint_sequence_number,
+                    error = ?e,
+                    "Failed to get network encryption key data for internal sign session"
+                );
+                return false;
+            }
+        };
+
         // Try to get a presign from the internal presign pool
         let (presign_session_id, presign) = match self
             .epoch_store
@@ -743,6 +775,7 @@ impl DWalletMPCManager {
             signature_algorithm,
             hash_scheme,
             dwallet_network_encryption_key_id,
+            &network_dkg_output_bytes,
             checkpoint_message.clone(),
             presign,
         );

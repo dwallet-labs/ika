@@ -35,6 +35,7 @@ impl DWalletSessionRequest {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
+        network_dkg_output: &[u8],
     ) -> Self {
         let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
         transcript.append_message(b"epoch", &epoch.to_be_bytes());
@@ -49,8 +50,11 @@ impl DWalletSessionRequest {
             signature_algorithm.to_string().as_bytes(),
         );
 
-        // TODO: key id or other network identifier
-        // TODO: take random suggestions from validators?
+        transcript.append_message(
+            b"dwallet network encryption key id",
+            dwallet_network_encryption_key_id.as_ref(),
+        );
+        transcript.append_message(b"network dkg output", network_dkg_output);
 
         // Generate a session identifier preimage in a deterministic way
         // (internally, it uses a hash function to pseudo-randomly generate it).
@@ -93,6 +97,7 @@ impl DWalletSessionRequest {
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
         dwallet_network_encryption_key_id: ObjectID,
+        network_dkg_output: &[u8],
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
     ) -> Self {
@@ -107,6 +112,11 @@ impl DWalletSessionRequest {
             b"signature algorithm",
             signature_algorithm.to_string().as_bytes(),
         );
+        transcript.append_message(
+            b"dwallet network encryption key id",
+            dwallet_network_encryption_key_id.as_ref(),
+        );
+        transcript.append_message(b"network dkg output", network_dkg_output);
 
         // Generate a session identifier preimage in a deterministic way
         let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =

@@ -299,6 +299,14 @@ pub enum VersionedNetworkDkgOutput {
     V2(MPCPublicOutput),
 }
 
+impl VersionedNetworkDkgOutput {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::V1(bytes) | Self::V2(bytes) => bytes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
