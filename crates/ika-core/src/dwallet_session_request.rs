@@ -51,7 +51,7 @@ impl DWalletSessionRequest {
         );
 
         transcript.append_message(
-            b"dwallet network encryption key id",
+            b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
         );
         transcript.append_message(b"network dkg output", network_dkg_output);
@@ -113,7 +113,7 @@ impl DWalletSessionRequest {
             signature_algorithm.to_string().as_bytes(),
         );
         transcript.append_message(
-            b"dwallet network encryption key id",
+            b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
         );
         transcript.append_message(b"network dkg output", network_dkg_output);
