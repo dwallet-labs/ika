@@ -2252,3 +2252,207 @@ impl From<LockDetails> for LockDetailsWrapper {
         LockDetailsWrapper::V1(details)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+    use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+    use sui_types::base_types::ObjectID;
+
+    fn create_tables() -> AuthorityEpochTables {
+        let dir = tempfile::tempdir().unwrap();
+        AuthorityEpochTables::open(0, dir.path(), None)
+    }
+
+    fn make_session_id(preimage: [u8; 32]) -> SessionIdentifier {
+        SessionIdentifier::new(SessionType::InternalPresign, preimage)
+    }
+
+    #[test]
+    fn test_insert_and_pop_presign() {
+        let tables = create_tables();
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        let session_id = make_session_id([1; 32]);
+        let presigns = vec![vec![1u8, 2, 3], vec![4, 5, 6]];
+
+        tables
+            .insert_presigns(algorithm, key_id, 0, session_id, presigns)
+            .unwrap();
+
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
+
+        let (popped_session, first_presign) =
+            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(popped_session, session_id);
+        assert_eq!(first_presign, vec![1u8, 2, 3]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
+
+        let (_, second_presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(second_presign, vec![4u8, 5, 6]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
+
+        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_presign_pool_isolation_across_key_ids() {
+        let tables = create_tables();
+        let key_id_a = ObjectID::random();
+        let key_id_b = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        let session_id_a = make_session_id([10; 32]);
+        let session_id_b = make_session_id([20; 32]);
+        let presigns_a = vec![vec![10u8], vec![11]];
+        let presigns_b = vec![vec![20u8], vec![21], vec![22]];
+
+        tables
+            .insert_presigns(algorithm, key_id_a, 0, session_id_a, presigns_a)
+            .unwrap();
+        tables
+            .insert_presigns(algorithm, key_id_b, 0, session_id_b, presigns_b)
+            .unwrap();
+
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 2);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
+
+        let (popped_session, presign) = tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
+        assert_eq!(popped_session, session_id_a);
+        assert_eq!(presign, vec![10u8]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 1);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
+
+        let (popped_session, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        assert_eq!(popped_session, session_id_b);
+        assert_eq!(presign, vec![20u8]);
+
+        // Exhaust key_id_a
+        tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
+        assert!(tables.pop_presign(algorithm, key_id_a).unwrap().is_none());
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 0);
+
+        // key_id_b still has presigns
+        assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 2);
+        let (_, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        assert_eq!(presign, vec![21u8]);
+    }
+
+    #[test]
+    fn test_pop_presign_ordering_across_sessions() {
+        let tables = create_tables();
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+
+        // Insert out of order by session_sequence_number
+        tables
+            .insert_presigns(
+                algorithm,
+                key_id,
+                10,
+                make_session_id([10; 32]),
+                vec![vec![10u8]],
+            )
+            .unwrap();
+        tables
+            .insert_presigns(
+                algorithm,
+                key_id,
+                5,
+                make_session_id([5; 32]),
+                vec![vec![5u8]],
+            )
+            .unwrap();
+        tables
+            .insert_presigns(
+                algorithm,
+                key_id,
+                20,
+                make_session_id([20; 32]),
+                vec![vec![20u8]],
+            )
+            .unwrap();
+
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
+
+        // Should pop in ascending session_sequence_number order
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![5u8]);
+
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![10u8]);
+
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![20u8]);
+
+        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_pop_from_empty_pool() {
+        let tables = create_tables();
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+
+        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_multiple_presigns_per_session() {
+        let tables = create_tables();
+        let key_id = ObjectID::random();
+        let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        let session_id = make_session_id([42; 32]);
+        let presigns = vec![vec![1u8], vec![2], vec![3]];
+
+        tables
+            .insert_presigns(algorithm, key_id, 0, session_id, presigns)
+            .unwrap();
+
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
+
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![1u8]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
+
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![2u8]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
+
+        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![3u8]);
+        assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
+
+        assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_presign_pool_isolation_across_algorithms() {
+        let tables = create_tables();
+        let key_id = ObjectID::random();
+        let ecdsa = DWalletSignatureAlgorithm::ECDSASecp256k1;
+        let eddsa = DWalletSignatureAlgorithm::EdDSA;
+        let session_ecdsa = make_session_id([1; 32]);
+        let session_eddsa = make_session_id([2; 32]);
+
+        tables
+            .insert_presigns(ecdsa, key_id, 0, session_ecdsa, vec![vec![100u8]])
+            .unwrap();
+        tables
+            .insert_presigns(eddsa, key_id, 0, session_eddsa, vec![vec![200u8]])
+            .unwrap();
+
+        assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 1);
+        assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
+
+        let (_, presign) = tables.pop_presign(ecdsa, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![100u8]);
+        assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 0);
+
+        // EdDSA pool unaffected
+        assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
+        let (_, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
+        assert_eq!(presign, vec![200u8]);
+    }
+}
