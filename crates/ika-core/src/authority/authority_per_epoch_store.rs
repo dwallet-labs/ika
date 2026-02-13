@@ -60,8 +60,8 @@ use ika_types::messages_dwallet_checkpoint::{
     DWalletCheckpointMessage, DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IkaNetworkConfig,
-    InternalSessionsStatusUpdate, SessionIdentifier,
+    AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    IkaNetworkConfig, InternalSessionsStatusUpdate, SessionIdentifier,
 };
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -286,6 +286,35 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     /// Checks if a presign has already been used.
     fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool>;
+
+    /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
+    /// This is used for external presign requests.
+    fn assign_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
+        current_epoch: u64,
+    ) -> IkaResult<Option<SessionIdentifier>>;
+
+    /// Retrieves an assigned presign by session identifier and signature algorithm.
+    fn get_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>>;
+
+    /// Pops an assigned presign from the pool. Used when the presign is consumed for signing.
+    fn pop_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>>;
+
+    /// Clears all expired assigned presigns for a given epoch.
+    /// This should be called at epoch boundaries.
+    fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -428,6 +457,47 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
         let tables = self.tables()?;
         tables.is_presign_used(presign_session_id)
+    }
+
+    fn assign_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
+        current_epoch: u64,
+    ) -> IkaResult<Option<SessionIdentifier>> {
+        let tables = self.tables()?;
+        tables.assign_presign(
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+            user_verification_key,
+            dwallet_id,
+            current_epoch,
+        )
+    }
+
+    fn get_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        let tables = self.tables()?;
+        tables.get_assigned_presign(signature_algorithm, session_identifier)
+    }
+
+    fn pop_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        let tables = self.tables()?;
+        tables.pop_assigned_presign(signature_algorithm, session_identifier)
+    }
+
+    fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()> {
+        let tables = self.tables()?;
+        tables.clear_expired_assigned_presigns(current_epoch)
     }
 }
 
@@ -610,6 +680,21 @@ pub struct AuthorityEpochTables {
     /// Value: () - just marks it as used
     /// Once a presign is used, it should never be used again.
     used_presigns: DBMap<SessionIdentifier, ()>,
+
+    /// Assigned presigns pools for external presigns.
+    /// Key: SessionIdentifier - the session ID that uniquely identifies this assigned presign
+    /// Value: AssignedPresign - contains presign data, user verification key, dwallet_id (for non-global), and epoch
+    /// These expire at the end of the epoch and are used for external sign requests.
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_ecdsa_secp256k1: DBMap<SessionIdentifier, AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_ecdsa_secp256r1: DBMap<SessionIdentifier, AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_eddsa: DBMap<SessionIdentifier, AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_taproot: DBMap<SessionIdentifier, AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_schnorrkel_substrate: DBMap<SessionIdentifier, AssignedPresign>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -655,6 +740,12 @@ fn internal_presign_pool_table_default_config() -> DBOptions {
 }
 
 fn internal_sessions_status_updates_table_default_config() -> DBOptions {
+    default_db_options()
+        .optimize_for_write_throughput()
+        .optimize_for_large_values_no_scan(1 << 10)
+}
+
+fn assigned_presign_pool_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -826,6 +917,114 @@ impl AuthorityEpochTables {
     /// Checks if a presign has already been used.
     pub fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
         Ok(self.used_presigns.contains_key(&presign_session_id)?)
+    }
+
+    /// Returns a reference to the assigned presign pool table for the given signature algorithm.
+    fn assigned_presign_pool_table(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> &DBMap<SessionIdentifier, AssignedPresign> {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => &self.assigned_presigns_ecdsa_secp256k1,
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => &self.assigned_presigns_ecdsa_secp256r1,
+            DWalletSignatureAlgorithm::EdDSA => &self.assigned_presigns_eddsa,
+            DWalletSignatureAlgorithm::Taproot => &self.assigned_presigns_taproot,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                &self.assigned_presigns_schnorrkel_substrate
+            }
+        }
+    }
+
+    /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
+    /// This is used for external presign requests.
+    pub fn assign_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
+        current_epoch: u64,
+    ) -> IkaResult<Option<SessionIdentifier>> {
+        // Pop a presign from the internal pool
+        let Some((session_identifier, presign)) =
+            self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+
+        // Create the assigned presign
+        let assigned_presign = AssignedPresign {
+            session_identifier,
+            presign,
+            user_verification_key,
+            dwallet_id,
+            assigned_epoch: current_epoch,
+        };
+
+        // Store it in the assigned pool
+        let table = self.assigned_presign_pool_table(signature_algorithm);
+        table.insert(&session_identifier, &assigned_presign)?;
+
+        Ok(Some(session_identifier))
+    }
+
+    /// Retrieves an assigned presign by session identifier and signature algorithm.
+    pub fn get_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        let table = self.assigned_presign_pool_table(signature_algorithm);
+        Ok(table.get(&session_identifier)?)
+    }
+
+    /// Pops an assigned presign from the pool. Used when the presign is consumed for signing.
+    pub fn pop_assigned_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        let table = self.assigned_presign_pool_table(signature_algorithm);
+        let assigned_presign = table.get(&session_identifier)?;
+        if assigned_presign.is_some() {
+            table.remove(&session_identifier)?;
+        }
+        Ok(assigned_presign)
+    }
+
+    /// Clears all expired assigned presigns for a given epoch.
+    /// This should be called at epoch boundaries.
+    pub fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()> {
+        // Clear for all signature algorithms
+        let algorithms = [
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            DWalletSignatureAlgorithm::ECDSASecp256r1,
+            DWalletSignatureAlgorithm::EdDSA,
+            DWalletSignatureAlgorithm::Taproot,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        ];
+
+        for algorithm in algorithms {
+            let table = self.assigned_presign_pool_table(algorithm);
+            let expired_keys: Vec<SessionIdentifier> = table
+                .safe_iter()
+                .filter_map(|result| {
+                    result.ok().and_then(|(key, value)| {
+                        if value.assigned_epoch < current_epoch {
+                            Some(key)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            for key in expired_keys {
+                table.remove(&key)?;
+            }
+        }
+
+        Ok(())
     }
 }
 

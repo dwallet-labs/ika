@@ -814,6 +814,52 @@ impl DWalletMPCManager {
             })
     }
 
+    /// Handles an external presign request by assigning a presign from the internal pool
+    /// to the assigned pool. Returns the session identifier if successful.
+    pub fn handle_external_presign_request(
+        &mut self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
+    ) -> Option<SessionIdentifier> {
+        // Assign the presign from internal pool to assigned pool
+        match self.epoch_store.assign_presign(
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+            user_verification_key,
+            dwallet_id,
+            self.epoch_id,
+        ) {
+            Ok(Some(session_id)) => {
+                info!(
+                    ?session_id,
+                    ?signature_algorithm,
+                    ?dwallet_network_encryption_key_id,
+                    "Successfully assigned presign to external request"
+                );
+                Some(session_id)
+            }
+            Ok(None) => {
+                warn!(
+                    ?signature_algorithm,
+                    ?dwallet_network_encryption_key_id,
+                    "No presign available in internal pool for external request"
+                );
+                None
+            }
+            Err(e) => {
+                error!(
+                    error=?e,
+                    ?signature_algorithm,
+                    ?dwallet_network_encryption_key_id,
+                    "Failed to assign presign for external request"
+                );
+                None
+            }
+        }
+    }
+
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
     pub(super) fn new_session(
