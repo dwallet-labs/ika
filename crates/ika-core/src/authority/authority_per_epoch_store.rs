@@ -311,10 +311,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
     ) -> IkaResult<Option<AssignedPresign>>;
-
-    /// Clears all expired assigned presigns for a given epoch.
-    /// This should be called at epoch boundaries.
-    fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -493,11 +489,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<AssignedPresign>> {
         let tables = self.tables()?;
         tables.pop_assigned_presign(signature_algorithm, session_identifier)
-    }
-
-    fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()> {
-        let tables = self.tables()?;
-        tables.clear_expired_assigned_presigns(current_epoch)
     }
 }
 
@@ -990,41 +981,6 @@ impl AuthorityEpochTables {
             table.remove(&session_identifier)?;
         }
         Ok(assigned_presign)
-    }
-
-    /// Clears all expired assigned presigns for a given epoch.
-    /// This should be called at epoch boundaries.
-    pub fn clear_expired_assigned_presigns(&self, current_epoch: u64) -> IkaResult<()> {
-        // Clear for all signature algorithms
-        let algorithms = [
-            DWalletSignatureAlgorithm::ECDSASecp256k1,
-            DWalletSignatureAlgorithm::ECDSASecp256r1,
-            DWalletSignatureAlgorithm::EdDSA,
-            DWalletSignatureAlgorithm::Taproot,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
-        ];
-
-        for algorithm in algorithms {
-            let table = self.assigned_presign_pool_table(algorithm);
-            let expired_keys: Vec<SessionIdentifier> = table
-                .safe_iter()
-                .filter_map(|result| {
-                    result.ok().and_then(|(key, value)| {
-                        if value.assigned_epoch < current_epoch {
-                            Some(key)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect();
-
-            for key in expired_keys {
-                table.remove(&key)?;
-            }
-        }
-
-        Ok(())
     }
 }
 
