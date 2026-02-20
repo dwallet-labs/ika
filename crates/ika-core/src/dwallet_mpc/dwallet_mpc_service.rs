@@ -830,11 +830,20 @@ impl DWalletMPCService {
                                             );
 
                                             // Serialize the SessionIdentifier for inclusion in the output
-                                            let presign_session_identifier = bcs::to_bytes(&presign_session_id)
-                                                .unwrap_or_else(|e| {
-                                                    error!(error=?e, "Failed to serialize session identifier");
-                                                    Vec::new()
-                                                });
+                                            let presign_session_identifier = match bcs::to_bytes(
+                                                &presign_session_id,
+                                            ) {
+                                                Ok(bytes) => bytes,
+                                                Err(e) => {
+                                                    error!(
+                                                        error=?e,
+                                                        should_never_happen =? true,
+                                                        "failed to serialize presign session identifier"
+                                                    );
+                                                    unprocessed_requests.push(request);
+                                                    continue;
+                                                }
+                                            };
 
                                             let checkpoint_message =
                                                 DWalletCheckpointMessageKind::RespondDWalletPresign(
