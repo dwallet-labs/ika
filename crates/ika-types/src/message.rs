@@ -44,7 +44,6 @@ pub struct PresignOutput {
     pub presign: Vec<u8>,
     pub rejected: bool,
     pub session_sequence_number: u64,
-    pub presign_session_identifier: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Ord, PartialOrd, Serialize, Deserialize)]

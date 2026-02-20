@@ -538,61 +538,6 @@ impl DWalletMPCManager {
             return None;
         }
 
-        // For Sign requests with presign_session_identifier, pop the assigned presign
-        if let ProtocolData::Sign {
-            data,
-            presign_session_identifier,
-            ..
-        } = &request.protocol_data
-        {
-            if !presign_session_identifier.is_empty() {
-                // Deserialize the SessionIdentifier
-                match bcs::from_bytes::<SessionIdentifier>(presign_session_identifier) {
-                    Ok(presign_session_id) => {
-                        // Pop the assigned presign (consumes it from the assigned pool)
-                        match self
-                            .epoch_store
-                            .pop_assigned_presign(data.signature_algorithm, presign_session_id)
-                        {
-                            Ok(Some(_assigned_presign)) => {
-                                info!(
-                                    ?presign_session_id,
-                                    ?session_identifier,
-                                    "Successfully consumed assigned presign for sign request"
-                                );
-                            }
-                            Ok(None) => {
-                                error!(
-                                    ?presign_session_id,
-                                    ?session_identifier,
-                                    "Assigned presign not found or already consumed - rejecting sign request"
-                                );
-                                // Return early to prevent session creation
-                                return None;
-                            }
-                            Err(e) => {
-                                error!(
-                                    error=?e,
-                                    ?presign_session_id,
-                                    ?session_identifier,
-                                    "Failed to pop assigned presign"
-                                );
-                                return None;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            error=?e,
-                            ?session_identifier,
-                            "Failed to deserialize presign_session_identifier"
-                        );
-                        return None;
-                    }
-                }
-            }
-        }
-
         let status = self.session_status_from_request(request.clone(), false);
 
         self.dwallet_mpc_metrics

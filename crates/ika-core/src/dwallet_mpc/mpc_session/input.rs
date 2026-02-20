@@ -244,12 +244,8 @@ pub(crate) fn session_input_from_request(
             message,
             presign,
             message_centralized_signature,
-            presign_session_identifier,
             ..
         } => {
-            // If this sign request has a presign_session_identifier, verify it's still available
-            // Note: The actual pop_assigned_presign should happen in the service layer,
-            // not here in input parsing. Here we just pass through the data.
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,

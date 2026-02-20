@@ -174,7 +174,6 @@ pub enum ProtocolData {
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
         message_centralized_signature: SerializedWrappedMPCPublicOutput,
-        presign_session_identifier: Vec<u8>,
     },
 
     InternalSign {
@@ -401,7 +400,6 @@ pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCRes
         message: request_event_data.message,
         presign: request_event_data.presign,
         message_centralized_signature: request_event_data.message_centralized_signature,
-        presign_session_identifier: request_event_data.presign_session_identifier,
     })
 }
 
