@@ -29,12 +29,12 @@ use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
-use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
-    DWalletMPCMessage, DWalletMPCOutput, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    InternalSessionsStatusUpdate, SessionIdentifier, SessionType,
+    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
+    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
+    InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
 };
-use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -100,6 +100,16 @@ pub(crate) struct DWalletMPCManager {
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
 
+    // The sequence number of the next internal presign session.
+    // Starts from 1 in every epoch, and increases as they are spawned.
+    // Different epochs will see repeating values of this variable,
+    // but that is safe as they are synced within an epoch and
+    // the session identifier is derived from the epoch as well.
+    next_internal_presign_sequence_number: u64,
+
+    /// The epoch store for persisting presign pools to disk.
+    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+
     /// Tracks the idle status of each party, overwritten on each status update.
     /// At the end of processing status updates for a consensus round, we majority vote
     /// to determine the network's idle status.
@@ -127,16 +137,6 @@ pub(crate) struct DWalletMPCManager {
 
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
-
-    // The sequence number of the next internal presign session.
-    // Starts from 1 in every epoch, and increases as they are spawned.
-    // Different epochs will see repeating values of this variable,
-    // but that is safe as they are synced within an epoch and
-    // the session identifier is derived from the epoch as well.
-    next_internal_presign_sequence_number: u64,
-
-    /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 }
 
 impl DWalletMPCManager {
@@ -226,6 +226,8 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
+            next_internal_presign_sequence_number: 1,
+            epoch_store,
             idle_status_by_party: HashMap::new(),
             user_requests_of_internal_resources: HashMap::new(),
             completed_presign_session_identifiers: HashSet::new(),
@@ -233,8 +235,6 @@ impl DWalletMPCManager {
             sent_presign_requests: HashSet::new(),
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
-            next_internal_presign_sequence_number: 1,
-            epoch_store,
         })
     }
 
@@ -265,26 +265,27 @@ impl DWalletMPCManager {
     pub fn handle_consensus_round_outputs(
         &mut self,
         consensus_round: u64,
-        outputs: Vec<DWalletMPCOutput>,
-    ) -> (Vec<DWalletCheckpointMessageKind>, Vec<SessionIdentifier>) {
+        outputs: Vec<DWalletMPCOutputReport>,
+    ) -> (Vec<DWalletMPCOutputKind>, Vec<SessionIdentifier>) {
         // Not let's move to process MPC outputs for the current round.
-        let mut checkpoint_messages = vec![];
+        let mut agreed_outputs = vec![];
         let mut completed_sessions = vec![];
         for output in &outputs {
-            let session_identifier = output.session_identifier;
+            let session_identifier = output.session_identifier();
+            let is_internal = output.is_internal();
 
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
                     self.complete_mpc_session(&session_identifier);
-                    let output_digest = output_result.iter().map(|m| m.digest()).collect_vec();
-                    checkpoint_messages.extend(output_result);
+                    agreed_outputs.push(output_result);
                     completed_sessions.push(session_identifier);
                     info!(
-                        ?output_digest,
                         consensus_round,
                         ?session_identifier,
                         ?malicious_authorities,
+                        ?is_internal,
+                        rejected = output.rejected(),
                         "MPC output reached quorum"
                     );
                 }
@@ -293,13 +294,15 @@ impl DWalletMPCManager {
                         consensus_round,
                         ?session_identifier,
                         ?output,
+                        ?is_internal,
+                        rejected = output.rejected(),
                         "MPC output yet to reach quorum"
                     );
                 }
             };
         }
 
-        (checkpoint_messages, completed_sessions)
+        (agreed_outputs, completed_sessions)
     }
 
     /// Handle status updates for a consensus round.
@@ -372,7 +375,7 @@ impl DWalletMPCManager {
                     agreed_presign_requests.push(request);
                     info!(
                         ?session_identifier,
-                        consensus_round, "Presign request has been agreed upon"
+                        consensus_round, "Presign request reached majority vote"
                     );
                 }
             }
@@ -450,23 +453,6 @@ impl DWalletMPCManager {
             })
             .cloned()
             .collect()
-    }
-
-    /// Returns the number of currently running computations.
-    pub fn running_computation_count(&self) -> usize {
-        self.cryptographic_computations_orchestrator
-            .currently_running_cryptographic_computations
-            .len()
-    }
-
-    /// Computes whether this validator is idle based on the number of ready-to-run
-    /// sessions plus currently running computations, compared to the threshold.
-    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
-        let number_of_executing_sessions = self.running_computation_count();
-        let total_session_count =
-            number_of_ready_to_advance_sessions + number_of_executing_sessions;
-        let threshold = self.protocol_config.idle_session_count_threshold();
-        total_session_count < threshold as usize
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -888,14 +874,12 @@ impl DWalletMPCManager {
         &mut self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-        user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
     ) -> Option<SessionIdentifier> {
         // Assign the presign from internal pool to assigned pool
         match self.epoch_store.assign_presign(
             signature_algorithm,
             dwallet_network_encryption_key_id,
-            user_verification_key,
             dwallet_id,
             self.epoch_id,
         ) {
@@ -934,7 +918,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
-        session_type: SessionComputationType,
+        session_computation_type: SessionComputationType,
     ) {
         info!(
             status=?status,
@@ -948,7 +932,7 @@ impl DWalletMPCManager {
             status,
             *session_identifier,
             self.party_id,
-            session_type,
+            session_computation_type,
         );
 
         info!(
@@ -977,7 +961,7 @@ impl DWalletMPCManager {
     /// The messages to advance with are built on the spot, assuming they satisfy required conditions.
     /// They are put on a `ComputationRequest` and forwarded to the `orchestrator` for execution.
     ///
-    /// Returns the completed computation results and whether the validator is idle.
+    /// Returns the completed computation results, idle status, and presign session requests.
     pub(crate) async fn perform_cryptographic_computation(
         &mut self,
         last_read_consensus_round: u64,
@@ -1196,10 +1180,11 @@ impl DWalletMPCManager {
     pub(crate) fn handle_output(
         &mut self,
         consensus_round: u64,
-        output: DWalletMPCOutput,
-    ) -> Option<(HashSet<AuthorityName>, Vec<DWalletCheckpointMessageKind>)> {
-        let session_identifier = output.session_identifier;
-        let sender_authority = output.authority;
+        output_report: DWalletMPCOutputReport,
+    ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
+        let session_identifier = output_report.session_identifier();
+        let sender_authority = output_report.authority();
+        let is_internal = output_report.is_internal();
 
         let Ok(sender_party_id) =
             authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -1208,6 +1193,7 @@ impl DWalletMPCManager {
                 session_identifier=?session_identifier,
                 sender_authority=?sender_authority,
                 receiver_authority=?self.validator_name,
+                ?is_internal,
                 "got a output for an authority without party ID",
             );
 
@@ -1221,25 +1207,31 @@ impl DWalletMPCManager {
                     ?session_identifier,
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
-                    "received a output for an MPC session before receiving an event requesting it"
+                    ?is_internal,
+                    "received an output for an MPC session before receiving an event requesting it"
                 );
 
-                // All output kinds are constructed from the same type, so we can safely use the first one.
-                let Ok(session_computation_type) = SessionComputationType::try_from(
-                    output.output.first().expect("output must have a kind"),
-                ) else {
-                    error!(
-                        session_identifier=?session_identifier,
-                        sender_authority=?sender_authority,
-                        receiver_authority=?self.validator_name,
-                        "got a output for an invalid computation type",
-                    );
+                let session_computation_type = match output_report.is_native() {
+                    Ok(true) => SessionComputationType::Native,
+                    Ok(false) => SessionComputationType::MPC {
+                        messages_by_consensus_round: HashMap::new(),
+                    },
+                    Err(e) => {
+                        error!(
+                            session_identifier=?session_identifier,
+                            sender_authority=?sender_authority,
+                            receiver_authority=?self.validator_name,
+                            error=?e,
+                            ?is_internal,
+                            "got an output for an invalid computation type",
+                        );
 
-                    return None;
+                        return None;
+                    }
                 };
 
                 // This can happen if the session is not in the active sessions,
-                // but we still want to store the message.
+                // but we still want to store the output.
                 // We will create a new session for it.
                 self.new_session(
                     &session_identifier,
@@ -1251,18 +1243,158 @@ impl DWalletMPCManager {
             }
         };
 
-        session.add_output(consensus_round, sender_party_id, output);
+        session.add_output(consensus_round, sender_party_id, output_report);
 
         let outputs_by_consensus_round = session.outputs_by_consensus_round().clone();
 
-        match self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round) {
-            Some((malicious_authorities, majority_vote)) => {
-                self.record_malicious_actors(&malicious_authorities);
+        if let Some((malicious_authorities, majority_vote)) =
+            self.build_outputs_to_finalize(&session_identifier, outputs_by_consensus_round)
+        {
+            self.record_malicious_actors(&malicious_authorities);
 
-                Some((malicious_authorities, majority_vote))
+            match majority_vote.clone() {
+                DWalletMPCOutputKind::Internal { output } => {
+                    self.handle_mpc_internal_output(session_identifier, output);
+                }
+                DWalletMPCOutputKind::External { .. } => {}
             }
-            None => None,
+
+            Some((malicious_authorities, majority_vote))
+        } else {
+            None
         }
+    }
+
+    fn handle_mpc_internal_output(
+        &mut self,
+        session_identifier: SessionIdentifier,
+        output: DWalletInternalMPCOutputKind,
+    ) {
+        match output {
+            DWalletInternalMPCOutputKind::InternalPresign {
+                output,
+                signature_algorithm,
+                session_sequence_number,
+                ..
+            } => match signature_algorithm {
+                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                    self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
+                        signature_algorithm,
+                        session_sequence_number,
+                        session_identifier,
+                        output,
+                    );
+                }
+                DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                    self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
+                        signature_algorithm,
+                        session_sequence_number,
+                        session_identifier,
+                        output,
+                    );
+                }
+                DWalletSignatureAlgorithm::EdDSA => {
+                    self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
+                        signature_algorithm,
+                        session_sequence_number,
+                        session_identifier,
+                        output,
+                    );
+                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                    self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
+                        signature_algorithm,
+                        session_sequence_number,
+                        session_identifier,
+                        output,
+                    );
+                }
+                DWalletSignatureAlgorithm::Taproot => {
+                    self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
+                        signature_algorithm,
+                        session_sequence_number,
+                        session_identifier,
+                        output,
+                    );
+                }
+            },
+            DWalletInternalMPCOutputKind::InternalSign { .. } => {
+                // Checkpoint signature storage will be added with internal checkpoint signing feature.
+                warn!(
+                    ?session_identifier,
+                    "received internal sign output but checkpoint signing is not yet enabled"
+                );
+            }
+        }
+    }
+
+    fn record_internal_presign_output<P: twopc_mpc::presign::Protocol>(
+        &mut self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_sequence_number: u64,
+        session_identifier: SessionIdentifier,
+        public_output: Vec<u8>,
+    ) {
+        let presigns = match bcs::from_bytes::<Vec<P::Presign>>(&public_output) {
+            Ok(presigns) => presigns,
+            Err(e) => {
+                error!(
+                    should_never_happen = true,
+                    error = ?e,
+                    "failed to deserialize an internal presign output"
+                );
+                return;
+            }
+        };
+
+        let serialized_presigns = match presigns
+            .into_iter()
+            .map(|presign| bcs::to_bytes(&presign))
+            .collect::<bcs::Result<Vec<_>>>()
+        {
+            Ok(presigns) => presigns,
+            Err(e) => {
+                error!(
+                    should_never_happen = true,
+                    error = ?e,
+                    "failed to serialize an internal presign output"
+                );
+                return;
+            }
+        };
+
+        let number_of_new_presigns = serialized_presigns.len();
+        let presign_size = serialized_presigns.first().map(|x| x.len()).unwrap_or(0);
+
+        if let Err(e) = self.epoch_store.insert_presigns(
+            signature_algorithm,
+            session_sequence_number,
+            session_identifier,
+            serialized_presigns,
+        ) {
+            error!(
+                error = ?e,
+                ?signature_algorithm,
+                ?session_sequence_number,
+                "failed to insert presigns into the epoch store"
+            );
+            return;
+        }
+
+        // TODO: no unwrap or?
+        let pool_new_size = self
+            .epoch_store
+            .presign_pool_size(signature_algorithm)
+            .unwrap_or(0);
+
+        info!(
+            ?number_of_new_presigns,
+            ?pool_new_size,
+            ?signature_algorithm,
+            ?session_sequence_number,
+            ?presign_size,
+            "Added presigns to the internal presign pool"
+        );
     }
 
     pub(crate) fn is_malicious_actor(&self, authority: &AuthorityName) -> bool {
@@ -1298,7 +1430,7 @@ impl DWalletMPCManager {
         &self,
         session_identifier: &SessionIdentifier,
         outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
-    ) -> Option<(HashSet<AuthorityName>, Vec<DWalletCheckpointMessageKind>)> {
+    ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
         let mut outputs_to_finalize: HashMap<PartyID, DWalletMPCSessionOutput> = HashMap::new();
 
         for (_, outputs) in outputs_by_consensus_round {
@@ -1360,5 +1492,22 @@ impl DWalletMPCManager {
                 );
             }
         };
+    }
+
+    /// Returns the number of cryptographic computations currently running.
+    pub fn running_computation_count(&self) -> usize {
+        self.cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations
+            .len()
+    }
+
+    /// Computes whether this validator is idle based on the number of ready-to-run
+    /// sessions plus currently running computations, compared to the threshold.
+    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
+        let number_of_executing_sessions = self.running_computation_count();
+        let total_session_count =
+            number_of_ready_to_advance_sessions + number_of_executing_sessions;
+        let threshold = self.protocol_config.idle_session_count_threshold();
+        total_session_count < threshold as usize
     }
 }

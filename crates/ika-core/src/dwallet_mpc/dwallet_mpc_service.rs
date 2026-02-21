@@ -25,9 +25,9 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
-#[cfg(test)]
+use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedPresignOutput};
+#[cfg(feature = "test-utils")]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
@@ -43,21 +43,22 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyState, InternalSessionsStatusUpdate, SessionIdentifier,
-    UserSecretKeyShareEventType,
+    DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyState, GlobalPresignRequest, InternalSessionsStatusUpdate,
+    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
@@ -89,6 +90,8 @@ pub struct DWalletMPCService {
     /// Is the network considered in an idle state?
     /// If so, we can process more internal presign sessions to make use of resources.
     network_is_idle: bool,
+    agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
+    processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
 }
@@ -156,11 +159,13 @@ impl DWalletMPCService {
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
+            agreed_global_presign_requests_queue: Vec::new(),
+            processed_global_presign_requests_session_identifiers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -174,7 +179,7 @@ impl DWalletMPCService {
     ) -> Self {
         DWalletMPCService {
             last_read_consensus_round: Some(0),
-            epoch_store,
+            epoch_store: epoch_store.clone(),
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
@@ -202,20 +207,33 @@ impl DWalletMPCService {
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
+            processed_global_presign_requests_session_identifiers: HashSet::new(),
+            agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-utils")]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
+    }
+
+    /// Test helper: receive and process completed cryptographic computations
+    /// without running the full service loop. This is useful for cleaning up
+    /// the `currently_running_cryptographic_computations` set after tests.
+    #[cfg(feature = "test-utils")]
+    pub(crate) fn receive_completed_computations(&mut self) {
+        let _ = self
+            .dwallet_mpc_manager
+            .cryptographic_computations_orchestrator
+            .receive_completed_computations(self.dwallet_mpc_metrics.clone());
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
@@ -315,24 +333,6 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
-    async fn process_cryptographic_computations(&mut self) {
-        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
-            warn!("No last read consensus round, cannot perform cryptographic computation");
-            return;
-        };
-
-        let (computation_results, is_idle) = self
-            .dwallet_mpc_manager
-            .perform_cryptographic_computation(last_read_consensus_round)
-            .await;
-
-        self.handle_computation_results_and_submit_to_consensus(computation_results)
-            .await;
-
-        // Send status update to consensus using the result from cryptographic computations.
-        self.send_status_update_to_consensus(is_idle).await;
-    }
-
     /// Send status update to consensus if there are unsent presign requests,
     /// idle status changed, or there is new network key data to send.
     async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
@@ -351,12 +351,7 @@ impl DWalletMPCService {
             all_key_data
                 .values()
                 .filter(|data| !self.sent_network_key_ids.contains(&data.id))
-                .filter(|data| {
-                    !matches!(
-                        data.state,
-                        AwaitingNetworkDKG
-                    )
-                })
+                .filter(|data| !matches!(data.state, AwaitingNetworkDKG))
                 .cloned()
                 .collect()
         };
@@ -396,6 +391,25 @@ impl DWalletMPCService {
                 self.sent_network_key_ids.insert(key_data.id);
             }
         }
+    }
+
+    async fn process_cryptographic_computations(&mut self) {
+        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
+            warn!("No last read consensus round, cannot perform cryptographic computation");
+            return;
+        };
+
+        let (computation_results, is_idle) = self
+            .dwallet_mpc_manager
+            .perform_cryptographic_computation(last_read_consensus_round)
+            .await;
+
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
+            .await;
+
+        // TODO: do this only if the status changed.
+        // Send status update to consensus using the result from cryptographic computations
+        self.send_status_update_to_consensus(is_idle).await;
     }
 
     async fn handle_new_requests(
@@ -513,7 +527,8 @@ impl DWalletMPCService {
             let mpc_outputs = self
                 .epoch_store
                 .next_dwallet_mpc_output(self.last_read_consensus_round);
-            let (mpc_outputs_consensus_round, mpc_outputs) = match mpc_outputs {
+
+            let (external_mpc_outputs_consensus_round, external_mpc_outputs) = match mpc_outputs {
                 Ok(mpc_outputs) => {
                     if let Some(mpc_outputs) = mpc_outputs {
                         mpc_outputs
@@ -532,22 +547,57 @@ impl DWalletMPCService {
                 }
             };
 
+            let mpc_outputs = self
+                .epoch_store
+                .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
+
+            let internal_mpc_outputs = match mpc_outputs {
+                Ok(Some((round, outputs))) => {
+                    // Validate round matches
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for internal MPC outputs"
+                        );
+                        panic!("consensus round mismatch for internal MPC outputs");
+                    }
+                    outputs
+                }
+                Ok(None) => {
+                    // No internal MPC outputs for this round - use empty list.
+                    // This can happen during initialization or when no internal outputs are generated.
+                    Vec::new()
+                }
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load DWallet MPC outputs from the local DB"
+                    );
+                    panic!("failed to load DWallet MPC outputs from the local DB");
+                }
+            };
+
             let verified_dwallet_checkpoint_messages = self
                 .epoch_store
                 .next_verified_dwallet_checkpoint_message(self.last_read_consensus_round);
-            let (
-                verified_dwallet_checkpoint_messages_consensus_round,
-                verified_dwallet_checkpoint_messages,
-            ) = match verified_dwallet_checkpoint_messages {
-                Ok(verified_dwallet_checkpoint_messages) => {
-                    if let Some(verified_dwallet_checkpoint_messages) =
-                        verified_dwallet_checkpoint_messages
-                    {
-                        verified_dwallet_checkpoint_messages
-                    } else {
-                        error!("failed to get verified dwallet checkpoint messages, None value");
-                        panic!("failed to get verified dwallet checkpoint messages, None value");
+            let verified_dwallet_checkpoint_messages = match verified_dwallet_checkpoint_messages {
+                Ok(Some((round, messages))) => {
+                    // Validate round matches
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for verified checkpoint messages"
+                        );
+                        panic!("consensus round mismatch for verified checkpoint messages");
                     }
+                    messages
+                }
+                Ok(None) => {
+                    // No verified checkpoint messages for this round - use empty list.
+                    Vec::new()
                 }
                 Err(e) => {
                     error!(
@@ -590,19 +640,15 @@ impl DWalletMPCService {
                 }
             };
 
-            if mpc_messages_consensus_round != mpc_outputs_consensus_round
-                || mpc_messages_consensus_round
-                    != verified_dwallet_checkpoint_messages_consensus_round
-            {
+            if mpc_messages_consensus_round != external_mpc_outputs_consensus_round {
                 error!(
                     ?mpc_messages_consensus_round,
-                    ?mpc_outputs_consensus_round,
-                    ?verified_dwallet_checkpoint_messages_consensus_round,
-                    "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
+                    ?external_mpc_outputs_consensus_round,
+                    "the consensus rounds of MPC messages and external MPC outputs do not match"
                 );
 
                 panic!(
-                    "the consensus rounds of MPC messages, MPC outputs and checkpoint messages do not match"
+                    "the consensus rounds of MPC messages and external MPC outputs do not match"
                 );
             }
 
@@ -624,13 +670,36 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_status_updates(consensus_round, status_updates)
             {
-                if self.network_is_idle != agreed_status.is_idle {
+                // Take only the requests we haven't agreed on yet, and haven't processed.
+                let new_global_presign_requests: Vec<_> = agreed_status
+                    .global_presign_requests
+                    .into_iter()
+                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
+                    .filter(|request| {
+                        !self
+                            .processed_global_presign_requests_session_identifiers
+                            .contains(&request.session_identifier)
+                    })
+                    .sorted_by(|a, b| {
+                        a.session_identifier
+                            .into_uint()
+                            .cmp(&b.session_identifier.into_uint())
+                    })
+                    .collect();
+
+                if self.network_is_idle != agreed_status.is_idle
+                    || !new_global_presign_requests.is_empty()
+                {
                     info!(
                         consensus_round,
                         is_idle = agreed_status.is_idle,
-                        "Network idle status changed"
+                        number_of_new_global_presign_requests = new_global_presign_requests.len(),
+                        "Agreed status changed"
                     );
+
                     self.network_is_idle = agreed_status.is_idle;
+                    self.agreed_global_presign_requests_queue
+                        .extend(new_global_presign_requests);
                 }
             }
 
@@ -656,9 +725,106 @@ impl DWalletMPCService {
                 .handle_consensus_round_messages(consensus_round, mpc_messages);
 
             // 5. Handle MPC outputs.
-            let (mut checkpoint_messages, completed_sessions) = self
+            let external_mpc_outputs = external_mpc_outputs
+                .into_iter()
+                .map(DWalletMPCOutputReport::External)
+                .collect();
+            let (agreed_external_mpc_outputs, completed_external_sessions) = self
                 .dwallet_mpc_manager
-                .handle_consensus_round_outputs(consensus_round, mpc_outputs);
+                .handle_consensus_round_outputs(consensus_round, external_mpc_outputs);
+
+            let internal_mpc_outputs = internal_mpc_outputs
+                .into_iter()
+                .map(DWalletMPCOutputReport::Internal)
+                .collect();
+            let (_, completed_internal_sessions) = self
+                .dwallet_mpc_manager
+                .handle_consensus_round_outputs(consensus_round, internal_mpc_outputs);
+
+            let completed_sessions: Vec<_> = completed_external_sessions
+                .into_iter()
+                .chain(completed_internal_sessions)
+                .collect();
+
+            // Handle global presign requests
+            let global_presign_checkpoint_messages = if !self
+                .agreed_global_presign_requests_queue
+                .is_empty()
+            {
+                let mut unprocessed_requests = Vec::new();
+                let mut global_presign_checkpoint_messages = Vec::new();
+                for request in self.agreed_global_presign_requests_queue.clone() {
+                    match self.epoch_store.pop_presign(
+                        request.signature_algorithm,
+                        request.dwallet_network_encryption_key_id,
+                    ) {
+                        Ok(Some((_presign_session_id, presign))) => {
+                            match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+                                Ok(presign) => {
+                                    info!(
+                                        request_session_id =? request.session_identifier,
+                                        presign_id =? request.presign_id,
+                                        session_sequence_number =? request.session_sequence_number,
+                                        "popped presign from internal pool for global presign request"
+                                    );
+
+                                    let checkpoint_message =
+                                        DWalletCheckpointMessageKind::RespondDWalletPresign(
+                                            PresignOutput {
+                                                presign,
+                                                dwallet_id: None,
+                                                presign_id: request.presign_id.to_vec(),
+                                                rejected: false,
+                                                session_sequence_number: request
+                                                    .session_sequence_number,
+                                            },
+                                        );
+
+                                    global_presign_checkpoint_messages.push(checkpoint_message);
+                                    self.processed_global_presign_requests_session_identifiers
+                                        .insert(request.session_identifier);
+                                }
+                                Err(e) => {
+                                    error!(
+                                        error=?e,
+                                        should_never_happen =? true,
+                                        "failed to serialize presign output"
+                                    );
+                                    unprocessed_requests.push(request);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // No presign available in internal pool
+                            unprocessed_requests.push(request);
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                should_never_happen =? true,
+                                "failed to pop presign from internal pool"
+                            );
+                            unprocessed_requests.push(request);
+                        }
+                    }
+                }
+
+                self.agreed_global_presign_requests_queue = unprocessed_requests;
+
+                global_presign_checkpoint_messages
+            } else {
+                Vec::new()
+            };
+
+            // Take back the external outputs' internal checkpoint messages
+            let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
+                .into_iter()
+                .flat_map(|output| match output {
+                    DWalletMPCOutputKind::External { output } => output,
+                    _ => vec![],
+                })
+                .chain(global_presign_checkpoint_messages)
+                .collect();
 
             // Add messages from the consensus output such as EndOfPublish.
             checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
@@ -678,6 +844,7 @@ impl DWalletMPCService {
                         "End of publish reached, no more dwallet checkpoints will be processed for this epoch"
                     );
                 }
+
                 if !checkpoint_messages.is_empty() {
                     let pending_checkpoint =
                         PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
@@ -771,7 +938,7 @@ impl DWalletMPCService {
 
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
-                    should_never_happen=true,
+                    should_never_happen =? true,
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
@@ -833,6 +1000,7 @@ impl DWalletMPCService {
                                 ?malicious_authorities,
                             "malicious parties detected upon MPC session finalize",
                         );
+
                         malicious_authorities
                     } else {
                         vec![]
@@ -840,35 +1008,49 @@ impl DWalletMPCService {
 
                     let rejected = false;
 
-                    let consensus_message = self.new_dwallet_mpc_output(
+                    if let Some(consensus_message) = self.new_dwallet_mpc_output(
                         session_identifier,
                         &request,
                         public_output_value,
                         malicious_authorities,
                         rejected,
-                    );
-
-                    if let Err(err) = consensus_adapter
-                        .submit_to_consensus(&[consensus_message])
-                        .await
-                    {
-                        error!(
-                            ?session_identifier,
-                            validator=?validator_name,
-                            error=?err,
-                            "failed to submit an MPC output message to consensus",
-                        );
+                    ) {
+                        if let Err(err) = consensus_adapter
+                            .submit_to_consensus(&[consensus_message])
+                            .await
+                        {
+                            error!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                error=?err,
+                                "failed to submit an MPC output message to consensus",
+                            );
+                        }
                     }
                 }
                 Err(err) => {
-                    self.submit_failed_session(
-                        session_identifier,
-                        &request,
-                        &validator_name.to_string(),
-                        party_id,
-                        err,
-                    )
-                    .await;
+                    match request.session_type {
+                        // TODO: InternalSign
+                        SessionType::InternalPresign => {
+                            // TODO: nothing to do here actually right?
+                            error!(
+                                should_never_happen =? true,
+                                session_identifier=?session.session_identifier,
+                                error=?err,
+                                "internal presign session failed",
+                            );
+                        }
+                        _ => {
+                            self.submit_failed_session(
+                                session_identifier,
+                                &request,
+                                &validator_name.to_string(),
+                                party_id,
+                                err,
+                            )
+                            .await;
+                        }
+                    }
                 }
             }
         }
@@ -918,19 +1100,20 @@ impl DWalletMPCService {
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
         let rejected = true;
 
-        let consensus_message =
-            self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected);
-
-        if let Err(err) = consensus_adapter
-            .submit_to_consensus(&[consensus_message])
-            .await
+        if let Some(consensus_message) =
+            self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected)
         {
-            error!(
-                ?session_identifier,
-                validator=?validator_name,
-                error=?err,
-                "failed to submit an MPC SessionFailed message to consensus"
-            );
+            if let Err(err) = consensus_adapter
+                .submit_to_consensus(&[consensus_message])
+                .await
+            {
+                error!(
+                    ?session_identifier,
+                    validator=?validator_name,
+                    error=?err,
+                    "failed to submit an MPC SessionFailed message to consensus"
+                );
+            }
         }
     }
 
@@ -954,19 +1137,72 @@ impl DWalletMPCService {
         output: Vec<u8>,
         malicious_authorities: Vec<AuthorityName>,
         rejected: bool,
-    ) -> ConsensusTransaction {
-        let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
-            &session_identifier,
-            session_request,
-            output,
-            rejected,
-        );
-        ConsensusTransaction::new_dwallet_mpc_output(
-            self.name,
-            session_identifier,
-            output,
-            malicious_authorities,
-        )
+    ) -> Option<ConsensusTransaction> {
+        match session_request.session_type {
+            SessionType::InternalPresign => match &session_request.protocol_data {
+                ProtocolData::InternalPresign { data, .. } => {
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalPresign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                            session_sequence_number: session_request.session_sequence_number,
+                        },
+                        malicious_authorities,
+                    ))
+                }
+                _ => {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session_identifier,
+                        "mismatch between session type and protocol data during MPC output creation",
+                    );
+
+                    None
+                }
+            },
+            SessionType::InternalSign => match &session_request.protocol_data {
+                ProtocolData::InternalSign { data, .. } => {
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalSign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                            hash_scheme: data.hash_scheme,
+                            checkpoint_sequence_number: session_request.session_sequence_number,
+                        },
+                        malicious_authorities,
+                    ))
+                }
+                _ => {
+                    error!(
+                        should_never_happen =? true,
+                        session_identifier=?session_identifier,
+                        "mismatch between session type and protocol data during MPC output creation",
+                    );
+
+                    None
+                }
+            },
+            SessionType::User | SessionType::System => {
+                let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
+                    &session_identifier,
+                    session_request,
+                    output,
+                    rejected,
+                );
+                Some(ConsensusTransaction::new_dwallet_mpc_output(
+                    self.name,
+                    session_identifier,
+                    output,
+                    malicious_authorities,
+                ))
+            }
+        }
     }
 
     fn build_dwallet_checkpoint_message_kinds_from_output(
@@ -1060,6 +1296,7 @@ impl DWalletMPCService {
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
                 });
+
                 vec![tx]
             }
             ProtocolData::InternalSign { .. } => {
@@ -1083,6 +1320,7 @@ impl DWalletMPCService {
                     rejected,
                     session_sequence_number: session_request.session_sequence_number,
                 });
+
                 vec![tx]
             }
             ProtocolData::EncryptedShareVerification {

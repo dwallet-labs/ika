@@ -210,13 +210,16 @@ pub enum ProtocolData {
 
 impl ProtocolData {
     /// Returns `None` if this request is not a global presign one (either not a presign, or a targeted presign),
-    /// and `Some((presign_id, curve, signature_algorithm))` if it is.
-    pub fn is_global_presign(&self) -> Option<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm)> {
+    /// and `Some((presign_id, curve, signature_algorithm, network_key_id))` if it is.
+    pub fn is_global_presign(
+        &self,
+    ) -> Option<(ObjectID, DWalletCurve, DWalletSignatureAlgorithm, ObjectID)> {
         match self {
             ProtocolData::Presign {
                 data,
                 presign_id,
                 dwallet_public_output,
+                dwallet_network_encryption_key_id,
                 ..
             } => {
                 let is_global_presign = match data.signature_algorithm {
@@ -228,7 +231,12 @@ impl ProtocolData {
                 };
 
                 if is_global_presign {
-                    Some((*presign_id, data.curve, data.signature_algorithm))
+                    Some((
+                        *presign_id,
+                        data.curve,
+                        data.signature_algorithm,
+                        *dwallet_network_encryption_key_id,
+                    ))
                 } else {
                     None
                 }
