@@ -63,6 +63,7 @@ async fn test_presign_pool_state_preserved() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
                 presigns,
@@ -73,7 +74,7 @@ async fn test_presign_pool_state_preserved() {
     // Verify all epoch stores have the presigns
     for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
 
         info!(
@@ -107,7 +108,7 @@ async fn test_presign_pool_state_preserved() {
     // (simulating that the persistent state survives across service loops)
     for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
 
         info!(
@@ -363,6 +364,7 @@ async fn test_epoch_store_presign_pool_operations() {
     test_epoch_store
         .insert_presigns(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
+            ObjectID::ZERO, // dwallet_network_encryption_key_id
             1,
             test_session_id_one,
             presigns.clone(),
@@ -370,7 +372,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .expect("Failed to insert presigns");
 
     let pool_size = test_epoch_store
-        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("Failed to get pool size");
 
     assert_eq!(pool_size, 10, "Pool should have 10 presigns");
@@ -385,7 +387,7 @@ async fn test_epoch_store_presign_pool_operations() {
     info!("Consumed presign: {:?}", consumed.map(|(_, p)| p.len()));
 
     let pool_size_after_consume = test_epoch_store
-        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("Failed to get pool size");
 
     assert_eq!(
@@ -400,6 +402,7 @@ async fn test_epoch_store_presign_pool_operations() {
     test_epoch_store
         .insert_presigns(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
+            ObjectID::ZERO, // dwallet_network_encryption_key_id
             2,
             test_session_id_two,
             more_presigns,
@@ -407,7 +410,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .expect("Failed to insert more presigns");
 
     let final_pool_size = test_epoch_store
-        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("Failed to get pool size");
 
     assert_eq!(final_pool_size, 14, "Pool should have 14 presigns");
@@ -417,6 +420,7 @@ async fn test_epoch_store_presign_pool_operations() {
     test_epoch_store
         .insert_presigns(
             DWalletSignatureAlgorithm::EdDSA,
+            ObjectID::ZERO, // dwallet_network_encryption_key_id
             1,
             test_session_id_three,
             vec![vec![100u8; 32]; 5],
@@ -424,7 +428,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .expect("Failed to insert EdDSA presigns");
 
     let eddsa_pool_size = test_epoch_store
-        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA)
+        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, ObjectID::ZERO)
         .expect("Failed to get EdDSA pool size");
 
     assert_eq!(eddsa_pool_size, 5, "EdDSA pool should have 5 presigns");
@@ -432,7 +436,7 @@ async fn test_epoch_store_presign_pool_operations() {
 
     // Verify pools are independent
     let ecdsa_size = test_epoch_store
-        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("Failed to get ECDSA pool size");
 
     assert_eq!(ecdsa_size, 14, "ECDSA pool should be unchanged");

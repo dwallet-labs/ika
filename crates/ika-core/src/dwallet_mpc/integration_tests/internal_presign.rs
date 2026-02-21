@@ -192,6 +192,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
                 presigns,
@@ -202,7 +203,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // Verify pool is at minimum size
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
         assert_eq!(pool_size, min_pool_size, "Pool should be at minimum size");
     }
@@ -245,7 +246,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // (Some internal presigns might still be created for other algorithms)
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
         info!(
             "Final ECDSASecp256k1 pool size: {} (min: {})",

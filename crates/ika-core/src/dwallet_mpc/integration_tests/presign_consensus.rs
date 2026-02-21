@@ -61,6 +61,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
                 vec![mock_presign_data.clone(); 5],
@@ -186,6 +187,7 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
                 vec![mock_presign_data.clone(); 10],

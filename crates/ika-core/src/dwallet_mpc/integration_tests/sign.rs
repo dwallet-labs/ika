@@ -491,6 +491,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1, // session_sequence_number for internal presigns
                 mock_session_identifier,
                 vec![mock_presign_data.clone()],
@@ -501,7 +502,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
     // Verify pool has the presign
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
         assert_eq!(pool_size, 1, "Pool should have one presign");
     }
@@ -589,7 +590,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
     // Verify the pool was consumed
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
-            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1)
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
             .expect("Failed to get pool size");
         assert_eq!(
             pool_size, 0,

@@ -93,6 +93,7 @@ async fn test_internal_checkpoint_sign_flow() {
         epoch_store
             .insert_presigns(
                 signature_algorithm,
+                ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
                 vec![mock_presign_data.clone()],
@@ -103,7 +104,7 @@ async fn test_internal_checkpoint_sign_flow() {
     // Verify pool has the presign
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
-            .presign_pool_size(signature_algorithm)
+            .presign_pool_size(signature_algorithm, ObjectID::ZERO)
             .expect("Failed to get pool size");
         assert_eq!(pool_size, 1, "Pool should have one presign");
         info!(

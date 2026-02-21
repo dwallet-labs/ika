@@ -38,8 +38,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
     pub(crate) round_to_status_updates:
         Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
-    /// Presign pool keyed by signature algorithm
-    pub(crate) presign_pools: Arc<Mutex<HashMap<DWalletSignatureAlgorithm, Vec<Vec<u8>>>>>,
+    /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
+    /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
+    pub(crate) presign_pools: Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -159,29 +160,42 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn insert_presigns(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _dwallet_network_encryption_key_id: ObjectID,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
         _session_sequence_number: u64,
-        _session_identifier: SessionIdentifier,
-        _presigns: Vec<Vec<u8>>,
+        session_identifier: SessionIdentifier,
+        presigns: Vec<Vec<u8>>,
     ) -> IkaResult<()> {
+        let mut pools = self.presign_pools.lock().unwrap();
+        let key = (signature_algorithm, dwallet_network_encryption_key_id);
+        let pool = pools.entry(key).or_insert_with(Vec::new);
+
+        // Add each presign with the session identifier
+        for presign in presigns {
+            pool.push((session_identifier, presign));
+        }
+
         Ok(())
     }
 
     fn presign_pool_size(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _dwallet_network_encryption_key_id: ObjectID,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<u64> {
-        Ok(0)
+        let pools = self.presign_pools.lock().unwrap();
+        let key = (signature_algorithm, dwallet_network_encryption_key_id);
+        Ok(pools.get(&key).map_or(0, |pool| pool.len() as u64))
     }
 
     fn pop_presign(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _dwallet_network_encryption_key_id: ObjectID,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
-        Ok(None)
+        let mut pools = self.presign_pools.lock().unwrap();
+        let key = (signature_algorithm, dwallet_network_encryption_key_id);
+        Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
     }
 
     fn mark_presign_as_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<()> {
