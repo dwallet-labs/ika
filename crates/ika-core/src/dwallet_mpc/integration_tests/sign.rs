@@ -492,7 +492,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
                 ObjectID::ZERO, // dwallet_network_encryption_key_id
-                1, // session_sequence_number for internal presigns
+                1,              // session_sequence_number for internal presigns
                 mock_session_identifier,
                 vec![mock_presign_data.clone()],
             )

@@ -40,7 +40,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
         Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
-    pub(crate) presign_pools: Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>>,
+    pub(crate) presign_pools: Arc<
+        Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>,
+    >,
 }
 
 pub(crate) struct IntegrationTestState {

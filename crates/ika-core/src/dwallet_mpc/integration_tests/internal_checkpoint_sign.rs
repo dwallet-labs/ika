@@ -20,6 +20,7 @@ use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use sui_types::base_types::ObjectID;
 use tracing::info;
 
 /// Test that internal checkpoint signing works end-to-end:
