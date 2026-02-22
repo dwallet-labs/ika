@@ -19,7 +19,9 @@ use crate::dwallet_mpc::{
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureAlgorithm, VersionedPresignOutput,
+};
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -844,6 +846,20 @@ impl DWalletMPCManager {
             return false;
         }
 
+        // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
+        // with the sign session input path, which expects this wrapping.
+        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+            Ok(wrapped) => wrapped,
+            Err(e) => {
+                error!(
+                    checkpoint_sequence_number,
+                    error = ?e,
+                    "Failed to wrap presign in VersionedPresignOutput for internal sign"
+                );
+                return false;
+            }
+        };
+
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
             checkpoint_sequence_number,
@@ -853,7 +869,7 @@ impl DWalletMPCManager {
             dwallet_network_encryption_key_id,
             &network_dkg_output_bytes,
             checkpoint_message.clone(),
-            presign,
+            wrapped_presign,
         );
 
         let session_identifier = request.session_identifier;
