@@ -1030,9 +1030,7 @@ impl DWalletMPCService {
                 }
                 Err(err) => {
                     match request.session_type {
-                        // TODO: InternalSign
                         SessionType::InternalPresign => {
-                            // TODO: nothing to do here actually right?
                             error!(
                                 should_never_happen =? true,
                                 session_identifier=?session.session_identifier,
