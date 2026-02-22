@@ -348,7 +348,6 @@ impl DWalletMPCService {
         self.handle_computation_results_and_submit_to_consensus(computation_results)
             .await;
 
-        // TODO: do this only if the status changed.
         // Send status update to consensus using the result from cryptographic computations
         self.send_status_update_to_consensus(is_idle).await;
     }
