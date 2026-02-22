@@ -1028,28 +1028,26 @@ impl DWalletMPCService {
                         }
                     }
                 }
-                Err(err) => {
-                    match request.session_type {
-                        SessionType::InternalPresign => {
-                            error!(
-                                should_never_happen =? true,
-                                session_identifier=?session.session_identifier,
-                                error=?err,
-                                "internal presign session failed",
-                            );
-                        }
-                        _ => {
-                            self.submit_failed_session(
-                                session_identifier,
-                                &request,
-                                &validator_name.to_string(),
-                                party_id,
-                                err,
-                            )
-                            .await;
-                        }
+                Err(err) => match request.session_type {
+                    SessionType::InternalPresign => {
+                        error!(
+                            should_never_happen =? true,
+                            session_identifier=?session.session_identifier,
+                            error=?err,
+                            "internal presign session failed",
+                        );
                     }
-                }
+                    _ => {
+                        self.submit_failed_session(
+                            session_identifier,
+                            &request,
+                            &validator_name.to_string(),
+                            party_id,
+                            err,
+                        )
+                        .await;
+                    }
+                },
             }
         }
     }
