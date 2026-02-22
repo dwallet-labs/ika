@@ -874,12 +874,14 @@ impl DWalletMPCManager {
         &mut self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
     ) -> Option<SessionIdentifier> {
         // Assign the presign from internal pool to assigned pool
         match self.epoch_store.assign_presign(
             signature_algorithm,
             dwallet_network_encryption_key_id,
+            user_verification_key,
             dwallet_id,
             self.epoch_id,
         ) {

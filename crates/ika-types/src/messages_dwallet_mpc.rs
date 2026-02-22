@@ -160,6 +160,9 @@ pub struct AssignedPresign {
     pub session_identifier: SessionIdentifier,
     /// The actual presign data.
     pub presign: Vec<u8>,
+    /// The user's Ed25519 verification key for signature verification.
+    /// TODO: Placeholder - will be populated when user verification is implemented.
+    pub user_verification_key: Option<Vec<u8>>,
     /// The dwallet ID (for non-global dwallets like ECDSA imported wallets and v1 dwallets).
     pub dwallet_id: Option<ObjectID>,
     /// The epoch when this presign was assigned (for expiry).

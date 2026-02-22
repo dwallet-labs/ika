@@ -293,6 +293,7 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>>;
@@ -471,6 +472,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>> {
@@ -478,6 +480,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         tables.assign_presign(
             signature_algorithm,
             dwallet_network_encryption_key_id,
+            user_verification_key,
             dwallet_id,
             current_epoch,
         )
@@ -967,6 +970,7 @@ impl AuthorityEpochTables {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>> {
@@ -981,6 +985,7 @@ impl AuthorityEpochTables {
         let assigned_presign = AssignedPresign {
             session_identifier,
             presign,
+            user_verification_key,
             dwallet_id,
             assigned_epoch: current_epoch,
         };
