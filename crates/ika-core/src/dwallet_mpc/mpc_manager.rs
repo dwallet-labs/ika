@@ -1429,7 +1429,6 @@ impl DWalletMPCManager {
             return;
         }
 
-        // TODO: no unwrap or?
         let pool_new_size = self
             .epoch_store
             .presign_pool_size(signature_algorithm, dwallet_network_encryption_key_id)
@@ -1518,6 +1517,14 @@ impl DWalletMPCManager {
             session.mark_mpc_session_as_completed();
             session.clear_data();
         }
+    }
+
+    pub(crate) fn mark_global_presign_request_fulfilled(
+        &mut self,
+        session_identifier: SessionIdentifier,
+    ) {
+        self.completed_presign_session_identifiers
+            .insert(session_identifier);
     }
 
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
