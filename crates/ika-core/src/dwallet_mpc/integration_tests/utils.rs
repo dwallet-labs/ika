@@ -219,8 +219,8 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         _signature_algorithm: DWalletSignatureAlgorithm,
         _dwallet_network_encryption_key_id: ObjectID,
-        _dwallet_id: Option<ObjectID>,
         _user_verification_key: Option<Vec<u8>>,
+        _dwallet_id: Option<ObjectID>,
         _current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>> {
         Ok(None)

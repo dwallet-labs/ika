@@ -25,9 +25,10 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
+use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
-use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedPresignOutput};
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
@@ -51,14 +52,14 @@ use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
@@ -165,7 +166,7 @@ impl DWalletMPCService {
         }
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -213,13 +214,13 @@ impl DWalletMPCService {
         }
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
@@ -228,7 +229,7 @@ impl DWalletMPCService {
     /// Test helper: receive and process completed cryptographic computations
     /// without running the full service loop. This is useful for cleaning up
     /// the `currently_running_cryptographic_computations` set after tests.
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn receive_completed_computations(&mut self) {
         let _ = self
             .dwallet_mpc_manager
@@ -333,6 +334,25 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
+    async fn process_cryptographic_computations(&mut self) {
+        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
+            warn!("No last read consensus round, cannot perform cryptographic computation");
+            return;
+        };
+
+        let (computation_results, is_idle) = self
+            .dwallet_mpc_manager
+            .perform_cryptographic_computation(last_read_consensus_round)
+            .await;
+
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
+            .await;
+
+        // TODO: do this only if the status changed.
+        // Send status update to consensus using the result from cryptographic computations
+        self.send_status_update_to_consensus(is_idle).await;
+    }
+
     /// Send status update to consensus if there are unsent presign requests,
     /// idle status changed, or there is new network key data to send.
     async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
@@ -391,25 +411,6 @@ impl DWalletMPCService {
                 self.sent_network_key_ids.insert(key_data.id);
             }
         }
-    }
-
-    async fn process_cryptographic_computations(&mut self) {
-        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
-            warn!("No last read consensus round, cannot perform cryptographic computation");
-            return;
-        };
-
-        let (computation_results, is_idle) = self
-            .dwallet_mpc_manager
-            .perform_cryptographic_computation(last_read_consensus_round)
-            .await;
-
-        self.handle_computation_results_and_submit_to_consensus(computation_results)
-            .await;
-
-        // TODO: do this only if the status changed.
-        // Send status update to consensus using the result from cryptographic computations
-        self.send_status_update_to_consensus(is_idle).await;
     }
 
     async fn handle_new_requests(

@@ -100,16 +100,6 @@ pub(crate) struct DWalletMPCManager {
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
 
-    // The sequence number of the next internal presign session.
-    // Starts from 1 in every epoch, and increases as they are spawned.
-    // Different epochs will see repeating values of this variable,
-    // but that is safe as they are synced within an epoch and
-    // the session identifier is derived from the epoch as well.
-    next_internal_presign_sequence_number: u64,
-
-    /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-
     /// Tracks the idle status of each party, overwritten on each status update.
     /// At the end of processing status updates for a consensus round, we majority vote
     /// to determine the network's idle status.
@@ -137,6 +127,16 @@ pub(crate) struct DWalletMPCManager {
 
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
+    // The sequence number of the next internal presign session.
+    // Starts from 1 in every epoch, and increases as they are spawned.
+    // Different epochs will see repeating values of this variable,
+    // but that is safe as they are synced within an epoch and
+    // the session identifier is derived from the epoch as well.
+    next_internal_presign_sequence_number: u64,
+
+    /// The epoch store for persisting presign pools to disk.
+    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 }
 
 impl DWalletMPCManager {
@@ -226,8 +226,6 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
-            next_internal_presign_sequence_number: 1,
-            epoch_store,
             idle_status_by_party: HashMap::new(),
             user_requests_of_internal_resources: HashMap::new(),
             completed_presign_session_identifiers: HashSet::new(),
@@ -235,6 +233,8 @@ impl DWalletMPCManager {
             sent_presign_requests: HashSet::new(),
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
+            next_internal_presign_sequence_number: 1,
+            epoch_store,
         })
     }
 
@@ -453,6 +453,23 @@ impl DWalletMPCManager {
             })
             .cloned()
             .collect()
+    }
+
+    /// Returns the number of currently running computations.
+    pub fn running_computation_count(&self) -> usize {
+        self.cryptographic_computations_orchestrator
+            .currently_running_cryptographic_computations
+            .len()
+    }
+
+    /// Computes whether this validator is idle based on the number of ready-to-run
+    /// sessions plus currently running computations, compared to the threshold.
+    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
+        let number_of_executing_sessions = self.running_computation_count();
+        let total_session_count =
+            number_of_ready_to_advance_sessions + number_of_executing_sessions;
+        let threshold = self.protocol_config.idle_session_count_threshold();
+        total_session_count < threshold as usize
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -879,15 +896,15 @@ impl DWalletMPCManager {
         &mut self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-        dwallet_id: Option<ObjectID>,
         user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
     ) -> Option<SessionIdentifier> {
         // Assign the presign from internal pool to assigned pool
         match self.epoch_store.assign_presign(
             signature_algorithm,
             dwallet_network_encryption_key_id,
-            dwallet_id,
             user_verification_key,
+            dwallet_id,
             self.epoch_id,
         ) {
             Ok(Some(session_id)) => {
@@ -1507,22 +1524,5 @@ impl DWalletMPCManager {
                 );
             }
         };
-    }
-
-    /// Returns the number of cryptographic computations currently running.
-    pub fn running_computation_count(&self) -> usize {
-        self.cryptographic_computations_orchestrator
-            .currently_running_cryptographic_computations
-            .len()
-    }
-
-    /// Computes whether this validator is idle based on the number of ready-to-run
-    /// sessions plus currently running computations, compared to the threshold.
-    pub fn compute_is_idle(&self, number_of_ready_to_advance_sessions: usize) -> bool {
-        let number_of_executing_sessions = self.running_computation_count();
-        let total_session_count =
-            number_of_ready_to_advance_sessions + number_of_executing_sessions;
-        let threshold = self.protocol_config.idle_session_count_threshold();
-        total_session_count < threshold as usize
     }
 }
