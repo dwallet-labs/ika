@@ -615,40 +615,45 @@ impl DWalletMPCManager {
                         && curve == checkpoint_curve
                         && signature_algorithm == checkpoint_algorithm;
 
-                    let (minimal_pool_size, consensus_round_delay, sessions_to_instantiate) =
-                        if is_checkpointing_presign {
-                            (
-                                self.protocol_config.checkpoint_presign_pool_minimum_size(),
-                                self.protocol_config
-                                    .checkpoint_presign_consensus_round_delay(),
-                                self.protocol_config
-                                    .checkpoint_presign_sessions_to_instantiate(),
-                            )
-                        } else {
-                            (
-                                self.protocol_config.get_internal_presign_pool_minimum_size(
+                    let (
+                        minimal_pool_size,
+                        maximum_pool_size,
+                        consensus_round_delay,
+                        sessions_to_instantiate,
+                    ) = if is_checkpointing_presign {
+                        (
+                            self.protocol_config.checkpoint_presign_pool_minimum_size(),
+                            self.protocol_config.checkpoint_presign_pool_maximum_size(),
+                            self.protocol_config
+                                .checkpoint_presign_consensus_round_delay(),
+                            self.protocol_config
+                                .checkpoint_presign_sessions_to_instantiate(),
+                        )
+                    } else {
+                        (
+                            self.protocol_config
+                                .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
+                            self.protocol_config
+                                .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
+                            self.protocol_config
+                                .get_internal_presign_consensus_round_delay(
                                     curve,
                                     signature_algorithm,
                                 ),
-                                self.protocol_config
-                                    .get_internal_presign_consensus_round_delay(
-                                        curve,
-                                        signature_algorithm,
-                                    ),
-                                self.protocol_config
-                                    .get_internal_presign_sessions_to_instantiate(
-                                        curve,
-                                        signature_algorithm,
-                                    ),
-                            )
-                        };
+                            self.protocol_config
+                                .get_internal_presign_sessions_to_instantiate(
+                                    curve,
+                                    signature_algorithm,
+                                ),
+                        )
+                    };
 
                     let current_pool_size =
                         self.internal_presign_pool_size(key_id, curve, signature_algorithm);
 
                     if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
                         && current_pool_size < minimal_pool_size)
-                        || network_is_idle
+                        || (network_is_idle && current_pool_size < maximum_pool_size)
                     {
                         for _ in 1..=sessions_to_instantiate {
                             self.instantiate_internal_presign_session(
@@ -875,12 +880,14 @@ impl DWalletMPCManager {
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
         dwallet_id: Option<ObjectID>,
+        user_verification_key: Option<Vec<u8>>,
     ) -> Option<SessionIdentifier> {
         // Assign the presign from internal pool to assigned pool
         match self.epoch_store.assign_presign(
             signature_algorithm,
             dwallet_network_encryption_key_id,
             dwallet_id,
+            user_verification_key,
             self.epoch_id,
         ) {
             Ok(Some(session_id)) => {
@@ -1275,11 +1282,13 @@ impl DWalletMPCManager {
                 output,
                 signature_algorithm,
                 session_sequence_number,
+                dwallet_network_encryption_key_id,
                 ..
             } => match signature_algorithm {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
                         signature_algorithm,
+                        dwallet_network_encryption_key_id,
                         session_sequence_number,
                         session_identifier,
                         output,
@@ -1288,6 +1297,7 @@ impl DWalletMPCManager {
                 DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                     self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
                         signature_algorithm,
+                        dwallet_network_encryption_key_id,
                         session_sequence_number,
                         session_identifier,
                         output,
@@ -1296,6 +1306,7 @@ impl DWalletMPCManager {
                 DWalletSignatureAlgorithm::EdDSA => {
                     self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
                         signature_algorithm,
+                        dwallet_network_encryption_key_id,
                         session_sequence_number,
                         session_identifier,
                         output,
@@ -1304,6 +1315,7 @@ impl DWalletMPCManager {
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
                         signature_algorithm,
+                        dwallet_network_encryption_key_id,
                         session_sequence_number,
                         session_identifier,
                         output,
@@ -1312,6 +1324,7 @@ impl DWalletMPCManager {
                 DWalletSignatureAlgorithm::Taproot => {
                     self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
                         signature_algorithm,
+                        dwallet_network_encryption_key_id,
                         session_sequence_number,
                         session_identifier,
                         output,
@@ -1331,6 +1344,7 @@ impl DWalletMPCManager {
     fn record_internal_presign_output<P: twopc_mpc::presign::Protocol>(
         &mut self,
         signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
         session_sequence_number: u64,
         session_identifier: SessionIdentifier,
         public_output: Vec<u8>,
@@ -1368,6 +1382,7 @@ impl DWalletMPCManager {
 
         if let Err(e) = self.epoch_store.insert_presigns(
             signature_algorithm,
+            dwallet_network_encryption_key_id,
             session_sequence_number,
             session_identifier,
             serialized_presigns,
@@ -1384,7 +1399,7 @@ impl DWalletMPCManager {
         // TODO: no unwrap or?
         let pool_new_size = self
             .epoch_store
-            .presign_pool_size(signature_algorithm)
+            .presign_pool_size(signature_algorithm, dwallet_network_encryption_key_id)
             .unwrap_or(0);
 
         info!(

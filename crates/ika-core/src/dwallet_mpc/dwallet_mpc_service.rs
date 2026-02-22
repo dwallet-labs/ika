@@ -1140,19 +1140,21 @@ impl DWalletMPCService {
     ) -> Option<ConsensusTransaction> {
         match session_request.session_type {
             SessionType::InternalPresign => match &session_request.protocol_data {
-                ProtocolData::InternalPresign { data, .. } => {
-                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
-                        self.name,
-                        session_identifier,
-                        DWalletInternalMPCOutputKind::InternalPresign {
-                            output,
-                            curve: data.curve,
-                            signature_algorithm: data.signature_algorithm,
-                            session_sequence_number: session_request.session_sequence_number,
-                        },
-                        malicious_authorities,
-                    ))
-                }
+                ProtocolData::InternalPresign {
+                    data,
+                    dwallet_network_encryption_key_id,
+                } => Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                    self.name,
+                    session_identifier,
+                    DWalletInternalMPCOutputKind::InternalPresign {
+                        output,
+                        curve: data.curve,
+                        signature_algorithm: data.signature_algorithm,
+                        session_sequence_number: session_request.session_sequence_number,
+                        dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
+                    },
+                    malicious_authorities,
+                )),
                 _ => {
                     error!(
                         should_never_happen =? true,
