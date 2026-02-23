@@ -351,12 +351,7 @@ impl DWalletMPCService {
             all_key_data
                 .values()
                 .filter(|data| !self.sent_network_key_ids.contains(&data.id))
-                .filter(|data| {
-                    !matches!(
-                        data.state,
-                        AwaitingNetworkDKG
-                    )
-                })
+                .filter(|data| !matches!(data.state, AwaitingNetworkDKG))
                 .cloned()
                 .collect()
         };
