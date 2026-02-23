@@ -92,7 +92,7 @@ pub struct DWalletMPCService {
     /// If so, we can process more internal presign sessions to make use of resources.
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
-    processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
+    processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
 }
@@ -161,7 +161,7 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
-            processed_global_presign_requests_session_identifiers: HashSet::new(),
+            processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
         }
     }
@@ -208,7 +208,7 @@ impl DWalletMPCService {
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
-            processed_global_presign_requests_session_identifiers: HashSet::new(),
+            processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
         }
@@ -748,11 +748,10 @@ impl DWalletMPCService {
                 // Use retain to keep only unprocessed requests in the queue
                 self.agreed_global_presign_requests_queue.retain(|request| {
                     if self
-                            .processed_global_presign_requests_session_identifiers
-                            .contains(&request.session_identifier) {
-                        // just an extra precaution check: if we already assigned an external presign for this session,
-                        // don't assign another remove from queue (return false)
-                        // TODO: use sequence number not session identifier
+                            .processed_global_presign_sequence_numbers
+                            .contains(&request.session_sequence_number) {
+                        // Extra precaution: if we already assigned an external presign for this
+                        // sequence number, don't assign another — remove from queue (return false).
                         return false;
                     }
 
@@ -783,11 +782,11 @@ impl DWalletMPCService {
                                         );
 
                                     global_presign_checkpoint_messages.push(checkpoint_message);
-                                    self.processed_global_presign_requests_session_identifiers
-                                        .insert(request.session_identifier);
+                                    self.processed_global_presign_sequence_numbers
+                                        .insert(request.session_sequence_number);
                                     // Mark this request as fulfilled in the manager to skip future voting
                                     self.dwallet_mpc_manager
-                                        .mark_global_presign_request_fulfilled(request.session_identifier);
+                                        .mark_global_presign_request_fulfilled(request.session_sequence_number);
 
                                     // Successfully processed - remove from queue (return false)
                                     false

@@ -107,21 +107,21 @@ pub(crate) struct DWalletMPCManager {
     /// to determine the network's idle status.
     idle_status_by_party: HashMap<PartyID, bool>,
 
-    /// Tracks which parties have seen each presign request.
-    /// When a presign request reaches majority, it's moved to `completed_presign_session_identifiers`.
-    user_requests_of_internal_resources: HashMap<SessionIdentifier, HashSet<PartyID>>,
+    /// Tracks which parties have seen each presign request, keyed by sequence number.
+    /// When a presign request reaches majority, it's moved to `completed_presign_sequence_numbers`.
+    presign_request_votes: HashMap<u64, HashSet<PartyID>>,
 
-    /// Session identifiers of presign requests that have reached majority vote.
+    /// Sequence numbers of presign requests that have reached majority vote.
     /// Once completed, we don't record new votes for these requests.
-    completed_presign_session_identifiers: HashSet<SessionIdentifier>,
+    completed_presign_sequence_numbers: HashSet<u64>,
 
     /// Global presign requests collected from Sui events, to be broadcast in status updates.
     pub(crate) global_presign_requests: Vec<GlobalPresignRequest>,
 
-    /// Session identifiers of presign requests that have already been sent through consensus.
+    /// Sequence numbers of presign requests that have already been sent through consensus.
     /// When we receive our own status update back from consensus, we mark those requests as sent.
     /// This prevents sending the same request multiple times.
-    sent_presign_requests: HashSet<SessionIdentifier>,
+    sent_presign_sequence_numbers: HashSet<u64>,
 
     /// Per-key voting: maps each key ID to a map from data values to the set of parties that voted for that data.
     network_key_data_votes:
@@ -229,10 +229,10 @@ impl DWalletMPCManager {
             schnorr_presign_second_round_delay,
             protocol_config,
             idle_status_by_party: HashMap::new(),
-            user_requests_of_internal_resources: HashMap::new(),
-            completed_presign_session_identifiers: HashSet::new(),
+            presign_request_votes: HashMap::new(),
+            completed_presign_sequence_numbers: HashSet::new(),
             global_presign_requests: Vec::new(),
-            sent_presign_requests: HashSet::new(),
+            sent_presign_sequence_numbers: HashSet::new(),
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
@@ -311,7 +311,7 @@ impl DWalletMPCManager {
     ///
     /// For each status update:
     /// - Override the sender's idle status in `idle_status_by_party`
-    /// - For each presign request, add the sender to `user_requests_of_internal_resources`
+    /// - For each presign request, add the sender to `presign_request_votes`
     ///   and immediately check if majority is reached
     ///
     /// At the end, perform majority vote on idle status using `idle_status_by_party`.
@@ -341,8 +341,8 @@ impl DWalletMPCManager {
             // mark the presign requests as sent to avoid re-sending them.
             if sender_authority == self.validator_name {
                 for request in &status_update.global_presign_requests {
-                    self.sent_presign_requests
-                        .insert(request.session_identifier);
+                    self.sent_presign_sequence_numbers
+                        .insert(request.session_sequence_number);
                 }
             }
 
@@ -352,31 +352,31 @@ impl DWalletMPCManager {
 
             // Process each presign request and check for majority immediately.
             for request in status_update.global_presign_requests {
-                let session_identifier = request.session_identifier;
+                let sequence_number = request.session_sequence_number;
 
                 // Skip if this presign request has already reached majority.
                 if self
-                    .completed_presign_session_identifiers
-                    .contains(&session_identifier)
+                    .completed_presign_sequence_numbers
+                    .contains(&sequence_number)
                 {
                     continue;
                 }
 
                 // Add this party's vote for this presign request.
                 let parties = self
-                    .user_requests_of_internal_resources
-                    .entry(session_identifier)
+                    .presign_request_votes
+                    .entry(sequence_number)
                     .or_default();
                 parties.insert(sender_party_id);
 
                 // Check if the parties that voted form an authorized subset.
                 if self.access_structure.is_authorized_subset(parties).is_ok() {
                     // Majority reached - mark as completed and add to result.
-                    self.completed_presign_session_identifiers
-                        .insert(session_identifier);
+                    self.completed_presign_sequence_numbers
+                        .insert(sequence_number);
                     agreed_presign_requests.push(request);
                     info!(
-                        ?session_identifier,
+                        sequence_number,
                         consensus_round, "Presign request reached majority vote"
                     );
                 }
@@ -450,8 +450,8 @@ impl DWalletMPCManager {
             .iter()
             .filter(|request| {
                 !self
-                    .sent_presign_requests
-                    .contains(&request.session_identifier)
+                    .sent_presign_sequence_numbers
+                    .contains(&request.session_sequence_number)
             })
             .cloned()
             .collect()
@@ -1519,12 +1519,9 @@ impl DWalletMPCManager {
         }
     }
 
-    pub(crate) fn mark_global_presign_request_fulfilled(
-        &mut self,
-        session_identifier: SessionIdentifier,
-    ) {
-        self.completed_presign_session_identifiers
-            .insert(session_identifier);
+    pub(crate) fn mark_global_presign_request_fulfilled(&mut self, session_sequence_number: u64) {
+        self.completed_presign_sequence_numbers
+            .insert(session_sequence_number);
     }
 
     pub(crate) fn complete_computation_mpc_session_and_create_if_not_exists(
