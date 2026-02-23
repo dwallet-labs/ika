@@ -17,8 +17,8 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
-    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -187,6 +187,33 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn is_presign_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<bool> {
         Ok(false)
+    }
+
+    fn assign_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _dwallet_network_encryption_key_id: ObjectID,
+        _user_verification_key: Option<Vec<u8>>,
+        _dwallet_id: Option<ObjectID>,
+        _current_epoch: u64,
+    ) -> IkaResult<Option<SessionIdentifier>> {
+        Ok(None)
+    }
+
+    fn get_assigned_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        Ok(None)
+    }
+
+    fn pop_assigned_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        Ok(None)
     }
 
     fn next_internal_sessions_status_update(
@@ -480,7 +507,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 continue;
             }
             let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            let _ = dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
             let consensus_messages_store = sent_consensus_messages_collectors[i]
                 .submitted_messages
                 .clone();
@@ -611,7 +638,7 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
         key_id,
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
         assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()

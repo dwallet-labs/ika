@@ -170,7 +170,7 @@ pub(crate) async fn create_network_key_test(
                 )])));
         });
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration().await;
+        service.run_service_loop_iteration(vec![]).await;
     }
     (consensus_round, network_key_bytes, key_id.unwrap())
 }
