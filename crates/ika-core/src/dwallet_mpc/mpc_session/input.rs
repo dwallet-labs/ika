@@ -245,24 +245,21 @@ pub(crate) fn session_input_from_request(
             presign,
             message_centralized_signature,
             ..
-        } => {
-            Ok((
-                PublicInput::Sign(SignPublicInputByProtocol::try_new(
-                    request.session_identifier,
-                    dwallet_decentralized_public_output,
-                    message.clone(),
-                    presign,
-                    message_centralized_signature,
-                    data.hash_scheme,
-                    access_structure,
-                    network_keys.get_network_encryption_key_public_data(
-                        dwallet_network_encryption_key_id,
-                    )?,
-                    data.signature_algorithm,
-                )?),
-                None,
-            ))
-        }
+        } => Ok((
+            PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                request.session_identifier,
+                dwallet_decentralized_public_output,
+                message.clone(),
+                presign,
+                message_centralized_signature,
+                data.hash_scheme,
+                access_structure,
+                network_keys
+                    .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,
+                data.signature_algorithm,
+            )?),
+            None,
+        )),
         ProtocolData::InternalSign {
             data,
             dwallet_network_encryption_key_id,

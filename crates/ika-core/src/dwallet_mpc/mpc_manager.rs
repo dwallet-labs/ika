@@ -25,6 +25,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
+use hex;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
@@ -1347,12 +1348,32 @@ impl DWalletMPCManager {
                     );
                 }
             },
-            DWalletInternalMPCOutputKind::InternalSign { .. } => {
-                // Checkpoint signature storage will be added with internal checkpoint signing feature.
-                warn!(
-                    ?session_identifier,
-                    "received internal sign output but checkpoint signing is not yet enabled"
-                );
+            DWalletInternalMPCOutputKind::InternalSign {
+                output,
+                curve,
+                signature_algorithm,
+                hash_scheme: _,
+                checkpoint_sequence_number,
+            } => {
+                if let Err(e) = self
+                    .epoch_store
+                    .store_mpc_checkpoint_signature(checkpoint_sequence_number, output.clone())
+                {
+                    error!(
+                        checkpoint_sequence_number,
+                        error = ?e,
+                        "Failed to store MPC checkpoint signature"
+                    );
+                } else {
+                    info!(
+                        checkpoint_sequence_number,
+                        curve = ?curve,
+                        signature_algorithm = ?signature_algorithm,
+                        signature_length = output.len(),
+                        signature_hex = %hex::encode(&output),
+                        "Internal checkpoint sign completed - MPC signature stored"
+                    );
+                }
             }
         }
     }

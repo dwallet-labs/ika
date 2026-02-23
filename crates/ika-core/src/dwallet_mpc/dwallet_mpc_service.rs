@@ -60,6 +60,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
+use tokio::sync::mpsc::UnboundedReceiver;
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
@@ -96,6 +97,11 @@ pub struct DWalletMPCService {
     processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
+    /// Receiver for internal checkpoint sign requests from the checkpoint service.
+    internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
+    /// Buffer for checkpoint sign requests that couldn't be processed yet
+    /// (e.g., checkpoint key not yet agreed). Retried each service loop iteration.
+    pending_checkpoint_sign_requests: Vec<InternalCheckpointSignRequest>,
 }
 
 impl DWalletMPCService {
@@ -165,6 +171,8 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
+            internal_checkpoint_sign_receiver,
+            pending_checkpoint_sign_requests: Vec::new(),
         }
     }
 
@@ -217,6 +225,8 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
+            internal_checkpoint_sign_receiver,
+            pending_checkpoint_sign_requests: Vec::new(),
         }
     }
 
@@ -344,23 +354,47 @@ impl DWalletMPCService {
     }
 
     /// Process internal checkpoint sign requests received from the checkpoint service.
-    /// Each request triggers an internal MPC signing session for a checkpoint.
+    /// Uses a two-phase approach:
+    /// 1. Drain the channel into a pending buffer.
+    /// 2. Try to process buffered requests; those that can't be processed yet (e.g.,
+    ///    checkpoint key not yet agreed) remain in the buffer for the next iteration.
     fn process_internal_checkpoint_sign_requests(&mut self) {
-        // Use try_recv to non-blocking drain all pending requests
+        // Phase 1: Drain channel into pending buffer.
         while let Ok(request) = self.internal_checkpoint_sign_receiver.try_recv() {
             info!(
                 checkpoint_seq = request.checkpoint_sequence_number,
                 message_len = request.message.len(),
                 "Received internal checkpoint sign request from checkpoint service"
             );
+            self.pending_checkpoint_sign_requests.push(request);
+        }
 
-            let _instantiated = self
+        // Phase 2: Try to process buffered requests.
+        // If checkpoint key is not yet agreed, leave them in the buffer.
+        if self.pending_checkpoint_sign_requests.is_empty() {
+            return;
+        }
+
+        // Use retain: process and remove successful ones, keep failed ones.
+        self.pending_checkpoint_sign_requests.retain(|request| {
+            let instantiated = self
                 .dwallet_mpc_manager
                 .instantiate_internal_sign_session_for_checkpoint(
                     request.checkpoint_sequence_number,
-                    request.message,
+                    request.message.clone(),
                 );
-        }
+
+            if instantiated {
+                debug!(
+                    checkpoint_seq = request.checkpoint_sequence_number,
+                    "Internal checkpoint sign session instantiated"
+                );
+                false // remove from buffer
+            } else {
+                // Key not yet available or presign not ready — keep in buffer for retry.
+                true
+            }
+        });
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -706,6 +740,12 @@ impl DWalletMPCService {
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
                     .into_iter()
+                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
+                    .filter(|request| {
+                        !self
+                            .processed_global_presign_sequence_numbers
+                            .contains(&request.session_sequence_number)
+                    })
                     .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
 
