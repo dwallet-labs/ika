@@ -102,16 +102,6 @@ pub(crate) struct DWalletMPCManager {
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
 
-    // The sequence number of the next internal presign session.
-    // Starts from 1 in every epoch, and increases as they are spawned.
-    // Different epochs will see repeating values of this variable,
-    // but that is safe as they are synced within an epoch and
-    // the session identifier is derived from the epoch as well.
-    next_internal_presign_sequence_number: u64,
-
-    /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-
     /// Tracks the idle status of each party, overwritten on each status update.
     /// At the end of processing status updates for a consensus round, we majority vote
     /// to determine the network's idle status.
@@ -139,6 +129,16 @@ pub(crate) struct DWalletMPCManager {
 
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
+    // The sequence number of the next internal presign session.
+    // Starts from 1 in every epoch, and increases as they are spawned.
+    // Different epochs will see repeating values of this variable,
+    // but that is safe as they are synced within an epoch and
+    // the session identifier is derived from the epoch as well.
+    next_internal_presign_sequence_number: u64,
+
+    /// The epoch store for persisting presign pools to disk.
+    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 }
 
 impl DWalletMPCManager {
@@ -228,8 +228,6 @@ impl DWalletMPCManager {
             decryption_key_reconfiguration_third_round_delay,
             schnorr_presign_second_round_delay,
             protocol_config,
-            next_internal_presign_sequence_number: 1,
-            epoch_store,
             idle_status_by_party: HashMap::new(),
             presign_request_votes: HashMap::new(),
             completed_presign_sequence_numbers: HashSet::new(),
@@ -237,6 +235,8 @@ impl DWalletMPCManager {
             sent_presign_sequence_numbers: HashSet::new(),
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
+            next_internal_presign_sequence_number: 1,
+            epoch_store,
         })
     }
 

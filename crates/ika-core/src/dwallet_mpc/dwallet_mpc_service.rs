@@ -354,18 +354,13 @@ impl DWalletMPCService {
                 "Received internal checkpoint sign request from checkpoint service"
             );
 
-            let instantiated = self
+            let _instantiated = self
                 .dwallet_mpc_manager
                 .instantiate_internal_sign_session_for_checkpoint(
                     request.checkpoint_sequence_number,
                     request.message,
                 );
-
-        self.handle_computation_results_and_submit_to_consensus(computation_results)
-            .await;
-
-        // Send status update to consensus using the result from cryptographic computations
-        self.send_status_update_to_consensus(is_idle).await;
+        }
     }
 
     /// Send status update to consensus if there are unsent presign requests,
