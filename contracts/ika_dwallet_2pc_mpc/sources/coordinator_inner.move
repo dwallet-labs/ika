@@ -2607,7 +2607,9 @@ public(package) fun sign_during_dkg_request(
     } = presign;
 
     let presign = match (state) {
-        PresignState::Completed { presign } => presign,
+        PresignState::Completed { presign } => {
+            presign
+        },
         _ => abort EInvalidPresign,
     };
 
@@ -3946,7 +3948,9 @@ fun validate_and_initiate_sign(
     } = presign;
 
     let presign = match (state) {
-        PresignState::Completed { presign } => presign,
+        PresignState::Completed { presign } => {
+            presign
+        },
         _ => abort EInvalidPresign,
     };
 
@@ -4193,7 +4197,9 @@ public(package) fun request_future_sign(
     };
 
     let presign = match (presign_obj.state) {
-        PresignState::Completed { presign } => presign,
+        PresignState::Completed { presign } => {
+            presign
+        },
         _ => abort EInvalidPresign,
     };
 
