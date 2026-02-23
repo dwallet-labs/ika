@@ -116,6 +116,7 @@ base64 = "0.22.1"
 bcs = "0.1.4"
 byteorder = "1.4.3"
 bytes = { version = "1.5.0", features = ["serde"] }
+cached = "0.43.0"
 chrono = { version = "0.4.39", features = ["clock", "serde"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 const-str = "1.0.0"

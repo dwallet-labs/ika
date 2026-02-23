@@ -223,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_old_epoch_data() {
-        telemetry_subscribers::init_for_testing();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let metrics = Metrics::new(&Registry::new());
 
         {
