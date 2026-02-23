@@ -1106,13 +1106,13 @@ impl DWalletMPCService {
                     }
                 }
                 Err(err) => match request.session_type {
-                    // TODO: InternalSign
-                    SessionType::InternalPresign => {
+                    SessionType::InternalPresign | SessionType::InternalSign => {
                         error!(
                             should_never_happen =? true,
                             session_identifier=?session.session_identifier,
+                            session_type=?request.session_type,
                             error=?err,
-                            "internal presign session failed",
+                            "internal session failed",
                         );
                     }
                     _ => {
