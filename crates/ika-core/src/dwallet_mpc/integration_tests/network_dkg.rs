@@ -169,10 +169,25 @@ pub(crate) async fn create_network_key_test(
                     },
                 )])));
         });
+    // Generate status updates containing the key data from each party's service loop.
     for service in test_state.dwallet_mpc_services.iter_mut() {
-        service.run_service_loop_iteration().await;
+        service.run_service_loop_iteration(vec![]).await;
     }
-    (consensus_round, network_key_bytes, key_id.unwrap())
+    // Distribute the key data status updates as a new consensus round so that
+    // `handle_status_updates` can vote on them and `instantiate_agreed_keys_from_voted_data`
+    // can populate `network_keys` in each party's manager.
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        consensus_round,
+    );
+    // Process the new round to instantiate the agreed network key in every party.
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    // Return incremented consensus round so callers start from the correct round.
+    (consensus_round + 1, network_key_bytes, key_id.unwrap())
 }
 
 pub(crate) fn send_start_network_key_reconfiguration_event(

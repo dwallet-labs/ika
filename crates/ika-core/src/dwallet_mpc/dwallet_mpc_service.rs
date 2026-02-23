@@ -43,8 +43,7 @@ use ika_types::message::{
 };
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyState, InternalSessionsStatusUpdate, SessionIdentifier,
-    UserSecretKeyShareEventType,
+    InternalSessionsStatusUpdate, SessionIdentifier, UserSecretKeyShareEventType,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -174,7 +173,7 @@ impl DWalletMPCService {
     ) -> Self {
         DWalletMPCService {
             last_read_consensus_round: Some(0),
-            epoch_store,
+            epoch_store: epoch_store.clone(),
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
@@ -351,12 +350,7 @@ impl DWalletMPCService {
             all_key_data
                 .values()
                 .filter(|data| !self.sent_network_key_ids.contains(&data.id))
-                .filter(|data| {
-                    !matches!(
-                        data.state,
-                        AwaitingNetworkDKG
-                    )
-                })
+                .filter(|data| !matches!(&data.state, ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG))
                 .cloned()
                 .collect()
         };

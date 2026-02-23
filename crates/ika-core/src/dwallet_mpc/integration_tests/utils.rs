@@ -17,8 +17,8 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
-    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, InternalSessionsStatusUpdate,
-    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -189,11 +189,46 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(false)
     }
 
+    fn assign_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _dwallet_network_encryption_key_id: ObjectID,
+        _user_verification_key: Option<Vec<u8>>,
+        _dwallet_id: Option<ObjectID>,
+        _current_epoch: u64,
+    ) -> IkaResult<Option<SessionIdentifier>> {
+        Ok(None)
+    }
+
+    fn get_assigned_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        Ok(None)
+    }
+
+    fn pop_assigned_presign(
+        &self,
+        _signature_algorithm: DWalletSignatureAlgorithm,
+        _session_identifier: SessionIdentifier,
+    ) -> IkaResult<Option<AssignedPresign>> {
+        Ok(None)
+    }
+
     fn next_internal_sessions_status_update(
         &self,
-        _last_consensus_round: Option<Round>,
+        last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
-        Ok(None)
+        let round_to_status_updates = self.round_to_status_updates.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_status_updates
+                .get(&0)
+                .map(|updates| (0, updates.clone())));
+        }
+        Ok(round_to_status_updates
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
     }
 }
 
@@ -474,19 +509,55 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
 ) -> Option<PendingDWalletCheckpoint> {
     let mut pending_checkpoints = vec![];
     let mut completed_parties = vec![];
+    // Track per-party newly-instantiated network key IDs so that sessions waiting
+    // for a key (in `requests_pending_for_network_key`) are activated as soon as the
+    // key is voted-in through a consensus round, without requiring a second outer-loop
+    // iteration.
+    let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
+        vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         for i in 0..committee.voting_rights.len() {
             if !parties_to_advance.contains(&i) || completed_parties.contains(&i) {
                 continue;
             }
             let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            let key_ids = std::mem::take(&mut party_newly_instantiated_network_key_ids[i]);
+            let new_key_ids = dwallet_mpc_service
+                .run_service_loop_iteration(key_ids)
+                .await;
+            party_newly_instantiated_network_key_ids[i] = new_key_ids;
             let consensus_messages_store = sent_consensus_messages_collectors[i]
                 .submitted_messages
                 .clone();
             let pending_checkpoints_store = testing_epoch_stores[i].pending_checkpoints.clone();
             let notify_service = notify_services[i].clone();
-            if !consensus_messages_store.lock().unwrap().is_empty() {
+            let has_computation_messages =
+                consensus_messages_store.lock().unwrap().iter().any(|msg| {
+                    matches!(
+                        msg.kind,
+                        ConsensusTransactionKind::DWalletMPCMessage(_)
+                            | ConsensusTransactionKind::DWalletMPCOutput(_)
+                    )
+                });
+            let currently_running_len = dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .len();
+            // When `currently_running == 0` and the party produced an
+            // `InternalSessionsStatusUpdate` (e.g. key data broadcast), treat this as a
+            // round boundary so the outer loop can call
+            // `send_advance_results_between_parties` and advance the key-voting state.
+            // We must NOT apply this when `currently_running == 1`: in that case an active
+            // computation will produce a DWalletMPCMessage shortly.
+            let has_idle_status_update = currently_running_len == 0
+                && consensus_messages_store.lock().unwrap().iter().any(|msg| {
+                    matches!(
+                        msg.kind,
+                        ConsensusTransactionKind::InternalSessionsStatusUpdate(_)
+                    )
+                });
+            if has_computation_messages || has_idle_status_update {
                 info!(
                     party_id=?i+1,
                     "Received messages for party",
@@ -515,13 +586,20 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 completed_parties.push(i);
                 continue;
             }
-            assert_eq!(
+            // When a session is pending for network key data (key not yet voted-in through
+            // consensus), `currently_running` is 0 — that is expected and not a bug.
+            let has_pending_for_key = !dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .requests_pending_for_network_key
+                .is_empty();
+            assert!(
                 dwallet_mpc_service
                     .dwallet_mpc_manager()
                     .cryptographic_computations_orchestrator
                     .currently_running_cryptographic_computations
-                    .len(),
-                1,
+                    .len()
+                    == 1
+                    || has_pending_for_key,
                 "Pending for a non existent computation for party id: {}",
                 i + 1,
             );
@@ -611,7 +689,7 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
         key_id,
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
         assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()
