@@ -304,6 +304,14 @@ pub struct ProtocolConfig {
     internal_eddsa_presign_sessions_to_instantiate: Option<u64>,
     internal_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
     internal_taproot_presign_sessions_to_instantiate: Option<u64>,
+
+    // Pool maximum sizes (caps for idle spawning)
+    checkpoint_presign_pool_maximum_size: Option<u64>,
+    internal_secp256k1_ecdsa_presign_pool_maximum_size: Option<u64>,
+    internal_secp256r1_ecdsa_presign_pool_maximum_size: Option<u64>,
+    internal_eddsa_presign_pool_maximum_size: Option<u64>,
+    internal_schnorrkel_substrate_presign_pool_maximum_size: Option<u64>,
+    internal_taproot_presign_pool_maximum_size: Option<u64>,
 }
 
 // feature flags
@@ -564,6 +572,14 @@ impl ProtocolConfig {
             internal_eddsa_presign_sessions_to_instantiate: Some(1),           // 1×26=26 presigns
             internal_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1), // 1×26=26
             internal_taproot_presign_sessions_to_instantiate: Some(1),         // 1×26=26 presigns
+
+            // Pool maximum sizes (caps for idle spawning, 3× minimum)
+            checkpoint_presign_pool_maximum_size: Some(150000),
+            internal_secp256k1_ecdsa_presign_pool_maximum_size: Some(75000),
+            internal_secp256r1_ecdsa_presign_pool_maximum_size: Some(30000),
+            internal_eddsa_presign_pool_maximum_size: Some(30000),
+            internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
+            internal_taproot_presign_pool_maximum_size: Some(30000),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -687,6 +703,28 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::Taproot => {
                 self.internal_taproot_presign_sessions_to_instantiate()
             }
+        }
+    }
+
+    /// Get the maximum size of the internal presign pool.
+    /// We should not spawn presigns beyond this size even when idle.
+    pub fn get_internal_presign_pool_maximum_size(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_maximum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_maximum_size(),
         }
     }
 }

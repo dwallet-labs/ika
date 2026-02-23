@@ -153,17 +153,11 @@ impl DWalletSession {
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
-        let mpc_protocol = match &self.status {
-            SessionStatus::Active { request, .. } => {
-                // TODO: fix this, I don't want it displayed this way
-                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
-            }
-            SessionStatus::WaitingForSessionRequest => {
-                "Unknown - waiting for session request".to_string()
-            }
-            SessionStatus::ComputationCompleted => {
-                "Unknown - session computation completed".to_string()
-            }
+        let metric_data = match &self.status {
+            SessionStatus::Active { request, .. } => Some(DWalletSessionRequestMetricData::from(
+                &request.protocol_data,
+            )),
+            SessionStatus::WaitingForSessionRequest | SessionStatus::ComputationCompleted => None,
             SessionStatus::Completed | SessionStatus::Failed => {
                 warn!(
                     session_identifier=?self.session_identifier,
@@ -173,13 +167,27 @@ impl DWalletSession {
             }
         };
 
+        let protocol_name = metric_data.as_ref().map_or("Unknown", |d| d.name());
+        let curve = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.curve());
+        let hash_scheme = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.hash_scheme());
+        let signature_algorithm = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.signature_algorithm());
+
         debug!(
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
             receiving_authority=?self.validator_name,
             consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
-            ?mpc_protocol,
+            %protocol_name,
+            %curve,
+            %hash_scheme,
+            %signature_algorithm,
             "Received a dWallet MPC message",
         );
 

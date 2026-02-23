@@ -85,6 +85,7 @@ pub enum DWalletInternalMPCOutputKind {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_sequence_number: u64,
+        dwallet_network_encryption_key_id: ObjectID,
     },
     InternalSign {
         output: Vec<u8>,
@@ -160,8 +161,7 @@ pub struct AssignedPresign {
     pub session_identifier: SessionIdentifier,
     /// The actual presign data.
     pub presign: Vec<u8>,
-    /// The user's Ed25519 verification key for signature verification.
-    /// TODO: Placeholder - will be populated when user verification is implemented.
+    /// The user verification key associated with the dWallet (if applicable).
     pub user_verification_key: Option<Vec<u8>>,
     /// The dwallet ID (for non-global dwallets like ECDSA imported wallets and v1 dwallets).
     pub dwallet_id: Option<ObjectID>,

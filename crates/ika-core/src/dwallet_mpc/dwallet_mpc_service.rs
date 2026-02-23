@@ -26,9 +26,10 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
+use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
-use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedPresignOutput};
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
@@ -52,15 +53,14 @@ use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
 use mpc::GuaranteedOutputDeliveryRoundResult;
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::mpsc::UnboundedReceiver;
-#[cfg(feature = "test-utils")]
+#[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
@@ -93,9 +93,7 @@ pub struct DWalletMPCService {
     /// If so, we can process more internal presign sessions to make use of resources.
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
-    processed_global_presign_requests_session_identifiers: HashSet<SessionIdentifier>,
-    /// Receiver for internal checkpoint signing requests from the checkpoint service.
-    internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
+    processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
 }
@@ -165,13 +163,12 @@ impl DWalletMPCService {
             number_of_consensus_rounds: 0,
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
-            processed_global_presign_requests_session_identifiers: HashSet::new(),
-            internal_checkpoint_sign_receiver,
+            processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
         }
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -217,20 +214,19 @@ impl DWalletMPCService {
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
             network_is_idle: false,
-            processed_global_presign_requests_session_identifiers: HashSet::new(),
+            processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
-            internal_checkpoint_sign_receiver,
             sent_network_key_ids: HashSet::new(),
         }
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager(&self) -> &DWalletMPCManager {
         &self.dwallet_mpc_manager
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
@@ -239,7 +235,7 @@ impl DWalletMPCService {
     /// Test helper: receive and process completed cryptographic computations
     /// without running the full service loop. This is useful for cleaning up
     /// the `currently_running_cryptographic_computations` set after tests.
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn receive_completed_computations(&mut self) {
         let _ = self
             .dwallet_mpc_manager
@@ -365,18 +361,11 @@ impl DWalletMPCService {
                     request.message,
                 );
 
-            if instantiated {
-                debug!(
-                    checkpoint_seq = request.checkpoint_sequence_number,
-                    "Internal checkpoint sign session instantiated"
-                );
-            } else {
-                warn!(
-                    checkpoint_seq = request.checkpoint_sequence_number,
-                    "Failed to instantiate internal checkpoint sign session"
-                );
-            }
-        }
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
+            .await;
+
+        // Send status update to consensus using the result from cryptographic computations
+        self.send_status_update_to_consensus(is_idle).await;
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -643,6 +632,8 @@ impl DWalletMPCService {
                 }
                 Ok(None) => {
                     // No verified checkpoint messages for this round - use empty list.
+                    // This is expected during initialization or internal-only rounds, where no
+                    // checkpoint messages need to be produced. The old code would panic in this case.
                     Vec::new()
                 }
                 Err(e) => {
@@ -720,17 +711,7 @@ impl DWalletMPCService {
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
                     .into_iter()
-                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
-                    .filter(|request| {
-                        !self
-                            .processed_global_presign_requests_session_identifiers
-                            .contains(&request.session_identifier)
-                    })
-                    .sorted_by(|a, b| {
-                        a.session_identifier
-                            .into_uint()
-                            .cmp(&b.session_identifier.into_uint())
-                    })
+                    .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
 
                 if self.network_is_idle != agreed_status.is_idle
@@ -797,9 +778,18 @@ impl DWalletMPCService {
                 .agreed_global_presign_requests_queue
                 .is_empty()
             {
-                let mut unprocessed_requests = Vec::new();
                 let mut global_presign_checkpoint_messages = Vec::new();
-                for request in self.agreed_global_presign_requests_queue.clone() {
+
+                // Use retain to keep only unprocessed requests in the queue
+                self.agreed_global_presign_requests_queue.retain(|request| {
+                    if self
+                            .processed_global_presign_sequence_numbers
+                            .contains(&request.session_sequence_number) {
+                        // Extra precaution: if we already assigned an external presign for this
+                        // sequence number, don't assign another — remove from queue (return false).
+                        return false;
+                    }
+
                     match self.epoch_store.pop_presign(
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
@@ -826,10 +816,15 @@ impl DWalletMPCService {
                                             },
                                         );
 
-                                    global_presign_checkpoint_messages
-                                        .push(checkpoint_message);
-                                    self.processed_global_presign_requests_session_identifiers
-                                        .insert(request.session_identifier);
+                                    global_presign_checkpoint_messages.push(checkpoint_message);
+                                    self.processed_global_presign_sequence_numbers
+                                        .insert(request.session_sequence_number);
+                                    // Mark this request as fulfilled in the manager to skip future voting
+                                    self.dwallet_mpc_manager
+                                        .mark_global_presign_request_fulfilled(request.session_sequence_number);
+
+                                    // Successfully processed - remove from queue (return false)
+                                    false
                                 }
                                 Err(e) => {
                                     error!(
@@ -837,13 +832,14 @@ impl DWalletMPCService {
                                         should_never_happen =? true,
                                         "failed to serialize presign output"
                                     );
-                                    unprocessed_requests.push(request);
+                                    // Keep in queue for retry (return true)
+                                    true
                                 }
                             }
                         }
                         Ok(None) => {
-                            // No presign available in internal pool
-                            unprocessed_requests.push(request);
+                            // No presign available in internal pool - keep in queue (return true)
+                            true
                         }
                         Err(e) => {
                             error!(
@@ -851,12 +847,11 @@ impl DWalletMPCService {
                                 should_never_happen =? true,
                                 "failed to pop presign from internal pool"
                             );
-                            unprocessed_requests.push(request);
+                            // Keep in queue for retry (return true)
+                            true
                         }
                     }
-                }
-
-                self.agreed_global_presign_requests_queue = unprocessed_requests;
+                });
 
                 global_presign_checkpoint_messages
             } else {
@@ -1075,30 +1070,27 @@ impl DWalletMPCService {
                         }
                     }
                 }
-                Err(err) => {
-                    match request.session_type {
-                        // TODO: InternalSign
-                        SessionType::InternalPresign => {
-                            // TODO: nothing to do here actually right?
-                            error!(
-                                should_never_happen =? true,
-                                session_identifier=?session.session_identifier,
-                                error=?err,
-                                "internal presign session failed",
-                            );
-                        }
-                        _ => {
-                            self.submit_failed_session(
-                                session_identifier,
-                                &request,
-                                &validator_name.to_string(),
-                                party_id,
-                                err,
-                            )
-                            .await;
-                        }
+                Err(err) => match request.session_type {
+                    // TODO: InternalSign
+                    SessionType::InternalPresign => {
+                        error!(
+                            should_never_happen =? true,
+                            session_identifier=?session.session_identifier,
+                            error=?err,
+                            "internal presign session failed",
+                        );
                     }
-                }
+                    _ => {
+                        self.submit_failed_session(
+                            session_identifier,
+                            &request,
+                            &validator_name.to_string(),
+                            party_id,
+                            err,
+                        )
+                        .await;
+                    }
+                },
             }
         }
     }
@@ -1187,19 +1179,21 @@ impl DWalletMPCService {
     ) -> Option<ConsensusTransaction> {
         match session_request.session_type {
             SessionType::InternalPresign => match &session_request.protocol_data {
-                ProtocolData::InternalPresign { data, .. } => {
-                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
-                        self.name,
-                        session_identifier,
-                        DWalletInternalMPCOutputKind::InternalPresign {
-                            output,
-                            curve: data.curve,
-                            signature_algorithm: data.signature_algorithm,
-                            session_sequence_number: session_request.session_sequence_number,
-                        },
-                        malicious_authorities,
-                    ))
-                }
+                ProtocolData::InternalPresign {
+                    data,
+                    dwallet_network_encryption_key_id,
+                } => Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                    self.name,
+                    session_identifier,
+                    DWalletInternalMPCOutputKind::InternalPresign {
+                        output,
+                        curve: data.curve,
+                        signature_algorithm: data.signature_algorithm,
+                        session_sequence_number: session_request.session_sequence_number,
+                        dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
+                    },
+                    malicious_authorities,
+                )),
                 _ => {
                     error!(
                         should_never_happen =? true,
