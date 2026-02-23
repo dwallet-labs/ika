@@ -744,70 +744,82 @@ impl DWalletMPCService {
                 .chain(completed_internal_sessions)
                 .collect();
 
-            // Handle global presign requests.
-            // Process from the front; stop when the pool is empty to avoid pointless DB scans.
-            let mut global_presign_checkpoint_messages = Vec::new();
+            // Handle global presign requests
+            let global_presign_checkpoint_messages = if !self
+                .agreed_global_presign_requests_queue
+                .is_empty()
+            {
+                let mut global_presign_checkpoint_messages = Vec::new();
 
-            while !self.agreed_global_presign_requests_queue.is_empty() {
-                let request = self.agreed_global_presign_requests_queue[0];
-                match self.epoch_store.pop_presign(
-                    request.signature_algorithm,
-                    request.dwallet_network_encryption_key_id,
-                ) {
-                    Ok(Some((_presign_session_id, presign))) => {
-                        match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
-                            Ok(presign) => {
-                                info!(
-                                    request_session_id =? request.session_identifier,
-                                    presign_id =? request.presign_id,
-                                    session_sequence_number =? request.session_sequence_number,
-                                    "popped presign from internal pool for global presign request"
-                                );
-
-                                let checkpoint_message =
-                                    DWalletCheckpointMessageKind::RespondDWalletPresign(
-                                        PresignOutput {
-                                            presign,
-                                            dwallet_id: None,
-                                            presign_id: request.presign_id.to_vec(),
-                                            rejected: false,
-                                            session_sequence_number: request
-                                                .session_sequence_number,
-                                        },
+                // Use retain to keep only unprocessed requests in the queue
+                self.agreed_global_presign_requests_queue.retain(|request| {
+                    match self.epoch_store.pop_presign(
+                        request.signature_algorithm,
+                        request.dwallet_network_encryption_key_id,
+                    ) {
+                        Ok(Some((_presign_session_id, presign))) => {
+                            match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+                                Ok(presign) => {
+                                    info!(
+                                        request_session_id =? request.session_identifier,
+                                        presign_id =? request.presign_id,
+                                        session_sequence_number =? request.session_sequence_number,
+                                        "popped presign from internal pool for global presign request"
                                     );
 
-                                global_presign_checkpoint_messages.push(checkpoint_message);
-                                self.processed_global_presign_requests_session_identifiers
-                                    .insert(request.session_identifier);
-                                self.dwallet_mpc_manager
-                                    .mark_global_presign_request_fulfilled(
-                                        request.session_identifier,
-                                    );
+                                    let checkpoint_message =
+                                        DWalletCheckpointMessageKind::RespondDWalletPresign(
+                                            PresignOutput {
+                                                presign,
+                                                dwallet_id: None,
+                                                presign_id: request.presign_id.to_vec(),
+                                                rejected: false,
+                                                session_sequence_number: request
+                                                    .session_sequence_number,
+                                            },
+                                        );
 
-                                // Request fulfilled — remove from queue.
-                                self.agreed_global_presign_requests_queue.remove(0);
-                            }
-                            Err(e) => {
-                                error!(
-                                    error=?e,
-                                    should_never_happen =? true,
-                                    "failed to serialize presign output"
-                                );
-                                break;
+                                    global_presign_checkpoint_messages.push(checkpoint_message);
+                                    self.processed_global_presign_requests_session_identifiers
+                                        .insert(request.session_identifier);
+                                    // Mark this request as fulfilled in the manager to skip future voting
+                                    self.dwallet_mpc_manager
+                                        .mark_global_presign_request_fulfilled(request.session_identifier);
+
+                                    // Successfully processed - remove from queue (return false)
+                                    false
+                                }
+                                Err(e) => {
+                                    error!(
+                                        error=?e,
+                                        should_never_happen =? true,
+                                        "failed to serialize presign output"
+                                    );
+                                    // Keep in queue for retry (return true)
+                                    true
+                                }
                             }
                         }
+                        Ok(None) => {
+                            // No presign available in internal pool - keep in queue (return true)
+                            true
+                        }
+                        Err(e) => {
+                            error!(
+                                error=?e,
+                                should_never_happen =? true,
+                                "failed to pop presign from internal pool"
+                            );
+                            // Keep in queue for retry (return true)
+                            true
+                        }
                     }
-                    Ok(None) => break,
-                    Err(e) => {
-                        error!(
-                            error=?e,
-                            should_never_happen =? true,
-                            "failed to pop presign from internal pool"
-                        );
-                        break;
-                    }
-                }
-            }
+                });
+
+                global_presign_checkpoint_messages
+            } else {
+                Vec::new()
+            };
 
             // Take back the external outputs' internal checkpoint messages
             let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
