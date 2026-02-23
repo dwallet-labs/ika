@@ -676,12 +676,6 @@ impl DWalletMPCService {
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
                     .into_iter()
-                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
-                    .filter(|request| {
-                        !self
-                            .processed_global_presign_requests_session_identifiers
-                            .contains(&request.session_identifier)
-                    })
                     .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
 
@@ -753,6 +747,15 @@ impl DWalletMPCService {
 
                 // Use retain to keep only unprocessed requests in the queue
                 self.agreed_global_presign_requests_queue.retain(|request| {
+                    if self
+                            .processed_global_presign_requests_session_identifiers
+                            .contains(&request.session_identifier) {
+                        // just an extra precaution check: if we already assigned an external presign for this session,
+                        // don't assign another remove from queue (return false)
+                        // TODO: use sequence number not session identifier
+                        return false;
+                    }
+
                     match self.epoch_store.pop_presign(
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
