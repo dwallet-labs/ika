@@ -48,7 +48,7 @@
 		"@typescript-eslint/eslint-plugin": "^6.1.0",
 		"@typescript-eslint/parser": "^6.1.0",
 		"concurrently": "^9.1.2",
-		"eslint": "^8.57.1",
+		"eslint": "^9.26.0",
 		"eslint-config-prettier": "^8.10.0",
 		"eslint-config-react-app": "^7.0.1",
 		"eslint-import-resolver-typescript": "^3.10.1",
