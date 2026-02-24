@@ -1,18 +1,18 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Integration tests for internal checkpoint signing.
+//! Integration tests for internal signing.
 //!
-//! These tests verify that the checkpoint signing flow works correctly:
-//! 1. Network key creation with internal checkpoint DKG
+//! These tests verify that the internal signing flow works correctly:
+//! 1. Network key creation with internal sign DKG
 //! 2. Presign pool population
 //! 3. Internal sign session triggering
 //! 4. Signature verification against the network key
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
-use crate::dwallet_mpc::InternalCheckpointSignRequest;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::{
-    emulate_centralized_dkg_for_internal_signing, internal_checkpoint_dkg_session_id,
+use crate::dwallet_mpc::InternalSignRequest;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_sign_dkg_emulation::{
+    emulate_centralized_dkg_for_internal_sign, internal_sign_dkg_session_id,
 };
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
@@ -23,15 +23,15 @@ use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::ObjectID;
 use tracing::info;
 
-/// Test that internal checkpoint signing works end-to-end:
+/// Test that internal signing works end-to-end:
 /// 1. Create a network key
-/// 2. Set up internal checkpoint DKG output
+/// 2. Set up internal sign DKG output
 /// 3. Populate the presign pool
-/// 4. Trigger internal checkpoint signing
+/// 4. Trigger internal signing
 /// 5. Verify the MPC completes successfully
 #[tokio::test]
 #[cfg(test)]
-async fn test_internal_checkpoint_sign_flow() {
+async fn test_internal_sign_flow() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -127,30 +127,30 @@ async fn test_internal_checkpoint_sign_flow() {
         initial_internal_sign_count
     );
 
-    // Note: The actual internal checkpoint signing requires:
-    // 1. The internal_checkpoint_dkg_output to be populated in NetworkEncryptionKeyPublicData
+    // Note: The actual internal signing requires:
+    // 1. The internal_sign_dkg_output to be populated in NetworkEncryptionKeyPublicData
     // 2. A valid presign that matches the protocol format
     //
     // Since these are not yet fully integrated, this test verifies that:
     // - The infrastructure for triggering internal sign sessions is in place
-    // - The MPC service processes checkpoint sign requests from the channel
+    // - The MPC service processes internal sign requests from the channel
     //
     // Full end-to-end signing with verification will be enabled once:
-    // - Network DKG computes and stores internal_checkpoint_dkg_output
-    // - Internal presign sessions generate valid presigns for the checkpoint curve/algorithm
+    // - Network DKG computes and stores internal_sign_dkg_output
+    // - Internal presign sessions generate valid presigns for the signing curve/algorithm
 
-    info!("Internal checkpoint sign infrastructure test completed successfully!");
+    info!("Internal sign infrastructure test completed successfully!");
 }
 
-/// Test that the internal checkpoint DKG session ID is computed deterministically.
+/// Test that the internal sign DKG session ID is computed deterministically.
 #[test]
-fn test_internal_checkpoint_dkg_session_id_determinism() {
+fn test_internal_sign_dkg_session_id_determinism() {
     let network_key_id = [1u8; 32];
     let curve = DWalletCurve::Curve25519;
     let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-    let session_id_1 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
-    let session_id_2 = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+    let session_id_1 = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
+    let session_id_2 = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
 
     assert_eq!(
         session_id_1, session_id_2,
@@ -159,8 +159,7 @@ fn test_internal_checkpoint_dkg_session_id_determinism() {
 
     // Different inputs should produce different session IDs
     let different_network_key_id = [2u8; 32];
-    let session_id_3 =
-        internal_checkpoint_dkg_session_id(&different_network_key_id, curve, algorithm);
+    let session_id_3 = internal_sign_dkg_session_id(&different_network_key_id, curve, algorithm);
     assert_ne!(
         session_id_1, session_id_3,
         "Different network key IDs should produce different session IDs"

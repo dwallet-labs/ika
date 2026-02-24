@@ -2,6 +2,7 @@ mod create_dwallet;
 mod encrypt_secret_share;
 mod idle_status_voting;
 mod internal_presign;
+mod internal_sign;
 mod malicious_behavior;
 mod message_before_event;
 mod missing_network_key;

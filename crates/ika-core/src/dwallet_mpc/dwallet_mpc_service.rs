@@ -14,7 +14,6 @@ use crate::dwallet_checkpoints::{
     DWalletCheckpointServiceNotify, PendingDWalletCheckpoint, PendingDWalletCheckpointInfo,
     PendingDWalletCheckpointV1,
 };
-use crate::dwallet_mpc::InternalCheckpointSignRequest;
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
@@ -22,6 +21,7 @@ use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
 };
 use crate::dwallet_mpc::party_ids_to_authority_names;
+use crate::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
@@ -60,7 +60,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
@@ -97,11 +97,11 @@ pub struct DWalletMPCService {
     processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
-    /// Receiver for internal checkpoint sign requests from the checkpoint service.
-    internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
-    /// Buffer for checkpoint sign requests that couldn't be processed yet
-    /// (e.g., checkpoint key not yet agreed). Retried each service loop iteration.
-    pending_checkpoint_sign_requests: Vec<InternalCheckpointSignRequest>,
+    /// Receiver for internal sign requests.
+    internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
+    /// Buffer for internal sign requests that couldn't be processed yet
+    /// (e.g., key not yet agreed). Retried each service loop iteration.
+    pending_internal_sign_requests: Vec<InternalSignRequest>,
 }
 
 impl DWalletMPCService {
@@ -118,7 +118,8 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
-        internal_checkpoint_sign_receiver: UnboundedReceiver<InternalCheckpointSignRequest>,
+        internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
+        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -148,6 +149,7 @@ impl DWalletMPCService {
             sui_data_receivers.clone(),
             protocol_config.clone(),
             epoch_store.clone(),
+            internal_sign_output_sender,
         );
 
         Self {
@@ -171,8 +173,8 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
-            internal_checkpoint_sign_receiver,
-            pending_checkpoint_sign_requests: Vec::new(),
+            internal_sign_receiver,
+            pending_internal_sign_requests: Vec::new(),
         }
     }
 
@@ -188,9 +190,11 @@ impl DWalletMPCService {
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
     ) -> Self {
-        // Create a dummy channel for testing - the sender is immediately dropped
-        let (_, internal_checkpoint_sign_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<InternalCheckpointSignRequest>();
+        // Create dummy channels for testing - senders are immediately dropped / held
+        let (_, internal_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignRequest>();
+        let (internal_sign_output_sender, _internal_sign_output_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignOutput>();
 
         DWalletMPCService {
             last_read_consensus_round: Some(0),
@@ -210,6 +214,7 @@ impl DWalletMPCService {
                 sui_data_receivers.clone(),
                 ProtocolConfig::get_for_min_version(),
                 epoch_store,
+                internal_sign_output_sender,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -225,8 +230,8 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
-            internal_checkpoint_sign_receiver,
-            pending_checkpoint_sign_requests: Vec::new(),
+            internal_sign_receiver,
+            pending_internal_sign_requests: Vec::new(),
         }
     }
 
@@ -332,8 +337,8 @@ impl DWalletMPCService {
         debug!("Running DWalletMPCService loop");
         self.sync_last_session_to_complete_in_current_epoch().await;
 
-        // Process any pending internal checkpoint sign requests.
-        self.process_internal_checkpoint_sign_requests();
+        // Process any pending internal sign requests.
+        self.process_internal_sign_requests();
 
         // Receive **new** dWallet MPC events and save them in the local DB.
         let rejected_sessions = self
@@ -353,41 +358,42 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
-    /// Process internal checkpoint sign requests received from the checkpoint service.
+    /// Process internal sign requests received via the channel.
     /// Uses a two-phase approach:
     /// 1. Drain the channel into a pending buffer.
     /// 2. Try to process buffered requests; those that can't be processed yet (e.g.,
-    ///    checkpoint key not yet agreed) remain in the buffer for the next iteration.
-    fn process_internal_checkpoint_sign_requests(&mut self) {
+    ///    key not yet agreed) remain in the buffer for the next iteration.
+    fn process_internal_sign_requests(&mut self) {
         // Phase 1: Drain channel into pending buffer.
-        while let Ok(request) = self.internal_checkpoint_sign_receiver.try_recv() {
+        while let Ok(request) = self.internal_sign_receiver.try_recv() {
             info!(
-                checkpoint_seq = request.checkpoint_sequence_number,
+                sequence_number = request.sequence_number,
                 message_len = request.message.len(),
-                "Received internal checkpoint sign request from checkpoint service"
+                "Received internal sign request"
             );
-            self.pending_checkpoint_sign_requests.push(request);
+            self.pending_internal_sign_requests.push(request);
         }
 
         // Phase 2: Try to process buffered requests.
-        // If checkpoint key is not yet agreed, leave them in the buffer.
-        if self.pending_checkpoint_sign_requests.is_empty() {
+        if self.pending_internal_sign_requests.is_empty() {
             return;
         }
 
         // Use retain: process and remove successful ones, keep failed ones.
-        self.pending_checkpoint_sign_requests.retain(|request| {
-            let instantiated = self
-                .dwallet_mpc_manager
-                .instantiate_internal_sign_session_for_checkpoint(
-                    request.checkpoint_sequence_number,
-                    request.message.clone(),
-                );
+        self.pending_internal_sign_requests.retain(|request| {
+            let instantiated = self.dwallet_mpc_manager.instantiate_internal_sign_session(
+                request.dwallet_network_encryption_key_id,
+                request.curve,
+                request.signature_algorithm,
+                request.hash_scheme,
+                request.sequence_number,
+                request.message.clone(),
+            );
 
             if instantiated {
                 debug!(
-                    checkpoint_seq = request.checkpoint_sequence_number,
-                    "Internal checkpoint sign session instantiated"
+                    sequence_number = request.sequence_number,
+                    "Internal sign session instantiated"
                 );
                 false // remove from buffer
             } else {
@@ -1249,7 +1255,7 @@ impl DWalletMPCService {
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
                             hash_scheme: data.hash_scheme,
-                            checkpoint_sequence_number: session_request.session_sequence_number,
+                            sequence_number: session_request.session_sequence_number,
                         },
                         malicious_authorities,
                     ))

@@ -29,9 +29,6 @@ pub struct DWalletCheckpointMessage {
     /// DWallet checkpoint timestamps are monotonic, but not strongly monotonic - subsequent
     /// dwallet checkpoints can have same timestamp if they originate from the same underlining consensus commit
     pub messages: Vec<DWalletCheckpointMessageKind>,
-    /// MPC signature for this checkpoint (optional for backward compatibility)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mpc_signature: Option<Vec<u8>>,
 }
 
 impl Message for DWalletCheckpointMessage {
@@ -53,7 +50,6 @@ impl DWalletCheckpointMessage {
             epoch,
             sequence_number,
             messages,
-            mpc_signature: None,
         }
     }
 

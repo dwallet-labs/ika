@@ -5,7 +5,6 @@ use super::{DWalletCheckpointMetrics, DWalletCheckpointStore};
 use crate::authority::StableSyncAuthoritySigner;
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_adapter::SubmitToConsensus;
-use crate::dwallet_mpc::InternalCheckpointSignRequest;
 use async_trait::async_trait;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
@@ -16,7 +15,6 @@ use ika_types::messages_dwallet_checkpoint::{
     SignedDWalletCheckpointMessage, VerifiedDWalletCheckpointMessage,
 };
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, info, instrument, trace, warn};
 
 #[async_trait]
@@ -42,10 +40,6 @@ pub struct SubmitDWalletCheckpointToConsensus<T> {
     pub signer: StableSyncAuthoritySigner,
     pub authority: AuthorityName,
     pub metrics: Arc<DWalletCheckpointMetrics>,
-    /// Channel to send checkpoint signing requests to the MPC service.
-    /// When a checkpoint is created, we send a request through this channel
-    /// to trigger an internal MPC signing session.
-    pub internal_checkpoint_sign_sender: UnboundedSender<InternalCheckpointSignRequest>,
 }
 
 pub struct LogDWalletCheckpointOutput;
@@ -84,35 +78,6 @@ impl<T: SubmitToConsensus> DWalletCheckpointOutput for SubmitDWalletCheckpointTo
                 ?checkpoint_message,
                 "Sending dwallet checkpoint signature to consensus."
             );
-
-            // TODO: think if we can do this from mpc service
-            // Trigger internal MPC signing session for this checkpoint.
-            // The MPC signature will eventually replace the BLS quorum signature.
-            // For now, both are submitted - the MPC signature is logged when complete.
-            let checkpoint_digest = checkpoint_message.digest();
-            let message_to_sign = bcs::to_bytes(&checkpoint_digest)
-                .expect("checkpoint digest serialization should never fail");
-
-            let internal_sign_request = InternalCheckpointSignRequest {
-                checkpoint_sequence_number: checkpoint_seq,
-                message: message_to_sign,
-            };
-
-            if let Err(e) = self
-                .internal_checkpoint_sign_sender
-                .send(internal_sign_request)
-            {
-                warn!(
-                    checkpoint_seq,
-                    error = %e,
-                    "Failed to send internal checkpoint sign request to MPC service"
-                );
-            } else {
-                debug!(
-                    checkpoint_seq,
-                    "Sent internal checkpoint sign request to MPC service"
-                );
-            }
 
             let summary = SignedDWalletCheckpointMessage::new(
                 epoch_store.epoch(),

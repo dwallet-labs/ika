@@ -311,19 +311,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
     ) -> IkaResult<Option<AssignedPresign>>;
-
-    /// Stores an MPC signature for a checkpoint.
-    fn store_mpc_checkpoint_signature(
-        &self,
-        checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
-        signature: Vec<u8>,
-    ) -> IkaResult<()>;
-
-    /// Retrieves the MPC signature for a checkpoint, if it exists.
-    fn get_mpc_checkpoint_signature(
-        &self,
-        checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
-    ) -> IkaResult<Option<Vec<u8>>>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -502,27 +489,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<Option<AssignedPresign>> {
         let tables = self.tables()?;
         tables.pop_assigned_presign(signature_algorithm, session_identifier)
-    }
-
-    fn store_mpc_checkpoint_signature(
-        &self,
-        checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
-        signature: Vec<u8>,
-    ) -> IkaResult<()> {
-        let tables = self.tables()?;
-        Ok(tables
-            .mpc_checkpoint_signatures
-            .insert(&checkpoint_sequence_number, &signature)?)
-    }
-
-    fn get_mpc_checkpoint_signature(
-        &self,
-        checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
-    ) -> IkaResult<Option<Vec<u8>>> {
-        let tables = self.tables()?;
-        Ok(tables
-            .mpc_checkpoint_signatures
-            .get(&checkpoint_sequence_number)?)
     }
 }
 
@@ -720,10 +686,6 @@ pub struct AuthorityEpochTables {
     assigned_presigns_taproot: DBMap<SessionIdentifier, AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_schnorrkel_substrate: DBMap<SessionIdentifier, AssignedPresign>,
-
-    /// MPC signatures for checkpoints. Key is checkpoint sequence number, value is the MPC signature bytes.
-    /// This table is populated when InternalSign MPC sessions complete and is read when relaying checkpoints.
-    mpc_checkpoint_signatures: DBMap<DWalletCheckpointSequenceNumber, Vec<u8>>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {

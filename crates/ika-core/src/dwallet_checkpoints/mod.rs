@@ -420,8 +420,6 @@ pub struct DWalletCheckpointSignatureAggregator {
         MultiStakeAggregator<DWalletCheckpointMessageDigest, DWalletCheckpointMessage, true>,
     state: Arc<AuthorityState>,
     metrics: Arc<DWalletCheckpointMetrics>,
-    /// BLS quorum signature that we're holding until MPC signature is ready
-    pending_auth_signature: Option<AuthorityStrongQuorumSignInfo>,
 }
 
 impl DWalletCheckpointBuilder {
@@ -915,7 +913,6 @@ impl DWalletCheckpointAggregator {
                     ),
                     state: self.state.clone(),
                     metrics: self.metrics.clone(),
-                    pending_auth_signature: None,
                 });
                 debug!(
                     next_index = 0,
@@ -927,40 +924,6 @@ impl DWalletCheckpointAggregator {
                 );
                 self.current.as_mut().unwrap()
             };
-
-            // First check if we have a pending auth signature and the MPC signature is now ready
-            if let Some(pending_sig) = &current.pending_auth_signature {
-                let checkpoint_sequence_number = current.checkpoint_message.sequence_number;
-                let mpc_signature = self
-                    .epoch_store
-                    .get_mpc_checkpoint_signature(checkpoint_sequence_number)?;
-
-                if let Some(mpc_sig) = mpc_signature {
-                    // MPC signature is now ready, complete the checkpoint
-                    let mut checkpoint_with_mpc = current.checkpoint_message.clone();
-                    checkpoint_with_mpc.mpc_signature = Some(mpc_sig);
-
-                    let checkpoint_message = VerifiedDWalletCheckpointMessage::new_unchecked(
-                        CertifiedDWalletCheckpointMessage::new_from_data_and_sig(
-                            checkpoint_with_mpc,
-                            pending_sig.clone(),
-                        ),
-                    );
-
-                    self.tables
-                        .insert_certified_checkpoint(&checkpoint_message)?;
-                    self.metrics
-                        .last_certified_dwallet_checkpoint
-                        .set(checkpoint_sequence_number as i64);
-                    info!(
-                        checkpoint_sequence_number,
-                        "Checkpoint certified with both BLS and MPC signatures"
-                    );
-                    result.push(checkpoint_message.into_inner());
-                    self.current = None;
-                    continue 'outer;
-                }
-            }
 
             let epoch_tables = self
                 .epoch_store
@@ -1003,43 +966,23 @@ impl DWalletCheckpointAggregator {
                     )])
                     .inc();
                 if let Ok(auth_signature) = current.try_aggregate(received_data) {
-                    // BLS quorum reached, but we need to wait for MPC signature as well
                     let checkpoint_sequence_number = current.checkpoint_message.sequence_number;
 
-                    // Check if MPC signature is available
-                    let mpc_signature = self
-                        .epoch_store
-                        .get_mpc_checkpoint_signature(checkpoint_sequence_number)?;
+                    let checkpoint_message = VerifiedDWalletCheckpointMessage::new_unchecked(
+                        CertifiedDWalletCheckpointMessage::new_from_data_and_sig(
+                            current.checkpoint_message.clone(),
+                            auth_signature,
+                        ),
+                    );
 
-                    if let Some(mpc_sig) = mpc_signature {
-                        // Both BLS quorum and MPC signature are ready - create certified checkpoint
-                        let mut checkpoint_with_mpc = current.checkpoint_message.clone();
-                        checkpoint_with_mpc.mpc_signature = Some(mpc_sig);
-
-                        let checkpoint_message = VerifiedDWalletCheckpointMessage::new_unchecked(
-                            CertifiedDWalletCheckpointMessage::new_from_data_and_sig(
-                                checkpoint_with_mpc,
-                                auth_signature,
-                            ),
-                        );
-
-                        self.tables
-                            .insert_certified_checkpoint(&checkpoint_message)?;
-                        self.metrics
-                            .last_certified_dwallet_checkpoint
-                            .set(checkpoint_sequence_number as i64);
-                        result.push(checkpoint_message.into_inner());
-                        self.current = None;
-                        continue 'outer;
-                    } else {
-                        // BLS quorum reached but MPC signature not ready yet
-                        // Store the auth_signature and wait for MPC signature
-                        current.pending_auth_signature = Some(auth_signature);
-                        debug!(
-                            checkpoint_sequence_number,
-                            "BLS quorum reached, waiting for MPC signature"
-                        );
-                    }
+                    self.tables
+                        .insert_certified_checkpoint(&checkpoint_message)?;
+                    self.metrics
+                        .last_certified_dwallet_checkpoint
+                        .set(checkpoint_sequence_number as i64);
+                    result.push(checkpoint_message.into_inner());
+                    self.current = None;
+                    continue 'outer;
                 } else {
                     current.next_index = index + 1;
                 }

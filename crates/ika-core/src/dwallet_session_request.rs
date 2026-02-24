@@ -86,13 +86,13 @@ impl DWalletSessionRequest {
         }
     }
 
-    /// Creates a new internal sign session request for signing checkpoint data.
+    /// Creates a new internal sign session request.
     ///
     /// The session identifier is derived deterministically from the epoch and
-    /// checkpoint sequence number, ensuring all validators create the same session.
+    /// sequence number, ensuring all validators create the same session.
     pub fn new_internal_sign(
         epoch: u64,
-        checkpoint_sequence_number: u64,
+        sequence_number: u64,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
@@ -105,7 +105,7 @@ impl DWalletSessionRequest {
         transcript.append_message(b"epoch", &epoch.to_be_bytes());
         transcript.append_message(
             b"checkpoint sequence number",
-            &checkpoint_sequence_number.to_be_bytes(),
+            &sequence_number.to_be_bytes(),
         );
         transcript.append_message(b"curve", curve.to_string().as_bytes());
         transcript.append_message(
@@ -141,7 +141,7 @@ impl DWalletSessionRequest {
         Self {
             session_type,
             session_identifier,
-            session_sequence_number: checkpoint_sequence_number,
+            session_sequence_number: sequence_number,
             protocol_data,
             epoch,
             requires_network_key_data: true,

@@ -11,14 +11,26 @@ use std::vec::Vec;
 use sui_types::base_types::EpochId;
 use tracing::error;
 
-/// Request to trigger an internal MPC signing session for a checkpoint.
-/// Sent from the checkpoint service to the MPC service when a new checkpoint is created.
+/// Request to trigger an internal MPC signing session.
+/// Sent to the MPC service to initiate a sign session using the internal presign pool.
 #[derive(Debug, Clone)]
-pub struct InternalCheckpointSignRequest {
-    /// The sequence number of the checkpoint to sign.
-    pub checkpoint_sequence_number: u64,
-    /// The serialized checkpoint digest to sign.
+pub struct InternalSignRequest {
+    pub sequence_number: u64,
     pub message: Vec<u8>,
+    pub dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+    pub curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
+    pub signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
+    pub hash_scheme: group::HashScheme,
+}
+
+/// Output from a completed internal MPC signing session.
+/// Sent to the internal sign output channel for consumers.
+#[derive(Debug, Clone)]
+pub struct InternalSignOutput {
+    pub sequence_number: u64,
+    pub signature: Vec<u8>,
+    pub curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
+    pub signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
 }
 
 pub mod dwallet_mpc_service;

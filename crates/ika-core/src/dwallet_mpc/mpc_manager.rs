@@ -43,7 +43,10 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
+
+use crate::dwallet_mpc::InternalSignOutput;
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -140,6 +143,9 @@ pub(crate) struct DWalletMPCManager {
 
     /// The epoch store for persisting presign pools to disk.
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+
+    /// Channel sender for completed internal sign session outputs.
+    internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
 }
 
 impl DWalletMPCManager {
@@ -155,6 +161,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -168,6 +175,7 @@ impl DWalletMPCManager {
             sui_data_receivers,
             protocol_config,
             epoch_store,
+            internal_sign_output_sender,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -188,6 +196,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -238,6 +247,7 @@ impl DWalletMPCManager {
             agreed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             epoch_store,
+            internal_sign_output_sender,
         })
     }
 
@@ -584,6 +594,7 @@ impl DWalletMPCManager {
     }
 
     /// Returns the network encryption key ID used for checkpoint signing (the oldest by DKG epoch).
+    /// Used by internal presign session instantiation to determine checkpoint-specific pool params.
     fn checkpoint_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
         self.network_keys
             .network_encryption_keys
@@ -728,42 +739,19 @@ impl DWalletMPCManager {
         self.next_internal_presign_sequence_number += 1;
     }
 
-    /// Instantiates an internal sign session for signing a checkpoint message.
+    /// Instantiates a generic internal sign session.
     ///
-    /// This is called when a checkpoint is created and needs to be signed using
-    /// the internal checkpoint dWallet (with emulated centralized party).
-    ///
-    /// # Arguments
-    /// * `checkpoint_sequence_number` - The sequence number of the checkpoint to sign
-    /// * `checkpoint_message` - The serialized checkpoint message to sign
-    ///
-    /// The network encryption key ID and signature algorithm are determined internally,
-    /// using the same approach as internal presign sessions.
-    pub(super) fn instantiate_internal_sign_session_for_checkpoint(
+    /// Pops a presign from the internal pool, wraps it, and creates the sign session.
+    /// The caller provides all parameters (key ID, curve, algorithm, hash scheme, etc.).
+    pub(super) fn instantiate_internal_sign_session(
         &mut self,
-        checkpoint_sequence_number: u64,
-        checkpoint_message: Vec<u8>,
+        dwallet_network_encryption_key_id: ObjectID,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: group::HashScheme,
+        sequence_number: u64,
+        message: Vec<u8>,
     ) -> bool {
-        // Use the consensus-agreed checkpoint key ID.
-        let dwallet_network_encryption_key_id = match self
-            .checkpoint_signing_network_encryption_key_id()
-        {
-            Some(key_id) => key_id,
-            None => {
-                warn!(
-                    checkpoint_sequence_number,
-                    "No consensus-agreed checkpoint key available for internal checkpoint signing"
-                );
-                return false;
-            }
-        };
-
-        // Get the checkpoint signing algorithm and curve from protocol config
-        let signature_algorithm = self.protocol_config.checkpoint_signing_algorithm();
-        let curve = self.protocol_config.checkpoint_signing_curve();
-
-        let hash_scheme = self.protocol_config.checkpoint_signing_hash_scheme().into();
-
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -772,7 +760,7 @@ impl DWalletMPCManager {
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
-                    checkpoint_sequence_number,
+                    sequence_number,
                     error = ?e,
                     "Failed to get network encryption key data for internal sign session"
                 );
@@ -788,18 +776,18 @@ impl DWalletMPCManager {
             Ok(Some((session_id, presign))) => (session_id, presign),
             Ok(None) => {
                 warn!(
-                    checkpoint_sequence_number,
+                    sequence_number,
                     ?signature_algorithm,
-                    "No presign available in internal pool for checkpoint signing"
+                    "No presign available in internal pool for internal signing"
                 );
                 return false;
             }
             Err(e) => {
                 error!(
-                    checkpoint_sequence_number,
+                    sequence_number,
                     ?signature_algorithm,
                     error = ?e,
-                    "Failed to get presign from internal pool for checkpoint signing"
+                    "Failed to get presign from internal pool for internal signing"
                 );
                 return false;
             }
@@ -812,7 +800,7 @@ impl DWalletMPCManager {
             .unwrap_or(false)
         {
             error!(
-                checkpoint_sequence_number,
+                sequence_number,
                 ?presign_session_id,
                 "Presign has already been used - this should not happen"
             );
@@ -822,7 +810,7 @@ impl DWalletMPCManager {
         // Mark the presign as used to prevent double-spending
         if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
             error!(
-                checkpoint_sequence_number,
+                sequence_number,
                 ?presign_session_id,
                 error = ?e,
                 "Failed to mark presign as used"
@@ -836,7 +824,7 @@ impl DWalletMPCManager {
             Ok(wrapped) => wrapped,
             Err(e) => {
                 error!(
-                    checkpoint_sequence_number,
+                    sequence_number,
                     error = ?e,
                     "Failed to wrap presign in VersionedPresignOutput for internal sign"
                 );
@@ -846,13 +834,13 @@ impl DWalletMPCManager {
 
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
-            checkpoint_sequence_number,
+            sequence_number,
             curve,
             signature_algorithm,
             hash_scheme,
             dwallet_network_encryption_key_id,
             &network_dkg_output_bytes,
-            checkpoint_message.clone(),
+            message.clone(),
             wrapped_presign,
         );
 
@@ -864,12 +852,12 @@ impl DWalletMPCManager {
         };
 
         info!(
-            checkpoint_sequence_number,
+            sequence_number,
             ?curve,
             ?signature_algorithm,
             ?session_identifier,
-            message_length = checkpoint_message.len(),
-            "instantiating internal sign session for checkpoint",
+            message_length = message.len(),
+            "instantiating internal sign session",
         );
 
         self.new_session(&session_identifier, status, session_computation_type);
@@ -1353,25 +1341,27 @@ impl DWalletMPCManager {
                 curve,
                 signature_algorithm,
                 hash_scheme: _,
-                checkpoint_sequence_number,
+                sequence_number,
             } => {
-                if let Err(e) = self
-                    .epoch_store
-                    .store_mpc_checkpoint_signature(checkpoint_sequence_number, output.clone())
-                {
+                info!(
+                    sequence_number,
+                    curve = ?curve,
+                    signature_algorithm = ?signature_algorithm,
+                    signature_length = output.len(),
+                    signature_hex = %hex::encode(&output),
+                    "Internal sign completed"
+                );
+                let sign_output = InternalSignOutput {
+                    sequence_number,
+                    signature: output,
+                    curve,
+                    signature_algorithm,
+                };
+                if let Err(e) = self.internal_sign_output_sender.send(sign_output) {
                     error!(
-                        checkpoint_sequence_number,
+                        sequence_number,
                         error = ?e,
-                        "Failed to store MPC checkpoint signature"
-                    );
-                } else {
-                    info!(
-                        checkpoint_sequence_number,
-                        curve = ?curve,
-                        signature_algorithm = ?signature_algorithm,
-                        signature_length = output.len(),
-                        signature_hex = %hex::encode(&output),
-                        "Internal checkpoint sign completed - MPC signature stored"
+                        "Failed to send internal sign output to channel"
                     );
                 }
             }
