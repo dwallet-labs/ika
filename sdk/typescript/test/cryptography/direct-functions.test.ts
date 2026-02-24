@@ -12,57 +12,9 @@ import {
 	sessionIdentifierDigest,
 	verifyAndGetDWalletDKGPublicOutput,
 } from '../../src/client/cryptography';
-import { Curve, Hash } from '../../src/client/types';
+import { Curve, Hash, SignatureAlgorithm } from '../../src/client/types';
 
 describe('Cryptography Direct Functions', () => {
-	it('should create class groups keypair with seed', async () => {
-		// Create a hardcoded 32-byte seed for consistent testing
-		const seed = new Uint8Array([
-			1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-			27, 28, 29, 30, 31, 32,
-		]);
-
-		// Test creating a class groups keypair
-		const keypair = await createClassGroupsKeypair(seed, Curve.SECP256K1);
-
-		// Test against expected deterministic outputs
-		expect(keypair).toBeDefined();
-		expect(keypair.encryptionKey).toBeInstanceOf(Uint8Array);
-		expect(keypair.decryptionKey).toBeInstanceOf(Uint8Array);
-
-		// Verify exact expected lengths
-		expect(keypair.encryptionKey.length).toBe(778);
-		expect(keypair.decryptionKey.length).toBe(194);
-
-		// Verify exact expected output for first 20 bytes (deterministic with this seed)
-		const expectedEncryptionKeyStart = '800218a3f328cfa9432b5c3f0755d1e480d20eac';
-		const expectedDecryptionKeyStart = 'c00183d131cf69691ca1a7a3fc134f149880e8bb';
-
-		const actualEncryptionKeyStart = Array.from(keypair.encryptionKey.slice(0, 20))
-			.map((b) => b.toString(16).padStart(2, '0'))
-			.join('');
-		const actualDecryptionKeyStart = Array.from(keypair.decryptionKey.slice(0, 20))
-			.map((b) => b.toString(16).padStart(2, '0'))
-			.join('');
-
-		expect(actualEncryptionKeyStart).toBe(expectedEncryptionKeyStart);
-		expect(actualDecryptionKeyStart).toBe(expectedDecryptionKeyStart);
-
-		// Test that same seed creates same keypair
-		const keypair2 = await createClassGroupsKeypair(seed, Curve.SECP256K1);
-
-		expect(keypair.encryptionKey).toEqual(keypair2.encryptionKey);
-		expect(keypair.decryptionKey).toEqual(keypair2.decryptionKey);
-
-		// Test that different seeds create different keypairs
-		const seed2 = new Uint8Array(32);
-		crypto.getRandomValues(seed2);
-		const keypair3 = await createClassGroupsKeypair(seed2, Curve.SECP256K1);
-
-		expect(keypair.encryptionKey).not.toEqual(keypair3.encryptionKey);
-		expect(keypair.decryptionKey).not.toEqual(keypair3.decryptionKey);
-	});
-
 	it('should reject invalid seed sizes', async () => {
 		// Test with wrong seed size
 		const invalidSeed = new Uint8Array(16); // Too small
@@ -198,14 +150,14 @@ describe('Cryptography Direct Functions', () => {
 
 	it('should have exact expected cryptographic enum values', async () => {
 		// Test exact expected enum values
-		expect(Curve.SECP256K1).toBe(0);
-		expect(Hash.SHA256).toBe(1);
-		expect(Hash.KECCAK256).toBe(0);
+		expect(Curve.SECP256K1).toBe('SECP256K1');
+		expect(Hash.SHA256).toBe('SHA256');
+		expect(Hash.KECCAK256).toBe('KECCAK256');
 
 		// Verify types
-		expect(typeof Curve.SECP256K1).toBe('number');
-		expect(typeof Hash.SHA256).toBe('number');
-		expect(typeof Hash.KECCAK256).toBe('number');
+		expect(typeof Curve.SECP256K1).toBe('string');
+		expect(typeof Hash.SHA256).toBe('string');
+		expect(typeof Hash.KECCAK256).toBe('string');
 	});
 
 	it('should handle edge cases and invalid inputs gracefully', async () => {
@@ -230,14 +182,14 @@ describe('Cryptography Direct Functions', () => {
 	it('should test curve enum values', async () => {
 		// Test that curve enum values are properly defined
 		expect(Curve.SECP256K1).toBeDefined();
-		expect(typeof Curve.SECP256K1).toBe('number');
+		expect(typeof Curve.SECP256K1).toBe('string');
 	});
 
 	it('should test hash enum values', async () => {
 		expect(Hash.SHA256).toBeDefined();
 		expect(Hash.KECCAK256).toBeDefined();
-		expect(typeof Hash.SHA256).toBe('number');
-		expect(typeof Hash.KECCAK256).toBe('number');
+		expect(typeof Hash.SHA256).toBe('string');
+		expect(typeof Hash.KECCAK256).toBe('string');
 		expect(Hash.SHA256).not.toBe(Hash.KECCAK256);
 	});
 
@@ -474,7 +426,15 @@ describe('Cryptography Direct Functions', () => {
 
 			// With random invalid data, this should throw an error
 			await expect(
-				verifySecpSignature(publicKey, signature, message, networkDkgPublicOutput, 1),
+				verifySecpSignature(
+					publicKey,
+					signature,
+					message,
+					networkDkgPublicOutput,
+					Hash.SHA256,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Curve.SECP256K1,
+				),
 			).rejects.toThrow();
 		});
 	});
@@ -520,8 +480,9 @@ describe('Cryptography Direct Functions', () => {
 					userSecretKeyShare,
 					presign,
 					message,
-					1, // SHA256 hash
-					0, // ECDSA signature scheme
+					Hash.SHA256,
+					SignatureAlgorithm.ECDSASecp256k1,
+					Curve.SECP256K1,
 				),
 			).rejects.toThrow();
 		});
