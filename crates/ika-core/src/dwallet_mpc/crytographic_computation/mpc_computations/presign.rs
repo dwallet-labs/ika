@@ -205,18 +205,12 @@ impl PresignPublicInputByProtocol {
                                     <Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
 
-                                let output = match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
-                                    VersionedOutput::UniversalPublicDKGOutput {
-                                        ..
-                                    } => {
-                                        return Err(DwalletMPCError::InvalidInput(
-                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
-                                        ))
+                                match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
+                                        Some(output)
                                     }
-                                };
-
-                                Some(output)
+                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                                }
                             }
                             None => None,
                         },
@@ -236,19 +230,13 @@ impl PresignPublicInputByProtocol {
                                     <RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
 
-                                let output = match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
-                                    VersionedOutput::UniversalPublicDKGOutput {
-                                        ..
-                                    } => {
-                                        return Err(DwalletMPCError::InvalidInput(
-                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
-                                        ))
+                                match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
+                                        Some(output)
                                     }
-                                };
-
-                                Some(output)
-                            },
+                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                                }
+                            }
                             None => None,
                         },
                     ));
@@ -268,18 +256,12 @@ impl PresignPublicInputByProtocol {
                                     <Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
 
-                                let output = match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
-                                    VersionedOutput::UniversalPublicDKGOutput {
-                                        ..
-                                    } => {
-                                        return Err(DwalletMPCError::InvalidInput(
-                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
-                                        ))
+                                match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
+                                        Some(output)
                                     }
-                                };
-
-                                Some(output)
+                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                                }
                             }
                             None => None,
                         },
@@ -300,18 +282,12 @@ impl PresignPublicInputByProtocol {
                                     <Secp256r1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
 
-                                let output = match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
-                                    VersionedOutput::UniversalPublicDKGOutput {
-                                        ..
-                                    } => {
-                                        return Err(DwalletMPCError::InvalidInput(
-                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
-                                        ))
+                                match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
+                                        Some(output)
                                     }
-                                };
-
-                                Some(output)
+                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                                }
                             }
                             None => None,
                         },
@@ -332,18 +308,12 @@ impl PresignPublicInputByProtocol {
                                     <Secp256k1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
                                 >(&dkg_output)?;
 
-                                let output = match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => output,
-                                    VersionedOutput::UniversalPublicDKGOutput {
-                                        ..
-                                    } => {
-                                        return Err(DwalletMPCError::InvalidInput(
-                                            "Universal DKG output is not supported for v2 non-global presign".to_string(),
-                                        ))
+                                match versioned_output {
+                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
+                                        Some(output)
                                     }
-                                };
-
-                                Some(output)
+                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                                }
                             }
                             None => None,
                         },

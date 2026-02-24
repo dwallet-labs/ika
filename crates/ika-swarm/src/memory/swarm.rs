@@ -429,6 +429,7 @@ mod test {
     use std::num::NonZeroUsize;
 
     #[tokio::test]
+    #[ignore = "requires a running local Sui node"]
     async fn launch() {
         telemetry_subscribers::init_for_testing();
         let mut swarm = Swarm::builder()

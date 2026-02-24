@@ -892,7 +892,7 @@ mod test {
     #[test]
     fn test_getters() {
         let prot: ProtocolConfig =
-            ProtocolConfig::get_for_version(ProtocolVersion::new(3), Chain::Unknown);
+            ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
         assert_eq!(
             prot.max_messages_per_dwallet_checkpoint(),
             prot.max_messages_per_dwallet_checkpoint_as_option()
@@ -903,7 +903,7 @@ mod test {
     #[test]
     fn test_setters() {
         let mut prot: ProtocolConfig =
-            ProtocolConfig::get_for_version(ProtocolVersion::new(3), Chain::Unknown);
+            ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
         prot.set_max_messages_per_dwallet_checkpoint_for_testing(123);
         assert_eq!(prot.max_messages_per_dwallet_checkpoint(), 123);
 
@@ -934,7 +934,7 @@ mod test {
     #[test]
     fn lookup_by_string_test() {
         let prot: ProtocolConfig =
-            ProtocolConfig::get_for_version(ProtocolVersion::new(3), Chain::Unknown);
+            ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
         // Does not exist
         assert!(prot.lookup_attr("some random string".to_string()).is_none());
 
@@ -946,9 +946,7 @@ mod test {
         );
 
         let protocol_config: ProtocolConfig =
-            ProtocolConfig::get_for_version(ProtocolVersion::new(3), Chain::Unknown);
-
-        // We had this in version 3
+            ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
         assert_eq!(
             protocol_config
                 .attr_map()
@@ -961,7 +959,7 @@ mod test {
 
         // Check feature flags
         let prot: ProtocolConfig =
-            ProtocolConfig::get_for_version(ProtocolVersion::new(3), Chain::Unknown);
+            ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
         // Does not exist
         assert!(
             prot.feature_flags

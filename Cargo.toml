@@ -73,13 +73,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "a204b2a3"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a204b2a3"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -116,6 +116,7 @@ base64 = "0.22.1"
 bcs = "0.1.4"
 byteorder = "1.4.3"
 bytes = { version = "1.5.0", features = ["serde"] }
+cached = "0.43.0"
 chrono = { version = "0.4.39", features = ["clock", "serde"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 const-str = "1.0.0"
@@ -335,5 +336,6 @@ ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee553b25f9f619722391de33edbe2f7412c" }
 rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }
+der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }

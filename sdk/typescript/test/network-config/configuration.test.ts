@@ -21,10 +21,10 @@ describe('Network Configuration', () => {
 		expect(config.packages.ikaCommonPackage).toBe(
 			'0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175',
 		);
-		expect(config.packages.ikaDwallet2pcMpcPackage).toBe(
+		expect(config.packages.ikaDwallet2pcMpcOriginalPackage).toBe(
 			'0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317',
 		);
-		expect(config.packages.ikaSystemPackage).toBe(
+		expect(config.packages.ikaSystemOriginalPackage).toBe(
 			'0xb874c9b51b63e05425b74a22891c35b8da447900e577667b52e85a16d4d85486',
 		);
 
@@ -42,8 +42,8 @@ describe('Network Configuration', () => {
 		// Verify format requirements are still met
 		expect(config.packages.ikaPackage).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.packages.ikaCommonPackage).toMatch(/^0x[a-f0-9]+$/);
-		expect(config.packages.ikaDwallet2pcMpcPackage).toMatch(/^0x[a-f0-9]+$/);
-		expect(config.packages.ikaSystemPackage).toMatch(/^0x[a-f0-9]+$/);
+		expect(config.packages.ikaDwallet2pcMpcOriginalPackage).toMatch(/^0x[a-f0-9]+$/);
+		expect(config.packages.ikaSystemOriginalPackage).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.objects.ikaSystemObject.objectID).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.objects.ikaDWalletCoordinator.objectID).toMatch(/^0x[a-f0-9]+$/);
 	});
@@ -62,10 +62,10 @@ describe('Network Configuration', () => {
 		expect(config.packages.ikaCommonPackage).toBe(
 			'0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0',
 		);
-		expect(config.packages.ikaDwallet2pcMpcPackage).toBe(
+		expect(config.packages.ikaDwallet2pcMpcOriginalPackage).toBe(
 			'0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730',
 		);
-		expect(config.packages.ikaSystemPackage).toBe(
+		expect(config.packages.ikaSystemOriginalPackage).toBe(
 			'0xae71e386fd4cff3a080001c4b74a9e485cd6a209fa98fb272ab922be68869148',
 		);
 
@@ -83,8 +83,8 @@ describe('Network Configuration', () => {
 		// Verify format requirements are still met
 		expect(config.packages.ikaPackage).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.packages.ikaCommonPackage).toMatch(/^0x[a-f0-9]+$/);
-		expect(config.packages.ikaDwallet2pcMpcPackage).toMatch(/^0x[a-f0-9]+$/);
-		expect(config.packages.ikaSystemPackage).toMatch(/^0x[a-f0-9]+$/);
+		expect(config.packages.ikaDwallet2pcMpcOriginalPackage).toMatch(/^0x[a-f0-9]+$/);
+		expect(config.packages.ikaSystemOriginalPackage).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.objects.ikaSystemObject.objectID).toMatch(/^0x[a-f0-9]+$/);
 		expect(config.objects.ikaDWalletCoordinator.objectID).toMatch(/^0x[a-f0-9]+$/);
 	});

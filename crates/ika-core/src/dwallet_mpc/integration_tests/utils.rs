@@ -155,9 +155,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn next_dwallet_internal_mpc_output(
         &self,
-        _last_consensus_round: Option<Round>,
+        last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletInternalMPCOutput>)>> {
-        Ok(None)
+        let round_to_internal_outputs = self.round_to_internal_outputs.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_internal_outputs
+                .get(&0)
+                .map(|outputs| (0, outputs.clone())));
+        }
+        Ok(round_to_internal_outputs
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|outputs| (last_consensus_round.unwrap() + 1, outputs.clone())))
     }
 
     fn insert_presigns(
@@ -210,9 +218,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn next_internal_sessions_status_update(
         &self,
-        _last_consensus_round: Option<Round>,
+        last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
-        Ok(None)
+        let round_to_status_updates = self.round_to_status_updates.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_status_updates
+                .get(&0)
+                .map(|updates| (0, updates.clone())));
+        }
+        Ok(round_to_status_updates
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
     }
 
     fn assign_presign(
@@ -444,6 +460,17 @@ pub(crate) fn send_advance_results_between_parties(
                 }
             })
             .collect();
+        let internal_outputs: Vec<_> = consensus_messages
+            .clone()
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletInternalMPCOutput(output) = message.kind {
+                    Some(output)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let status_updates: Vec<_> = consensus_messages
             .into_iter()
             .filter_map(|message| {
@@ -480,13 +507,14 @@ pub(crate) fn send_advance_results_between_parties(
                 .unwrap()
                 .insert(new_data_consensus_round, vec![]);
 
-            // Also initialize internal outputs for this round (empty by default)
+            // Distribute internal MPC outputs (e.g. completed internal presign sessions) to all parties
             other_epoch_store
                 .round_to_internal_outputs
                 .lock()
                 .unwrap()
                 .entry(new_data_consensus_round)
-                .or_default();
+                .or_default()
+                .extend(internal_outputs.clone());
             // Distribute status updates to all parties
             other_epoch_store
                 .round_to_status_updates
@@ -534,6 +562,12 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut pending_checkpoints = vec![];
     let mut completed_parties = vec![];
     let mut iterations = 0usize;
+    // Track per-party newly-instantiated network key IDs so that sessions waiting
+    // for a key (in `requests_pending_for_network_key`) are activated as soon as the
+    // key is voted-in through a consensus round, without requiring a second outer-loop
+    // iteration.
+    let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
+        vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         iterations += 1;
         if iterations >= MAX_PARTY_ITERATIONS {
@@ -573,9 +607,41 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 })
             };
 
+            // When `currently_running == 0` and the party has an
+            // `InternalSessionsStatusUpdate` containing new network key data (e.g. key
+            // data broadcast after DKG completes), treat it as a round boundary so the
+            // outer loop can call `send_advance_results_between_parties` and activate
+            // sessions waiting on the key.
+            // Also trigger when the update contains global presign requests, so that the
+            // outer loop distributes them to all parties (regardless of running computations).
+            // This check must happen BEFORE clearing so the status update is not lost.
+            // We only trigger on updates with actual `network_key_data` or `global_presign_requests`
+            // to avoid false positives from idle-status-only updates (emitted on first run due to
+            // `last_sent_idle_status = None`), which would waste outer-loop rounds.
+            let currently_running_len = dwallet_mpc_service
+                .dwallet_mpc_manager()
+                .cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .len();
+            let check_status_update_with_data = |store: &Arc<Mutex<Vec<ConsensusTransaction>>>| {
+                store.lock().unwrap().iter().any(|msg| {
+                    if let ConsensusTransactionKind::InternalSessionsStatusUpdate(update) =
+                        &msg.kind
+                    {
+                        !update.global_presign_requests.is_empty()
+                            || (currently_running_len == 0 && !update.network_key_data.is_empty())
+                    } else {
+                        false
+                    }
+                })
+            };
+
             // Check for MPC activity BEFORE clearing - this handles messages produced
             // during setup phases (e.g., rejected sessions when network key is already available)
-            if check_mpc_activity(&consensus_messages_store) {
+            // Also exit early if there's a pending-for-key/presign status update to distribute.
+            if check_mpc_activity(&consensus_messages_store)
+                || check_status_update_with_data(&consensus_messages_store)
+            {
                 info!(
                     party_id=?i+1,
                     "Received MPC messages/outputs for party (from previous phase)",
@@ -591,7 +657,11 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 .lock()
                 .unwrap()
                 .clear();
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            let key_ids = std::mem::take(&mut party_newly_instantiated_network_key_ids[i]);
+            let new_key_ids = dwallet_mpc_service
+                .run_service_loop_iteration(key_ids)
+                .await;
+            party_newly_instantiated_network_key_ids[i] = new_key_ids;
 
             // Check if the party has produced MPC messages or outputs in THIS iteration.
             // We filter for DWalletMPCMessage and DWalletMPCOutput because InternalSessionsStatusUpdate
@@ -600,7 +670,9 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             // background tasks that run asynchronously and should not count as "completion" for
             // the test harness. Otherwise, one party starting internal presigns before others
             // would cause the test to progress before all parties have processed the same events.
-            if check_mpc_activity(&consensus_messages_store) {
+            if check_mpc_activity(&consensus_messages_store)
+                || check_status_update_with_data(&consensus_messages_store)
+            {
                 info!(
                     party_id=?i+1,
                     "Received MPC messages/outputs for party",
@@ -652,7 +724,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             let dwallet_mpc_service = dwallet_mpc_services.get_mut(i).unwrap();
             // Run the service loop to allow tokio tasks spawned by rayon to complete
             // and to call receive_completed_computations internally.
-            let _ = dwallet_mpc_service.run_service_loop_iteration().await;
+            let _ = dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
             if dwallet_mpc_service
                 .dwallet_mpc_manager()
                 .cryptographic_computations_orchestrator
@@ -743,7 +815,7 @@ pub(crate) async fn send_start_network_dkg_event_to_all_parties(
         key_id,
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
         assert_eq!(dwallet_mpc_service.dwallet_mpc_manager().sessions.len(), 1);
         let session = dwallet_mpc_service
             .dwallet_mpc_manager()
@@ -853,12 +925,10 @@ pub(crate) fn send_start_dwallet_dkg_event(
     session_identifier_preimage: [u8; 32],
     session_sequence_number: u64,
     dwallet_network_encryption_key_id: ObjectID,
-    encrypted_user_secret_key_share_id: ObjectID,
     dwallet_id: ObjectID,
     centralized_public_key_share_and_proof: Vec<u8>,
-    encrypted_centralized_secret_share_and_proof: Vec<u8>,
-    encryption_key: Vec<u8>,
-    encryption_key_id: ObjectID,
+    user_secret_key_share: UserSecretKeyShareEventType,
+    curve: DWalletCurve,
 ) {
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
@@ -871,18 +941,10 @@ pub(crate) fn send_start_dwallet_dkg_event(
                 session_sequence_number,
                 protocol_data: ProtocolData::DWalletDKG {
                     data: DWalletDKGData {
-                        curve: DWalletCurve::Secp256k1,
+                        curve,
                         centralized_public_key_share_and_proof:
                             centralized_public_key_share_and_proof.clone(),
-                        user_secret_key_share: UserSecretKeyShareEventType::Encrypted {
-                            encrypted_user_secret_key_share_id,
-                            encrypted_centralized_secret_share_and_proof:
-                                encrypted_centralized_secret_share_and_proof.clone(),
-                            encryption_key: encryption_key.clone(),
-                            encryption_key_id,
-                            encryption_key_address: Default::default(),
-                            signer_public_key: vec![],
-                        },
+                        user_secret_key_share: user_secret_key_share.clone(),
                     },
                     dwallet_id,
                     dwallet_network_encryption_key_id,
@@ -895,6 +957,49 @@ pub(crate) fn send_start_dwallet_dkg_event(
             epoch_id,
         ));
     });
+}
+
+/// Advances consensus rounds until the internal presign pool for the given algorithm and
+/// network key has at least one presign available. Returns the new consensus round.
+///
+/// This is useful when tests need real presigns from the internal pool (e.g. for sign tests),
+/// and need to wait for the background internal presign sessions to complete.
+pub(crate) async fn advance_rounds_while_presign_pool_empty(
+    test_state: &mut IntegrationTestState,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    network_key_id: ObjectID,
+    start_consensus_round: Round,
+) -> Round {
+    const MAX_WAIT_ROUNDS: usize = 300;
+    let mut consensus_round = start_consensus_round;
+    for _ in 0..MAX_WAIT_ROUNDS {
+        send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            consensus_round,
+        );
+        consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let pool_size = test_state
+            .epoch_stores
+            .first()
+            .expect("at least one epoch store should exist")
+            .presign_pool_size(signature_algorithm, network_key_id)
+            .unwrap_or(0);
+        if pool_size > 0 {
+            return consensus_round;
+        }
+    }
+    panic!(
+        "Presign pool for {:?} did not fill after {} rounds (~{} seconds)",
+        signature_algorithm,
+        MAX_WAIT_ROUNDS,
+        MAX_WAIT_ROUNDS / 10
+    );
 }
 
 /// Maximum number of consensus rounds to wait before failing the test.
@@ -917,19 +1022,6 @@ pub(crate) async fn advance_mpc_flow_until_completion(
             );
         }
 
-        // Set up the current round's data BEFORE running service loops.
-        // This ensures services can read from the DB and process new events.
-        // On the first iteration, this creates empty entries for the start round,
-        // allowing services to poll event channels and start new sessions.
-        send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            consensus_round,
-        );
-        consensus_round += 1;
-        rounds_waited += 1;
-
         if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
             &test_state.committee,
             &mut test_state.dwallet_mpc_services,
@@ -940,16 +1032,23 @@ pub(crate) async fn advance_mpc_flow_until_completion(
         .await
         {
             info!(?pending_checkpoint, "MPC flow completed successfully");
-            // Distribute any final outputs/messages before returning.
-            // This ensures subsequent MPC operations can access the results.
             send_advance_results_between_parties(
                 &test_state.committee,
                 &mut test_state.sent_consensus_messages_collectors,
                 &mut test_state.epoch_stores,
                 consensus_round,
             );
-            return (consensus_round + 1, pending_checkpoint);
+            return (consensus_round, pending_checkpoint);
         }
+
+        send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            consensus_round,
+        );
+        consensus_round += 1;
+        rounds_waited += 1;
     }
 }
 
