@@ -593,9 +593,9 @@ impl DWalletMPCManager {
         ]
     }
 
-    /// Returns the network encryption key ID used for checkpoint signing (the oldest by DKG epoch).
-    /// Used by internal presign session instantiation to determine checkpoint-specific pool params.
-    fn checkpoint_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
+    /// Returns the network encryption key ID used for internal signing (the oldest by DKG epoch).
+    /// Used by internal presign session instantiation to determine internal-signing-specific pool params.
+    fn internal_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
         self.network_keys
             .network_encryption_keys
             .iter()
@@ -612,36 +612,39 @@ impl DWalletMPCManager {
         network_is_idle: bool,
     ) {
         // Check if we are ready to instantiate internal sessions, which depend on the consensus agreed (synced) network key data.
-        let agreed_checkpoint_key_id = match self.checkpoint_signing_network_encryption_key_id() {
+        let agreed_internal_signing_key_id = match self.internal_signing_network_encryption_key_id()
+        {
             Some(id) => id,
             None => return,
         };
 
-        let checkpoint_curve = self.protocol_config.checkpoint_signing_curve();
-        let checkpoint_algorithm = self.protocol_config.checkpoint_signing_algorithm();
+        let internal_signing_curve = self.protocol_config.internal_signing_curve();
+        let internal_signing_algorithm = self.protocol_config.internal_signing_algorithm();
 
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
             {
                 for signature_algorithm in signature_algorithms {
-                    let is_checkpointing_presign = agreed_checkpoint_key_id == key_id
-                        && curve == checkpoint_curve
-                        && signature_algorithm == checkpoint_algorithm;
+                    let is_internal_signing_presign = agreed_internal_signing_key_id == key_id
+                        && curve == internal_signing_curve
+                        && signature_algorithm == internal_signing_algorithm;
 
                     let (
                         minimal_pool_size,
                         maximum_pool_size,
                         consensus_round_delay,
                         sessions_to_instantiate,
-                    ) = if is_checkpointing_presign {
+                    ) = if is_internal_signing_presign {
                         (
-                            self.protocol_config.checkpoint_presign_pool_minimum_size(),
-                            self.protocol_config.checkpoint_presign_pool_maximum_size(),
                             self.protocol_config
-                                .checkpoint_presign_consensus_round_delay(),
+                                .internal_sign_presign_pool_minimum_size(),
                             self.protocol_config
-                                .checkpoint_presign_sessions_to_instantiate(),
+                                .internal_sign_presign_pool_maximum_size(),
+                            self.protocol_config
+                                .internal_sign_presign_consensus_round_delay(),
+                            self.protocol_config
+                                .internal_sign_presign_sessions_to_instantiate(),
                         )
                     } else {
                         (
@@ -737,6 +740,13 @@ impl DWalletMPCManager {
         self.new_session(&session_identifier, status, session_computation_type);
 
         self.next_internal_presign_sequence_number += 1;
+    }
+
+    /// Returns whether the network encryption key with the given ID is available.
+    pub(super) fn has_network_key(&self, key_id: &ObjectID) -> bool {
+        self.network_keys
+            .get_network_encryption_key_public_data(key_id)
+            .is_ok()
     }
 
     /// Instantiates a generic internal sign session.
@@ -1149,8 +1159,8 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.protocol_config.checkpoint_signing_curve(),
-                    self.protocol_config.checkpoint_signing_algorithm(),
+                    self.protocol_config.internal_signing_curve(),
+                    self.protocol_config.internal_signing_algorithm(),
                     self.party_id,
                 )
                 .await;

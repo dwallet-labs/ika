@@ -261,8 +261,8 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    checkpoint_signing_curve: DWalletCurve,
-    checkpoint_signing_algorithm: DWalletSignatureAlgorithm,
+    internal_signing_curve: DWalletCurve,
+    internal_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
@@ -304,9 +304,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute the internal checkpoint DKG output for checkpoint signing
-            // Select the protocol PP for the checkpoint signing curve
-            let internal_sign_dkg_output = match checkpoint_signing_curve {
+            // Compute the internal sign DKG output for internal signing.
+            // Select the protocol PP for the internal signing curve.
+            let internal_sign_dkg_output = match internal_signing_curve {
                 DWalletCurve::Secp256k1 => {
                     bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
                 }
@@ -323,8 +323,8 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
             .and_then(|protocol_pp| {
                 compute_internal_sign_dkg_output(
                     &network_key_id,
-                    checkpoint_signing_curve,
-                    checkpoint_signing_algorithm,
+                    internal_signing_curve,
+                    internal_signing_algorithm,
                     &protocol_pp,
                     access_structure,
                     party_id,

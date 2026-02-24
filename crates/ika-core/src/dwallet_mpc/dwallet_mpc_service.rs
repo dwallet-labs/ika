@@ -359,12 +359,9 @@ impl DWalletMPCService {
     }
 
     /// Process internal sign requests received via the channel.
-    /// Uses a two-phase approach:
-    /// 1. Drain the channel into a pending buffer.
-    /// 2. Try to process buffered requests; those that can't be processed yet (e.g.,
-    ///    key not yet agreed) remain in the buffer for the next iteration.
+    /// Drains the channel into a pending buffer, then instantiates sessions
+    /// for requests whose network key is already available.
     fn process_internal_sign_requests(&mut self) {
-        // Phase 1: Drain channel into pending buffer.
         while let Ok(request) = self.internal_sign_receiver.try_recv() {
             info!(
                 sequence_number = request.sequence_number,
@@ -374,14 +371,19 @@ impl DWalletMPCService {
             self.pending_internal_sign_requests.push(request);
         }
 
-        // Phase 2: Try to process buffered requests.
         if self.pending_internal_sign_requests.is_empty() {
             return;
         }
 
-        // Use retain: process and remove successful ones, keep failed ones.
         self.pending_internal_sign_requests.retain(|request| {
-            let instantiated = self.dwallet_mpc_manager.instantiate_internal_sign_session(
+            if !self
+                .dwallet_mpc_manager
+                .has_network_key(&request.dwallet_network_encryption_key_id)
+            {
+                return true; // key not yet available, keep in buffer
+            }
+
+            self.dwallet_mpc_manager.instantiate_internal_sign_session(
                 request.dwallet_network_encryption_key_id,
                 request.curve,
                 request.signature_algorithm,
@@ -389,17 +391,7 @@ impl DWalletMPCService {
                 request.sequence_number,
                 request.message.clone(),
             );
-
-            if instantiated {
-                debug!(
-                    sequence_number = request.sequence_number,
-                    "Internal sign session instantiated"
-                );
-                false // remove from buffer
-            } else {
-                // Key not yet available or presign not ready — keep in buffer for retry.
-                true
-            }
+            false // instantiated, remove from buffer
         });
     }
 

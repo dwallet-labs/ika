@@ -278,13 +278,13 @@ pub struct ProtocolConfig {
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
 
-    checkpoint_signing_curve: Option<DWalletCurve>,
-    checkpoint_signing_algorithm: Option<DWalletSignatureAlgorithm>,
-    checkpoint_signing_hash_scheme: Option<DWalletHashScheme>,
+    internal_signing_curve: Option<DWalletCurve>,
+    internal_signing_algorithm: Option<DWalletSignatureAlgorithm>,
+    internal_signing_hash_scheme: Option<DWalletHashScheme>,
 
-    checkpoint_presign_pool_minimum_size: Option<u64>,
-    checkpoint_presign_consensus_round_delay: Option<u64>,
-    checkpoint_presign_sessions_to_instantiate: Option<u64>,
+    internal_sign_presign_pool_minimum_size: Option<u64>,
+    internal_sign_presign_consensus_round_delay: Option<u64>,
+    internal_sign_presign_sessions_to_instantiate: Option<u64>,
 
     // === Internal Presign Configuration ===
     internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
@@ -306,7 +306,7 @@ pub struct ProtocolConfig {
     internal_taproot_presign_sessions_to_instantiate: Option<u64>,
 
     // Pool maximum sizes (caps for idle spawning)
-    checkpoint_presign_pool_maximum_size: Option<u64>,
+    internal_sign_presign_pool_maximum_size: Option<u64>,
     internal_secp256k1_ecdsa_presign_pool_maximum_size: Option<u64>,
     internal_secp256r1_ecdsa_presign_pool_maximum_size: Option<u64>,
     internal_eddsa_presign_pool_maximum_size: Option<u64>,
@@ -545,13 +545,13 @@ impl ProtocolConfig {
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
 
-            checkpoint_signing_curve: Some(DWalletCurve::Curve25519),
-            checkpoint_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
-            checkpoint_signing_hash_scheme: Some(DWalletHashScheme::Keccak256),
+            internal_signing_curve: Some(DWalletCurve::Curve25519),
+            internal_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
+            internal_signing_hash_scheme: Some(DWalletHashScheme::Keccak256),
 
-            checkpoint_presign_pool_minimum_size: Some(5000),
-            checkpoint_presign_consensus_round_delay: Some(4), // 1s
-            checkpoint_presign_sessions_to_instantiate: Some(4), // 4×26=104 presigns/cycle
+            internal_sign_presign_pool_minimum_size: Some(5000),
+            internal_sign_presign_consensus_round_delay: Some(4), // 1s
+            internal_sign_presign_sessions_to_instantiate: Some(4), // 4×26=104 presigns/cycle
 
             // === Internal Presign Configuration ===
             // Pool minimum sizes
@@ -574,7 +574,7 @@ impl ProtocolConfig {
             internal_taproot_presign_sessions_to_instantiate: Some(1),         // 1×26=26 presigns
 
             // Pool maximum sizes (caps for idle spawning, 3× minimum)
-            checkpoint_presign_pool_maximum_size: Some(150000),
+            internal_sign_presign_pool_maximum_size: Some(150000),
             internal_secp256k1_ecdsa_presign_pool_maximum_size: Some(75000),
             internal_secp256r1_ecdsa_presign_pool_maximum_size: Some(30000),
             internal_eddsa_presign_pool_maximum_size: Some(30000),

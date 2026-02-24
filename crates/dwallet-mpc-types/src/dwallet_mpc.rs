@@ -131,7 +131,7 @@ pub struct NetworkEncryptionKeyPublicData {
     ///
     /// This field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
-    /// the network to perform internal signing operations (e.g., checkpoint signing)
+    /// the network to perform internal signing operations
     /// without requiring an actual user.
     ///
     /// # Security Model
