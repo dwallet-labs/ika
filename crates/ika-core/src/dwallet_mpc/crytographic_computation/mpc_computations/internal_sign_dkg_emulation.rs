@@ -596,7 +596,7 @@ pub fn internal_sign_dkg_session_id(
     signature_algorithm: DWalletSignatureAlgorithm,
 ) -> SessionIdentifier {
     // Compute a deterministic preimage using Merlin transcript
-    let mut transcript = Transcript::new(b"Internal Checkpoint DKG Session ID");
+    let mut transcript = Transcript::new(b"Internal Sign DKG Session ID");
     transcript.append_message(b"network_key_id", network_key_id);
     transcript.append_message(b"curve", curve.to_string().as_bytes());
     transcript.append_message(
