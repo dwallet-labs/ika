@@ -6,7 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_checkpoint_dkg_emulation::compute_internal_checkpoint_dkg_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_sign_dkg_emulation::compute_internal_sign_dkg_output;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -408,7 +408,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
 
             // Compute the internal checkpoint DKG output for checkpoint signing
             // Select the protocol PP for the checkpoint signing curve
-            let internal_checkpoint_dkg_output = match checkpoint_signing_curve {
+            let internal_sign_dkg_output = match checkpoint_signing_curve {
                 DWalletCurve::Secp256k1 => {
                     bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
                 }
@@ -423,7 +423,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 }
             }
             .and_then(|protocol_pp| {
-                compute_internal_checkpoint_dkg_output(
+                compute_internal_sign_dkg_output(
                     &network_key_id,
                     checkpoint_signing_curve,
                     checkpoint_signing_algorithm,
@@ -447,7 +447,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                internal_checkpoint_dkg_output,
+                internal_sign_dkg_output,
             })
         }
     }

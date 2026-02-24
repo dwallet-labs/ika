@@ -127,7 +127,7 @@ pub struct NetworkEncryptionKeyPublicData {
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 
-    /// The DKG output for internal checkpoint signing.
+    /// The DKG output for internal signing.
     ///
     /// This field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
@@ -146,7 +146,7 @@ pub struct NetworkEncryptionKeyPublicData {
     /// - `curve`: The curve used for signing (e.g., Curve25519)
     /// - `signature_algorithm`: The signature algorithm (e.g., EdDSA)
     /// - `serialized_dkg_output`: BCS-serialized `VersionedDwalletDKGPublicOutput`
-    pub internal_checkpoint_dkg_output: Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)>,
+    pub internal_sign_dkg_output: Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)>,
 }
 
 #[derive(
@@ -445,16 +445,16 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the internal checkpoint centralized DKG output if available.
+    /// Returns the internal sign DKG output if available.
     ///
     /// The output contains:
     /// - The curve used for signing
     /// - The signature algorithm
     /// - The serialized `VersionedDwalletDKGPublicOutput`
-    pub fn internal_checkpoint_centralized_dkg_output(
+    pub fn internal_sign_dkg_output(
         &self,
     ) -> Option<&(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
-        self.internal_checkpoint_dkg_output.as_ref()
+        self.internal_sign_dkg_output.as_ref()
     }
 
     /// Returns the serialized protocol public parameters for the given curve.
