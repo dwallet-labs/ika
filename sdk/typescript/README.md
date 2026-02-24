@@ -164,15 +164,15 @@ cargo run --bin ika --release --no-default-features -- start
 Then run the SDK tests, for example from the repo root:
 
 ```bash
-vitest run test/v2/dwallet-creation.test.ts && \
-vitest run test/v2/all-combinations.test.ts && \
-vitest run test/v2/all-combinations-future-sign.test.ts && \
-vitest run test/v2/dwallet-sign-during-dkg.test.ts && \
-vitest run test/v2/global-presign.test.ts && \
-vitest run test/v2/imported-key.test.ts && \
-vitest run test/v2/imported-key-make-public-share-and-sign.test.ts && \
-vitest run test/v2/make-public-share-and-sign.test.ts && \
-vitest run test/v2/transfer-dwallet.test.ts
+vitest run test/integration/dwallet-creation.test.ts && \
+vitest run test/integration/all-combinations.test.ts && \
+vitest run test/integration/all-combinations-future-sign.test.ts && \
+vitest run test/integration/dwallet-sign-during-dkg.test.ts && \
+vitest run test/integration/global-presign.test.ts && \
+vitest run test/integration/imported-key.test.ts && \
+vitest run test/integration/imported-key-make-public-share-and-sign.test.ts && \
+vitest run test/integration/make-public-share-and-sign.test.ts && \
+vitest run test/integration/transfer-dwallet.test.ts
 ```
 
 End-to-end system tests live under `test/system-tests` and have their own setup and instructions in
