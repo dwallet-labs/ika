@@ -14,12 +14,18 @@ use tracing::info;
 // but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
 
 
+// TODO:  next_internal_sessions_status_update() always returns Ok(None). This is the critical mock stub. The real service reads status updates from the
+//   epoch store via this method to perform weighted majority voting on idle status. Since the mock always returns None, the service never receives any
+//    status updates. The consensus-based idle status voting is completely untested.
+
 /// Test that validators correctly compute and report their idle status.
 /// The idle status is based on the number of ready-to-advance sessions
 /// plus currently running computations compared to a threshold.
 #[tokio::test]
 #[cfg(test)]
 async fn test_validators_compute_idle_status_correctly() {
+    //  TODO: this tests a local computation, not consensus. compute_is_idle(0) is a pure local function. The test
+    //   never verifies that idle status is agreed upon through the consensus voting mechanism. It should test both local and network-sent values.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -225,6 +231,10 @@ async fn test_idle_status_affects_internal_presign_creation() {
 async fn test_status_updates_distributed_through_consensus() {
     // TODO: this test is too general, should be way more specific; we should think of edge cases in which status updates are sent and assure they are sent after this edge cases happen and only then (and not twice for the same update!)
     // For example (think of more): when we get new presign request, or idle status changed. Make the conditions such that these would occur. And assert that the agreed upon values are correct.
+
+    // TODO: This tests the test harness, not the service. It verifies that
+    //   send_advance_results_between_parties writes to round_to_status_updates maps. But the service never reads from those maps (because the trait method
+    //    returns None). The test is checking that the test harness correctly copies data between HashMaps — it says nothing about the service. We must fix that.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -314,6 +324,10 @@ async fn test_status_updates_distributed_through_consensus() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_weighted_majority_voting_on_idle_status() {
+    // TODO: this test should be deleted, it should be a part of test_status_updates_distributed_through_consensus().
+
+    // TODO: this test has no assertion. Line 389: just info!("Test passed: ..."). There's literally no assert! on voting
+    //    behavior. The test always passes.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
