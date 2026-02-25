@@ -379,6 +379,12 @@ impl DWalletMPCService {
             if !self.dwallet_mpc_manager.has_internal_signing_network_key() {
                 return true; // key not yet available, keep in buffer
             }
+            if !self
+                .dwallet_mpc_manager
+                .has_internal_signing_presign_available()
+            {
+                return true; // no presign yet, keep in buffer
+            }
 
             self.dwallet_mpc_manager.instantiate_internal_sign_session(
                 request.sequence_number,

@@ -667,12 +667,7 @@ pub fn compute_internal_sign_dkg_output(
     };
 
     // Serialize the full output
-    let serialized_output = bcs::to_bytes(&output).map_err(|e| {
-        DwalletMPCError::InternalError(format!(
-            "Failed to serialize internal sign DKG output: {}",
-            e
-        ))
-    })?;
+    let serialized_output = bcs::to_bytes(&output).map_err(DwalletMPCError::BcsError)?;
 
     Ok(serialized_output)
 }

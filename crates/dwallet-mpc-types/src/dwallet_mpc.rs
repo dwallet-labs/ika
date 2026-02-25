@@ -140,12 +140,7 @@ pub struct NetworkEncryptionKeyPublicData {
     /// there is no user secret to protect. Security for internal signing comes entirely
     /// from the network's threshold signature scheme, not from randomness.
     ///
-    /// # Structure
-    ///
-    /// The output is stored as `(curve, signature_algorithm, serialized_dkg_output)`.
-    /// - `curve`: The curve used for signing (e.g., Curve25519)
-    /// - `signature_algorithm`: The signature algorithm (e.g., EdDSA)
-    /// - `serialized_dkg_output`: BCS-serialized `VersionedDwalletDKGPublicOutput`
+    /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
     pub internal_sign_dkg_output: Vec<u8>,
 }
 

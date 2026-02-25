@@ -20,7 +20,7 @@ use crate::dwallet_mpc::{
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, VersionedPresignOutput,
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
 };
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
@@ -756,63 +756,47 @@ impl DWalletMPCManager {
         &mut self,
         sequence_number: u64,
         message: Vec<u8>,
-    ) -> bool {
+    ) {
         // Derive config values internally
-        let dwallet_network_encryption_key_id =
-            match self.internal_signing_network_encryption_key_id() {
-                Some(id) => id,
-                None => {
-                    error!(
-                        sequence_number,
-                        "No network key available for internal signing"
-                    );
-                    return false;
-                }
-            };
+        let dwallet_network_encryption_key_id = self
+            .internal_signing_network_encryption_key_id()
+            .expect("caller should check has_internal_signing_network_key() first");
 
         let curve = self.protocol_config.internal_signing_curve();
         let signature_algorithm = self.protocol_config.internal_signing_algorithm();
-        let hash_scheme = group::HashScheme::Keccak256; // Always use Keccak256 for internal signing
-        let network_dkg_output_bytes = match self
+        let hash_scheme = match self.protocol_config.internal_signing_hash_scheme() {
+            DWalletHashScheme::Keccak256 => group::HashScheme::Keccak256,
+        };
+        let network_dkg_output_bytes = self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
-        {
-            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
-            Err(e) => {
+            .map(|key_data| key_data.network_dkg_output().as_bytes().to_vec())
+            .unwrap_or_else(|e| {
                 error!(
                     ?dwallet_network_encryption_key_id,
                     sequence_number,
                     error = ?e,
+                    should_never_happen = true,
                     "Failed to get network encryption key data for internal sign session"
                 );
-                return false;
-            }
-        };
+                panic!("Failed to get network encryption key data: {e:?}")
+            });
 
         // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign) = match self
+        let (presign_session_id, presign) = self
             .epoch_store
             .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
-        {
-            Ok(Some((session_id, presign))) => (session_id, presign),
-            Ok(None) => {
-                warn!(
-                    sequence_number,
-                    ?signature_algorithm,
-                    "No presign available in internal pool for internal signing"
-                );
-                return false;
-            }
-            Err(e) => {
+            .unwrap_or_else(|e| {
                 error!(
                     sequence_number,
                     ?signature_algorithm,
                     error = ?e,
+                    should_never_happen = true,
                     "Failed to get presign from internal pool for internal signing"
                 );
-                return false;
-            }
-        };
+                panic!("Failed to get presign from internal pool: {e:?}")
+            })
+            .expect("caller should check has_internal_signing_presign_available() first");
 
         // Check if this presign has already been used (safety check)
         if self
@@ -823,9 +807,10 @@ impl DWalletMPCManager {
             error!(
                 sequence_number,
                 ?presign_session_id,
+                should_never_happen = true,
                 "Presign has already been used - this should not happen"
             );
-            return false;
+            panic!("Presign has already been used: {presign_session_id:?}");
         }
 
         // Mark the presign as used to prevent double-spending
@@ -834,24 +819,24 @@ impl DWalletMPCManager {
                 sequence_number,
                 ?presign_session_id,
                 error = ?e,
+                should_never_happen = true,
                 "Failed to mark presign as used"
             );
-            return false;
+            panic!("Failed to mark presign as used: {e:?}");
         }
 
         // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
         // with the sign session input path, which expects this wrapping.
-        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
-            Ok(wrapped) => wrapped,
-            Err(e) => {
+        let wrapped_presign =
+            bcs::to_bytes(&VersionedPresignOutput::V2(presign)).unwrap_or_else(|e| {
                 error!(
                     sequence_number,
                     error = ?e,
+                    should_never_happen = true,
                     "Failed to wrap presign in VersionedPresignOutput for internal sign"
                 );
-                return false;
-            }
-        };
+                panic!("Failed to wrap presign: {e:?}")
+            });
 
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
@@ -882,12 +867,24 @@ impl DWalletMPCManager {
         );
 
         self.new_session(&session_identifier, status, session_computation_type);
-        true
     }
 
     /// Checks if this manager has an internal signing network key available
     pub(super) fn has_internal_signing_network_key(&self) -> bool {
         self.internal_signing_network_encryption_key_id().is_some()
+    }
+
+    /// Checks if this manager has a presign available for internal signing
+    pub(super) fn has_internal_signing_presign_available(&self) -> bool {
+        let Some(key_id) = self.internal_signing_network_encryption_key_id() else {
+            return false;
+        };
+        let signature_algorithm = self.protocol_config.internal_signing_algorithm();
+
+        self.epoch_store
+            .presign_pool_size(signature_algorithm, key_id)
+            .unwrap_or(0)
+            > 0
     }
 
     fn internal_presign_pool_size(
