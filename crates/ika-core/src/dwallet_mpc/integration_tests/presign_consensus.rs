@@ -274,7 +274,11 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
     // Note: The consensus mechanism may broadcast requests to all validators,
     // so even validator 3 (who didn't receive the request directly) may produce output
     // if the request reaches quorum and gets broadcast via consensus.
-    // TODO: this should be exactly 3 validators not >= 2.
+
+    // TODO: validators_with_output.len() >= 2. The comments (lines 261-268) acknowledge that "due to
+    // timing... not all validators may complete." The interesting property — that validator 3 (who never received the request) can still produce output
+    // via consensus — is not firmly asserted.
+    // We must assert that indeed all validators see the output. And if we have timing issues, we might need to decern why and modify the configured values so they never occur. THis should be fairly deterinistic
     assert!(
         validators_with_output.len() >= 2,
         "At least 2 validators should have the presign output. Got: {}",
