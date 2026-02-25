@@ -16,6 +16,7 @@ use tracing::info;
 // TODO: these tests wait for create_network_key_test() to setup the key,
 // but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
 
+// TODO: a test like test_internal_sign_dkg_session_id_determinism() but for internal presign sessinos is required, think of all edge cases.
 
 /// Test that internal presign sessions are instantiated at the correct consensus rounds
 /// based on the configuration (consensus_round_delay).
