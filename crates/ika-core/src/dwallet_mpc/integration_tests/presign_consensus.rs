@@ -153,6 +153,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_partial_visibility_consensus_and_pool_retrieval() {
+    // TODO: refer to the TODOs of test_global_presign_requests_tracked_and_reported() as relevant here as well.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -273,6 +274,7 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
     // Note: The consensus mechanism may broadcast requests to all validators,
     // so even validator 3 (who didn't receive the request directly) may produce output
     // if the request reaches quorum and gets broadcast via consensus.
+    // TODO: this should be exactly 3 validators not >= 2.
     assert!(
         validators_with_output.len() >= 2,
         "At least 2 validators should have the presign output. Got: {}",
