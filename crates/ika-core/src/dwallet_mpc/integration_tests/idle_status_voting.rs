@@ -5,6 +5,15 @@ use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::SessionType;
 use tracing::info;
 
+// TODO: all of these tests either take the protocol_config values as-is, or don't regard them at all.
+// This is problematic; guessing could lead to future test failures, and taking values as-is could make tests needlessly long to execute as the values could be very large.
+// Instead, we should set values in a convinient range (e.g. instantiate 2 sessions after every 4 rounds, and min pool size of 10 and max of 20).
+// Then we should test accurately and strictly based on these values.
+
+// TODO: these tests wait for create_network_key_test() to setup the key,
+// but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
+
+
 /// Test that validators correctly compute and report their idle status.
 /// The idle status is based on the number of ready-to-advance sessions
 /// plus currently running computations compared to a threshold.
@@ -108,6 +117,8 @@ async fn test_validators_compute_idle_status_correctly() {
             i
         );
     }
+
+    // TODO: should assert is_idle is false after enough rounds and so enough presign instatnation sessions.
 
     info!("Test passed: Validators correctly compute idle status");
 }

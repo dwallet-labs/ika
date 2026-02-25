@@ -14,6 +14,15 @@ use sui_types::base_types::ObjectID;
 use sui_types::committee::EpochId;
 use tracing::info;
 
+// TODO: all of these tests either take the protocol_config values as-is, or don't regard them at all.
+// This is problematic; guessing could lead to future test failures, and taking values as-is could make tests needlessly long to execute as the values could be very large.
+// Instead, we should set values in a convinient range (e.g. instantiate 2 sessions after every 4 rounds, and min pool size of 10 and max of 20).
+// Then we should test accurately and strictly based on these values.
+
+// TODO: these tests wait for create_network_key_test() to setup the key,
+// but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
+
+
 /// Test that global presign requests are properly tracked and reported.
 /// This verifies that when a global presign request is received, it's added to the
 /// global_presign_requests list and eventually processed via the pool.
