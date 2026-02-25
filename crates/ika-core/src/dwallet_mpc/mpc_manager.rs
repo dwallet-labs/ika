@@ -752,16 +752,27 @@ impl DWalletMPCManager {
     /// Instantiates a generic internal sign session.
     ///
     /// Pops a presign from the internal pool, wraps it, and creates the sign session.
-    /// The caller provides all parameters (key ID, curve, algorithm, hash scheme, etc.).
     pub(super) fn instantiate_internal_sign_session(
         &mut self,
-        dwallet_network_encryption_key_id: ObjectID,
-        curve: DWalletCurve,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        hash_scheme: group::HashScheme,
         sequence_number: u64,
         message: Vec<u8>,
     ) -> bool {
+        // Derive config values internally
+        let dwallet_network_encryption_key_id =
+            match self.internal_signing_network_encryption_key_id() {
+                Some(id) => id,
+                None => {
+                    error!(
+                        sequence_number,
+                        "No network key available for internal signing"
+                    );
+                    return false;
+                }
+            };
+
+        let curve = self.protocol_config.internal_signing_curve();
+        let signature_algorithm = self.protocol_config.internal_signing_algorithm();
+        let hash_scheme = group::HashScheme::Keccak256; // Always use Keccak256 for internal signing
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -872,6 +883,11 @@ impl DWalletMPCManager {
 
         self.new_session(&session_identifier, status, session_computation_type);
         true
+    }
+
+    /// Checks if this manager has an internal signing network key available
+    pub(super) fn has_internal_signing_network_key(&self) -> bool {
+        self.internal_signing_network_encryption_key_id().is_some()
     }
 
     fn internal_presign_pool_size(
@@ -1348,15 +1364,12 @@ impl DWalletMPCManager {
             },
             DWalletInternalMPCOutputKind::InternalSign {
                 output,
-                curve,
-                signature_algorithm,
-                hash_scheme: _,
                 sequence_number,
             } => {
                 info!(
                     sequence_number,
-                    curve = ?curve,
-                    signature_algorithm = ?signature_algorithm,
+                    curve = ?self.protocol_config.internal_signing_curve(),
+                    signature_algorithm = ?self.protocol_config.internal_signing_algorithm(),
                     signature_length = output.len(),
                     signature_hex = %hex::encode(&output),
                     "Internal sign completed"
@@ -1364,13 +1377,12 @@ impl DWalletMPCManager {
                 let sign_output = InternalSignOutput {
                     sequence_number,
                     signature: output,
-                    curve,
-                    signature_algorithm,
                 };
                 if let Err(e) = self.internal_sign_output_sender.send(sign_output) {
                     error!(
                         sequence_number,
                         error = ?e,
+                        should_never_happen = true,
                         "Failed to send internal sign output to channel"
                     );
                 }

@@ -966,8 +966,6 @@ impl DWalletCheckpointAggregator {
                     )])
                     .inc();
                 if let Ok(auth_signature) = current.try_aggregate(received_data) {
-                    let checkpoint_sequence_number = current.checkpoint_message.sequence_number;
-
                     let checkpoint_message = VerifiedDWalletCheckpointMessage::new_unchecked(
                         CertifiedDWalletCheckpointMessage::new_from_data_and_sig(
                             current.checkpoint_message.clone(),
@@ -979,7 +977,7 @@ impl DWalletCheckpointAggregator {
                         .insert_certified_checkpoint(&checkpoint_message)?;
                     self.metrics
                         .last_certified_dwallet_checkpoint
-                        .set(checkpoint_sequence_number as i64);
+                        .set(current.checkpoint_message.sequence_number as i64);
                     result.push(checkpoint_message.into_inner());
                     self.current = None;
                     continue 'outer;

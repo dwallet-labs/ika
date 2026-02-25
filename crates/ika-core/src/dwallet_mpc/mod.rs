@@ -17,10 +17,6 @@ use tracing::error;
 pub struct InternalSignRequest {
     pub sequence_number: u64,
     pub message: Vec<u8>,
-    pub dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
-    pub curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
-    pub signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
-    pub hash_scheme: group::HashScheme,
 }
 
 /// Output from a completed internal MPC signing session.
@@ -29,8 +25,6 @@ pub struct InternalSignRequest {
 pub struct InternalSignOutput {
     pub sequence_number: u64,
     pub signature: Vec<u8>,
-    pub curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
-    pub signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
 }
 
 pub mod dwallet_mpc_service;

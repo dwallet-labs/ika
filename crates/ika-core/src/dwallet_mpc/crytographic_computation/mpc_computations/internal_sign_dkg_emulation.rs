@@ -631,8 +631,7 @@ pub fn internal_sign_dkg_session_id(
 ///
 /// # Returns
 ///
-/// A tuple of (curve, algorithm, serialized_output) if successful, or None if the
-/// computation fails.
+/// The serialized DKG output if successful, or an error if the computation fails.
 pub fn compute_internal_sign_dkg_output(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
@@ -640,48 +639,26 @@ pub fn compute_internal_sign_dkg_output(
     protocol_pp: &[u8],
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
-) -> Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
+) -> DwalletMPCResult<Vec<u8>> {
     // Compute the session ID for deterministic DKG
     let session_id = internal_sign_dkg_session_id(network_key_id, curve, algorithm);
 
     // Emulate the centralized party DKG
     let centralized_result =
-        match emulate_centralized_dkg_for_internal_sign(curve, protocol_pp, session_id.as_ref()) {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    ?curve,
-                    ?algorithm,
-                    "Failed to compute internal sign centralized DKG output"
-                );
-                return None;
-            }
-        };
+        emulate_centralized_dkg_for_internal_sign(curve, protocol_pp, session_id.as_ref())?;
 
     // Convert session_id to CommitmentSizedNumber for the decentralized DKG
     let session_id = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
 
     // Compute the decentralized party DKG output
-    let decentralized_dkg_public_output = match compute_decentralized_dkg_output(
+    let decentralized_dkg_public_output = compute_decentralized_dkg_output(
         curve,
         session_id,
         protocol_pp,
         &centralized_result,
         access_structure,
         party_id,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                ?curve,
-                ?algorithm,
-                "Failed to compute internal sign decentralized DKG output"
-            );
-            return None;
-        }
-    };
+    )?;
 
     // Create the full internal sign DKG output
     let output = InternalSignDKGOutput {
@@ -690,9 +667,14 @@ pub fn compute_internal_sign_dkg_output(
     };
 
     // Serialize the full output
-    let serialized_output = bcs::to_bytes(&output).ok()?;
+    let serialized_output = bcs::to_bytes(&output).map_err(|e| {
+        DwalletMPCError::InternalError(format!(
+            "Failed to serialize internal sign DKG output: {}",
+            e
+        ))
+    })?;
 
-    Some((curve, algorithm, serialized_output))
+    Ok(serialized_output)
 }
 
 #[cfg(test)]

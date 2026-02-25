@@ -272,22 +272,7 @@ pub(crate) fn session_input_from_request(
 
             // Get the stored internal sign DKG output (contains both centralized and decentralized DKG).
             // This is pre-computed during network key construction.
-            let (stored_curve, stored_algorithm, stored_dkg_output_bytes) =
-                encryption_key_public_data
-                    .internal_sign_dkg_output()
-                    .ok_or_else(|| {
-                        DwalletMPCError::InternalError(
-                            "Internal sign DKG output not found in network key public data during internal sign".to_string(),
-                        )
-                    })?;
-
-            // Verify the stored curve and algorithm match the requested ones
-            if *stored_curve != data.curve || *stored_algorithm != data.signature_algorithm {
-                return Err(DwalletMPCError::InternalError(format!(
-                    "Internal sign DKG was created for {:?}/{:?}, but signing requested {:?}/{:?}",
-                    stored_curve, stored_algorithm, data.curve, data.signature_algorithm
-                )));
-            }
+            let stored_dkg_output_bytes = encryption_key_public_data.internal_sign_dkg_output();
 
             // Deserialize the stored internal sign DKG output.
             let internal_sign_dkg_output: InternalSignDKGOutput =

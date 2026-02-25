@@ -306,30 +306,21 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
 
             // Compute the internal sign DKG output for internal signing.
             // Select the protocol PP for the internal signing curve.
-            let internal_sign_dkg_output = match internal_signing_curve {
-                DWalletCurve::Secp256k1 => {
-                    bcs::to_bytes(&*secp256k1_protocol_public_parameters).ok()
-                }
-                DWalletCurve::Secp256r1 => {
-                    bcs::to_bytes(&*secp256r1_protocol_public_parameters).ok()
-                }
-                DWalletCurve::Ristretto => {
-                    bcs::to_bytes(&*ristretto_protocol_public_parameters).ok()
-                }
-                DWalletCurve::Curve25519 => {
-                    bcs::to_bytes(&*curve25519_protocol_public_parameters).ok()
-                }
-            }
-            .and_then(|protocol_pp| {
-                compute_internal_sign_dkg_output(
-                    &network_key_id,
-                    internal_signing_curve,
-                    internal_signing_algorithm,
-                    &protocol_pp,
-                    access_structure,
-                    party_id,
-                )
-            });
+            let protocol_pp = match internal_signing_curve {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(&*secp256k1_protocol_public_parameters)?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(&*secp256r1_protocol_public_parameters)?,
+                DWalletCurve::Ristretto => bcs::to_bytes(&*ristretto_protocol_public_parameters)?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(&*curve25519_protocol_public_parameters)?,
+            };
+
+            let internal_sign_dkg_output = compute_internal_sign_dkg_output(
+                &network_key_id,
+                internal_signing_curve,
+                internal_signing_algorithm,
+                &protocol_pp,
+                access_structure,
+                party_id,
+            )?;
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,

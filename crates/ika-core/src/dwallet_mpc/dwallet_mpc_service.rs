@@ -376,18 +376,11 @@ impl DWalletMPCService {
         }
 
         self.pending_internal_sign_requests.retain(|request| {
-            if !self
-                .dwallet_mpc_manager
-                .has_network_key(&request.dwallet_network_encryption_key_id)
-            {
+            if !self.dwallet_mpc_manager.has_internal_signing_network_key() {
                 return true; // key not yet available, keep in buffer
             }
 
             self.dwallet_mpc_manager.instantiate_internal_sign_session(
-                request.dwallet_network_encryption_key_id,
-                request.curve,
-                request.signature_algorithm,
-                request.hash_scheme,
                 request.sequence_number,
                 request.message.clone(),
             );
@@ -1238,15 +1231,12 @@ impl DWalletMPCService {
                 }
             },
             SessionType::InternalSign => match &session_request.protocol_data {
-                ProtocolData::InternalSign { data, .. } => {
+                ProtocolData::InternalSign { .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
                         DWalletInternalMPCOutputKind::InternalSign {
                             output,
-                            curve: data.curve,
-                            signature_algorithm: data.signature_algorithm,
-                            hash_scheme: data.hash_scheme,
                             sequence_number: session_request.session_sequence_number,
                         },
                         malicious_authorities,

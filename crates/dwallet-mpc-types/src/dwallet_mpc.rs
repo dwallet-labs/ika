@@ -146,7 +146,7 @@ pub struct NetworkEncryptionKeyPublicData {
     /// - `curve`: The curve used for signing (e.g., Curve25519)
     /// - `signature_algorithm`: The signature algorithm (e.g., EdDSA)
     /// - `serialized_dkg_output`: BCS-serialized `VersionedDwalletDKGPublicOutput`
-    pub internal_sign_dkg_output: Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)>,
+    pub internal_sign_dkg_output: Vec<u8>,
 }
 
 #[derive(
@@ -445,16 +445,11 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the internal sign DKG output if available.
+    /// Returns the internal sign DKG output.
     ///
-    /// The output contains:
-    /// - The curve used for signing
-    /// - The signature algorithm
-    /// - The serialized `VersionedDwalletDKGPublicOutput`
-    pub fn internal_sign_dkg_output(
-        &self,
-    ) -> Option<&(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
-        self.internal_sign_dkg_output.as_ref()
+    /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
+    pub fn internal_sign_dkg_output(&self) -> &[u8] {
+        &self.internal_sign_dkg_output
     }
 
     /// Returns the serialized protocol public parameters for the given curve.
