@@ -8,9 +8,9 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { describe, it } from 'vitest';
 
-import { IkaClient } from '../../src';
-import { createTestIkaClient, delay } from '../helpers/test-utils';
-import { createIkaGenesis, TEST_ROOT_DIR } from '../system-tests/globals';
+import { IkaClient } from '../../../src';
+import { createTestIkaClient, delay } from '../../helpers/test-utils';
+import { createIkaGenesis, TEST_ROOT_DIR } from '../globals';
 
 describe('Upgrade twopc_mpc Move package', () => {
 	it('Update the twopc_mpc package and migrate the dwallet coordinator', async () => {
