@@ -8,11 +8,19 @@ use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use sui_types::base_types::ObjectID;
 use tracing::info;
 
+// TODO: all of these tests either take the protocol_config values as-is, or don't regard them at all.
+// This is problematic; guessing could lead to future test failures, and taking values as-is could make tests needlessly long to execute as the values could be very large.
+// Instead, we should set values in a convinient range (e.g. instantiate 2 sessions after every 4 rounds, and min pool size of 10 and max of 20).
+// Then we should test accurately and strictly based on these values.
+
 /// Test that internal presign sessions are instantiated at the correct consensus rounds
 /// based on the configuration (consensus_round_delay).
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_instantiation_at_correct_rounds() {
+    // TODO: the test just verifies that internal presigns were created, doesn't verify how many and at which rounds, which it should.
+    // It should also base its counts and how many consensus rounds to run etc. based on the configuration, or configure the protocol_config to hold test-related values.
+
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -141,6 +149,12 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
+    // TODO: this  tests the wrong pool. It inserts presigns for (ECDSASecp256k1, ObjectID::ZERO), but
+    // the real service creates presigns for the actual network key ID from DKG (not ObjectID::ZERO). The assertion pool_size >= min_pool_size is
+    // trivially true because nothing ever consumes from that pool. The test doesn't verify that presign creation STOPPED for the actual key — it
+    // verifies that a pool nobody touches hasn't shrunk. We should use the actual key id, and be strict at checks..
+    // We should also make this test run also for all signing algorithms (i.e. populate all pools and check for all of them it was stopped at non-idle.)
+
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -195,6 +209,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     for epoch_store in &test_state.epoch_stores {
         let presigns: Vec<Vec<u8>> = (0..min_pool_size)
             .map(|i| {
+                // TODO: what does it matter? as long as no sign sessions instantiated, just put an empty vec, its not used.
                 let mut data = mock_presign_data.clone();
                 data.push(i as u8); // Make each presign unique
                 data
@@ -220,6 +235,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         assert_eq!(pool_size, min_pool_size, "Pool should be at minimum size");
     }
 
+    // TODO: this should be zero, assert
     // Count initial internal presign sessions
     let initial_secp256k1_sessions: usize = test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
@@ -239,7 +255,10 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
 
     // Make the system "not idle" by ensuring there are enough sessions
     // The idle threshold is typically around 8, so we need more than that
+    // TODO: dont guess or hardcode threshold, take from configuration.
 
+    // TODO: what sessions exactly do you cant on creating? other pool sessions for different curves? this is hardcoded and ugly, and i want to change the test such that we do it for all curves anyways, so this is bad.
+    // lets change it so that we mock insertion of new sessions ourselves, instead of letting the system do it for us.
     for round_offset in 0..5 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -255,7 +274,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     }
 
     // Check that the pool size hasn't changed significantly
-    // (Some internal presigns might still be created for other algorithms)
+    // (Some internal presigns might still be created for other algorithms) TODO: we are checking specific pools, so this can't be an issue, we should check it hasn't changed at all!
     for epoch_store in &test_state.epoch_stores {
         let pool_size = epoch_store
             .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
@@ -265,6 +284,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             pool_size, min_pool_size
         );
         // Pool should still be at or above minimum (no consumption without signing)
+        // TODO: assert equals, not >= - should be exact
         assert!(
             pool_size >= min_pool_size,
             "Pool size should remain at or above minimum"
@@ -279,6 +299,12 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_continues_when_idle() {
+    // TODO: this has a silent skip. if the system isn't locally idle, the test logs "System was not
+    //   idle, skipping idle-specific assertion" and passes without testing anything. The idle check is done locally (active_sessions < idle_threshold)
+    //   rather than through consensus-agreed idle status. This shouldn't be the case, which should assert we are idle and we actually test things.
+    // Also, we should make the test strict at assertions, not check things like >= but ==, meaning we check values are exactly as anticipated, and base it on the protocol_config values and equations.
+    // We should also make sure that the session instantiations stops when the maximum pool size is reached.
+
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -388,6 +414,10 @@ async fn test_internal_presign_continues_when_idle() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_sessions_per_round_matches_config() {
+    // TODO: what is the difference from test_internal_presign_instantiation_at_correct_rounds? is this duplicated?
+
+    // TODO: this doesn't actually verify the config value. It reads eddsa_sessions_to_instantiate but
+    //   never asserts that the batch size matches. It just asserts final_count > 0.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
