@@ -20,6 +20,7 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn test_global_presign_requests_tracked_and_reported() {
+    // TODO: test for all signing schemes
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
@@ -54,6 +55,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
+    // TODO: instead of mocking, we should wait for the presign pools to be populated with actualy presigns.
     // Pre-populate presign pool for global presign requests
     let mock_presign_data = vec![1, 2, 3, 4, 5];
     let mock_session_identifier = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
@@ -61,6 +63,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
+                // TODO: use network_key_id
                 ObjectID::ZERO, // dwallet_network_encryption_key_id
                 1,
                 mock_session_identifier,
@@ -116,9 +119,11 @@ async fn test_global_presign_requests_tracked_and_reported() {
             for message in checkpoint.messages() {
                 if let DWalletCheckpointMessageKind::RespondDWalletPresign(presign_output) = message
                 {
+                    // TODO: we only created two presign requests, so this has to be one of the two, so assert that.
                     if presign_output.presign_id == presign_id_1.to_vec()
                         || presign_output.presign_id == presign_id_2.to_vec()
                     {
+                        // TODO: Instead of counting, have a bool for each of them, and assert they are both set (and only once)
                         found_outputs += 1;
                         info!(
                             "Found presign output for presign_id {:?}",
@@ -134,6 +139,8 @@ async fn test_global_presign_requests_tracked_and_reported() {
         found_outputs > 0,
         "Should have found presign outputs for global presign requests"
     );
+
+    // TODO: check, based on the current consensus round, that the presign pool has exactly the configuration-based anticipated amount - 2.
 
     info!(
         "Test passed: Global presign requests tracked and outputs generated. Found {} outputs",
