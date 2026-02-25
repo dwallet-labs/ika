@@ -119,6 +119,7 @@ async fn test_validators_compute_idle_status_correctly() {
     }
 
     // TODO: should assert is_idle is false after enough rounds and so enough presign instatnation sessions.
+    // This should be asserted at exactly the correct consenous round, based on computing the anticipated session instantitions from the protocol_config.
 
     info!("Test passed: Validators correctly compute idle status");
 }
@@ -129,6 +130,7 @@ async fn test_validators_compute_idle_status_correctly() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_idle_status_affects_internal_presign_creation() {
+    // TODO: this test seems to duplicate test_internal_presign_stops_at_min_pool_size_when_not_idle()/test_internal_presign_continues_when_idle() - take whethever asserts it makes in addition into those tests, and delete this one
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
@@ -221,6 +223,8 @@ async fn test_idle_status_affects_internal_presign_creation() {
 #[tokio::test]
 #[cfg(test)]
 async fn test_status_updates_distributed_through_consensus() {
+    // TODO: this test is too general, should be way more specific; we should think of edge cases in which status updates are sent and assure they are sent after this edge cases happen and only then (and not twice for the same update!)
+    // For example (think of more): when we get new presign request, or idle status changed. Make the conditions such that these would occur. And assert that the agreed upon values are correct.
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
