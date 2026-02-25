@@ -13,6 +13,10 @@ use tracing::info;
 // Instead, we should set values in a convinient range (e.g. instantiate 2 sessions after every 4 rounds, and min pool size of 10 and max of 20).
 // Then we should test accurately and strictly based on these values.
 
+// TODO: these tests wait for create_network_key_test() to setup the key,
+// but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
+
+
 /// Test that internal presign sessions are instantiated at the correct consensus rounds
 /// based on the configuration (consensus_round_delay).
 #[tokio::test]
