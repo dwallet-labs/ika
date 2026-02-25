@@ -78,7 +78,16 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
     );
 
     // Track internal presign sessions created
-    let mut internal_presign_count = 0usize;
+    // TODO: actually, now we wait for create_network_key_test() to setup the key,
+    // but in fact we should wait for the key to be agreed upon in consensus as part of the status voting, or at least set it in the mock.
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+    let mut internal_presign_count = manager
+        .sessions
+        .iter()
+        .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
+        .count();
+
+    assert_eq!(internal_presign_count, 0, "there should be no internal presigns instantiated right after network key was received");
 
     // Run several consensus rounds and count internal presign sessions
     for round_offset in 0..10 {
@@ -104,6 +113,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
             .count();
 
+        // TODO: assert that the exact number of presign sessions were instantiated here.
         if current_internal_presign_count > internal_presign_count {
             info!(
                 "Round {}: New internal presign sessions created. Total: {} (was {})",
@@ -113,6 +123,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         }
     }
 
+    // TODO: assert that the expected number of presign sessions were instantiated.
     // Verify that internal presign sessions were created
     assert!(
         internal_presign_count > 0,

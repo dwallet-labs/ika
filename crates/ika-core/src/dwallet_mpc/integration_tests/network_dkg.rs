@@ -140,6 +140,7 @@ pub(crate) async fn create_network_key_test(
         consensus_round, 7,
         "Network DKG should complete at round 5, returns 7 (rounds distributed before and after service loops)"
     );
+
     let mut network_key_bytes = vec![];
     let mut key_id = None;
     for message in network_key_checkpoint.messages() {
