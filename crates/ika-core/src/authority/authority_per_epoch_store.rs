@@ -2424,8 +2424,8 @@ mod tests {
         SessionIdentifier::new(SessionType::InternalPresign, preimage)
     }
 
-    #[test]
-    fn test_insert_and_pop_presign() {
+    #[tokio::test]
+    async fn test_insert_and_pop_presign() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
@@ -2451,8 +2451,8 @@ mod tests {
         assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
     }
 
-    #[test]
-    fn test_presign_pool_isolation_across_key_ids() {
+    #[tokio::test]
+    async fn test_presign_pool_isolation_across_key_ids() {
         let tables = create_tables();
         let key_id_a = ObjectID::random();
         let key_id_b = ObjectID::random();
@@ -2493,8 +2493,8 @@ mod tests {
         assert_eq!(presign, vec![21u8]);
     }
 
-    #[test]
-    fn test_pop_presign_ordering_across_sessions() {
+    #[tokio::test]
+    async fn test_pop_presign_ordering_across_sessions() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
@@ -2543,8 +2543,8 @@ mod tests {
         assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
     }
 
-    #[test]
-    fn test_pop_from_empty_pool() {
+    #[tokio::test]
+    async fn test_pop_from_empty_pool() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
@@ -2553,8 +2553,8 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
     }
 
-    #[test]
-    fn test_multiple_presigns_per_session() {
+    #[tokio::test]
+    async fn test_multiple_presigns_per_session() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let algorithm = DWalletSignatureAlgorithm::ECDSASecp256k1;
@@ -2582,8 +2582,8 @@ mod tests {
         assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
     }
 
-    #[test]
-    fn test_presign_pool_isolation_across_algorithms() {
+    #[tokio::test]
+    async fn test_presign_pool_isolation_across_algorithms() {
         let tables = create_tables();
         let key_id = ObjectID::random();
         let ecdsa = DWalletSignatureAlgorithm::ECDSASecp256k1;

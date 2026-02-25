@@ -67,13 +67,25 @@ async fn test_some_malicious_validators_flows_succeed() {
 
     for malicious_party_index in malicious_parties {
         // Create a malicious message for round 1, and set it as the patty's message.
+        // Find the first DWalletMPCMessage by type, skipping any InternalSessionsStatusUpdate
+        // entries that may precede it.
+        let message_index = {
+            let submitted = sent_consensus_messages_collectors[malicious_party_index]
+                .submitted_messages
+                .lock()
+                .unwrap();
+            submitted
+                .iter()
+                .position(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+                .expect("Network DKG first round should produce a DWalletMPCMessage")
+        };
         let mut original_message = sent_consensus_messages_collectors[malicious_party_index]
             .submitted_messages
             .lock()
             .unwrap()
-            .remove(0);
+            .remove(message_index);
         let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-            panic!("Network DKG first round should produce a DWalletMPCMessage");
+            unreachable!("index was verified to be a DWalletMPCMessage above");
         };
         let mut new_message: Vec<u8> = vec![0];
         new_message.extend(bcs::to_bytes::<u64>(&1).unwrap());
@@ -250,28 +262,40 @@ pub(crate) fn replace_party_message_with_other_party_message(
     other_party: usize,
     sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
 ) {
-    let original_message = sent_consensus_messages_collectors[party_to_replace]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .pop()
-        .unwrap();
+    // The DWalletMPCMessage is the last DWalletMPCMessage in the submitted messages
+    // (status updates may follow it, but we want the most recent computation result).
+    let original_message = {
+        let mut submitted = sent_consensus_messages_collectors[party_to_replace]
+            .submitted_messages
+            .lock()
+            .unwrap();
+        let index = submitted
+            .iter()
+            .rposition(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+            .expect("party_to_replace should have a DWalletMPCMessage to replace");
+        submitted.remove(index)
+    };
 
-    let mut other_party_message = sent_consensus_messages_collectors[other_party]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .first()
-        .unwrap()
-        .clone();
+    // The other party's DWalletMPCMessage may be preceded by status updates; find it by type.
+    let mut other_party_message = {
+        let submitted = sent_consensus_messages_collectors[other_party]
+            .submitted_messages
+            .lock()
+            .unwrap();
+        submitted
+            .iter()
+            .find(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+            .expect("other_party should have a DWalletMPCMessage to copy")
+            .clone()
+    };
     let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) =
         other_party_message.kind
     else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+        unreachable!("index was verified to be a DWalletMPCMessage above");
     };
     let ConsensusTransactionKind::DWalletMPCMessage(original_message) = original_message.kind
     else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+        unreachable!("index was verified to be a DWalletMPCMessage above");
     };
     other_party_message_content.authority = original_message.authority;
     sent_consensus_messages_collectors[party_to_replace]

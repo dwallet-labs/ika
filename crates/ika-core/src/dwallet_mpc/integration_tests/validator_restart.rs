@@ -101,7 +101,7 @@ async fn test_presign_pool_state_preserved() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -187,7 +187,7 @@ async fn test_validators_continue_sessions_across_rounds() {
             test_state.consensus_round += 1;
 
             for service in test_state.dwallet_mpc_services.iter_mut() {
-                service.run_service_loop_iteration().await;
+                service.run_service_loop_iteration(vec![]).await;
             }
         }
 
@@ -287,7 +287,7 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         // Only run service loop for responsive validators
         for (i, service) in test_state.dwallet_mpc_services.iter_mut().enumerate() {
             if i != unresponsive_validator {
-                service.run_service_loop_iteration().await;
+                service.run_service_loop_iteration(vec![]).await;
             }
         }
 
@@ -324,7 +324,7 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -381,7 +381,7 @@ async fn test_epoch_store_presign_pool_operations() {
 
     // Test consuming a presign
     let consumed = test_epoch_store
-        .pop_presign(DWalletSignatureAlgorithm::ECDSASecp256k1)
+        .pop_presign(DWalletSignatureAlgorithm::ECDSASecp256k1, ObjectID::ZERO)
         .expect("Failed to pop presign");
 
     assert!(consumed.is_some(), "Should have consumed a presign");

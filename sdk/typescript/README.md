@@ -147,9 +147,29 @@ import { Curve, Hash, SignatureAlgorithm, type DWallet, type Presign } from '@ik
 
 ### Testing
 
+The SDK has unit and integration tests under `test` that expect an Ika localnet to be running for
+any tests that talk to the chain.
+
+Start a localnet following the
+[Setup Ika Localnet docs](https://docs.ika.xyz/docs/sdk/setup-localnet), which is equivalent to:
+
 ```bash
-pnpm --filter @ika.xyz/sdk test
+# Terminal 1 – Sui localnet
+RUST_LOG="off,sui_node=info" sui start --with-faucet --force-regenesis --epoch-duration-ms 1000000000000000
+
+# Terminal 2 – Ika localnet
+cargo run --bin ika --release --no-default-features -- start
 ```
+
+Then run the SDK tests, for example from the repo root:
+
+```bash
+pnpm --filter @ika.xyz/sdk test:unit
+pnpm --filter @ika.xyz/sdk test:integration
+```
+
+End-to-end system tests live under `test/system-tests` and have their own setup and instructions in
+`test/system-tests/README.md`; they are **not** run by the command above.
 
 ### License
 

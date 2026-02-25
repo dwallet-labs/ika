@@ -50,6 +50,7 @@ async fn encrypt_secret_share() {
         consensus_round,
         key_id,
         network_key_bytes.clone(),
+        DWalletCurve::Secp256k1,
     )
     .await;
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
@@ -72,7 +73,7 @@ async fn encrypt_secret_share() {
     );
     let (_, encrypted_secret_share_checkpoint) = utils::advance_mpc_flow_until_completion(
         &mut test_state,
-        dwallet_test_result.flow_completion_consensus_round,
+        dwallet_test_result.flow_completion_consensus_round + 1,
     )
     .await;
     let DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(

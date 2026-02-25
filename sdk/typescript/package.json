@@ -31,6 +31,8 @@
 	"scripts": {
 		"build": "build-package",
 		"test": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run",
+		"test:unit": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/unit",
+		"test:integration": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/integration/dwallet-creation.test.ts && vitest run test/integration/all-combinations.test.ts && vitest run test/integration/all-combinations-future-sign.test.ts && vitest run test/integration/dwallet-sign-during-dkg.test.ts && vitest run test/integration/global-presign.test.ts && vitest run test/integration/imported-key.test.ts && vitest run test/integration/imported-key-make-public-share-and-sign.test.ts && vitest run test/integration/make-public-share-and-sign.test.ts && vitest run test/integration/transfer-dwallet.test.ts",
 		"test:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest",
 		"test:coverage": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run --coverage",
 		"test:coverage:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest --coverage",
@@ -45,7 +47,7 @@
 		"lint": "pnpm run eslint:check && pnpm run prettier:check",
 		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
 		"test:e2e": "vitest run e2e",
-		"prepare": "pnpm sui-ts-codegen generate"
+		"prepare": "sui client --yes active-address && pnpm sui-ts-codegen generate"
 	},
 	"bugs": {
 		"url": "https://github.com/dwallet-labs/ika/issues/new"

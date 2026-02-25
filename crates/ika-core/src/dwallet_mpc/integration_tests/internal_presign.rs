@@ -115,7 +115,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
         // Run service loop for all parties
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
 
         // Count internal presign sessions in the first service
@@ -274,7 +274,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -383,7 +383,7 @@ async fn test_internal_presign_continues_when_idle() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -489,7 +489,7 @@ async fn test_internal_presign_sessions_per_round_matches_config() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
 
         // Check for new internal presign sessions

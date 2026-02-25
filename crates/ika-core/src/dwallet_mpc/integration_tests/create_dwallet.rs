@@ -17,7 +17,9 @@ use dwallet_mpc_centralized_party::{
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::messages_dwallet_mpc::{
+    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
@@ -59,7 +61,14 @@ async fn create_dwallet_test() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes).await;
+    create_dwallet_test_inner(
+        &mut test_state,
+        consensus_round,
+        key_id,
+        network_key_bytes,
+        DWalletCurve::Secp256k1,
+    )
+    .await;
     info!("DWallet DKG second round completed");
 }
 
@@ -94,9 +103,14 @@ async fn make_dwallet_public() {
     }
     let (consensus_round, network_key_bytes, key_id) =
         create_network_key_test(&mut test_state).await;
-    let result =
-        create_dwallet_test_inner(&mut test_state, consensus_round, key_id, network_key_bytes)
-            .await;
+    let result = create_dwallet_test_inner(
+        &mut test_state,
+        consensus_round,
+        key_id,
+        network_key_bytes,
+        DWalletCurve::Secp256k1,
+    )
+    .await;
     send_make_dwallet_public_event(
         epoch_id,
         &test_state.sui_data_senders,
@@ -109,7 +123,7 @@ async fn make_dwallet_public() {
     );
     let (_, verified_dwallet_checkpoint) = utils::advance_mpc_flow_until_completion(
         &mut test_state,
-        result.flow_completion_consensus_round,
+        result.flow_completion_consensus_round + 1,
     )
     .await;
     let DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(
@@ -292,6 +306,7 @@ pub(crate) async fn create_dwallet_test_inner(
     start_consensus_round: Round,
     network_key_id: ObjectID,
     network_key_bytes: Vec<u8>,
+    curve: DWalletCurve,
 ) -> DWalletTestResult {
     let consensus_round = start_consensus_round;
     let dwallet_dkg_session_identifier = [2; 32];
@@ -300,39 +315,61 @@ pub(crate) async fn create_dwallet_test_inner(
         .first()
         .expect("At least one service should exist")
         .epoch;
-    let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(curve as u32, network_key_bytes).unwrap();
     let centralized_dwallet_dkg_result =
         dwallet_mpc_centralized_party::create_dkg_output_by_curve_v2(
-            0,
+            curve as u32,
             protocol_pp.clone(),
             SessionIdentifier::new(SessionType::User, dwallet_dkg_session_identifier).to_vec(),
         )
         .unwrap();
-    let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
-    let encrypted_secret_key_share_and_proof = encrypt_secret_key_share_and_prove_v2(
-        0,
-        centralized_dwallet_dkg_result
-            .centralized_secret_output
-            .clone(),
-        encryption_key.clone(),
-        protocol_pp,
-    )
-    .unwrap();
-    let encrypted_secret_share_id = ObjectID::random();
+    // For Curve25519 (EdDSA), class groups encryption is not needed and not supported.
+    // Use the Public key share variant which publishes the centralized party share in the clear.
+    // For other curves (Secp256k1, Secp256r1), use encrypted key shares with class groups.
+    let (user_secret_key_share, class_groups_encryption_key) = if curve == DWalletCurve::Curve25519
+    {
+        // For Curve25519 (EdDSA), class groups encryption of the secret key share is not
+        // supported. Use Public variant: the secret key share is passed in plaintext for
+        // validators to verify directly against the public commitment.
+        let public_share = UserSecretKeyShareEventType::Public {
+            public_user_secret_key_share: centralized_dwallet_dkg_result
+                .centralized_secret_output
+                .clone(),
+        };
+        (public_share, vec![])
+    } else {
+        let (encryption_key, _) = generate_cg_keypair_from_seed(0, [1; 32]).unwrap();
+        let encrypted = encrypt_secret_key_share_and_prove_v2(
+            curve as u32,
+            centralized_dwallet_dkg_result
+                .centralized_secret_output
+                .clone(),
+            encryption_key.clone(),
+            protocol_pp,
+        )
+        .unwrap();
+        let encrypted_share_type = UserSecretKeyShareEventType::Encrypted {
+            encrypted_user_secret_key_share_id: ObjectID::random(),
+            encrypted_centralized_secret_share_and_proof: encrypted,
+            encryption_key: encryption_key.clone(),
+            encryption_key_id: ObjectID::random(),
+            encryption_key_address: Default::default(),
+            signer_public_key: vec![],
+        };
+        (encrypted_share_type, encryption_key)
+    };
     let dwallet_id = ObjectID::random();
-    let encryption_key_id = ObjectID::random();
     send_start_dwallet_dkg_event(
         epoch_id,
         &test_state.sui_data_senders,
         dwallet_dkg_session_identifier,
         3,
         network_key_id,
-        encrypted_secret_share_id,
         dwallet_id,
         centralized_dwallet_dkg_result.public_key_share_and_proof,
-        encrypted_secret_key_share_and_proof,
-        encryption_key.clone(),
-        encryption_key_id,
+        user_secret_key_share,
+        curve,
     );
     let (consensus_round, dwallet_second_round_checkpoint) =
         utils::advance_mpc_flow_until_completion(test_state, consensus_round).await;
@@ -355,7 +392,7 @@ pub(crate) async fn create_dwallet_test_inner(
         flow_completion_consensus_round: consensus_round,
         dkg_output: decentralized_party_dkg_public_output.clone(),
         dwallet_secret_key_share: centralized_dwallet_dkg_result.centralized_secret_output,
-        class_groups_encryption_key: encryption_key,
+        class_groups_encryption_key,
     }
 }
 

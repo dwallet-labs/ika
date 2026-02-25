@@ -293,7 +293,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_max_elapsed_time() {
-        telemetry_subscribers::init_for_testing();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         // No retry is needed, should return immediately. We give it a very small
         // max_elapsed_time and it should still finish in time.
         let max_elapsed_time = Duration::from_millis(20);

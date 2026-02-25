@@ -102,7 +102,7 @@ async fn network_key_received_after_start_event() {
         key_id.unwrap(),
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
     }
     for i in &parties_that_receive_network_key_after_start_event {
         let dwallet_mpc_service = &mut test_state.dwallet_mpc_services[*i];

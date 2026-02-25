@@ -1,13 +1,13 @@
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { describe, it } from 'vitest';
 
-import { testCreateNetworkKey } from '../helpers/network-dkg-test-helpers';
+import { testCreateNetworkKey } from '../../helpers/network-dkg-test-helpers';
 import {
 	createTestIkaClient,
 	createTestSuiClient,
 	runSignFullFlowWithV1Dwallet,
 	waitForEpochSwitch,
-} from '../helpers/test-utils';
+} from '../../helpers/test-utils';
 
 describe('Network keys creation tests', () => {
 	it('should create a network key', async () => {

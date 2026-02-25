@@ -97,7 +97,7 @@ async fn test_validators_compute_idle_status_correctly() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -195,7 +195,7 @@ async fn test_idle_status_affects_internal_presign_creation() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -279,7 +279,7 @@ async fn test_status_updates_distributed_through_consensus() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
 
         // Check status updates in epoch stores
@@ -381,7 +381,7 @@ async fn test_weighted_majority_voting_on_idle_status() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -409,7 +409,7 @@ async fn test_weighted_majority_voting_on_idle_status() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
