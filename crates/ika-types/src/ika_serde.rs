@@ -107,19 +107,27 @@ mod test {
 
     #[test]
     fn test_ika_bitmap_unique_deserialize() {
+        // Malformed bitmap with duplicate container keys is now correctly rejected
+        // by the roaring crate's stricter validation.
         let raw = "OjAAAAoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWAAAAFoAAABcAAAAXgAAAGAAAABiAAAAZAAAAGYAAABoAAAAagAAAAEAAQABAAEAAQABAAEAAQABAAEA";
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(raw)
             .unwrap();
 
-        let bitmap = roaring::RoaringBitmap::deserialize_from(&bytes[..]).unwrap();
-        assert_eq!(bitmap.len(), 10);
-        let bitmap_values: Vec<u32> = bitmap.iter().collect();
-        assert_eq!(bitmap_values, vec![1; 10]);
+        assert!(roaring::RoaringBitmap::deserialize_from(&bytes[..]).is_err());
+        assert!(deserialize_ika_bitmap(&bytes[..]).is_err());
 
-        let sui_bitmap = deserialize_ika_bitmap(&bytes[..]).unwrap();
-        assert_eq!(sui_bitmap.len(), 1);
-        let bitmap_values: Vec<u32> = sui_bitmap.iter().collect();
-        assert_eq!(bitmap_values, vec![1]);
+        // Valid bitmap round-trips correctly.
+        let mut valid_bitmap = roaring::RoaringBitmap::new();
+        valid_bitmap.insert(1);
+        valid_bitmap.insert(5);
+        valid_bitmap.insert(10);
+        let mut valid_bytes = vec![];
+        valid_bitmap.serialize_into(&mut valid_bytes).unwrap();
+
+        let deserialized = deserialize_ika_bitmap(&valid_bytes[..]).unwrap();
+        assert_eq!(deserialized.len(), 3);
+        let values: Vec<u32> = deserialized.iter().collect();
+        assert_eq!(values, vec![1, 5, 10]);
     }
 }

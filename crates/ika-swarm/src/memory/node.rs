@@ -157,6 +157,7 @@ mod test {
     use crate::memory::Swarm;
 
     #[tokio::test]
+    #[ignore = "requires a running local Sui node"]
     async fn start_and_stop() {
         telemetry_subscribers::init_for_testing();
         let swarm = Swarm::builder().build().await.unwrap();

@@ -61,7 +61,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
-                ObjectID::ZERO, // dwallet_network_encryption_key_id
+                network_key_id,
                 1,
                 mock_session_identifier,
                 vec![mock_presign_data.clone(); 5],
@@ -81,6 +81,8 @@ async fn test_global_presign_requests_tracked_and_reported() {
         100,
         presign_id_1,
         network_key_id,
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::ECDSASecp256k1,
     );
 
     info!("Sending second global presign request");
@@ -91,6 +93,8 @@ async fn test_global_presign_requests_tracked_and_reported() {
         101,
         presign_id_2,
         network_key_id,
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::ECDSASecp256k1,
     );
 
     // Run service loops and advance consensus
@@ -104,7 +108,7 @@ async fn test_global_presign_requests_tracked_and_reported() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 
@@ -187,7 +191,7 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         epoch_store
             .insert_presigns(
                 DWalletSignatureAlgorithm::ECDSASecp256k1,
-                ObjectID::ZERO, // dwallet_network_encryption_key_id
+                network_key_id,
                 1,
                 mock_session_identifier,
                 vec![mock_presign_data.clone(); 10],
@@ -226,7 +230,7 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         test_state.consensus_round += 1;
 
         for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration().await;
+            service.run_service_loop_iteration(vec![]).await;
         }
     }
 

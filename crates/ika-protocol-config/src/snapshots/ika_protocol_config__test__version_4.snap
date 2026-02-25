@@ -8,21 +8,20 @@ feature_flags:
   mysticeti_num_leaders_per_round: 1
   consensus_zstd_compression: true
   consensus_batched_block_sync: true
+  consensus_skip_gced_blocks_in_direct_finalization: true
   enforce_checkpoint_timestamp_monotonicity: true
-  internal_presign_sessions: true
+sui_protocol_version: 108
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200
 max_system_checkpoint_size_bytes: 51200
 buffer_stake_for_protocol_upgrade_bps: 5000
 consensus_bad_nodes_stake_threshold: 30
-idle_session_count_threshold: 10
 consensus_max_transaction_size_bytes: 315218930
 consensus_max_num_transactions_in_block: 512
 consensus_max_transactions_in_block_bytes: 315218930
 consensus_gc_depth: 60
 decryption_key_reconfiguration_third_round_delay: 10
-schnorr_presign_second_round_delay: 8
 network_dkg_third_round_delay: 10
 network_encryption_key_version: 2
 reconfiguration_message_version: 2

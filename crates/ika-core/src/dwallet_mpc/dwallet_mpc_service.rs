@@ -212,7 +212,7 @@ impl DWalletMPCService {
                 0,
                 DWalletMPCMetrics::new(&Registry::new()),
                 sui_data_receivers.clone(),
-                ProtocolConfig::get_for_min_version(),
+                ProtocolConfig::get_for_max_version_UNSAFE(),
                 epoch_store,
                 internal_sign_output_sender,
             ),
@@ -222,7 +222,7 @@ impl DWalletMPCService {
             sui_data_requests: sui_data_receivers,
             name: authority_name,
             epoch: 1,
-            protocol_config: ProtocolConfig::get_for_min_version(),
+            protocol_config: ProtocolConfig::get_for_max_version_UNSAFE(),
             committee: Arc::new(committee),
             last_sent_idle_status: None,
             number_of_consensus_rounds: 0,
@@ -412,7 +412,12 @@ impl DWalletMPCService {
             all_key_data
                 .values()
                 .filter(|data| !self.sent_network_key_ids.contains(&data.id))
-                .filter(|data| !matches!(data.state, AwaitingNetworkDKG))
+                .filter(|data| {
+                    !matches!(
+                        &data.state,
+                        DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
+                    )
+                })
                 .cloned()
                 .collect()
         };
