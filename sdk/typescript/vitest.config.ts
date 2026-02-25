@@ -14,7 +14,7 @@ export default defineConfig({
 		env: {
 			NODE_ENV: 'test',
 		},
-		exclude: ['**/node_modules/**', '**/chaos-test/**', '**/multiple-network-keys/**'],
+		exclude: ['**/node_modules/**', '**/system-tests/multiple-network-keys/**'],
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'html', 'json', 'lcov'],
