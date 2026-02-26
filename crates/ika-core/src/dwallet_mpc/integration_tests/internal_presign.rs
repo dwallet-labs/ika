@@ -3,10 +3,11 @@ use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_CONSENSUS_ROUND_DELAY, TEST_PRESIGN_SESSIONS_TO_INSTANTIATE, build_test_state,
-    count_sessions_by_type, create_test_protocol_config_guard,
+    create_test_protocol_config_guard,
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use std::collections::HashSet;
 use sui_types::base_types::ObjectID;
 use tracing::info;
 
@@ -79,17 +80,32 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
     );
 
-    // Record the baseline count after network key creation.
+    // Collect the baseline set of session IDs after network key creation.
     // create_network_key_test runs extra service loop iterations that install the key,
     // which also triggers the first batch of internal presign sessions.
-    let baseline_count = count_sessions_by_type(&test_state, SessionType::InternalPresign);
+    let baseline_sessions: HashSet<SessionIdentifier> = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .sessions
+        .keys()
+        .filter(|id| id.session_type() == SessionType::InternalPresign)
+        .copied()
+        .collect();
     info!(
         "Baseline internal presign count after network key creation: {}",
-        baseline_count
+        baseline_sessions.len()
     );
 
-    // Run rounds and verify sessions appear only at delay-aligned rounds
-    let mut total_internal_presigns = baseline_count;
+    // Track all NEW session IDs seen across rounds using a HashSet.
+    // Using a set avoids underflow from session removals: we only count each new ID once
+    // even if it later completes and is removed from the manager.
+    let mut all_seen_sessions: HashSet<SessionIdentifier> = baseline_sessions.clone();
+    // After 10 rounds with delay=2, we should have had 5 instantiation events.
+    // Each event creates sessions_to_instantiate(1) * number_of_active_algorithm_pairs sessions.
+    // With 5 algorithm pairs: 5 events × 1 session × 5 algorithms = 25 expected sessions.
+    let expected_instantiation_events = 10 / delay as usize;
+    let expected_new_sessions =
+        expected_instantiation_events * TEST_PRESIGN_SESSIONS_TO_INSTANTIATE * ALL_ALGORITHMS.len();
+
     for round_offset in 1..=10 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -103,34 +119,46 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             service.run_service_loop_iteration(vec![]).await;
         }
 
-        let current_count = count_sessions_by_type(&test_state, SessionType::InternalPresign);
-        let new_sessions = current_count - total_internal_presigns;
+        let current_sessions: HashSet<SessionIdentifier> = test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .sessions
+            .keys()
+            .filter(|id| id.session_type() == SessionType::InternalPresign)
+            .copied()
+            .collect();
+        let new_this_round: HashSet<SessionIdentifier> = current_sessions
+            .difference(&all_seen_sessions)
+            .copied()
+            .collect();
 
         if round_offset % delay as usize == 0 {
             // At delay-aligned rounds, new sessions should be created.
             // Each delay-aligned round creates sessions_to_instantiate * number_of_algorithm_pairs.
             assert!(
-                new_sessions > 0,
+                !new_this_round.is_empty(),
                 "round_offset={}: expected new sessions at delay-aligned round, got 0",
                 round_offset
             );
             info!(
-                "Round offset {}: {} new internal presign sessions (total: {})",
-                round_offset, new_sessions, current_count
+                "Round offset {}: {} new internal presign sessions (total seen: {})",
+                round_offset,
+                new_this_round.len(),
+                all_seen_sessions.len()
             );
         }
-        total_internal_presigns = current_count;
+        all_seen_sessions.extend(new_this_round);
     }
 
-    // After 10 rounds with delay=2, we should have had 5 instantiation events.
-    // Each event creates sessions_to_instantiate(1) * number_of_active_algorithm_pairs sessions.
+    let total_new = all_seen_sessions.len() - baseline_sessions.len();
     assert!(
-        total_internal_presigns > 0,
-        "expected internal presign sessions to be created after 10 rounds"
+        total_new >= expected_new_sessions,
+        "expected at least {} new presign sessions over 10 rounds (got {})",
+        expected_new_sessions,
+        total_new
     );
     info!(
-        "Test completed: {} total internal presign sessions created over 10 rounds",
-        total_internal_presigns
+        "Test completed: {} new internal presign sessions created over 10 rounds (expected >= {})",
+        total_new, expected_new_sessions
     );
 }
 
@@ -202,7 +230,22 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
     }
 
-    // Record pool sizes after stabilization
+    // Run 20 extra settling rounds to let any in-flight sessions complete and deposit
+    // into the pool before we snapshot the "before" sizes.
+    for _ in 0..20 {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+
+    // Record pool sizes after full stabilization (all in-flight sessions have completed)
     let pool_sizes_before: Vec<(DWalletCurve, DWalletSignatureAlgorithm, u64)> = ALL_ALGORITHMS
         .iter()
         .map(|(curve, algorithm)| {
@@ -213,7 +256,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         })
         .collect();
 
-    // Run several more delay-aligned rounds
+    // Run several more delay-aligned rounds to confirm the pool is now stable
     for _ in 0..6 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -227,8 +270,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
     }
 
-    // Assert pool sizes are unchanged (nothing consumed, nothing should have been added
-    // since pools are at min and system is not idle)
+    // Assert pool sizes are exactly unchanged: nothing consumed and nothing added,
+    // since the pools are at min_pool_size and the system is not idle.
     for (curve, algorithm, size_before) in &pool_sizes_before {
         let size_after = test_state.epoch_stores[0]
             .presign_pool_size(*algorithm, network_key_id)
@@ -237,17 +280,10 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             "{:?}/{:?}: pool_before={}, pool_after={}",
             curve, algorithm, size_before, size_after
         );
-        // Pool should be at least min_pool_size (we pre-populated it) and should not have
-        // shrunk (no consumption). If system is not idle, no new presigns should be created
-        // beyond min pool size. We use >= because completed in-flight sessions may still
-        // deposit into the pool.
-        assert!(
-            size_after >= *size_before,
-            "{:?}/{:?}: pool should not shrink without consumption (before={}, after={})",
-            curve,
-            algorithm,
-            size_before,
-            size_after
+        assert_eq!(
+            size_after, *size_before,
+            "{:?}/{:?}: pool should be exactly stable once settled (before={}, after={})",
+            curve, algorithm, size_before, size_after
         );
     }
 
@@ -330,20 +366,50 @@ async fn test_internal_presign_continues_when_idle() {
         }
     }
 
-    // More internal presign sessions should have been created (spawned, not necessarily
-    // completed to pool yet). Count sessions in the manager.
-    let final_presign_session_count =
-        count_sessions_by_type(&test_state, SessionType::InternalPresign);
+    // When idle, presign sessions spawn and complete — verify the pool grew beyond min_pool_size
+    let pool_size_after_idle_rounds = test_state.epoch_stores[0]
+        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+        .unwrap_or(0);
 
     info!(
-        "After 20 rounds: {} internal presign sessions in manager",
-        final_presign_session_count,
+        "After 20 idle rounds: EdDSA pool size={} (was {} at min)",
+        pool_size_after_idle_rounds, min_pool_size
     );
 
-    // When idle, new sessions should have been spawned
     assert!(
-        final_presign_session_count > 0,
-        "when idle, internal presign sessions should continue to be created"
+        pool_size_after_idle_rounds > min_pool_size,
+        "when idle, pool should grow beyond min_pool_size (min={}, got={})",
+        min_pool_size,
+        pool_size_after_idle_rounds
+    );
+
+    // Verify the pool respects max_pool_size by running many more rounds and checking the cap.
+    // Run 60 more rounds to give the pool time to hit and stay at the cap.
+    for _ in 0..60 {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+
+    let pool_size_after_cap_rounds = test_state.epoch_stores[0]
+        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+        .unwrap_or(0);
+    info!(
+        "After 60 more rounds: EdDSA pool size={} (max={})",
+        pool_size_after_cap_rounds, max_pool_size
+    );
+    assert!(
+        pool_size_after_cap_rounds <= max_pool_size,
+        "pool should never exceed max_pool_size (max={}, got={})",
+        max_pool_size,
+        pool_size_after_cap_rounds
     );
 
     info!("Test completed: internal presigns continue when idle");

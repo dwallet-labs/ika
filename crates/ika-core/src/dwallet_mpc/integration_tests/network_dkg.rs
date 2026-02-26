@@ -205,6 +205,17 @@ pub(crate) async fn create_network_key_test(
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
+    // Verify every validator installed the network key before returning.
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        assert!(
+            service
+                .dwallet_mpc_manager()
+                .has_network_key(&key_id.unwrap()),
+            "Validator {} should have network key {:?} installed after DKG and status voting",
+            i,
+            key_id.unwrap()
+        );
+    }
     // Return the next unused consensus round so callers start from the correct round.
     (consensus_round + 2, network_key_bytes, key_id.unwrap())
 }

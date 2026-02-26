@@ -965,7 +965,11 @@ pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
     })
 }
 
-/// Counts sessions of a given type across the first validator's manager.
+/// Counts sessions of a given type in validator 0's manager.
+///
+/// Using validator 0 as a proxy is sufficient because all validators run the same
+/// service-loop logic and receive the same consensus output; their session sets are
+/// structurally identical at any given round boundary.
 #[cfg(test)]
 pub(crate) fn count_sessions_by_type(
     test_state: &IntegrationTestState,

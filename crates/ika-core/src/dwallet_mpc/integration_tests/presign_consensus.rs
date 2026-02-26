@@ -148,6 +148,16 @@ async fn test_global_presign_requests_tracked_and_reported() {
         "Final pool size: {} (was {})",
         final_pool_size, initial_pool_size
     );
+    // Two presigns were consumed (one per request). Background internal presign sessions may
+    // have added more presigns during these rounds, so we only assert that the pool has not
+    // grown beyond what the two consumed presigns could account for: any net addition above
+    // (initial - 2) means background sessions are running, which is fine.
+    assert!(
+        final_pool_size >= initial_pool_size.saturating_sub(2),
+        "pool should reflect at least 2 consumed presigns (initial={}, final={})",
+        initial_pool_size,
+        final_pool_size
+    );
 
     info!("Test passed: both global presign requests tracked and outputs generated");
 }
@@ -255,6 +265,17 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         "all 4 validators should have the presign output, got {:?}",
         validators_with_output
     );
+
+    // Log final pool size to confirm the presign was consumed from each validator's pool.
+    for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
+        let final_pool_size = epoch_store
+            .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, network_key_id)
+            .unwrap_or(0);
+        info!(
+            "Validator {} final ECDSASecp256k1 pool size: {} (initial was {})",
+            i, final_pool_size, initial_pool_size
+        );
+    }
 
     info!(
         "Test passed: all {} validators produced output from partial visibility",

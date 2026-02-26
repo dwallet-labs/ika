@@ -129,7 +129,42 @@ async fn test_internal_sign_flow() {
         }
     }
 
-    // Check pool size after signing - should have decreased by 1 (the presign was consumed)
+    // Retry loop: run more consensus rounds until sign output arrives, or panic on timeout.
+    let sign_output = {
+        let mut result = test_state.internal_sign_output_receivers[0].try_recv().ok();
+        let mut extra_rounds = 0;
+        while result.is_none() && extra_rounds < 100 {
+            utils::send_advance_results_between_parties(
+                &test_state.committee,
+                &mut test_state.sent_consensus_messages_collectors,
+                &mut test_state.epoch_stores,
+                test_state.consensus_round as u64,
+            );
+            test_state.consensus_round += 1;
+            for service in test_state.dwallet_mpc_services.iter_mut() {
+                service.run_service_loop_iteration(vec![]).await;
+            }
+            result = test_state.internal_sign_output_receivers[0].try_recv().ok();
+            extra_rounds += 1;
+        }
+        result.expect("InternalSignOutput not received after 150 consensus rounds")
+    };
+    assert_eq!(
+        sign_output.sequence_number, sequence_number,
+        "output sequence number should match request"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "signature should not be empty"
+    );
+    info!(
+        "Received InternalSignOutput: sequence_number={}, signature_len={}",
+        sign_output.sequence_number,
+        sign_output.signature.len()
+    );
+
+    // Check pool size after signing — should have decreased by at least 1 (presign consumed).
+    // May have grown from background internal presign session completions.
     let pool_size_after = test_state.epoch_stores[0]
         .presign_pool_size(signature_algorithm, network_key_id)
         .expect("failed to get pool size");
@@ -137,33 +172,12 @@ async fn test_internal_sign_flow() {
         "Pool size after internal sign: {} (was {})",
         pool_size_after, pool_size_before
     );
-
-    // Try to receive output from the first validator's output channel
-    let output = test_state.internal_sign_output_receivers[0].try_recv();
-    match output {
-        Ok(sign_output) => {
-            info!(
-                "Received InternalSignOutput: sequence_number={}, signature_len={}",
-                sign_output.sequence_number,
-                sign_output.signature.len()
-            );
-            assert_eq!(
-                sign_output.sequence_number, sequence_number,
-                "output sequence number should match request"
-            );
-            assert!(
-                !sign_output.signature.is_empty(),
-                "signature should not be empty"
-            );
-        }
-        Err(_) => {
-            // If internal sign hasn't completed yet (may need more rounds for the full
-            // MPC flow), verify at least that sessions were created and pool was consumed
-            info!(
-                "InternalSignOutput not yet available on channel (sign session may still be in progress)"
-            );
-        }
-    }
+    assert!(
+        pool_size_after < pool_size_before || pool_size_before == 0,
+        "pool should have consumed at least one presign (before={}, after={})",
+        pool_size_before,
+        pool_size_after
+    );
 
     info!("Internal sign E2E test completed");
 }
@@ -248,6 +262,24 @@ fn test_internal_sign_dkg_session_id_determinism() {
         }
     }
 
+    // Single-bit-flip edge case: flipping one bit in the network key ID must change the session ID
+    let mut flipped_key_id = [1u8; 32];
+    flipped_key_id[0] ^= 1;
+    let flipped_session_id =
+        internal_sign_dkg_session_id(&flipped_key_id, DWalletCurve::Curve25519, algorithm);
+    assert_ne!(
+        session_id_first, flipped_session_id,
+        "single-bit flip in network key ID should produce a different session ID"
+    );
+
+    // Boundary edge cases: all-zeros and all-0xFF key IDs must produce different session IDs
+    let zero_id = internal_sign_dkg_session_id(&[0u8; 32], DWalletCurve::Curve25519, algorithm);
+    let max_id = internal_sign_dkg_session_id(&[0xFFu8; 32], DWalletCurve::Curve25519, algorithm);
+    assert_ne!(
+        zero_id, max_id,
+        "all-zeros and all-0xFF key IDs should produce different session IDs"
+    );
+
     info!(
         "Session ID determinism verified across {} curve/algorithm combinations",
         combinations.len()
@@ -257,12 +289,13 @@ fn test_internal_sign_dkg_session_id_determinism() {
 /// Test that the emulated centralized DKG produces deterministic output.
 /// This is critical for internal signing where all validators must produce
 /// identical emulated user messages.
+///
+/// Note: full end-to-end determinism of the DKG computation (using ZeroRng) requires
+/// real protocol public parameters produced by network DKG and is covered by
+/// `test_internal_sign_flow`. This unit test verifies the deterministic session ID
+/// derivation, which is the fixed input that seeds the DKG emulation.
 #[test]
 fn test_emulated_centralized_dkg_determinism() {
-    // This test verifies the determinism property of the internal sign DKG emulation.
-    // Full integration with real protocol public parameters from network DKG output
-    // requires an async test with network key creation.
-    //
     // The core determinism guarantee comes from ZeroRng - verified here by checking
     // that session IDs are stable across calls (the session ID derivation is the
     // deterministic component we can test synchronously).

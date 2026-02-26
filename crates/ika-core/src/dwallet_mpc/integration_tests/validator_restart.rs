@@ -88,7 +88,7 @@ async fn test_presign_pool_not_consumed_without_sign_requests() {
             .expect("failed to get pool size");
 
         info!(
-            "Validator {} presign pool size after processing: {} (expected >= {})",
+            "Validator {} presign pool size after processing: {} (expected >= {}, may have grown from background internal presigns)",
             i, pool_size, num_presigns
         );
 
@@ -96,7 +96,7 @@ async fn test_presign_pool_not_consumed_without_sign_requests() {
         // sessions completed and deposited into the pool during the rounds.
         assert!(
             pool_size >= num_presigns,
-            "Validator {} pool should not shrink without consumption (expected >= {}, got {})",
+            "Validator {} pool should not shrink without sign requests (expected >= {}, got {})",
             i,
             num_presigns,
             pool_size
@@ -181,7 +181,7 @@ async fn test_validators_continue_sessions_across_rounds() {
 
         assert!(
             final_session_count > 0,
-            "Validator {} should have sessions after 3 phases of 10 rounds each",
+            "Validator {} should have sessions after 3 phases of 10 rounds each (internal presign sessions should keep the manager populated)",
             i
         );
     }
@@ -232,11 +232,23 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
     }
 
     // Verify responsive validators still have sessions
-    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
-        if i != unresponsive_validator {
+    let responsive_session_counts: Vec<usize> = test_state
+        .dwallet_mpc_services
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != unresponsive_validator)
+        .map(|(i, service)| {
             let session_count = service.dwallet_mpc_manager().sessions.len();
             info!("Responsive validator {} has {} sessions", i, session_count);
-        }
+            session_count
+        })
+        .collect();
+    for (i, &count) in responsive_session_counts.iter().enumerate() {
+        assert!(
+            count > 0,
+            "Responsive validator {} should have sessions while unresponsive validator is offline",
+            i
+        );
     }
 
     // "Restart" the unresponsive validator
@@ -457,6 +469,114 @@ async fn test_epoch_store_presign_pool_operations() {
     assert!(
         !other_used,
         "different session ID should not be marked as used"
+    );
+
+    // Test assign_presign / get_assigned_presign / pop_assigned_presign roundtrip.
+    // First, insert a real presign into the pool so assign_presign has something to pop.
+    let assign_key_id = ObjectID::random();
+    let assign_session_preimage = [50u8; 32];
+    let assign_source_session_id =
+        SessionIdentifier::new(SessionType::InternalPresign, assign_session_preimage);
+    test_epoch_store
+        .insert_presigns(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assign_key_id,
+            1,
+            assign_source_session_id,
+            vec![vec![55u8; 32]],
+        )
+        .expect("failed to insert presign for assign roundtrip");
+
+    // assign_presign pops one presign from the internal pool and places it in the assigned pool
+    let assigned_session_id = test_epoch_store
+        .assign_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assign_key_id,
+            None,
+            None,
+            1,
+        )
+        .expect("assign_presign should not error")
+        .expect("assign_presign should return a session ID when pool is non-empty");
+
+    // Internal pool should now be empty
+    let pool_after_assign = test_epoch_store
+        .presign_pool_size(DWalletSignatureAlgorithm::ECDSASecp256k1, assign_key_id)
+        .expect("failed to get pool size after assign");
+    assert_eq!(
+        pool_after_assign, 0,
+        "internal pool should be empty after assigning the only presign"
+    );
+
+    // get_assigned_presign retrieves without removing
+    let retrieved = test_epoch_store
+        .get_assigned_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assigned_session_id,
+        )
+        .expect("get_assigned_presign should not error")
+        .expect("assigned presign should exist after assign");
+    assert_eq!(
+        retrieved.presign,
+        vec![55u8; 32],
+        "retrieved presign data should match what was inserted"
+    );
+    assert_eq!(
+        retrieved.assigned_epoch, 1,
+        "assigned_epoch should match current_epoch passed to assign_presign"
+    );
+
+    // A second get still returns the presign (non-consuming)
+    let retrieved_again = test_epoch_store
+        .get_assigned_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assigned_session_id,
+        )
+        .expect("second get_assigned_presign should not error");
+    assert!(
+        retrieved_again.is_some(),
+        "assigned presign should still exist after a non-consuming get"
+    );
+
+    // pop_assigned_presign removes it from the assigned pool
+    let popped = test_epoch_store
+        .pop_assigned_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assigned_session_id,
+        )
+        .expect("pop_assigned_presign should not error")
+        .expect("pop should return the assigned presign");
+    assert_eq!(
+        popped.presign,
+        vec![55u8; 32],
+        "popped presign data should match what was inserted"
+    );
+
+    // After pop, the presign is gone from the assigned pool
+    let gone = test_epoch_store
+        .get_assigned_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assigned_session_id,
+        )
+        .expect("get after pop should not error");
+    assert!(
+        gone.is_none(),
+        "assigned presign should be absent after pop"
+    );
+
+    // assign_presign on an empty pool returns None
+    let no_assign = test_epoch_store
+        .assign_presign(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            assign_key_id,
+            None,
+            None,
+            1,
+        )
+        .expect("assign on empty pool should not error");
+    assert!(
+        no_assign.is_none(),
+        "assign_presign should return None when pool is empty"
     );
 
     info!(

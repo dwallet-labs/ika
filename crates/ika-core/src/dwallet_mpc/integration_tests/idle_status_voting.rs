@@ -137,6 +137,10 @@ async fn test_validators_compute_idle_status_correctly() {
         found_idle_true,
         "expected at least one status update with is_idle=true (initial state)"
     );
+    assert!(
+        found_idle_false,
+        "expected at least one status update with is_idle=false after sessions exceeded threshold"
+    );
 
     info!("Test passed: validators correctly compute idle status");
 }
@@ -224,6 +228,8 @@ async fn test_status_updates_distributed_through_consensus() {
         }
     }
 
+    let num_validators = test_state.dwallet_mpc_services.len();
+
     // Final verification: the service should have processed status updates.
     // Check that idle_status_by_party in the manager is populated (the service
     // reads from epoch store and calls handle_status_updates which populates this).
@@ -235,32 +241,32 @@ async fn test_status_updates_distributed_through_consensus() {
             i, idle_status_count
         );
         // After enough rounds, each validator should have received idle status from all parties.
-        // With 4 validators, we expect all 4 parties to have reported.
-        assert!(
-            idle_status_count > 0,
-            "Validator {} should have idle status from at least some parties (got {})",
-            i,
-            idle_status_count
+        assert_eq!(
+            idle_status_count, num_validators,
+            "Validator {} should have idle status from all {} parties (got {})",
+            i, num_validators, idle_status_count
         );
     }
 
-    // Verify total status updates distributed across the system
+    // Verify total status updates distributed across the system.
+    // Each round, each validator sends 1 status update, distributed to all 4 validators.
+    // Over 10 rounds: expected 4 * 10 * 4 = 160 total entries.
     let mut total_status_updates = 0usize;
     for epoch_store in &test_state.epoch_stores {
         let updates = epoch_store.round_to_status_updates.lock().unwrap();
         total_status_updates += updates.values().map(|v| v.len()).sum::<usize>();
     }
 
+    let expected_minimum = 10 * num_validators;
     info!(
-        "Total status updates across all validators: {}",
-        total_status_updates
+        "Total status updates across all validators: {} (expected >= {})",
+        total_status_updates, expected_minimum
     );
 
-    // Each round, each validator sends 1 status update, distributed to all 4.
-    // Over 10 rounds with 4 validators: expected ~4*10*4 = 160 total entries.
     assert!(
-        total_status_updates > 10,
-        "expected many status updates distributed through consensus, got {}",
+        total_status_updates >= expected_minimum,
+        "expected at least {} total status updates distributed through consensus, got {}",
+        expected_minimum,
         total_status_updates
     );
 
