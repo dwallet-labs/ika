@@ -109,7 +109,7 @@ pub(crate) struct DWalletMPCManager {
     /// Tracks the idle status of each party, overwritten on each status update.
     /// At the end of processing status updates for a consensus round, we majority vote
     /// to determine the network's idle status.
-    idle_status_by_party: HashMap<PartyID, bool>,
+    pub(crate) idle_status_by_party: HashMap<PartyID, bool>,
 
     /// Tracks which parties have seen each presign request, keyed by sequence number.
     /// When a presign request reaches majority, it's moved to `completed_presign_sequence_numbers`.
@@ -764,9 +764,8 @@ impl DWalletMPCManager {
 
         let curve = self.protocol_config.internal_signing_curve();
         let signature_algorithm = self.protocol_config.internal_signing_algorithm();
-        let hash_scheme = match self.protocol_config.internal_signing_hash_scheme() {
-            DWalletHashScheme::Keccak256 => group::HashScheme::Keccak256,
-        };
+        let hash_scheme: group::HashScheme =
+            self.protocol_config.internal_signing_hash_scheme().into();
         let network_dkg_output_bytes = self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)

@@ -189,14 +189,17 @@ impl DWalletMPCService {
         authority_name: AuthorityName,
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
-    ) -> Self {
-        // Create dummy channels for testing - senders are immediately dropped / held
-        let (_, internal_sign_receiver) =
+    ) -> (
+        Self,
+        UnboundedSender<InternalSignRequest>,
+        UnboundedReceiver<InternalSignOutput>,
+    ) {
+        let (internal_sign_request_sender, internal_sign_receiver) =
             tokio::sync::mpsc::unbounded_channel::<InternalSignRequest>();
-        let (internal_sign_output_sender, _internal_sign_output_receiver) =
+        let (internal_sign_output_sender, internal_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<InternalSignOutput>();
 
-        DWalletMPCService {
+        let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: epoch_store.clone(),
             dwallet_submit_to_consensus,
@@ -232,7 +235,13 @@ impl DWalletMPCService {
             sent_network_key_ids: HashSet::new(),
             internal_sign_receiver,
             pending_internal_sign_requests: Vec::new(),
-        }
+        };
+
+        (
+            service,
+            internal_sign_request_sender,
+            internal_sign_output_receiver,
+        )
     }
 
     #[cfg(any(test, feature = "test-utils"))]

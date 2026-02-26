@@ -38,6 +38,8 @@ async fn sign_flow_test() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -48,6 +50,8 @@ async fn sign_flow_test() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -161,6 +165,8 @@ async fn future_sign_flow_test() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -171,6 +177,8 @@ async fn future_sign_flow_test() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -570,6 +578,8 @@ async fn global_presign_request_uses_correct_metadata_test() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -580,6 +590,8 @@ async fn global_presign_request_uses_correct_metadata_test() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service

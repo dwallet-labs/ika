@@ -35,6 +35,8 @@ async fn test_some_malicious_validators_flows_succeed() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _internal_sign_request_senders,
+        _internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
@@ -175,6 +177,8 @@ async fn test_party_copies_other_party_message_dkg_round() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _internal_sign_request_senders,
+        _internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {

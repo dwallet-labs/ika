@@ -4,12 +4,14 @@ use crate::authority::authority_per_epoch_store::{
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use crate::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
@@ -20,11 +22,12 @@ use ika_types::messages_dwallet_mpc::{
     AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
     InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::info;
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
@@ -43,6 +46,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) presign_pools: Arc<
         Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>,
     >,
+    /// Tracks which presign session IDs have been consumed by signing.
+    pub(crate) used_presigns: Arc<Mutex<HashSet<SessionIdentifier>>>,
+    /// Assigned presigns keyed by (signature_algorithm, session_identifier).
+    pub(crate) assigned_presigns:
+        Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier), AssignedPresign>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -54,6 +62,8 @@ pub(crate) struct IntegrationTestState {
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
     pub(crate) sui_data_senders: Vec<SuiDataSenders>,
+    pub(crate) internal_sign_request_senders: Vec<UnboundedSender<InternalSignRequest>>,
+    pub(crate) internal_sign_output_receivers: Vec<UnboundedReceiver<InternalSignOutput>>,
 }
 
 /// A testing implementation of the `DWalletMPCSubmitToConsensus` trait.
@@ -93,6 +103,8 @@ impl TestingAuthorityPerEpochStore {
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
+            used_presigns: Arc::new(Mutex::new(HashSet::new())),
+            assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -208,12 +220,20 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
     }
 
-    fn mark_presign_as_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<()> {
+    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
+        self.used_presigns
+            .lock()
+            .unwrap()
+            .insert(presign_session_id);
         Ok(())
     }
 
-    fn is_presign_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        Ok(false)
+    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
+        Ok(self
+            .used_presigns
+            .lock()
+            .unwrap()
+            .contains(&presign_session_id))
     }
 
     fn next_internal_sessions_status_update(
@@ -233,29 +253,55 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn assign_presign(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _dwallet_network_encryption_key_id: ObjectID,
-        _user_verification_key: Option<Vec<u8>>,
-        _dwallet_id: Option<ObjectID>,
-        _current_epoch: u64,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        user_verification_key: Option<Vec<u8>>,
+        dwallet_id: Option<ObjectID>,
+        current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>> {
-        Ok(None)
+        let popped = self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?;
+        match popped {
+            Some((session_id, presign_bytes)) => {
+                let assigned = AssignedPresign {
+                    session_identifier: session_id,
+                    presign: presign_bytes,
+                    user_verification_key,
+                    dwallet_id,
+                    assigned_epoch: current_epoch,
+                };
+                self.assigned_presigns
+                    .lock()
+                    .unwrap()
+                    .insert((signature_algorithm, session_id), assigned);
+                Ok(Some(session_id))
+            }
+            None => Ok(None),
+        }
     }
 
     fn get_assigned_presign(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _session_identifier: SessionIdentifier,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
     ) -> IkaResult<Option<AssignedPresign>> {
-        Ok(None)
+        Ok(self
+            .assigned_presigns
+            .lock()
+            .unwrap()
+            .get(&(signature_algorithm, session_identifier))
+            .cloned())
     }
 
     fn pop_assigned_presign(
         &self,
-        _signature_algorithm: DWalletSignatureAlgorithm,
-        _session_identifier: SessionIdentifier,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        session_identifier: SessionIdentifier,
     ) -> IkaResult<Option<AssignedPresign>> {
-        Ok(None)
+        Ok(self
+            .assigned_presigns
+            .lock()
+            .unwrap()
+            .remove(&(signature_algorithm, session_identifier)))
     }
 }
 
@@ -342,6 +388,8 @@ pub fn create_dwallet_mpc_services(
     Vec<Arc<TestingSubmitToConsensus>>,
     Vec<Arc<TestingAuthorityPerEpochStore>>,
     Vec<Arc<TestingDWalletCheckpointNotify>>,
+    Vec<UnboundedSender<InternalSignRequest>>,
+    Vec<UnboundedReceiver<InternalSignOutput>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
@@ -369,12 +417,16 @@ pub fn create_dwallet_mpc_services(
     let mut consensus_stores = Vec::new();
     let mut epoch_stores = Vec::new();
     let mut notify_services = Vec::new();
+    let mut sign_request_senders = Vec::new();
+    let mut sign_output_receivers = Vec::new();
     for (
         dwallet_mpc_service,
         sui_data_sender,
         dwallet_submit_to_consensus,
         epoch_store,
         notify_service,
+        sign_request_sender,
+        sign_output_receiver,
     ) in dwallet_mpc_services
     {
         services.push(dwallet_mpc_service);
@@ -382,6 +434,8 @@ pub fn create_dwallet_mpc_services(
         consensus_stores.push(dwallet_submit_to_consensus);
         epoch_stores.push(epoch_store);
         notify_services.push(notify_service);
+        sign_request_senders.push(sign_request_sender);
+        sign_output_receivers.push(sign_output_receiver);
     }
     (
         services,
@@ -389,9 +443,12 @@ pub fn create_dwallet_mpc_services(
         consensus_stores,
         epoch_stores,
         notify_services,
+        sign_request_senders,
+        sign_output_receivers,
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn create_dwallet_mpc_service(
     authority_name: &AuthorityName,
     committee: Committee,
@@ -402,26 +459,31 @@ fn create_dwallet_mpc_service(
     Arc<TestingSubmitToConsensus>,
     Arc<TestingAuthorityPerEpochStore>,
     Arc<TestingDWalletCheckpointNotify>,
+    UnboundedSender<InternalSignRequest>,
+    UnboundedReceiver<InternalSignOutput>,
 ) {
     let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
     let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
     let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
     let checkpoint_notify = Arc::new(TestingDWalletCheckpointNotify::new());
+    let (service, sign_request_sender, sign_output_receiver) = DWalletMPCService::new_for_testing(
+        epoch_store.clone(),
+        seed,
+        dwallet_submit_to_consensus.clone(),
+        Arc::new(TestingAuthorityState::new()),
+        checkpoint_notify.clone(),
+        *authority_name,
+        committee.clone(),
+        sui_data_receivers.clone(),
+    );
     (
-        DWalletMPCService::new_for_testing(
-            epoch_store.clone(),
-            seed,
-            dwallet_submit_to_consensus.clone(),
-            Arc::new(TestingAuthorityState::new()),
-            checkpoint_notify.clone(),
-            *authority_name,
-            committee.clone(),
-            sui_data_receivers.clone(),
-        ),
+        service,
         sui_data_senders,
         dwallet_submit_to_consensus,
         epoch_store,
         checkpoint_notify,
+        sign_request_sender,
+        sign_output_receiver,
     )
 }
 
@@ -799,6 +861,150 @@ pub(crate) fn override_legit_messages_with_false_messages(
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
+use ika_protocol_config::OverrideGuard;
+
+/// Test-friendly protocol config values.
+/// These are small to keep integration tests fast and assertions exact.
+pub(crate) const TEST_IDLE_SESSION_COUNT_THRESHOLD: u64 = 5;
+pub(crate) const TEST_PRESIGN_POOL_MINIMUM_SIZE: u64 = 4;
+pub(crate) const TEST_PRESIGN_POOL_MAXIMUM_SIZE: u64 = 12;
+pub(crate) const TEST_PRESIGN_CONSENSUS_ROUND_DELAY: u64 = 2;
+pub(crate) const TEST_PRESIGN_SESSIONS_TO_INSTANTIATE: u64 = 1;
+pub(crate) const TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE: u64 = 2;
+
+/// Creates a protocol config override guard with small, test-friendly values.
+///
+/// Must be called BEFORE creating services (since `get_for_max_version_UNSAFE` caches).
+/// Hold the returned guard for the duration of the test.
+#[cfg(test)]
+pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
+    ProtocolConfig::apply_overrides_for_testing(|_version, mut config| {
+        config.set_idle_session_count_threshold_for_testing(TEST_IDLE_SESSION_COUNT_THRESHOLD);
+
+        // Per-algorithm presign pool settings
+        config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_secp256k1_ecdsa_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_secp256k1_ecdsa_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_secp256k1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_internal_secp256r1_ecdsa_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_secp256r1_ecdsa_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_secp256r1_ecdsa_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_secp256r1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_internal_eddsa_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_eddsa_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_eddsa_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_eddsa_presign_sessions_to_instantiate_for_testing(
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_internal_schnorrkel_substrate_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_schnorrkel_substrate_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_schnorrkel_substrate_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_internal_taproot_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_taproot_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_taproot_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_taproot_presign_sessions_to_instantiate_for_testing(
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        // Internal sign presign pool
+        config.set_internal_sign_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_internal_sign_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_internal_sign_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_internal_sign_presign_sessions_to_instantiate_for_testing(
+            TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config
+    })
+}
+
+/// Counts sessions of a given type across the first validator's manager.
+#[cfg(test)]
+pub(crate) fn count_sessions_by_type(
+    test_state: &IntegrationTestState,
+    session_type: SessionType,
+) -> usize {
+    test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .sessions
+        .iter()
+        .filter(|(id, _)| id.session_type() == session_type)
+        .count()
+}
+
+/// Creates an `IntegrationTestState` from the output of `create_dwallet_mpc_services`.
+#[cfg(test)]
+pub(crate) fn build_test_state(size: usize) -> IntegrationTestState {
+    let (committee, _) = Committee::new_simple_test_committee();
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
+    ) = create_dwallet_mpc_services(size);
+    IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
+    }
+}
 
 pub(crate) async fn send_start_network_dkg_event_to_all_parties(
     epoch_id: EpochId,
