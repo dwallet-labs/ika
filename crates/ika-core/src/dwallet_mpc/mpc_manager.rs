@@ -1072,8 +1072,21 @@ impl DWalletMPCManager {
             })
             .collect();
 
-        ready_to_advance_sessions
-            .sort_by(|(_, request), (_, other_request)| request.cmp(other_request));
+        // Sort user/system sessions before internal sessions so that external requests
+        // are never starved by the continuously-running internal presign pool.
+        ready_to_advance_sessions.sort_by(|(_, request), (_, other_request)| {
+            let is_internal = |r: &DWalletSessionRequest| {
+                matches!(
+                    r.session_type,
+                    SessionType::InternalPresign | SessionType::InternalSign
+                )
+            };
+            match (is_internal(request), is_internal(other_request)) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => request.cmp(other_request),
+            }
+        });
 
         let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
