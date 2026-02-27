@@ -175,16 +175,12 @@ async function aliceTransferShareToBob(
 	expect(bobEncryptedUserSecretKeyShareId).toBeDefined();
 
 	// Wait for Bob's encrypted share to be available
-	const bobEncryptedUserSecretKeyShare = await retryUntil(
-		() =>
-			ikaClient.getEncryptedUserSecretKeyShareInParticularState(
-				bobEncryptedUserSecretKeyShareId,
-				'NetworkVerificationCompleted',
-			),
-		(share) => share !== null,
-		30,
-		1000,
-	);
+	const bobEncryptedUserSecretKeyShare =
+		await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
+			bobEncryptedUserSecretKeyShareId,
+			'NetworkVerificationCompleted',
+			{ timeout: 300000 },
+		);
 
 	expect(bobEncryptedUserSecretKeyShare).toBeDefined();
 
