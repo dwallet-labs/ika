@@ -139,10 +139,12 @@ export async function requestPresignForDKG(
 		CoordinatorInnerModule.PresignRequestEvent,
 	).fromBase64(presignEvent?.bcs as string);
 
-	const presign = await ikaClient.getPresignInParticularState(
-		parsedPresignEvent.event_data.presign_id,
-		'Completed',
-		{ timeout: 300000 },
+	const presign = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
 	);
 
 	expect(presign).toBeDefined();
@@ -256,7 +258,7 @@ export async function waitForDWalletAwaitingSignature(
 		dWalletID,
 		'AwaitingKeyHolderSignature',
 		{
-			timeout: 450000,
+			timeout: 300000,
 		},
 	);
 
@@ -276,8 +278,11 @@ export async function acceptUserShareAndActivate(
 ): Promise<ZeroTrustDWallet> {
 	const { suiClient, ikaClient, userShareEncryptionKeys, testName } = setup;
 
-	const encryptedUserSecretKeyShare = await ikaClient.getEncryptedUserSecretKeyShare(
-		encryptedUserSecretKeyShareId,
+	const encryptedUserSecretKeyShare = await retryUntil(
+		() => ikaClient.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareId),
+		(share) => share !== null,
+		30,
+		1000,
 	);
 
 	expect(encryptedUserSecretKeyShare).toBeDefined();
@@ -298,9 +303,12 @@ export async function acceptUserShareAndActivate(
 
 	await executeTestTransaction(suiClient, suiTransaction, testName);
 
-	const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-		timeout: 450000,
-	});
+	const activeDWallet = await retryUntil(
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		(wallet) => wallet !== null,
+		30,
+		1000,
+	);
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
@@ -442,9 +450,12 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 
 	expect(dWalletID).toBeDefined();
 
-	const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-		timeout: 450000,
-	});
+	const activeDWallet = await retryUntil(
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		(wallet) => wallet !== null,
+		30,
+		1000,
+	);
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
@@ -539,9 +550,12 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	expect(dWalletID).toBeDefined();
 
-	const activeDWallet = await ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-		timeout: 450000,
-	});
+	const activeDWallet = await retryUntil(
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		(wallet) => wallet !== null,
+		30,
+		1000,
+	);
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
@@ -598,10 +612,12 @@ export async function runGlobalPresignTest(
 	expect(parsedPresignEvent).toBeDefined();
 	expect(parsedPresignEvent.event_data.presign_id).toBeDefined();
 
-	const presign = await ikaClient.getPresignInParticularState(
-		parsedPresignEvent.event_data.presign_id,
-		'Completed',
-		{ timeout: 300000 },
+	const presign = await retryUntil(
+		() =>
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+		(presign) => presign !== null,
+		30,
+		2000,
 	);
 
 	expect(presign).toBeDefined();
