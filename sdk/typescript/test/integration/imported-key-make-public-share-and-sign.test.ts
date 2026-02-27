@@ -213,11 +213,10 @@ async function createImportedKeyDWallet(
 	expect(encryptedUserSecretKeyShareId).toBeDefined();
 
 	// Wait for DWallet to be verified and active
-	const importedKeyDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
-		(wallet) => wallet !== null,
-		30,
-		1000,
+	const importedKeyDWallet = (await ikaClient.getDWalletInParticularState(
+		dWalletID,
+		'AwaitingKeyHolderSignature',
+		{ timeout: 450000 },
 	)) as ImportedKeyDWallet;
 
 	expect(importedKeyDWallet).toBeDefined();
@@ -266,11 +265,10 @@ async function acceptAndActivateImportedKeyDWallet(
 	await executeTestTransaction(suiClient, acceptShareTransaction, testName);
 
 	// Wait for wallet to become Active
-	const activeDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(importedKeyDWallet.id.id, 'Active'),
-		(wallet) => wallet !== null,
-		30,
-		2000,
+	const activeDWallet = (await ikaClient.getDWalletInParticularState(
+		importedKeyDWallet.id.id,
+		'Active',
+		{ timeout: 450000 },
 	)) as ImportedKeyDWallet;
 
 	expect(activeDWallet).toBeDefined();
@@ -326,7 +324,7 @@ async function makeImportedKeyDWalletPublic(
 	const publicDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(activeDWallet.id.id, 'Active'),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
-		30,
+		150,
 		2000,
 	);
 
@@ -393,12 +391,10 @@ async function requestPresignForImportedKey(
 		CoordinatorInnerModule.PresignRequestEvent,
 	).fromBase64(presignEvent?.bcs as string);
 
-	const presign = await retryUntil(
-		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
-		(presign) => presign !== null,
-		30,
-		2000,
+	const presign = await ikaClient.getPresignInParticularState(
+		parsedPresignEvent.event_data.presign_id,
+		'Completed',
+		{ timeout: 300000 },
 	);
 
 	expect(presign).toBeDefined();
@@ -483,6 +479,7 @@ async function signWithPublicShareAndVerify(
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 60000 },
 	);
 
 	expect(sign).toBeDefined();

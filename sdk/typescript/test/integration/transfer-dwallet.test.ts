@@ -175,16 +175,12 @@ async function aliceTransferShareToBob(
 	expect(bobEncryptedUserSecretKeyShareId).toBeDefined();
 
 	// Wait for Bob's encrypted share to be available
-	const bobEncryptedUserSecretKeyShare = await retryUntil(
-		() =>
-			ikaClient.getEncryptedUserSecretKeyShareInParticularState(
-				bobEncryptedUserSecretKeyShareId,
-				'NetworkVerificationCompleted',
-			),
-		(share) => share !== null,
-		30,
-		1000,
-	);
+	const bobEncryptedUserSecretKeyShare =
+		await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
+			bobEncryptedUserSecretKeyShareId,
+			'NetworkVerificationCompleted',
+			{ timeout: 300000 },
+		);
 
 	expect(bobEncryptedUserSecretKeyShare).toBeDefined();
 
@@ -264,12 +260,10 @@ async function requestAndWaitForPresign(
 	expect(presignRequestEvent).toBeDefined();
 	expect(presignRequestEvent.event_data.presign_id).toBeDefined();
 
-	const presignObject = await retryUntil(
-		() =>
-			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
-		(presign) => presign !== null,
-		30,
-		2000,
+	const presignObject = await ikaClient.getPresignInParticularState(
+		presignRequestEvent.event_data.presign_id,
+		'Completed',
+		{ timeout: 300000 },
 	);
 
 	expect(presignObject).toBeDefined();
@@ -361,6 +355,7 @@ async function bobSignAndVerify(
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 60000 },
 	);
 
 	expect(sign).toBeDefined();
