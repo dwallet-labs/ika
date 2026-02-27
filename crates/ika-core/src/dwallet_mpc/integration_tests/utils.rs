@@ -589,6 +589,52 @@ pub(crate) fn send_advance_results_between_parties(
     }
 }
 
+/// Maximum iterations when waiting for rayon computations to complete.
+/// At 100ms per iteration, this gives ~60 seconds before failing.
+const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 600;
+
+/// Wait for all parties' in-flight rayon computations to complete.
+///
+/// Runs the service loop repeatedly (with 100ms sleeps to let the tokio
+/// runtime poll rayon-spawned channel sends) until every party's
+/// `currently_running_cryptographic_computations` set is empty.
+///
+/// This is essential for tests that assert on session completion or pool
+/// sizes, because the cryptographic computations run on rayon and need
+/// real wall-clock time plus tokio runtime polls to deliver their results
+/// through the completion channel.
+pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState) {
+    for iteration in 0..MAX_COMPUTATION_WAIT_ITERATIONS {
+        let all_idle = test_state.dwallet_mpc_services.iter().all(|s| {
+            s.dwallet_mpc_manager()
+                .cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .is_empty()
+        });
+        if all_idle {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Run service loop to collect completed rayon results from the
+        // channel and submit them to consensus.  Without new consensus
+        // rounds in the epoch store, `process_consensus_rounds_from_storage`
+        // is a no-op, so only `process_cryptographic_computations` does work.
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+        if iteration > 0 && iteration % 100 == 0 {
+            info!(
+                iteration,
+                "wait_for_computations: still waiting for rayon computations"
+            );
+        }
+    }
+    panic!(
+        "Rayon computations did not complete within {} seconds",
+        MAX_COMPUTATION_WAIT_ITERATIONS / 10
+    );
+}
+
 pub(crate) async fn advance_all_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut [DWalletMPCService],

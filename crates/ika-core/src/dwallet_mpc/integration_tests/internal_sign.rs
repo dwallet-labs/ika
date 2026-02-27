@@ -115,25 +115,12 @@ async fn test_internal_sign_flow() {
 
     info!("Internal sign sessions created: {}", internal_sign_count);
 
-    // Run consensus rounds to complete the sign session
-    for _ in 0..50 {
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            test_state.consensus_round as u64,
-        );
-        test_state.consensus_round += 1;
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
-        }
-    }
-
-    // Retry loop: run more consensus rounds until sign output arrives, or panic on timeout.
+    // Run consensus rounds with computation waits to complete the sign session.
+    // Rayon threads need real wall-clock time to finish MPC computations.
     let sign_output = {
         let mut result = test_state.internal_sign_output_receivers[0].try_recv().ok();
-        let mut extra_rounds = 0;
-        while result.is_none() && extra_rounds < 100 {
+        let mut rounds = 0usize;
+        while result.is_none() && rounds < 150 {
             utils::send_advance_results_between_parties(
                 &test_state.committee,
                 &mut test_state.sent_consensus_messages_collectors,
@@ -144,8 +131,9 @@ async fn test_internal_sign_flow() {
             for service in test_state.dwallet_mpc_services.iter_mut() {
                 service.run_service_loop_iteration(vec![]).await;
             }
+            utils::wait_for_computations(&mut test_state).await;
             result = test_state.internal_sign_output_receivers[0].try_recv().ok();
-            extra_rounds += 1;
+            rounds += 1;
         }
         result.expect("InternalSignOutput not received after 150 consensus rounds")
     };

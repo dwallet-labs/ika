@@ -141,6 +141,24 @@ pub(crate) struct DWalletMPCManager {
     // the session identifier is derived from the epoch as well.
     next_internal_presign_sequence_number: u64,
 
+    /// Monotonically increasing count of instantiated internal presign sessions
+    /// per (curve, signature_algorithm). Incremented when a session is created.
+    /// Used with `completed_internal_presign_sessions` to prevent instantiating
+    /// new sessions while existing ones haven't completed — each session produces
+    /// a variable number of presigns (1 to n-t), so overlapping batches cause
+    /// pool overshoot.
+    /// Consensus-safe: instantiation is consensus-agreed, so all honest parties
+    /// maintain identical values.
+    pub(crate) instantiated_internal_presign_sessions:
+        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+
+    /// Monotonically increasing count of completed internal presign sessions
+    /// per (curve, signature_algorithm). Incremented when a session's output
+    /// reaches consensus majority. When this equals `instantiated_internal_presign_sessions`
+    /// for a given pair, new sessions may be instantiated.
+    pub(crate) completed_internal_presign_sessions:
+        HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
+
     /// The epoch store for persisting presign pools to disk.
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
@@ -246,6 +264,8 @@ impl DWalletMPCManager {
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
+            instantiated_internal_presign_sessions: HashMap::new(),
+            completed_internal_presign_sessions: HashMap::new(),
             epoch_store,
             internal_sign_output_sender,
         })
@@ -665,6 +685,23 @@ impl DWalletMPCManager {
                         )
                     };
 
+                    // Skip instantiation if previous sessions for this (curve, algorithm)
+                    // haven't completed yet. Each session produces a variable number of
+                    // presigns (1 to n-t), so overlapping batches cause pool overshoot.
+                    let instantiated = self
+                        .instantiated_internal_presign_sessions
+                        .get(&(curve, signature_algorithm))
+                        .copied()
+                        .unwrap_or(0);
+                    let completed = self
+                        .completed_internal_presign_sessions
+                        .get(&(curve, signature_algorithm))
+                        .copied()
+                        .unwrap_or(0);
+                    if instantiated != completed {
+                        continue;
+                    }
+
                     let current_pool_size =
                         self.internal_presign_pool_size(key_id, curve, signature_algorithm);
 
@@ -679,6 +716,10 @@ impl DWalletMPCManager {
                                 curve,
                                 signature_algorithm,
                             );
+                            *self
+                                .instantiated_internal_presign_sessions
+                                .entry((curve, signature_algorithm))
+                                .or_insert(0) += 1;
                         }
                     }
                 }
@@ -1320,57 +1361,63 @@ impl DWalletMPCManager {
         match output {
             DWalletInternalMPCOutputKind::InternalPresign {
                 output,
+                curve,
                 signature_algorithm,
                 session_sequence_number,
                 dwallet_network_encryption_key_id,
-                ..
-            } => match signature_algorithm {
-                DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                    self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        session_sequence_number,
-                        session_identifier,
-                        output,
-                    );
+            } => {
+                match signature_algorithm {
+                    DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                        self.record_internal_presign_output::<Secp256k1ECDSAProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                        self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSA => {
+                        self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::Taproot => {
+                        self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
                 }
-                DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                    self.record_internal_presign_output::<Secp256r1ECDSAProtocol>(
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        session_sequence_number,
-                        session_identifier,
-                        output,
-                    );
-                }
-                DWalletSignatureAlgorithm::EdDSA => {
-                    self.record_internal_presign_output::<Curve25519EdDSAProtocol>(
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        session_sequence_number,
-                        session_identifier,
-                        output,
-                    );
-                }
-                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                    self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        session_sequence_number,
-                        session_identifier,
-                        output,
-                    );
-                }
-                DWalletSignatureAlgorithm::Taproot => {
-                    self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
-                        signature_algorithm,
-                        dwallet_network_encryption_key_id,
-                        session_sequence_number,
-                        session_identifier,
-                        output,
-                    );
-                }
-            },
+                *self
+                    .completed_internal_presign_sessions
+                    .entry((curve, signature_algorithm))
+                    .or_insert(0) += 1;
+            }
             DWalletInternalMPCOutputKind::InternalSign {
                 output,
                 sequence_number,
