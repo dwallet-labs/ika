@@ -47,6 +47,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::InternalSignOutput;
+#[cfg(test)]
+use crate::dwallet_mpc::mpc_session::input::PublicInput;
+#[cfg(test)]
+use crate::request_protocol_data::{InternalSignData, ProtocolData};
+#[cfg(test)]
+use group::HashScheme;
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -1620,5 +1626,44 @@ impl DWalletMPCManager {
             number_of_ready_to_advance_sessions + number_of_executing_sessions;
         let threshold = self.protocol_config.idle_session_count_threshold();
         total_session_count < threshold as usize
+    }
+}
+
+#[cfg(test)]
+impl DWalletMPCManager {
+    /// Inserts junk `Active` `InternalSign` sessions so that `compute_is_idle()` returns `false`.
+    /// These sessions have `PublicInput::Junk` and will never produce real computations,
+    /// but they count toward the ready-to-advance total used by the idle check.
+    pub(crate) fn insert_junk_active_sessions(&mut self, count: usize) {
+        for i in 0..count {
+            let mut preimage = [0u8; 32];
+            preimage[..8].copy_from_slice(&i.to_le_bytes());
+            let session_id = SessionIdentifier::new(SessionType::InternalSign, preimage);
+            let request = DWalletSessionRequest {
+                session_type: SessionType::InternalSign,
+                session_identifier: session_id,
+                session_sequence_number: 0,
+                protocol_data: ProtocolData::InternalSign {
+                    data: InternalSignData {
+                        curve: DWalletCurve::Secp256k1,
+                        signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+                        hash_scheme: HashScheme::Keccak256,
+                    },
+                    dwallet_network_encryption_key_id: ObjectID::ZERO,
+                    message: vec![],
+                    presign: vec![],
+                },
+                epoch: 0,
+                requires_network_key_data: false,
+                requires_next_active_committee: false,
+                pulled: false,
+            };
+            let status = SessionStatus::Active {
+                public_input: PublicInput::Junk,
+                private_input: None,
+                request,
+            };
+            self.new_session(&session_id, status, SessionComputationType::Native);
+        }
     }
 }

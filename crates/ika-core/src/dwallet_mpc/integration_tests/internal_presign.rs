@@ -299,11 +299,19 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 }
 
 /// Test that internal presign sessions stop being created when the pool reaches minimum size
-/// and the system is not idle. Covers all signature algorithms.
+/// and the system is not idle.
 ///
-/// Pre-populates pools to `min_pool_size` so that the instantiation condition
-/// `current_pool_size < minimal_pool_size` is always false when not idle.
-/// Verifies pool sizes remain exactly stable across additional rounds.
+/// Instead of faking non-idle with `last_session_to_complete_in_current_epoch`, this test
+/// inserts junk `Active` `InternalSign` sessions so `compute_is_idle()` genuinely returns
+/// `false`.
+///
+/// The test has two phases:
+/// 1. Non-idle + below min → presigns ARE generated (pools fill to at least min_pool_size).
+/// 2. Non-idle + at/above min → no new presigns (pool sizes stay exactly stable).
+///
+/// The internal signing curve (Curve25519/EdDSA) is excluded from assertions because its
+/// presign pool uses separate config (`internal_sign_presign_*`) with different
+/// `sessions_to_instantiate`, which causes different pool dynamics.
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
@@ -312,48 +320,57 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
 
     let mut test_state = build_test_state(4);
 
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
-    // Create network key (the actual key ID is what matters).
+    // Create network key (required for internal presigns).
     let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    let protocol_config = &test_state.dwallet_mpc_services[0]
-        .dwallet_mpc_manager()
-        .protocol_config;
-    let min_pool_size = protocol_config.get_internal_presign_pool_minimum_size(
-        DWalletCurve::Secp256k1,
-        DWalletSignatureAlgorithm::ECDSASecp256k1,
-    );
-    let idle_threshold = protocol_config.idle_session_count_threshold();
-
-    info!(
-        "min_pool_size={}, idle_threshold={}",
-        min_pool_size, idle_threshold
-    );
-
-    // Pre-populate all pools to min_pool_size using the ACTUAL network key ID.
-    let mock_session_id = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
-    for (curve, algorithm) in ALL_ALGORITHMS {
-        let per_algo_min =
-            protocol_config.get_internal_presign_pool_minimum_size(*curve, *algorithm);
-        for epoch_store in &test_state.epoch_stores {
-            let presigns: Vec<Vec<u8>> = (0..per_algo_min).map(|_| vec![0u8; 32]).collect();
-            epoch_store
-                .insert_presigns(*algorithm, network_key_id, 1, mock_session_id, presigns)
-                .expect("failed to insert presigns");
-        }
+    // Insert junk active sessions so compute_is_idle() genuinely returns false.
+    // Must be done AFTER network key creation, which asserts sessions.len() == 1.
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .insert_junk_active_sessions(200);
     }
 
-    // Run settling rounds WITH computation waits so that any sessions created
-    // during/after network key setup complete and deposit their presigns.
-    // This ensures the pool is fully stable before we take the "before" snapshot.
-    for _ in 0..20 {
+    // Extract all needed config values in a scope block to avoid borrow conflicts.
+    let (non_internal_sign_algorithms, per_algo_min_sizes) = {
+        let protocol_config = &test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .protocol_config;
+
+        let internal_signing_curve = protocol_config.internal_signing_curve();
+        let internal_signing_algorithm = protocol_config.internal_signing_algorithm();
+        let non_internal_sign_algorithms: Vec<(DWalletCurve, DWalletSignatureAlgorithm)> =
+            ALL_ALGORITHMS
+                .iter()
+                .filter(|(curve, algorithm)| {
+                    !(*curve == internal_signing_curve && *algorithm == internal_signing_algorithm)
+                })
+                .copied()
+                .collect();
+
+        let per_algo_min_sizes: Vec<u64> = non_internal_sign_algorithms
+            .iter()
+            .map(|(curve, algorithm)| {
+                protocol_config.get_internal_presign_pool_minimum_size(*curve, *algorithm)
+            })
+            .collect();
+
+        let idle_threshold = protocol_config.idle_session_count_threshold();
+
+        info!(
+            "idle_threshold={}, excluded=({:?}/{:?})",
+            idle_threshold, internal_signing_curve, internal_signing_algorithm
+        );
+
+        (non_internal_sign_algorithms, per_algo_min_sizes)
+    };
+
+    // === Phase 1: Non-idle + below min → presigns ARE generated ===
+    // Pools start at 0 (below min_pool_size). Run enough rounds with computation waits
+    // for pools to fill up to at least min_pool_size.
+    for _ in 0..80 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -365,22 +382,59 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             service.run_service_loop_iteration(vec![]).await;
         }
         utils::wait_for_computations(&mut test_state).await;
+
+        // Early exit once all non-internal-sign pools reached min_pool_size.
+        let all_at_min = non_internal_sign_algorithms
+            .iter()
+            .zip(per_algo_min_sizes.iter())
+            .all(|((_, algorithm), min_size)| {
+                test_state.epoch_stores[0]
+                    .presign_pool_size(*algorithm, network_key_id)
+                    .unwrap_or(0)
+                    >= *min_size
+            });
+        if all_at_min {
+            info!("All non-internal-sign pools reached min_pool_size — moving to phase 2");
+            break;
+        }
     }
 
-    // Record pool sizes after full stabilization.
-    let pool_sizes_before: Vec<(DWalletCurve, DWalletSignatureAlgorithm, u64)> = ALL_ALGORITHMS
+    // Assert all non-internal-sign pools reached at least min_pool_size.
+    for ((curve, algorithm), min_size) in non_internal_sign_algorithms
         .iter()
-        .map(|(curve, algorithm)| {
-            let size = test_state.epoch_stores[0]
-                .presign_pool_size(*algorithm, network_key_id)
-                .unwrap_or(0);
-            (*curve, *algorithm, size)
-        })
-        .collect();
+        .zip(per_algo_min_sizes.iter())
+    {
+        let pool_size = test_state.epoch_stores[0]
+            .presign_pool_size(*algorithm, network_key_id)
+            .unwrap_or(0);
+        info!(
+            "{:?}/{:?}: pool_size={}, min={}",
+            curve, algorithm, pool_size, min_size
+        );
+        assert!(
+            pool_size >= *min_size,
+            "{:?}/{:?}: pool should have reached min_pool_size (min={}, got={})",
+            curve,
+            algorithm,
+            min_size,
+            pool_size
+        );
+    }
 
-    // Run several more delay-aligned rounds to confirm the pool is now stable.
-    // No computation waits needed here — pools are at/above min and system is
-    // not idle, so no new sessions should be created.
+    // === Phase 2: Non-idle + at/above min → no new presigns ===
+    // Snapshot pool sizes, then run more rounds and verify they stay exactly stable.
+    let pool_sizes_before: Vec<(DWalletCurve, DWalletSignatureAlgorithm, u64)> =
+        non_internal_sign_algorithms
+            .iter()
+            .map(|(curve, algorithm)| {
+                let size = test_state.epoch_stores[0]
+                    .presign_pool_size(*algorithm, network_key_id)
+                    .unwrap_or(0);
+                (*curve, *algorithm, size)
+            })
+            .collect();
+
+    // Run several more rounds — no computation waits needed since no new sessions are expected.
     for _ in 0..6 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -394,8 +448,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
     }
 
-    // Assert pool sizes are exactly unchanged: nothing consumed and nothing added,
-    // since the pools are at min_pool_size and the system is not idle.
+    // Assert pool sizes are exactly unchanged for non-internal-sign algorithms.
     for (curve, algorithm, size_before) in &pool_sizes_before {
         let size_after = test_state.epoch_stores[0]
             .presign_pool_size(*algorithm, network_key_id)
@@ -406,7 +459,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         );
         assert_eq!(
             size_after, *size_before,
-            "{:?}/{:?}: pool should be exactly stable once settled (before={}, after={})",
+            "{:?}/{:?}: pool should be exactly stable once at min (before={}, after={})",
             curve, algorithm, size_before, size_after
         );
     }

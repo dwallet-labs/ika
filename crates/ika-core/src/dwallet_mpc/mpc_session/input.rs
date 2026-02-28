@@ -43,6 +43,8 @@ pub(crate) enum PublicInput {
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
     NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
+    #[cfg(test)]
+    Junk,
 }
 
 // TODO (#542): move this logic to run before writing the event to the DB, maybe include within the session info
