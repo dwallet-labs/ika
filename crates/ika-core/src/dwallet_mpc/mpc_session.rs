@@ -7,7 +7,10 @@ use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
+    SessionIdentifier,
+};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use sui_types::base_types::ObjectID;
@@ -25,7 +28,7 @@ use tokio::sync::broadcast;
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
-    pub(crate) output: Vec<DWalletCheckpointMessageKind>,
+    pub(crate) output: DWalletMPCOutputKind,
     pub(crate) malicious_authorities: Vec<AuthorityName>,
 }
 
@@ -150,16 +153,11 @@ impl DWalletSession {
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
-        let mpc_protocol = match &self.status {
-            SessionStatus::Active { request, .. } => {
-                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
-            }
-            SessionStatus::WaitingForSessionRequest => {
-                "Unknown - waiting for session request".to_string()
-            }
-            SessionStatus::ComputationCompleted => {
-                "Unknown - session computation completed".to_string()
-            }
+        let metric_data = match &self.status {
+            SessionStatus::Active { request, .. } => Some(DWalletSessionRequestMetricData::from(
+                &request.protocol_data,
+            )),
+            SessionStatus::WaitingForSessionRequest | SessionStatus::ComputationCompleted => None,
             SessionStatus::Completed | SessionStatus::Failed => {
                 warn!(
                     session_identifier=?self.session_identifier,
@@ -169,13 +167,27 @@ impl DWalletSession {
             }
         };
 
+        let protocol_name = metric_data.as_ref().map_or("Unknown", |d| d.name());
+        let curve = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.curve());
+        let hash_scheme = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.hash_scheme());
+        let signature_algorithm = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.signature_algorithm());
+
         debug!(
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
             receiving_authority=?self.validator_name,
             consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
-            ?mpc_protocol,
+            %protocol_name,
+            %curve,
+            %hash_scheme,
+            %signature_algorithm,
             "Received a dWallet MPC message",
         );
 
@@ -212,13 +224,13 @@ impl DWalletSession {
         &mut self,
         consensus_round: u64,
         sender_party_id: PartyID,
-        output: DWalletMPCOutput,
+        output: DWalletMPCOutputReport,
     ) {
         debug!(
-            session_identifier=?output.session_identifier,
-            from_authority=?output.authority,
+            session_identifier=?output.session_identifier(),
+            from_authority=?output.authority(),
             receiving_authority=?self.validator_name,
-            output_messages=?output.output,
+            output=?output,
             consensus_round,
             status =? self.status,
             "Received a dWallet MPC output",
@@ -240,11 +252,24 @@ impl DWalletSession {
             .entry(consensus_round)
             .or_default();
 
-        if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
-            e.insert(DWalletMPCSessionOutput {
-                output: output.output,
-                malicious_authorities: output.malicious_authorities,
-            });
+        let malicious_authorities = output.malicious_authorities();
+        if let Ok(output) = output.output() {
+            if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
+                e.insert(DWalletMPCSessionOutput {
+                    output,
+                    malicious_authorities,
+                });
+            }
+        } else {
+            warn!(
+                session_identifier=?output.session_identifier(),
+                from_authority=?output.authority(),
+                receiving_authority=?self.validator_name,
+                consensus_round,
+                status =? self.status,
+                rejected=output.rejected(),
+                "Received an invalid dWallet MPC output",
+            );
         }
     }
 
@@ -423,10 +448,7 @@ impl DWalletMPCManager {
     ) -> Option<SessionStatus> {
         let session_identifier = request.session_identifier;
 
-        // Avoid instantiation of completed events by checking they belong to the current epoch.
-        // We only pull uncompleted events, so we skip the check for those,
-        // but pushed events might be completed.
-        if !request.pulled && request.epoch != self.epoch_id {
+        if !request.should_run_in_current_epoch(self.epoch_id) {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
@@ -501,24 +523,30 @@ impl DWalletMPCManager {
             return None;
         }
 
-        let status = match session_input_from_request(
-            &request,
-            &self.access_structure,
-            &self.committee,
-            &self.network_keys,
-            self.next_active_committee.clone(),
-            self.validators_class_groups_public_keys_and_proofs.clone(),
-        ) {
-            Ok((public_input, private_input)) => SessionStatus::Active {
-                public_input,
-                private_input,
-                request: request.clone(),
-            },
-            Err(e) => {
-                error!(error=?e, ?request, "create session input from dWallet request with error");
-                SessionStatus::Failed
+        if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
+            request.protocol_data.is_global_presign()
+        {
+            let global_presign_request = GlobalPresignRequest {
+                session_identifier: request.session_identifier,
+                session_sequence_number: request.session_sequence_number,
+                presign_id,
+                curve,
+                signature_algorithm,
+                dwallet_network_encryption_key_id,
+            };
+
+            if !self
+                .global_presign_requests
+                .contains(&global_presign_request)
+            {
+                self.global_presign_requests.push(global_presign_request);
             }
-        };
+
+            // Don't create a session for global presign, we will take it from the internal pools.
+            return None;
+        }
+
+        let status = self.session_status_from_request(request.clone(), false);
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());

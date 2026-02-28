@@ -85,12 +85,14 @@ pub enum DWalletInternalMPCOutputKind {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_sequence_number: u64,
+        dwallet_network_encryption_key_id: ObjectID,
     },
     InternalSign {
         output: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
+        checkpoint_sequence_number: u64,
     },
 }
 
@@ -108,6 +110,7 @@ pub struct GlobalPresignRequest {
     pub presign_id: ObjectID,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub dwallet_network_encryption_key_id: ObjectID,
 }
 
 /// Status update sent by each validator on each consensus round.
@@ -158,8 +161,7 @@ pub struct AssignedPresign {
     pub session_identifier: SessionIdentifier,
     /// The actual presign data.
     pub presign: Vec<u8>,
-    /// The user's Ed25519 verification key for signature verification.
-    /// TODO: Placeholder - will be populated when user verification is implemented.
+    /// The user verification key associated with the dWallet (if applicable).
     pub user_verification_key: Option<Vec<u8>>,
     /// The dwallet ID (for non-global dwallets like ECDSA imported wallets and v1 dwallets).
     pub dwallet_id: Option<ObjectID>,
@@ -678,9 +680,6 @@ pub struct PresignRequestEvent {
     pub dwallet_network_encryption_key_id: ObjectID,
     pub curve: u32,
     pub signature_algorithm: u32,
-    /// User's Ed25519 verification key for presign assignment authorization.
-    /// TODO: Placeholder - will be populated when user verification is implemented.
-    pub user_verification_key: Option<Vec<u8>>,
 }
 
 impl DWalletSessionEventTrait for PresignRequestEvent {
@@ -940,14 +939,6 @@ pub struct SignRequestEvent {
 
     /// Indicates whether the future sign feature was used to start the session.
     pub is_future_sign: bool,
-
-    /// User's Ed25519 verification key for presign usage authorization.
-    /// TODO: Placeholder - will be populated when user verification is implemented.
-    pub user_verification_key: Option<Vec<u8>>,
-
-    /// User's signature over the message and presign session ID, proving authorization to use this presign.
-    /// TODO: Placeholder - will be populated when user verification is implemented.
-    pub user_signature: Option<Vec<u8>>,
 }
 
 impl DWalletSessionEventTrait for SignRequestEvent {
