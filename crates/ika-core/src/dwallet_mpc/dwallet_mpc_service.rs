@@ -256,6 +256,16 @@ impl DWalletMPCService {
         &mut self.dwallet_mpc_manager
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn number_of_consensus_rounds(&self) -> u64 {
+        self.number_of_consensus_rounds
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn network_is_idle(&self) -> bool {
+        self.network_is_idle
+    }
+
     /// Test helper: receive and process completed cryptographic computations
     /// without running the full service loop. This is useful for cleaning up
     /// the `currently_running_cryptographic_computations` set after tests.

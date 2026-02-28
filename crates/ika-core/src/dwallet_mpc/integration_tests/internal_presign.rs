@@ -2,8 +2,9 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    TEST_PRESIGN_CONSENSUS_ROUND_DELAY, TEST_PRESIGN_SESSIONS_TO_INSTANTIATE, build_test_state,
-    create_test_protocol_config_guard,
+    TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE, TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+    TEST_PRESIGN_POOL_MAXIMUM_SIZE, TEST_PRESIGN_POOL_MINIMUM_SIZE,
+    TEST_PRESIGN_SESSIONS_TO_INSTANTIATE, build_test_state, create_test_protocol_config_guard,
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
@@ -27,14 +28,15 @@ const ALL_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
     (DWalletCurve::Secp256k1, DWalletSignatureAlgorithm::Taproot),
 ];
 
-/// Test that internal presign sessions are instantiated at the correct consensus rounds
-/// based on the configuration (consensus_round_delay).
+/// Test that internal presign sessions are instantiated at exactly the correct consensus
+/// rounds based on the production logic in `mpc_manager.rs:instantiate_internal_presign_sessions`.
 ///
-/// Uses per-(curve, algorithm) monotonic counters to verify that sessions are
-/// created beyond the baseline established during network key setup.
-/// Note: this test does NOT assert session completion — it only verifies
-/// correct instantiation timing. Completion is tested by
-/// `test_internal_presign_continues_when_idle`.
+/// For each (curve, algorithm) pair, verifies round-by-round that:
+/// - Sessions fire only when the in-flight guard is open (instantiated == completed)
+/// - AND either (delay-aligned AND pool < min_pool) OR (network_is_idle AND pool < max_pool)
+/// - The exact number of sessions created matches `sessions_to_instantiate` from config
+///
+/// Also verifies cross-service consistency and the monotonic invariant.
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_instantiation_at_correct_rounds() {
@@ -50,56 +52,87 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
     }
 
     // Create a network key (required for internal presigns).
-    let (consensus_round, _network_key_bytes, _network_key_id) =
+    let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Verify per-algorithm config values match the test constants.
+    // Read per-(curve, algo) config. The production code uses `internal_sign_presign_*`
+    // config for the (internal_signing_curve, internal_signing_algorithm) pair, and
+    // per-algorithm config for everything else.
     let protocol_config = &test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
         .protocol_config;
+    let internal_signing_curve = protocol_config.internal_signing_curve();
+    let internal_signing_algorithm = protocol_config.internal_signing_algorithm();
+
+    // Verify test config constants match what the protocol config returns.
     for (curve, algorithm) in ALL_ALGORITHMS {
-        let delay = protocol_config.get_internal_presign_consensus_round_delay(*curve, *algorithm);
-        let sessions_to_instantiate =
-            protocol_config.get_internal_presign_sessions_to_instantiate(*curve, *algorithm);
+        let is_internal_signing =
+            *curve == internal_signing_curve && *algorithm == internal_signing_algorithm;
+        let delay = if is_internal_signing {
+            protocol_config.internal_sign_presign_consensus_round_delay()
+        } else {
+            protocol_config.get_internal_presign_consensus_round_delay(*curve, *algorithm)
+        };
+        let sessions_to_instantiate = if is_internal_signing {
+            protocol_config.internal_sign_presign_sessions_to_instantiate()
+        } else {
+            protocol_config.get_internal_presign_sessions_to_instantiate(*curve, *algorithm)
+        };
+        let min_pool = if is_internal_signing {
+            protocol_config.internal_sign_presign_pool_minimum_size()
+        } else {
+            protocol_config.get_internal_presign_pool_minimum_size(*curve, *algorithm)
+        };
+        let max_pool = if is_internal_signing {
+            protocol_config.internal_sign_presign_pool_maximum_size()
+        } else {
+            protocol_config.get_internal_presign_pool_maximum_size(*curve, *algorithm)
+        };
         assert_eq!(
             delay, TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
-            "{:?}/{:?}: test config should set delay={}",
+            "{:?}/{:?}: delay should be {}",
             curve, algorithm, TEST_PRESIGN_CONSENSUS_ROUND_DELAY
         );
+        let expected_sessions = if is_internal_signing {
+            TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
+        } else {
+            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
+        };
         assert_eq!(
-            sessions_to_instantiate, TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
-            "{:?}/{:?}: test config should set sessions_to_instantiate={}",
-            curve, algorithm, TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
+            sessions_to_instantiate, expected_sessions,
+            "{:?}/{:?}: sessions_to_instantiate should be {}",
+            curve, algorithm, expected_sessions
+        );
+        assert_eq!(
+            min_pool, TEST_PRESIGN_POOL_MINIMUM_SIZE,
+            "{:?}/{:?}: min_pool should be {}",
+            curve, algorithm, TEST_PRESIGN_POOL_MINIMUM_SIZE
+        );
+        assert_eq!(
+            max_pool, TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+            "{:?}/{:?}: max_pool should be {}",
+            curve, algorithm, TEST_PRESIGN_POOL_MAXIMUM_SIZE
         );
     }
 
-    // After network key creation the first delay-aligned round will have
-    // triggered `instantiate_internal_presign_sessions` for every algorithm.
-    // Verify that sessions were created for every (curve, algorithm) pair.
-    for (curve, algorithm) in ALL_ALGORITHMS {
-        let instantiated = test_state.dwallet_mpc_services[0]
-            .dwallet_mpc_manager()
-            .instantiated_internal_presign_sessions
-            .get(&(*curve, *algorithm))
-            .copied()
-            .unwrap_or(0);
+    info!(
+        baseline_rounds = test_state.dwallet_mpc_services[0].number_of_consensus_rounds(),
+        "Starting round-by-round verification"
+    );
 
-        info!("{:?}/{:?}: instantiated={}", curve, algorithm, instantiated);
-
-        assert!(
-            instantiated > 0,
-            "{:?}/{:?}: expected at least one session to be instantiated after network key setup",
-            curve,
-            algorithm
-        );
-    }
-
-    // Run 10 more rounds.  The guard (`instantiated != completed`) will
-    // prevent new batches while the first batch is still in-flight (no
-    // computation waits here), which is the correct overshoot-prevention
-    // behaviour.  We verify counters stay consistent.
-    for _round_offset in 1..=10 {
+    // Run 16 rounds, verifying exact instantiation predictions each round.
+    //
+    // Key timing: within `process_consensus_rounds_from_storage`:
+    //   1. number_of_consensus_rounds += 1
+    //   2. process status updates → update network_is_idle
+    //   3. instantiate_internal_presign_sessions (reads pool from epoch_store)
+    //   4. handle messages/outputs (step 5 — deposits presigns into epoch_store)
+    //
+    // Step 3 sees pool BEFORE step 4 deposits. So we must read pool BEFORE
+    // run_service_loop_iteration, not after.
+    for round_offset in 1..=16u64 {
+        // Distribute inter-party messages/outputs from previous round.
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -108,43 +141,161 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         );
         test_state.consensus_round += 1;
 
+        // Snapshot pre-loop state: this is exactly what step 3 sees for
+        // pool_size, instantiated, and completed (nothing modifies them
+        // between this read and step 3 within run_service_loop_iteration).
+        let pre_loop_snapshots: Vec<_> = ALL_ALGORITHMS
+            .iter()
+            .map(|(curve, algorithm)| {
+                let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+                let instantiated = manager
+                    .instantiated_internal_presign_sessions
+                    .get(&(*curve, *algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let completed = manager
+                    .completed_internal_presign_sessions
+                    .get(&(*curve, *algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let pool_size = test_state.epoch_stores[0]
+                    .presign_pool_size(*algorithm, network_key_id)
+                    .unwrap_or(0);
+                (*curve, *algorithm, instantiated, completed, pool_size)
+            })
+            .collect();
+
+        // Run service loop for all services (processes the consensus round).
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration(vec![]).await;
         }
+
+        // Read post-loop values that were set DURING round processing
+        // (before step 3 ran): number_of_consensus_rounds and network_is_idle.
+        let post_number_of_rounds = test_state.dwallet_mpc_services[0].number_of_consensus_rounds();
+        let post_is_idle = test_state.dwallet_mpc_services[0].network_is_idle();
+
+        // Wait for rayon crypto to complete so outputs flow through consensus.
+        utils::wait_for_computations(&mut test_state).await;
+
+        // Verify per-(curve, algo) instantiation delta matches prediction.
+        for (curve, algorithm, pre_instantiated, pre_completed, pre_pool) in &pre_loop_snapshots {
+            let is_internal_signing =
+                *curve == internal_signing_curve && *algorithm == internal_signing_algorithm;
+            let delay = TEST_PRESIGN_CONSENSUS_ROUND_DELAY;
+            let min_pool = TEST_PRESIGN_POOL_MINIMUM_SIZE;
+            let max_pool = TEST_PRESIGN_POOL_MAXIMUM_SIZE;
+            let sessions_to_instantiate = if is_internal_signing {
+                TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
+            } else {
+                TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
+            };
+
+            let post_instantiated = test_state.dwallet_mpc_services[0]
+                .dwallet_mpc_manager()
+                .instantiated_internal_presign_sessions
+                .get(&(*curve, *algorithm))
+                .copied()
+                .unwrap_or(0);
+            let delta_instantiated = post_instantiated - pre_instantiated;
+
+            // Predict using exactly the state step 3 saw:
+            // - guard: pre_instantiated == pre_completed (unchanged before step 3)
+            // - delay: post_number_of_rounds (incremented before step 3)
+            // - pool: pre_pool (read from epoch_store before step 5 deposits)
+            // - idle: post_is_idle (updated from status updates before step 3)
+            let guard_open = pre_instantiated == pre_completed;
+            let delay_aligned = post_number_of_rounds % delay == 0;
+            let should_instantiate = guard_open
+                && ((delay_aligned && (*pre_pool) < min_pool)
+                    || (post_is_idle && (*pre_pool) < max_pool));
+            let expected_delta = if should_instantiate {
+                sessions_to_instantiate
+            } else {
+                0
+            };
+
+            info!(
+                round_offset,
+                ?curve,
+                ?algorithm,
+                post_number_of_rounds,
+                guard_open,
+                delay_aligned,
+                pre_pool,
+                post_is_idle,
+                pre_instantiated,
+                pre_completed,
+                delta_instantiated,
+                expected_delta,
+                "Round prediction"
+            );
+
+            assert_eq!(
+                delta_instantiated, expected_delta,
+                "round {round_offset}, {:?}/{:?}: expected delta={expected_delta} but got \
+                 delta={delta_instantiated} (guard_open={guard_open}, delay_aligned={delay_aligned}, \
+                 pre_pool={pre_pool}, post_idle={post_is_idle}, rounds={post_number_of_rounds})",
+                curve, algorithm,
+            );
+        }
     }
 
-    // Verify counters are still consistent (monotonic, no corruption).
+    // Final: all 4 services must agree on instantiated/completed counters.
     for (curve, algorithm) in ALL_ALGORITHMS {
-        let instantiated = test_state.dwallet_mpc_services[0]
+        let reference_instantiated = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .instantiated_internal_presign_sessions
             .get(&(*curve, *algorithm))
             .copied()
             .unwrap_or(0);
-        let completed = test_state.dwallet_mpc_services[0]
+        let reference_completed = test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .completed_internal_presign_sessions
             .get(&(*curve, *algorithm))
             .copied()
             .unwrap_or(0);
 
-        info!(
-            "{:?}/{:?}: instantiated={}, completed={}",
-            curve, algorithm, instantiated, completed
-        );
-
-        // Instantiated must be >= completed (monotonic invariant).
+        // Monotonic invariant.
         assert!(
-            instantiated >= completed,
+            reference_instantiated >= reference_completed,
             "{:?}/{:?}: instantiated ({}) must be >= completed ({})",
             curve,
             algorithm,
-            instantiated,
-            completed
+            reference_instantiated,
+            reference_completed
         );
+
+        // Cross-service consistency.
+        for (service_idx, service) in test_state.dwallet_mpc_services.iter().enumerate().skip(1) {
+            let instantiated = service
+                .dwallet_mpc_manager()
+                .instantiated_internal_presign_sessions
+                .get(&(*curve, *algorithm))
+                .copied()
+                .unwrap_or(0);
+            let completed = service
+                .dwallet_mpc_manager()
+                .completed_internal_presign_sessions
+                .get(&(*curve, *algorithm))
+                .copied()
+                .unwrap_or(0);
+            assert_eq!(
+                instantiated, reference_instantiated,
+                "{:?}/{:?}: service {} instantiated ({}) != service 0 ({})",
+                curve, algorithm, service_idx, instantiated, reference_instantiated
+            );
+            assert_eq!(
+                completed, reference_completed,
+                "{:?}/{:?}: service {} completed ({}) != service 0 ({})",
+                curve, algorithm, service_idx, completed, reference_completed
+            );
+        }
     }
 
-    info!("Test completed: per-algorithm presign instantiation verified over 10 rounds");
+    info!(
+        "Test completed: round-by-round presign instantiation predictions verified over 16 rounds"
+    );
 }
 
 /// Test that internal presign sessions stop being created when the pool reaches minimum size
