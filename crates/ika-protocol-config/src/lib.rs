@@ -547,7 +547,7 @@ impl ProtocolConfig {
 
             internal_signing_curve: Some(DWalletCurve::Curve25519),
             internal_signing_algorithm: Some(DWalletSignatureAlgorithm::EdDSA),
-            internal_signing_hash_scheme: Some(DWalletHashScheme::Keccak256),
+            internal_signing_hash_scheme: Some(DWalletHashScheme::SHA512),
 
             internal_sign_presign_pool_minimum_size: Some(5000),
             internal_sign_presign_consensus_round_delay: Some(4), // 1s

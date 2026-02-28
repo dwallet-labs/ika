@@ -29,8 +29,8 @@ use dwallet_mpc_centralized_party::{
     CentralizedDKGWasmResult, advance_sign_by_protocol_with_rng, centralized_dkg_output_v2_with_rng,
 };
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, VersionedDwalletUserSecretShare,
-    VersionedPublicKeyShareAndProof,
+    DWalletCurve, DWalletSignatureAlgorithm, VersionedCentralizedDKGPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedPublicKeyShareAndProof,
 };
 use dwallet_rng::ZeroRng;
 use group::OsCsRng;
@@ -369,9 +369,23 @@ where
     let zero_secret_key_share =
         get_zero_centralized_secret_internal::<SCALAR_LIMBS, ScalarValue>()?;
 
-    // Deserialize the centralized party DKG public output
+    // Deserialize the centralized party DKG public output, unwrapping the versioned envelope.
+    // Internal signing always produces V2 via `centralized_dkg_output_v2_with_rng`.
+    let versioned_dkg_output =
+        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(&emulated_dkg_result.public_output)
+            .map_err(DwalletMPCError::BcsError)?;
     let centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput =
-        bcs::from_bytes(&emulated_dkg_result.public_output).map_err(DwalletMPCError::BcsError)?;
+        match versioned_dkg_output {
+            VersionedCentralizedDKGPublicOutput::V2(output) => {
+                bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())
+                    .map_err(DwalletMPCError::BcsError)?
+            }
+            VersionedCentralizedDKGPublicOutput::V1(_) => {
+                return Err(DwalletMPCError::InternalError(
+                    "Internal sign DKG output should always be V2, got V1".to_string(),
+                ));
+            }
+        };
 
     // CRITICAL: Using ZeroRng for deterministic output.
     // This is intentional - all validators must produce identical outputs,
