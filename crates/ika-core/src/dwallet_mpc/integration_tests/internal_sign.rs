@@ -151,21 +151,9 @@ async fn test_internal_sign_flow() {
         sign_output.signature.len()
     );
 
-    // Check pool size after signing — should have decreased by at least 1 (presign consumed).
-    // May have grown from background internal presign session completions.
-    let pool_size_after = test_state.epoch_stores[0]
-        .presign_pool_size(signature_algorithm, network_key_id)
-        .expect("failed to get pool size");
-    info!(
-        "Pool size after internal sign: {} (was {})",
-        pool_size_after, pool_size_before
-    );
-    assert!(
-        pool_size_after < pool_size_before || pool_size_before == 0,
-        "pool should have consumed at least one presign (before={}, after={})",
-        pool_size_before,
-        pool_size_after
-    );
+    // The sign consumed a presign, but background presign sessions may have also completed,
+    // so we can't assert the pool strictly decreased. The successful signature output above
+    // is sufficient proof that a presign was consumed.
 
     info!("Internal sign E2E test completed");
 }

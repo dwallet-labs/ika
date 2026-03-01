@@ -1,4 +1,5 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::dwallet_mpc::InternalSignRequest;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
@@ -301,17 +302,19 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 /// Test that internal presign sessions stop being created when the pool reaches minimum size
 /// and the system is not idle.
 ///
-/// Instead of faking non-idle with `last_session_to_complete_in_current_epoch`, this test
-/// inserts junk `Active` `InternalSign` sessions so `compute_is_idle()` genuinely returns
-/// `false`.
+/// Makes the system non-idle by sending `InternalSignRequest`s through the channel, which
+/// creates real `InternalSign` sessions that count toward the idle threshold. These sessions
+/// only consume presigns from the Curve25519/EdDSA pool (the internal signing curve), so
+/// non-EdDSA pools remain unaffected.
 ///
-/// The test has two phases:
-/// 1. Non-idle + below min → presigns ARE generated (pools fill to at least min_pool_size).
-/// 2. Non-idle + at/above min → no new presigns (pool sizes stay exactly stable).
+/// The internal signing curve (Curve25519/EdDSA) is excluded from all assertions because
+/// InternalSign sessions consume its presigns and its pool uses separate config
+/// (`internal_sign_presign_*`) with different `sessions_to_instantiate`.
 ///
-/// The internal signing curve (Curve25519/EdDSA) is excluded from assertions because its
-/// presign pool uses separate config (`internal_sign_presign_*`) with different
-/// `sessions_to_instantiate`, which causes different pool dynamics.
+/// Test flow:
+/// 1. Create network key, let all pools fill (system is idle).
+/// 2. Send InternalSignRequests → creates active InternalSign sessions → system becomes non-idle.
+/// 3. Snapshot non-EdDSA pool sizes, run more rounds, assert they stay exactly stable.
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
@@ -325,16 +328,8 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Insert junk active sessions so compute_is_idle() genuinely returns false.
-    // Must be done AFTER network key creation, which asserts sessions.len() == 1.
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .insert_junk_active_sessions(200);
-    }
-
-    // Extract all needed config values in a scope block to avoid borrow conflicts.
-    let (non_internal_sign_algorithms, per_algo_min_sizes) = {
+    // Extract config values needed throughout the test.
+    let (non_internal_sign_algorithms, per_algo_min_sizes, internal_signing_algorithm) = {
         let protocol_config = &test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .protocol_config;
@@ -357,19 +352,23 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
             })
             .collect();
 
-        let idle_threshold = protocol_config.idle_session_count_threshold();
-
         info!(
             "idle_threshold={}, excluded=({:?}/{:?})",
-            idle_threshold, internal_signing_curve, internal_signing_algorithm
+            protocol_config.idle_session_count_threshold(),
+            internal_signing_curve,
+            internal_signing_algorithm
         );
 
-        (non_internal_sign_algorithms, per_algo_min_sizes)
+        (
+            non_internal_sign_algorithms,
+            per_algo_min_sizes,
+            internal_signing_algorithm,
+        )
     };
 
-    // === Phase 1: Non-idle + below min → presigns ARE generated ===
-    // Pools start at 0 (below min_pool_size). Run enough rounds with computation waits
-    // for pools to fill up to at least min_pool_size.
+    // === Phase 1: Let all pools fill while the system is idle ===
+    // Run rounds with computation waits until all non-EdDSA pools reach min_pool_size
+    // AND the EdDSA pool has presigns (needed for InternalSign requests later).
     for _ in 0..80 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -383,8 +382,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
         utils::wait_for_computations(&mut test_state).await;
 
-        // Early exit once all non-internal-sign pools reached min_pool_size.
-        let all_at_min = non_internal_sign_algorithms
+        let all_non_eddsa_at_min = non_internal_sign_algorithms
             .iter()
             .zip(per_algo_min_sizes.iter())
             .all(|((_, algorithm), min_size)| {
@@ -393,13 +391,17 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
                     .unwrap_or(0)
                     >= *min_size
             });
-        if all_at_min {
-            info!("All non-internal-sign pools reached min_pool_size — moving to phase 2");
+        let eddsa_has_presigns = test_state.epoch_stores[0]
+            .presign_pool_size(internal_signing_algorithm, network_key_id)
+            .unwrap_or(0)
+            > 0;
+        if all_non_eddsa_at_min && eddsa_has_presigns {
+            info!("All pools ready — moving to make system non-idle");
             break;
         }
     }
 
-    // Assert all non-internal-sign pools reached at least min_pool_size.
+    // Verify all non-EdDSA pools reached min.
     for ((curve, algorithm), min_size) in non_internal_sign_algorithms
         .iter()
         .zip(per_algo_min_sizes.iter())
@@ -421,8 +423,43 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         );
     }
 
-    // === Phase 2: Non-idle + at/above min → no new presigns ===
-    // Snapshot pool sizes, then run more rounds and verify they stay exactly stable.
+    // === Phase 2: Make the system non-idle with real InternalSign sessions ===
+    // Send InternalSignRequests to all validators. Each one that gets instantiated
+    // creates an Active InternalSign session, which counts toward the idle threshold.
+    // These only consume presigns from the EdDSA pool (excluded from assertions).
+    let num_sign_requests = 6u64;
+    for sequence_number in 0..num_sign_requests {
+        for sender in &test_state.internal_sign_request_senders {
+            sender
+                .send(InternalSignRequest {
+                    sequence_number,
+                    message: format!("idle-breaker-{}", sequence_number).into_bytes(),
+                })
+                .expect("failed to send internal sign request");
+        }
+    }
+
+    // Run a few rounds to process the requests and let InternalSign sessions become active.
+    for _ in 0..4 {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+
+    // Verify system is now non-idle.
+    assert!(
+        !test_state.dwallet_mpc_services[0].network_is_idle(),
+        "system should be non-idle after sending InternalSign requests"
+    );
+
+    // === Phase 3: Verify non-EdDSA pools are stable when non-idle + at/above min ===
     let pool_sizes_before: Vec<(DWalletCurve, DWalletSignatureAlgorithm, u64)> =
         non_internal_sign_algorithms
             .iter()

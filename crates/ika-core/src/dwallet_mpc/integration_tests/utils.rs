@@ -192,7 +192,14 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
         let pool = pools.entry(key).or_insert_with(Vec::new);
 
-        // Add each presign with the session identifier
+        // Deduplicate by session_identifier: production code overwrites on the same
+        // (key_id, session_sequence_number) key, so only one copy of each session's
+        // presigns should exist in the pool. Skip if already present.
+        let already_exists = pool.iter().any(|(sid, _)| *sid == session_identifier);
+        if already_exists {
+            return Ok(());
+        }
+
         for presign in presigns {
             pool.push((session_identifier, presign));
         }
@@ -220,20 +227,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
     }
 
-    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
-        self.used_presigns
-            .lock()
-            .unwrap()
-            .insert(presign_session_id);
+    fn mark_presign_as_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<()> {
+        // No-op in tests: the production "used" check is per session_identifier, but a single
+        // presign session can produce multiple presigns that share the same session_identifier.
+        // The production store deduplicates by (key_id, session_sequence_number) key, preventing
+        // duplicates. The test store's pop() already removes entries, which is sufficient.
         Ok(())
     }
 
-    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        Ok(self
-            .used_presigns
-            .lock()
-            .unwrap()
-            .contains(&presign_session_id))
+    fn is_presign_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<bool> {
+        // Always false: see mark_presign_as_used comment.
+        Ok(false)
     }
 
     fn next_internal_sessions_status_update(
