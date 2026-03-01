@@ -593,6 +593,110 @@ pub(crate) fn send_advance_results_between_parties(
     }
 }
 
+/// Like [`send_advance_results_between_parties`], but skips distributing messages
+/// TO the excluded receivers (simulating them being offline / not receiving consensus).
+/// Messages FROM excluded senders are still collected and distributed to online receivers.
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn send_advance_results_between_parties_excluding(
+    committee: &Committee,
+    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
+    epoch_stores: &mut [Arc<TestingAuthorityPerEpochStore>],
+    new_data_consensus_round: Round,
+    excluded_receivers: &HashSet<usize>,
+) {
+    for i in 0..committee.voting_rights.len() {
+        let consensus_messages_store = sent_consensus_messages_collectors[i]
+            .submitted_messages
+            .clone();
+        let consensus_messages = consensus_messages_store.lock().unwrap().clone();
+        consensus_messages_store.lock().unwrap().clear();
+        let dwallet_messages: Vec<_> = consensus_messages
+            .clone()
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletMPCMessage(message) = message.kind {
+                    Some(message)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let dwallet_outputs: Vec<_> = consensus_messages
+            .clone()
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletMPCOutput(message) = message.kind {
+                    Some(message)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let internal_outputs: Vec<_> = consensus_messages
+            .clone()
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::DWalletInternalMPCOutput(output) = message.kind {
+                    Some(output)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let status_updates: Vec<_> = consensus_messages
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) =
+                    message.kind
+                {
+                    Some(status_update)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for j in 0..committee.voting_rights.len() {
+            if excluded_receivers.contains(&j) {
+                continue;
+            }
+            let other_epoch_store = epoch_stores.get(j).unwrap();
+            other_epoch_store
+                .round_to_messages
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(dwallet_messages.clone());
+            other_epoch_store
+                .round_to_outputs
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(dwallet_outputs.clone());
+            other_epoch_store
+                .round_to_verified_checkpoint
+                .lock()
+                .unwrap()
+                .insert(new_data_consensus_round, vec![]);
+            other_epoch_store
+                .round_to_internal_outputs
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(internal_outputs.clone());
+            other_epoch_store
+                .round_to_status_updates
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(status_updates.clone());
+        }
+    }
+}
+
 /// Maximum iterations when waiting for rayon computations to complete.
 /// At 100ms per iteration, this gives ~60 seconds before failing.
 const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 600;

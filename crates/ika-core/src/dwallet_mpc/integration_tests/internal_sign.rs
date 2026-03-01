@@ -262,23 +262,14 @@ fn test_internal_sign_dkg_session_id_determinism() {
     );
 }
 
-/// Test that the emulated centralized DKG produces deterministic output.
-/// This is critical for internal signing where all validators must produce
-/// identical emulated user messages.
-///
-/// Note: full end-to-end determinism of the DKG computation (using ZeroRng) requires
-/// real protocol public parameters produced by network DKG and is covered by
-/// `test_internal_sign_flow`. This unit test verifies the deterministic session ID
-/// derivation, which is the fixed input that seeds the DKG emulation.
+/// Test that the internal sign DKG session ID derivation is stable across calls
+/// and unique per key. This verifies the deterministic input that seeds the DKG
+/// emulation, not the DKG computation itself (which requires real protocol public
+/// parameters and is covered by `test_internal_sign_flow`).
 #[test]
-fn test_emulated_centralized_dkg_determinism() {
-    // The core determinism guarantee comes from ZeroRng - verified here by checking
-    // that session IDs are stable across calls (the session ID derivation is the
-    // deterministic component we can test synchronously).
-
+fn test_dkg_session_id_stability() {
     let key_id = [42u8; 32];
 
-    // Verify session ID stability (the deterministic input to the DKG emulation)
     let first_call = internal_sign_dkg_session_id(
         &key_id,
         DWalletCurve::Curve25519,
@@ -291,10 +282,9 @@ fn test_emulated_centralized_dkg_determinism() {
     );
     assert_eq!(
         first_call, second_call,
-        "emulated DKG session IDs must be byte-identical across calls"
+        "DKG session IDs must be byte-identical across calls"
     );
 
-    // Different key produces different ID
     let different_key = [43u8; 32];
     let third_call = internal_sign_dkg_session_id(
         &different_key,
@@ -306,5 +296,5 @@ fn test_emulated_centralized_dkg_determinism() {
         "different keys should produce different DKG session IDs"
     );
 
-    info!("Emulated centralized DKG determinism verified");
+    info!("DKG session ID stability verified");
 }

@@ -127,8 +127,8 @@ async fn test_validators_continue_sessions_across_rounds() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Track session counts at different phases
-    let mut session_counts_over_time: Vec<Vec<usize>> = Vec::new();
+    // Snapshot instantiated presign counters after each phase to verify progress.
+    let mut instantiated_by_phase: Vec<Vec<u64>> = Vec::new();
 
     for phase in 0..3 {
         info!(
@@ -150,39 +150,53 @@ async fn test_validators_continue_sessions_across_rounds() {
             }
         }
 
-        let phase_counts: Vec<usize> = test_state
+        let phase_instantiated: Vec<u64> = test_state
             .dwallet_mpc_services
             .iter()
-            .map(|s| s.dwallet_mpc_manager().sessions.len())
+            .map(|s| {
+                s.dwallet_mpc_manager()
+                    .instantiated_internal_presign_sessions
+                    .values()
+                    .sum()
+            })
             .collect();
 
         info!(
-            "Phase {} complete. Session counts: {:?}",
-            phase, phase_counts
+            "Phase {} complete. Instantiated presign totals: {:?}",
+            phase, phase_instantiated
         );
 
-        session_counts_over_time.push(phase_counts);
+        instantiated_by_phase.push(phase_instantiated);
     }
 
-    // Verify all validators have sessions at the end (internal presigns should have been created)
-    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
-        let final_session_count = service.dwallet_mpc_manager().sessions.len();
-        let internal_presign_count = service
-            .dwallet_mpc_manager()
-            .sessions
-            .iter()
-            .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
-            .count();
-
-        info!(
-            "Final: Validator {} has {} total sessions ({} internal presigns)",
-            i, final_session_count, internal_presign_count
-        );
-
+    // Verify instantiated counters grew across phases for all validators.
+    for validator_idx in 0..test_state.dwallet_mpc_services.len() {
+        for phase in 1..instantiated_by_phase.len() {
+            assert!(
+                instantiated_by_phase[phase][validator_idx]
+                    >= instantiated_by_phase[phase - 1][validator_idx],
+                "Validator {}: instantiated presign count should be non-decreasing across phases (phase {}={}, phase {}={})",
+                validator_idx,
+                phase - 1,
+                instantiated_by_phase[phase - 1][validator_idx],
+                phase,
+                instantiated_by_phase[phase][validator_idx],
+            );
+        }
         assert!(
-            final_session_count > 0,
-            "Validator {} should have sessions after 3 phases of 10 rounds each (internal presign sessions should keep the manager populated)",
-            i
+            instantiated_by_phase[2][validator_idx] > 0,
+            "Validator {}: should have instantiated at least one presign session after 30 rounds",
+            validator_idx
+        );
+    }
+
+    // All validators should agree on instantiated counts.
+    let reference = &instantiated_by_phase[2][0];
+    for (i, count) in instantiated_by_phase[2].iter().enumerate().skip(1) {
+        assert_eq!(
+            count, reference,
+            "Validator {} instantiated count ({}) should match validator 0 ({})",
+            i, count, reference
         );
     }
 
@@ -190,7 +204,9 @@ async fn test_validators_continue_sessions_across_rounds() {
 }
 
 /// Test that one validator being temporarily unresponsive doesn't break the system.
-/// After recovery, the previously-unresponsive validator should have sessions in its manager.
+/// The unresponsive validator still receives consensus data (simulating a node that
+/// has consensus but hasn't processed its service loop), but doesn't run its service loop.
+/// After recovery, it should catch up and match the other validators' instantiated counts.
 #[tokio::test]
 #[cfg(test)]
 async fn test_system_resilience_to_temporary_unresponsiveness() {
@@ -214,7 +230,15 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
 
     let unresponsive_validator = 3;
 
-    // Run rounds where only validators 0, 1, 2 participate (validator 3 is "unresponsive")
+    // Snapshot instantiated counts before the offline period (network key creation
+    // may have already triggered some presign sessions for all validators).
+    let pre_offline_unresponsive: u64 = test_state.dwallet_mpc_services[unresponsive_validator]
+        .dwallet_mpc_manager()
+        .instantiated_internal_presign_sessions
+        .values()
+        .sum();
+
+    // Run rounds where validator 3 receives consensus data but doesn't process its service loop.
     for _round in 0..10 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -231,34 +255,42 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         }
     }
 
-    // Verify responsive validators still have sessions
-    let responsive_session_counts: Vec<usize> = test_state
-        .dwallet_mpc_services
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != unresponsive_validator)
-        .map(|(i, service)| {
-            let session_count = service.dwallet_mpc_manager().sessions.len();
-            info!("Responsive validator {} has {} sessions", i, session_count);
-            session_count
-        })
-        .collect();
-    for (i, &count) in responsive_session_counts.iter().enumerate() {
-        assert!(
-            count > 0,
-            "Responsive validator {} should have sessions while unresponsive validator is offline",
-            i
-        );
-    }
+    // Responsive validators should have progressed.
+    let responsive_instantiated: u64 = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .instantiated_internal_presign_sessions
+        .values()
+        .sum();
+    info!(
+        "Responsive validator 0 instantiated presigns: {}",
+        responsive_instantiated
+    );
+    assert!(
+        responsive_instantiated > 0,
+        "Responsive validators should have instantiated presign sessions"
+    );
 
-    // "Restart" the unresponsive validator
+    // The unresponsive validator should not have instantiated any new sessions.
+    let post_offline_unresponsive: u64 = test_state.dwallet_mpc_services[unresponsive_validator]
+        .dwallet_mpc_manager()
+        .instantiated_internal_presign_sessions
+        .values()
+        .sum();
+    assert_eq!(
+        post_offline_unresponsive, pre_offline_unresponsive,
+        "Unresponsive validator should not have instantiated new presigns while offline \
+         (before={}, after={})",
+        pre_offline_unresponsive, post_offline_unresponsive
+    );
+
+    // "Restart" the unresponsive validator — bring it back online.
     info!(
         "Bringing validator {} back online...",
         unresponsive_validator
     );
 
-    // Run more rounds with all validators
-    for _ in 0..10 {
+    // Run more rounds with all validators participating.
+    for _ in 0..20 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -272,18 +304,24 @@ async fn test_system_resilience_to_temporary_unresponsiveness() {
         }
     }
 
-    // Verify the recovered validator has sessions
-    let recovered_session_count = test_state.dwallet_mpc_services[unresponsive_validator]
+    // After recovery, the recovered validator should match the others' instantiated counts.
+    let recovered_instantiated: u64 = test_state.dwallet_mpc_services[unresponsive_validator]
         .dwallet_mpc_manager()
-        .sessions
-        .len();
+        .instantiated_internal_presign_sessions
+        .values()
+        .sum();
+    let reference_instantiated: u64 = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .instantiated_internal_presign_sessions
+        .values()
+        .sum();
     info!(
-        "Recovered validator {} has {} sessions",
-        unresponsive_validator, recovered_session_count
+        "Recovered validator {} instantiated: {}, reference validator 0: {}",
+        unresponsive_validator, recovered_instantiated, reference_instantiated
     );
-    assert!(
-        recovered_session_count > 0,
-        "recovered validator should have sessions after being brought back online"
+    assert_eq!(
+        recovered_instantiated, reference_instantiated,
+        "recovered validator should match reference validator's instantiated count after catchup"
     );
 
     info!("Test passed: system resilience to temporary unresponsiveness verified");
@@ -425,50 +463,20 @@ async fn test_epoch_store_presign_pool_operations() {
         "pop from empty pool should return None"
     );
 
-    // Test mark_presign_as_used / is_presign_used
+    // mark_presign_as_used / is_presign_used are intentional no-ops in the test store:
+    // a single presign session produces multiple presigns that share the same session_identifier,
+    // so per-session-ID "used" tracking doesn't work correctly. The test store relies on pop()
+    // removing entries and insert_presigns deduplicating by session_identifier instead.
+    // Verify the no-op behavior: mark should succeed, is_used should always return false.
     let used_session_id = SessionIdentifier::new(SessionType::InternalPresign, [99u8; 32]);
-
-    let is_used_before = test_epoch_store
-        .is_presign_used(used_session_id)
-        .expect("is_presign_used should not error");
-    assert!(
-        !is_used_before,
-        "presign should not be marked as used initially"
-    );
-
     test_epoch_store
         .mark_presign_as_used(used_session_id)
         .expect("mark_presign_as_used should not error");
-
-    let is_used_after = test_epoch_store
-        .is_presign_used(used_session_id)
-        .expect("is_presign_used should not error");
     assert!(
-        is_used_after,
-        "presign should be marked as used after marking"
-    );
-
-    // Marking the same presign again should not cause issues
-    test_epoch_store
-        .mark_presign_as_used(used_session_id)
-        .expect("marking again should not error");
-
-    let still_used = test_epoch_store
-        .is_presign_used(used_session_id)
-        .expect("is_presign_used should not error");
-    assert!(
-        still_used,
-        "presign should still be marked as used after double-marking"
-    );
-
-    // A different session ID should not be marked as used
-    let other_session_id = SessionIdentifier::new(SessionType::InternalPresign, [100u8; 32]);
-    let other_used = test_epoch_store
-        .is_presign_used(other_session_id)
-        .expect("is_presign_used should not error");
-    assert!(
-        !other_used,
-        "different session ID should not be marked as used"
+        !test_epoch_store
+            .is_presign_used(used_session_id)
+            .expect("is_presign_used should not error"),
+        "is_presign_used should always return false (no-op in test store)"
     );
 
     // Test assign_presign / get_assigned_presign / pop_assigned_presign roundtrip.

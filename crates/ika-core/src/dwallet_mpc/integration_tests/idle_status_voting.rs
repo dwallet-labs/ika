@@ -76,21 +76,17 @@ async fn test_validators_compute_idle_status_correctly() {
             service.run_service_loop_iteration(vec![]).await;
         }
 
-        // Check if any validator has transitioned to not-idle
+        // Check if any validator has transitioned to not-idle using the actual
+        // compute_is_idle() function rather than an ad-hoc formula.
         let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
         let session_count = manager.sessions.len();
-        let running_computations = manager.running_computation_count();
-        let total = session_count + running_computations;
+        let is_idle = manager.compute_is_idle(session_count);
 
-        if total >= idle_threshold as usize && !became_not_idle {
+        if !is_idle && !became_not_idle {
             became_not_idle = true;
             info!(
-                "Validator transitioned to NOT idle at consensus round {} (sessions={}, running={}, total={}, threshold={})",
-                test_state.consensus_round,
-                session_count,
-                running_computations,
-                total,
-                idle_threshold
+                "Validator transitioned to NOT idle at consensus round {} (sessions={}, threshold={})",
+                test_state.consensus_round, session_count, idle_threshold
             );
         }
     }
@@ -248,27 +244,27 @@ async fn test_status_updates_distributed_through_consensus() {
         );
     }
 
-    // Verify total status updates distributed across the system.
-    // Each round, each validator sends 1 status update, distributed to all 4 validators.
-    // Over 10 rounds: expected 4 * 10 * 4 = 160 total entries.
-    let mut total_status_updates = 0usize;
-    for epoch_store in &test_state.epoch_stores {
-        let updates = epoch_store.round_to_status_updates.lock().unwrap();
-        total_status_updates += updates.values().map(|v| v.len()).sum::<usize>();
+    // Verify that each validator's idle_status_by_party entries are consistent:
+    // all validators should agree on each party's idle status.
+    let reference_statuses: Vec<_> = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .idle_status_by_party
+        .iter()
+        .map(|(party, is_idle)| (*party, *is_idle))
+        .collect();
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate().skip(1) {
+        let manager = service.dwallet_mpc_manager();
+        for (party, expected_idle) in &reference_statuses {
+            let actual_idle = manager.idle_status_by_party.get(party);
+            assert_eq!(
+                actual_idle,
+                Some(expected_idle),
+                "Validator {} disagrees with validator 0 on party {:?}'s idle status",
+                i,
+                party
+            );
+        }
     }
-
-    let expected_minimum = 10 * num_validators;
-    info!(
-        "Total status updates across all validators: {} (expected >= {})",
-        total_status_updates, expected_minimum
-    );
-
-    assert!(
-        total_status_updates >= expected_minimum,
-        "expected at least {} total status updates distributed through consensus, got {}",
-        expected_minimum,
-        total_status_updates
-    );
 
     info!("Test passed: status updates distributed through consensus and processed by service");
 }

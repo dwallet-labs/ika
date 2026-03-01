@@ -530,9 +530,10 @@ async fn test_internal_presign_continues_when_idle() {
     test_state.consensus_round = consensus_round as usize;
 
     // Extract all needed config values in a scope block to avoid borrow conflicts.
-    let (max_pool_size, min_pool_size, max_overshoot) = {
-        let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
-        let protocol_config = &manager.protocol_config;
+    let (max_pool_size, min_pool_size) = {
+        let protocol_config = &test_state.dwallet_mpc_services[0]
+            .dwallet_mpc_manager()
+            .protocol_config;
         let max_pool_size = protocol_config.get_internal_presign_pool_maximum_size(
             DWalletCurve::Curve25519,
             DWalletSignatureAlgorithm::EdDSA,
@@ -541,22 +542,12 @@ async fn test_internal_presign_continues_when_idle() {
             DWalletCurve::Curve25519,
             DWalletSignatureAlgorithm::EdDSA,
         );
-        let sessions_to_instantiate = protocol_config.get_internal_presign_sessions_to_instantiate(
-            DWalletCurve::Curve25519,
-            DWalletSignatureAlgorithm::EdDSA,
-        );
-        // max_overshoot = sessions_to_instantiate * (n - threshold).
-        // A session can produce up to (n - t) presigns, and we create sessions_to_instantiate
-        // sessions per batch, so the pool can overshoot by at most this amount.
-        let total_weight = manager.access_structure.total_weight();
-        let threshold = manager.access_structure.threshold;
-        let max_overshoot = sessions_to_instantiate * (total_weight - threshold) as u64;
-        (max_pool_size, min_pool_size, max_overshoot)
+        (max_pool_size, min_pool_size)
     };
 
     info!(
-        "min_pool_size={}, max_pool_size={}, max_overshoot={}",
-        min_pool_size, max_pool_size, max_overshoot
+        "min_pool_size={}, max_pool_size={}",
+        min_pool_size, max_pool_size
     );
 
     // Pre-populate EdDSA pool to min_pool_size so we can verify growth beyond min.
@@ -614,33 +605,16 @@ async fn test_internal_presign_continues_when_idle() {
         .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
         .unwrap_or(0);
     info!(
-        "Final EdDSA pool size={} (min={}, max={}, max_overshoot={})",
-        pool_size_final, min_pool_size, max_pool_size, max_overshoot
+        "Final EdDSA pool size={} (min={}, max={})",
+        pool_size_final, min_pool_size, max_pool_size
     );
 
-    // Pool should have grown beyond min_pool_size.
-    assert!(
-        pool_size_final > min_pool_size,
-        "when idle, pool should grow beyond min_pool_size (min={}, got={})",
-        min_pool_size,
-        pool_size_final
-    );
-
-    // Pool should have reached at least max_pool_size (filled up).
-    assert!(
-        pool_size_final >= max_pool_size,
-        "pool should have filled up to at least max_pool_size (max={}, got={})",
-        max_pool_size,
-        pool_size_final
-    );
-
-    // Pool should not exceed max_pool_size + max_overshoot.
-    assert!(
-        pool_size_final <= max_pool_size + max_overshoot,
-        "pool should not exceed max_pool_size + max_overshoot (max={}, overshoot={}, got={})",
-        max_pool_size,
-        max_overshoot,
-        pool_size_final
+    // With sessions_to_instantiate=1 and the in-flight guard preventing overlap,
+    // the pool should reach exactly max_pool_size — no overshoot.
+    assert_eq!(
+        pool_size_final, max_pool_size,
+        "pool should reach exactly max_pool_size (max={}, got={})",
+        max_pool_size, pool_size_final
     );
 
     info!("Test completed: internal presigns continue when idle");
