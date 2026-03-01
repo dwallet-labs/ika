@@ -427,7 +427,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // Send InternalSignRequests to all validators. Each one that gets instantiated
     // creates an Active InternalSign session, which counts toward the idle threshold.
     // These only consume presigns from the EdDSA pool (excluded from assertions).
-    let num_sign_requests = 6u64;
+    let num_sign_requests = 20u64;
     for sequence_number in 0..num_sign_requests {
         for sender in &test_state.internal_sign_request_senders {
             sender
