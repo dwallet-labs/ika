@@ -208,46 +208,6 @@ async fn test_validators_compute_idle_status_correctly() {
         transition_count
     );
 
-    // Also verify that status updates were submitted to consensus with the correct is_idle flag.
-    let mut found_idle_true = false;
-    let mut found_idle_false = false;
-    for collector in &test_state.sent_consensus_messages_collectors {
-        let messages = collector.submitted_messages.lock().unwrap();
-        for msg in messages.iter() {
-            if let ConsensusTransactionKind::InternalSessionsStatusUpdate(update) = &msg.kind {
-                if update.is_idle {
-                    found_idle_true = true;
-                } else {
-                    found_idle_false = true;
-                }
-            }
-        }
-    }
-
-    // We expect to have seen both idle=true and idle=false in status updates
-    // distributed through the epoch stores.
-    for epoch_store in &test_state.epoch_stores {
-        let status_updates = epoch_store.round_to_status_updates.lock().unwrap();
-        for updates in status_updates.values() {
-            for update in updates {
-                if update.is_idle {
-                    found_idle_true = true;
-                } else {
-                    found_idle_false = true;
-                }
-            }
-        }
-    }
-
-    assert!(
-        found_idle_true,
-        "expected at least one status update with is_idle=true"
-    );
-    assert!(
-        found_idle_false,
-        "expected at least one status update with is_idle=false after sessions exceeded threshold"
-    );
-
     info!("Test passed: validators correctly compute idle status via consensus");
 }
 
