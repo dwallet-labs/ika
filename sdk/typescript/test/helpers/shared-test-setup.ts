@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { SuiClient } from '@mysten/sui/client';
+import { ClientWithCoreApi } from '@mysten/sui/client';
 
 import type { IkaClient } from '../../src/client/ika-client.js';
 import type { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
@@ -10,7 +10,7 @@ import { createTestIkaClient, createTestSuiClient, generateTestKeypair } from '.
 // Shared test instances to reduce memory usage across all tests
 export class SharedTestSetup {
 	private static instance: SharedTestSetup | null = null;
-	public suiClient: SuiClient | null = null;
+	public suiClient: ClientWithCoreApi | null = null;
 	public ikaClient: IkaClient | null = null;
 	public sharedKeypairs: Map<string, ReturnType<typeof generateTestKeypair>> = new Map();
 	private initialized = false;
@@ -56,7 +56,7 @@ export class SharedTestSetup {
 	/**
 	 * Get shared SuiClient instance
 	 */
-	public getSuiClient(): SuiClient {
+	public getSuiClient(): ClientWithCoreApi {
 		if (!this.suiClient) {
 			throw new Error('SharedTestSetup not initialized. Call initialize() first.');
 		}

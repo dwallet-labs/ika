@@ -2,8 +2,8 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { sha256, sha512 } from '@noble/hashes/sha2';
-import { keccak_256 } from '@noble/hashes/sha3';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,7 +17,6 @@ import {
 	SignatureAlgorithm,
 	ZeroTrustDWallet,
 } from '../../src';
-import { testPresign } from '../helpers/dwallet-test-helpers';
 import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,
@@ -34,6 +33,7 @@ import {
 	acceptUserShareAndActivate,
 	executeDKGRequest,
 	prepareDKG,
+	testPresign,
 	waitForDWalletAwaitingSignature,
 } from './helpers';
 
@@ -245,13 +245,13 @@ async function signAndVerify(
 	// Execute the signing transaction
 	const result = await executeTestTransaction(suiClient, transaction, testName);
 
-	const signEvent = result.events?.find((event) => event.type.includes('SignRequestEvent'));
+	const signEvent = result.events?.find((event) => event.eventType.includes('SignRequestEvent'));
 
 	expect(signEvent).toBeDefined();
 
 	const signEventData = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.SignRequestEvent,
-	).fromBase64(signEvent?.bcs as string);
+	).parse(new Uint8Array(signEvent?.bcs ?? []));
 
 	expect(signEventData).toBeDefined();
 
