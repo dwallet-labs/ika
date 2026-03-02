@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import { bcs } from '@mysten/sui/bcs';
-import { ClientWithCoreApi } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
@@ -1275,7 +1275,7 @@ export class IkaClient {
 						throw new NetworkError(`Failed to fetch object ${dynField.name}: ${dynField.message}`);
 					}
 
-					let parsed = DynamicField(bcs.byteVector()).parse(objResToBcs(dynField));
+					const parsed = DynamicField(bcs.byteVector()).parse(objResToBcs(dynField));
 
 					results.push(
 						processor({

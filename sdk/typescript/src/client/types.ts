@@ -3,7 +3,7 @@
 
 import type { BcsType } from '@mysten/sui/bcs';
 import { bcs, BcsStruct } from '@mysten/sui/bcs';
-import { ClientWithCoreApi } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SystemInnerModule from '../generated/ika_system/system_inner.js';
