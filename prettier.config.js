@@ -1,4 +1,4 @@
-// Copyright (c) Mysten Labs, Inc.
+// Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 module.exports = {
@@ -21,12 +21,6 @@ module.exports = {
 	overrides: [
 		{
 			files: 'sdk/**/*',
-			options: {
-				proseWrap: 'always',
-			},
-		},
-		{
-			files: 'external-crates/move/documentation/book/**/*',
 			options: {
 				proseWrap: 'always',
 			},
