@@ -46,8 +46,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) presign_pools: Arc<
         Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>,
     >,
-    /// Tracks which presign session IDs have been consumed by signing.
-    pub(crate) used_presigns: Arc<Mutex<HashSet<SessionIdentifier>>>,
+    /// Tracks presign session usage counts.
+    /// Maps session ID → (used_count, total_inserted_count).
+    /// A presign is considered fully used only when all presigns from that session
+    /// have been consumed (used_count >= total_count).
+    pub(crate) used_presigns: Arc<Mutex<HashMap<SessionIdentifier, (u64, u64)>>>,
     /// Assigned presigns keyed by (signature_algorithm, session_identifier).
     pub(crate) assigned_presigns:
         Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier), AssignedPresign>>>,
@@ -103,7 +106,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
-            used_presigns: Arc::new(Mutex::new(HashSet::new())),
+            used_presigns: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -200,9 +203,15 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             return Ok(());
         }
 
+        let count = presigns.len() as u64;
         for presign in presigns {
             pool.push((session_identifier, presign));
         }
+
+        // Track inserted count for is_presign_used checks.
+        let mut used = self.used_presigns.lock().unwrap();
+        let entry = used.entry(session_identifier).or_insert((0, 0));
+        entry.1 += count;
 
         Ok(())
     }
@@ -228,19 +237,21 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     }
 
     fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
-        self.used_presigns
-            .lock()
-            .unwrap()
-            .insert(presign_session_id);
+        let mut used = self.used_presigns.lock().unwrap();
+        let entry = used.entry(presign_session_id).or_insert((0, 0));
+        entry.0 += 1;
         Ok(())
     }
 
     fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        Ok(self
-            .used_presigns
-            .lock()
-            .unwrap()
-            .contains(&presign_session_id))
+        let used = self.used_presigns.lock().unwrap();
+        match used.get(&presign_session_id) {
+            // A session is "used" if:
+            // - It was marked without prior insert (total=0, used>0): external use
+            // - All batch presigns have been consumed (used >= total, total > 0)
+            Some((used_count, total_count)) => Ok(*used_count > 0 && *used_count >= *total_count),
+            None => Ok(false),
+        }
     }
 
     fn next_internal_sessions_status_update(
@@ -871,13 +882,28 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 continue;
             }
 
-            // Clear messages BEFORE running the service loop so we only track
-            // messages produced by THIS iteration
-            sent_consensus_messages_collectors[i]
-                .submitted_messages
-                .lock()
-                .unwrap()
-                .clear();
+            // Clear non-InternalPresign messages BEFORE running the service loop
+            // so we only track messages produced by THIS iteration.
+            // InternalPresign messages must be preserved because they run concurrently
+            // with the main flow — clearing them destroys round-advancement messages
+            // that the sessions need to progress through consensus.
+            {
+                let mut messages = sent_consensus_messages_collectors[i]
+                    .submitted_messages
+                    .lock()
+                    .unwrap();
+                messages.retain(|msg| match &msg.kind {
+                    ConsensusTransactionKind::DWalletMPCMessage(mpc_msg) => {
+                        mpc_msg.session_identifier.session_type() == SessionType::InternalPresign
+                    }
+                    ConsensusTransactionKind::DWalletMPCOutput(mpc_output) => {
+                        mpc_output.session_identifier.session_type() == SessionType::InternalPresign
+                    }
+                    ConsensusTransactionKind::DWalletInternalMPCOutput(_) => true,
+                    ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => true,
+                    _ => false,
+                });
+            }
             let key_ids = std::mem::take(&mut party_newly_instantiated_network_key_ids[i]);
             let new_key_ids = dwallet_mpc_service
                 .run_service_loop_iteration(key_ids)
@@ -1340,8 +1366,15 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
     start_consensus_round: Round,
 ) -> Round {
     const MAX_WAIT_ROUNDS: usize = 300;
+    /// Polling iterations per consensus round.  Each iteration sleeps 100ms
+    /// and runs the service loop so completed rayon tasks are collected.
+    /// We do NOT use `wait_for_computations` here because callers may have
+    /// in-flight multi-round sessions (e.g. ECDSA presigns started during DKG)
+    /// that cannot finish without future consensus rounds — blocking until ALL
+    /// computations are idle would deadlock.
+    const POLLS_PER_ROUND: usize = 20;
     let mut consensus_round = start_consensus_round;
-    for _ in 0..MAX_WAIT_ROUNDS {
+    for round_idx in 0..MAX_WAIT_ROUNDS {
         send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -1352,15 +1385,43 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration(vec![]).await;
         }
-        // Wait for rayon crypto computations to complete — presigns cannot
-        // appear in the pool until the cryptographic computation finishes.
-        wait_for_computations(test_state).await;
+        // Poll the service loop to collect rayon results, giving up to
+        // POLLS_PER_ROUND × 100ms for single-round computations to finish.
+        for _ in 0..POLLS_PER_ROUND {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            for service in test_state.dwallet_mpc_services.iter_mut() {
+                service.run_service_loop_iteration(vec![]).await;
+            }
+        }
         let pool_size = test_state
             .epoch_stores
             .first()
             .expect("at least one epoch store should exist")
             .presign_pool_size(signature_algorithm, network_key_id)
             .unwrap_or(0);
+        if round_idx < 10 || round_idx % 20 == 0 {
+            let svc = &test_state.dwallet_mpc_services[0];
+            let mgr = svc.dwallet_mpc_manager();
+            let network_keys = mgr.network_keys.network_encryption_keys.len();
+            let running = mgr
+                .cryptographic_computations_orchestrator
+                .currently_running_cryptographic_computations
+                .len();
+            let instantiated = mgr.instantiated_internal_presign_sessions.clone();
+            let completed = mgr.completed_internal_presign_sessions.clone();
+            info!(
+                round_idx,
+                consensus_round,
+                pool_size,
+                network_keys,
+                running,
+                ?instantiated,
+                ?completed,
+                number_of_consensus_rounds = svc.number_of_consensus_rounds(),
+                last_read = ?svc.last_read_consensus_round(),
+                "advance_rounds_while_presign_pool_empty: status"
+            );
+        }
         if pool_size > 0 {
             return consensus_round;
         }

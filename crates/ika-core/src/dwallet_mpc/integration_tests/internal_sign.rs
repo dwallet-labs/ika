@@ -20,7 +20,6 @@ use crate::dwallet_mpc::integration_tests::utils::{
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::collections::HashSet;
-use sui_types::base_types::ObjectID;
 use tracing::info;
 
 /// Test that internal signing works end-to-end:
@@ -165,8 +164,13 @@ async fn test_internal_sign_flow() {
         .lock()
         .unwrap()
         .clone();
-    let consumed_from_snapshot: HashSet<_> = used_presigns
-        .intersection(&presign_session_ids_before)
+    let consumed_from_snapshot: HashSet<_> = presign_session_ids_before
+        .iter()
+        .filter(|id| {
+            used_presigns
+                .get(id)
+                .map_or(false, |(used_count, _)| *used_count > 0)
+        })
         .collect();
     info!(
         "Used presigns: {:?}, from snapshot: {:?}",

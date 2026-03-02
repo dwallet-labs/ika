@@ -266,6 +266,11 @@ impl DWalletMPCService {
         self.network_is_idle
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
+        self.last_read_consensus_round
+    }
+
     /// Test helper: receive and process completed cryptographic computations
     /// without running the full service loop. This is useful for cleaning up
     /// the `currently_running_cryptographic_computations` set after tests.

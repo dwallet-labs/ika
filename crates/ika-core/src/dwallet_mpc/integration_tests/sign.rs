@@ -38,6 +38,24 @@ async fn sign_flow_test() {
             .dwallet_mpc_manager_mut()
             .last_session_to_complete_in_current_epoch = 400;
     }
+
+    // Verify test protocol config is in effect.
+    let pc = &test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .protocol_config;
+    info!(
+        delay = pc.get_internal_presign_consensus_round_delay(
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        ),
+        min_pool = pc.get_internal_presign_pool_minimum_size(
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        ),
+        enabled = pc.internal_presign_sessions_enabled(),
+        "sign_flow_test: EdDSA presign config"
+    );
+
     let (consensus_round, network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     // Use Curve25519 (EdDSA): EdDSA presigns do not require class groups operations and
