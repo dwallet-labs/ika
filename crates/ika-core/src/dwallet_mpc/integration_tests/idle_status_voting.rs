@@ -3,25 +3,98 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TEST_IDLE_SESSION_COUNT_THRESHOLD, build_test_state, create_test_protocol_config_guard,
 };
+use ika_protocol_config::ProtocolConfig;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use tracing::info;
+
+/// Creates a protocol config override guard tuned for the idle-status lifecycle test.
+///
+/// Key differences from the standard test config:
+/// - Pool minimum sizes = 1 (pools fill after a single completed session per algorithm).
+/// - Consensus round delay = 20 (large gap between instantiation checks, giving
+///   sessions time to complete and idle status time to propagate through consensus).
+/// - All sessions_to_instantiate = 1 (uniform across algorithms).
+///
+/// This creates a clear idle window: after the first batch of presign sessions
+/// completes and pools reach minimum, no new sessions are created until the next
+/// delay-aligned round. During that gap, session count drops to 0, validators
+/// report idle, and `network_is_idle()` flips to `true` via consensus majority.
+#[cfg(test)]
+fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard {
+    let pool_minimum = 1u64;
+    let pool_maximum = 12u64;
+    let delay = 20u64;
+    let sessions_to_instantiate = 1u64;
+
+    ProtocolConfig::apply_overrides_for_testing(move |_version, mut config| {
+        config.set_idle_session_count_threshold_for_testing(TEST_IDLE_SESSION_COUNT_THRESHOLD);
+
+        config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256k1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256k1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256k1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_secp256r1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256r1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256r1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256r1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_eddsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_eddsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_eddsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_eddsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_minimum_size_for_testing(pool_minimum);
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_schnorrkel_substrate_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_taproot_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_taproot_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_taproot_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_taproot_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_sign_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_sign_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_sign_presign_consensus_round_delay_for_testing(delay);
+        config
+            .set_internal_sign_presign_sessions_to_instantiate_for_testing(sessions_to_instantiate);
+
+        config
+    })
+}
 
 /// Test that validators correctly compute and report their idle status
 /// through the consensus-agreed `network_is_idle()` path, not just the local
 /// `compute_is_idle()` function.
 ///
+/// Uses a custom config with pool minimum=1 and delay=20 to create a clear
+/// idle window after the first batch of presign sessions fills the pools.
+///
 /// Asserts:
 /// 1. `network_is_idle` starts as `false` (default).
-/// 2. After a few rounds of status update propagation (with 0 sessions),
-///    `network_is_idle()` flips to `true` via consensus majority vote.
-/// 3. After enough internal presign sessions accumulate past idle_threshold,
+/// 2. After presign sessions complete and pools reach minimum, session count
+///    drops to 0 and `network_is_idle()` flips to `true` via consensus majority.
+/// 3. Idle-fill condition or next delay-aligned round creates new sessions,
 ///    `network_is_idle()` flips back to `false`.
 /// 4. Status updates submitted to consensus carry the correct `is_idle` flag.
 #[tokio::test]
 #[cfg(test)]
 async fn test_validators_compute_idle_status_correctly() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let _guard = create_test_protocol_config_guard();
+    let _guard = create_idle_status_test_config_guard();
 
     let mut test_state = build_test_state(4);
 
@@ -57,18 +130,24 @@ async fn test_validators_compute_idle_status_correctly() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Run enough rounds for:
-    // 1. Internal presign sessions to accumulate past idle_threshold.
-    //    With test config: delay=2, sessions_to_instantiate=1, 5 algorithm pairs.
-    //    After 2 delay-aligned rounds: 5 sessions (>= threshold=5) → not idle.
-    // 2. Idle status updates to propagate through consensus voting.
-    //    After propagation, network_is_idle() should reflect the consensus-agreed state.
+    // Run enough rounds for the full idle lifecycle:
     //
-    // We track whether network_is_idle ever reads `false` through the consensus path
-    // (not just the default value), confirming the full integration.
+    // With pool minimum=1, delay=20, 5 algorithm pairs (1 session each = 5 sessions):
+    //
+    // 1. First delay-aligned round: 5 presign sessions created,
+    //    total sessions (5) >= idle_threshold (5) → not idle.
+    // 2. Sessions complete over the next few rounds, presigns enter pools.
+    //    Each pool reaches >= 1 = minimum.
+    // 3. No new sessions until next delay-aligned round (20 rounds away).
+    //    Session count drops to 0 → idle locally.
+    // 4. Status updates propagate through consensus, network_is_idle() flips to true.
+    // 5. Idle-fill condition (pool < maximum && network_is_idle) triggers new sessions
+    //    → not idle again.
     let mut network_saw_not_idle = false;
+    let mut network_saw_idle = false;
     let mut status_updates_received = false;
-    for _ in 0..20 {
+
+    for round in 0..80 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -81,6 +160,9 @@ async fn test_validators_compute_idle_status_correctly() {
             service.run_service_loop_iteration(vec![]).await;
         }
 
+        // Give rayon threads time to finish MPC computations between rounds.
+        utils::wait_for_computations(&mut test_state).await;
+
         // Check if idle_status_by_party is populated — confirms status updates
         // have been received and processed from consensus.
         let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
@@ -88,17 +170,36 @@ async fn test_validators_compute_idle_status_correctly() {
             status_updates_received = true;
         }
 
-        // Once status updates have propagated, check network_is_idle() — it should
-        // be false because the presign sessions push session_count >= threshold.
-        if status_updates_received && !test_state.dwallet_mpc_services[0].network_is_idle() {
-            if !network_saw_not_idle {
-                let session_count = manager.sessions.len();
-                info!(
-                    "network_is_idle() is false via consensus at round {} (sessions={}, threshold={})",
-                    test_state.consensus_round, session_count, idle_threshold
-                );
+        // Once status updates have propagated, track network_is_idle() transitions.
+        if status_updates_received {
+            let is_idle = test_state.dwallet_mpc_services[0].network_is_idle();
+            if is_idle {
+                if !network_saw_idle {
+                    info!(
+                        "network_is_idle() is true via consensus at round {}",
+                        test_state.consensus_round
+                    );
+                }
+                network_saw_idle = true;
+            } else {
+                if !network_saw_not_idle {
+                    let session_count = manager.sessions.len();
+                    info!(
+                        "network_is_idle() is false via consensus at round {} (sessions={}, threshold={})",
+                        test_state.consensus_round, session_count, idle_threshold
+                    );
+                }
+                network_saw_not_idle = true;
             }
-            network_saw_not_idle = true;
+        }
+
+        // Early exit once we've observed both transitions.
+        if network_saw_idle && network_saw_not_idle {
+            info!(
+                "Both idle transitions observed by round {}, exiting early",
+                round
+            );
+            break;
         }
     }
 
@@ -106,6 +207,12 @@ async fn test_validators_compute_idle_status_correctly() {
     assert!(
         status_updates_received,
         "expected idle_status_by_party to be populated after consensus rounds"
+    );
+
+    // Verify network_is_idle was observed as true through the consensus path.
+    assert!(
+        network_saw_idle,
+        "expected network_is_idle() to be true via consensus after pools filled and sessions completed"
     );
 
     // Verify network_is_idle was observed as false through the consensus path.

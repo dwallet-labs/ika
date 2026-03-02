@@ -173,9 +173,10 @@ async fn test_internal_sign_flow() {
         used_presigns.len(),
         consumed_from_snapshot.len()
     );
-    assert!(
-        !consumed_from_snapshot.is_empty(),
-        "at least one presign from the pre-sign pool snapshot should have been consumed"
+    assert_eq!(
+        consumed_from_snapshot.len(),
+        1,
+        "exactly one presign from the pre-sign pool snapshot should have been consumed"
     );
 
     info!("Internal sign E2E test completed");
