@@ -21,9 +21,12 @@ Ika Client is the main entry point for interacting with the Ika protocol. It pro
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
 
-const client = new SuiClient({ url: getFullnodeUrl('testnet') }); // mainnet / testnet
+const client = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'), // mainnet / testnet
+	network: 'testnet',
+});
 
 const ikaClient = new IkaClient({
 	suiClient: client,

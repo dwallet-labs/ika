@@ -2,8 +2,8 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { sha256, sha512 } from '@noble/hashes/sha2';
-import { keccak_256 } from '@noble/hashes/sha3';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -22,7 +22,6 @@ import {
 	SignatureAlgorithm,
 	ZeroTrustDWallet,
 } from '../../src';
-import { testPresign } from '../helpers/dwallet-test-helpers';
 import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,
@@ -39,6 +38,7 @@ import {
 	acceptUserShareAndActivate,
 	executeDKGRequest,
 	prepareDKG,
+	testPresign,
 	waitForDWalletAwaitingSignature,
 } from './helpers';
 
@@ -184,13 +184,15 @@ async function setupDKGFlow(
 
 		const result = await executeTestTransaction(suiClient, transaction, testName);
 
-		const dkgEvent = result.events?.find((event) => event.type.includes('DWalletDKGRequestEvent'));
+		const dkgEvent = result.events?.find((event) =>
+			event.eventType.includes('DWalletDKGRequestEvent'),
+		);
 
 		expect(dkgEvent).toBeDefined();
 
 		const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
 			CoordinatorInnerModule.DWalletDKGRequestEvent,
-		).fromBase64(dkgEvent?.bcs as string);
+		).parse(new Uint8Array(dkgEvent?.bcs ?? []));
 
 		const dWalletID = parsedDkgEvent.event_data.dwallet_id;
 		expect(dWalletID).toBeDefined();
@@ -261,13 +263,13 @@ async function setupDKGFlow(
 		const result = await executeTestTransaction(suiClient, transaction, testName);
 
 		const verificationEvent = result.events?.find((event) =>
-			event.type.includes('DWalletImportedKeyVerificationRequestEvent'),
+			event.eventType.includes('DWalletImportedKeyVerificationRequestEvent'),
 		);
 		expect(verificationEvent).toBeDefined();
 
 		const parsedVerificationEvent = SessionsManagerModule.DWalletSessionEvent(
 			CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
-		).fromBase64(verificationEvent?.bcs as string);
+		).parse(new Uint8Array(verificationEvent?.bcs ?? []));
 
 		const dWalletID = parsedVerificationEvent.event_data.dwallet_id;
 		expect(dWalletID).toBeDefined();
@@ -304,7 +306,7 @@ async function setupDKGFlow(
 
 		await acceptShareIkaTransaction.acceptEncryptedUserShare({
 			dWallet: importedKeyDWallet,
-			encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+			encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id,
 			userPublicOutput: importDWalletVerificationInput.userPublicOutput,
 		});
 
@@ -507,7 +509,8 @@ async function futureSignAndVerify(
 	// Extract the partial user signature capability ID from the result using FutureSignRequestEvent
 	const futureSignRequestEvent = result1.events?.find((event) => {
 		return (
-			event.type.includes('FutureSignRequestEvent') && event.type.includes('DWalletSessionEvent')
+			event.eventType.includes('FutureSignRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
 		);
 	});
 
@@ -515,7 +518,7 @@ async function futureSignAndVerify(
 
 	const extractedPartialUserSignatureCap = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.FutureSignRequestEvent,
-	).fromBase64(futureSignRequestEvent?.bcs as string);
+	).parse(new Uint8Array(futureSignRequestEvent?.bcs ?? []));
 
 	const partialCap = await ikaClient.getPartialUserSignatureInParticularState(
 		extractedPartialUserSignatureCap.event_data.partial_centralized_signed_message_id,
@@ -572,13 +575,13 @@ async function futureSignAndVerify(
 
 	const result2 = await executeTestTransaction(suiClient, transaction2, testName);
 
-	const signEvent = result2.events?.find((event) => event.type.includes('SignRequestEvent'));
+	const signEvent = result2.events?.find((event) => event.eventType.includes('SignRequestEvent'));
 
 	expect(signEvent).toBeDefined();
 
 	const signEventData = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.SignRequestEvent,
-	).fromBase64(signEvent?.bcs as string);
+	).parse(new Uint8Array(signEvent?.bcs ?? []));
 
 	expect(signEventData).toBeDefined();
 

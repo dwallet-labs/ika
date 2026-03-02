@@ -33,7 +33,7 @@ The secp256k1 curve, widely used in blockchain applications.
 - **Key Size**: 256 bits
 
 ```typescript
-import { Curve } from '@dwallet-network/dwallet.js';
+import { Curve } from '@ika.xyz/sdk';
 
 const curve = Curve.SECP256K1;
 ```
@@ -87,7 +87,7 @@ Elliptic Curve Digital Signature Algorithm using the secp256k1 curve.
 - **Use Cases**: Bitcoin transactions, Ethereum transactions
 
 ```typescript
-import { Hash, SignatureAlgorithm } from '@dwallet-network/dwallet.js';
+import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 
 const signatureAlgorithm = SignatureAlgorithm.ECDSASecp256k1;
 const hash = Hash.KECCAK256; // or Hash.SHA256, Hash.DoubleSHA256

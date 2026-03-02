@@ -2,8 +2,8 @@ import { Transaction } from '@mysten/sui/transactions';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { sha256, sha512 } from '@noble/hashes/sha2';
-import { keccak_256 } from '@noble/hashes/sha3';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -197,13 +197,13 @@ async function createImportedKeyDWallet(
 	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
 
 	const verificationEvent = result.events?.find((event) =>
-		event.type.includes('DWalletImportedKeyVerificationRequestEvent'),
+		event.eventType.includes('DWalletImportedKeyVerificationRequestEvent'),
 	);
 	expect(verificationEvent).toBeDefined();
 
 	const parsedVerificationEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
-	).fromBase64(verificationEvent?.bcs as string);
+	).parse(new Uint8Array(verificationEvent?.bcs ?? []));
 
 	const dWalletID = parsedVerificationEvent.event_data.dwallet_id;
 	expect(dWalletID).toBeDefined();
@@ -259,7 +259,7 @@ async function acceptAndActivateImportedKeyDWallet(
 
 	await acceptShareIkaTransaction.acceptEncryptedUserShare({
 		dWallet: importedKeyDWallet,
-		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id,
 		userPublicOutput: userPublicOutput,
 	});
 
@@ -267,7 +267,7 @@ async function acceptAndActivateImportedKeyDWallet(
 
 	// Wait for wallet to become Active
 	const activeDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(importedKeyDWallet.id.id, 'Active'),
+		() => ikaClient.getDWalletInParticularState(importedKeyDWallet.id, 'Active'),
 		(wallet) => wallet !== null,
 		30,
 		2000,
@@ -324,7 +324,7 @@ async function makeImportedKeyDWalletPublic(
 
 	// Wait for DWallet to have public shares
 	const publicDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(activeDWallet.id.id, 'Active'),
+		() => ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active'),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
 		30,
 		2000,
@@ -386,12 +386,14 @@ async function requestPresignForImportedKey(
 
 	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
 
-	const presignEvent = result.events?.find((event) => event.type.includes('PresignRequestEvent'));
+	const presignEvent = result.events?.find((event) =>
+		event.eventType.includes('PresignRequestEvent'),
+	);
 	expect(presignEvent).toBeDefined();
 
 	const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.PresignRequestEvent,
-	).fromBase64(presignEvent?.bcs as string);
+	).parse(new Uint8Array(presignEvent?.bcs ?? []));
 
 	const presign = await retryUntil(
 		() =>
@@ -463,12 +465,12 @@ async function signWithPublicShareAndVerify(
 	// Execute the signing transaction
 	const result = await executeTestTransaction(suiClient, transaction, testName);
 
-	const signEvent = result.events?.find((event) => event.type.includes('SignRequestEvent'));
+	const signEvent = result.events?.find((event) => event.eventType.includes('SignRequestEvent'));
 	expect(signEvent).toBeDefined();
 
 	const signEventData = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.SignRequestEvent,
-	).fromBase64(signEvent?.bcs as string);
+	).parse(new Uint8Array(signEvent?.bcs ?? []));
 
 	expect(signEventData).toBeDefined();
 

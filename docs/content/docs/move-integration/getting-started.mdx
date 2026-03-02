@@ -116,10 +116,13 @@ pnpm add @ika.xyz/sdk
 
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
 
 // Create Sui client
-const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
 
 // Create Ika client
 const ikaClient = new IkaClient({
