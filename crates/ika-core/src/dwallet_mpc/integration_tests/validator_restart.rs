@@ -463,20 +463,22 @@ async fn test_epoch_store_presign_pool_operations() {
         "pop from empty pool should return None"
     );
 
-    // mark_presign_as_used / is_presign_used are intentional no-ops in the test store:
-    // a single presign session produces multiple presigns that share the same session_identifier,
-    // so per-session-ID "used" tracking doesn't work correctly. The test store relies on pop()
-    // removing entries and insert_presigns deduplicating by session_identifier instead.
-    // Verify the no-op behavior: mark should succeed, is_used should always return false.
+    // Verify mark_presign_as_used / is_presign_used tracks consumed presigns.
     let used_session_id = SessionIdentifier::new(SessionType::InternalPresign, [99u8; 32]);
-    test_epoch_store
-        .mark_presign_as_used(used_session_id)
-        .expect("mark_presign_as_used should not error");
     assert!(
         !test_epoch_store
             .is_presign_used(used_session_id)
             .expect("is_presign_used should not error"),
-        "is_presign_used should always return false (no-op in test store)"
+        "is_presign_used should return false before marking"
+    );
+    test_epoch_store
+        .mark_presign_as_used(used_session_id)
+        .expect("mark_presign_as_used should not error");
+    assert!(
+        test_epoch_store
+            .is_presign_used(used_session_id)
+            .expect("is_presign_used should not error"),
+        "is_presign_used should return true after marking"
     );
 
     // Test assign_presign / get_assigned_presign / pop_assigned_presign roundtrip.
