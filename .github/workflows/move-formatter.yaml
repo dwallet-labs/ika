@@ -12,7 +12,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 env:
-  VERSION: 0.3.3
+  VERSION: 0.3.5
 
 jobs:
   prettier-move:
@@ -31,7 +31,11 @@ jobs:
         working-directory: ${{ matrix.working-directory }}
     steps:
       - uses: actions/checkout@v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
       - name: Use Node.js
         uses: actions/setup-node@v4
-      - run: npm install --no-warnings @mysten/prettier-plugin-move@${{ env.VERSION }}
-      - run: npx prettier-move -c **/*.move
+      - run: pnpm add @mysten/prettier-plugin-move@${{ env.VERSION }}
+      - run: pnpm prettier-move -c **/*.move
