@@ -13,16 +13,16 @@ Key importing allows you to bring an existing private key (from Bitcoin, Ethereu
 ## Overview
 
 Key importing:
+
 - Converts existing private keys to dWallet format
 - Creates an `ImportedKeyDWalletCap` for authorization
 - Supports both zero-trust (encrypted) and shared (public) modes
 - Enables signing for wallets you already control
 
-
 <Callout type="warn" title="Security Consideration">
-When importing a key, you're trusting the network with a share of your existing private key. This is different from DKG where the key is generated in a distributed manner.
+	When importing a key, you're trusting the network with a share of your existing private key. This
+	is different from DKG where the key is generated in a distributed manner.
 </Callout>
-
 
 ## Import Process
 
@@ -51,32 +51,34 @@ public fun request_imported_key_dwallet_verification(
 
 ```typescript
 import {
-    IkaClient,
-    UserShareEncryptionKeys,
-    prepareImportedKeyDWalletVerification,
-    createRandomSessionIdentifier,
-    Curve,
+	createRandomSessionIdentifier,
+	Curve,
+	IkaClient,
+	prepareImportedKeyDWalletVerification,
+	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
 
 // Your existing private key
-const privateKey = new Uint8Array([/* your private key bytes */]);
+const privateKey = new Uint8Array([
+	/* your private key bytes */
+]);
 
 // Create encryption keys
 const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
-    new TextEncoder().encode('your-seed'),
-    Curve.SECP256K1,
+	new TextEncoder().encode('your-seed'),
+	Curve.SECP256K1,
 );
 
 const sessionIdentifier = createRandomSessionIdentifier();
 
 // Prepare import data
 const importData = await prepareImportedKeyDWalletVerification(
-    ikaClient,
-    Curve.SECP256K1,
-    sessionIdentifier,
-    signerAddress,
-    userShareEncryptionKeys,
-    privateKey,
+	ikaClient,
+	Curve.SECP256K1,
+	sessionIdentifier,
+	signerAddress,
+	userShareEncryptionKeys,
+	privateKey,
 );
 
 // importData contains:
@@ -292,6 +294,7 @@ let sign_id = coordinator.request_imported_key_sign_with_partial_user_signature_
 You can convert an imported key dWallet from zero-trust mode (encrypted user share) to shared mode (public user share). This enables contract-owned signing without user interaction.
 
 See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared) for the complete guide, including:
+
 - How to save and use the user secret key share
 - TypeScript SDK methods
 - Move contract integration
@@ -299,13 +302,13 @@ See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared
 
 ## Key Differences from DKG dWallets
 
-| Aspect | DKG dWallet | Imported Key dWallet |
-|--------|-------------|---------------------|
-| Capability Type | `DWalletCap` | `ImportedKeyDWalletCap` |
-| Message Approval | `approve_message()` | `approve_imported_key_message()` |
-| Sign Function | `request_sign()` | `request_imported_key_sign()` |
-| Presign Type | Global (for Taproot/EdDSA) | dWallet-specific (for ECDSA) |
-| Key Origin | Generated distributed | Imported from user |
+| Aspect           | DKG dWallet                | Imported Key dWallet             |
+| ---------------- | -------------------------- | -------------------------------- |
+| Capability Type  | `DWalletCap`               | `ImportedKeyDWalletCap`          |
+| Message Approval | `approve_message()`        | `approve_imported_key_message()` |
+| Sign Function    | `request_sign()`           | `request_imported_key_sign()`    |
+| Presign Type     | Global (for Taproot/EdDSA) | dWallet-specific (for ECDSA)     |
+| Key Origin       | Generated distributed      | Imported from user               |
 
 ## Best Practices
 

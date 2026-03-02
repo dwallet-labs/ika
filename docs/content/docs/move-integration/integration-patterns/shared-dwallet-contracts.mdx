@@ -13,16 +13,17 @@ Shared dWallet contracts hold a dWallet capability and control signing through s
 ## Overview
 
 In this pattern:
+
 - The contract owns the `DWalletCap`
 - Uses **public user share** (shared mode) - network can sign without user interaction
 - Contract logic controls who can sign and when
 - Perfect for governance, treasuries, and automated systems
 
-
 <Callout type="info" title="Already Have a Zero-Trust dWallet?">
-You can convert an existing zero-trust dWallet to shared mode using `request_make_dwallet_user_secret_key_shares_public()`. This also works for imported key dWallets. See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared) for details.
+	You can convert an existing zero-trust dWallet to shared mode using
+	`request_make_dwallet_user_secret_key_shares_public()`. This also works for imported key dWallets.
+	See [Converting to Shared](/docs/move-integration/protocols/converting-to-shared) for details.
 </Callout>
-
 
 ## Architecture
 

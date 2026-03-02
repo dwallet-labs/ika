@@ -1,17 +1,17 @@
 ---
-version: "3.9"
+version: '3.9'
 services:
   fullnode:
     # Note: Update the tag to the latest version of ika-io/ika-node for mainnet or testnet.
     image: ika-io/ika-node:latest
     ports:
-    - "8080:8080"
-    - "8084:8084/udp"
-    - "9000:9000"
-    - "9184:9184"
+      - '8080:8080'
+      - '8084:8084/udp'
+      - '9000:9000'
+      - '9184:9184'
     volumes:
-    - ./fullnode-template.yaml:/opt/ika/config/fullnode.yaml:ro
-    - ./ikadb:/opt/ika/db:rw
-    command: ["/opt/ika/bin/ika-node", "--config-path", "/opt/ika/config/fullnode.yaml"]
+      - ./fullnode-template.yaml:/opt/ika/config/fullnode.yaml:ro
+      - ./ikadb:/opt/ika/db:rw
+    command: ['/opt/ika/bin/ika-node', '--config-path', '/opt/ika/config/fullnode.yaml']
 volumes:
   ikadb:

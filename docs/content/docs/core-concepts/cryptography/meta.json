@@ -1,7 +1,4 @@
 {
-  "title": "Cryptography",
-  "pages": [
-    "2pc-mpc",
-    "mpc"
-  ]
+	"title": "Cryptography",
+	"pages": ["2pc-mpc", "mpc"]
 }

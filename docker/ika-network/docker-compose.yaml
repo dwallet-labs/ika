@@ -1,4 +1,4 @@
-version: "3"
+version: '3'
 
 services:
   validator1:
@@ -18,18 +18,13 @@ services:
       - ./genesis/files/validator1-8080.yaml:/opt/ika/config/validator.yaml:ro
       - ./genesis/files/genesis.blob:/opt/ika/config/genesis.blob:ro
       - /tmp/ika/db1:/opt/ika/db:rw
-    command:
-      [
-        "/usr/local/bin/ika-node",
-        "--config-path",
-        "/opt/ika/config/validator.yaml",
-      ]
+    command: ['/usr/local/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml']
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
   validator2:
     networks:
       ika-network:
@@ -47,18 +42,13 @@ services:
       - ./genesis/files/validator2-8080.yaml:/opt/ika/config/validator.yaml:ro
       - ./genesis/files/genesis.blob:/opt/ika/config/genesis.blob:ro
       - /tmp/ika/db2:/opt/ika/db:rw
-    command:
-      [
-        "/usr/local/bin/ika-node",
-        "--config-path",
-        "/opt/ika/config/validator.yaml",
-      ]
+    command: ['/usr/local/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml']
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
   validator3:
     networks:
       ika-network:
@@ -76,18 +66,13 @@ services:
       - ./genesis/files/validator3-8080.yaml:/opt/ika/config/validator.yaml:ro
       - ./genesis/files/genesis.blob:/opt/ika/config/genesis.blob:ro
       - /tmp/ika/db3:/opt/ika/db:rw
-    command:
-      [
-        "/usr/local/bin/ika-node",
-        "--config-path",
-        "/opt/ika/config/validator.yaml",
-      ]
+    command: ['/usr/local/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml']
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
   validator4:
     networks:
       ika-network:
@@ -105,18 +90,13 @@ services:
       - ./genesis/files/validator4-8080.yaml:/opt/ika/config/validator.yaml:ro
       - ./genesis/files/genesis.blob:/opt/ika/config/genesis.blob:ro
       - /tmp/ika/db4:/opt/ika/db:rw
-    command:
-      [
-        "/usr/local/bin/ika-node",
-        "--config-path",
-        "/opt/ika/config/validator.yaml",
-      ]
+    command: ['/usr/local/bin/ika-node', '--config-path', '/opt/ika/config/validator.yaml']
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
   fullnode1:
     networks:
       ika-network:
@@ -134,18 +114,13 @@ services:
       - ./genesis/static/fullnode.yaml:/opt/ika/config/fullnode.yaml:ro
       - ./genesis/files/genesis.blob:/opt/ika/config/genesis.blob:ro
       - /tmp/ika/db5:/opt/ika/db:rw
-    command:
-      [
-        "/usr/local/bin/ika-node",
-        "--config-path",
-        "/opt/ika/config/fullnode.yaml",
-      ]
+    command: ['/usr/local/bin/ika-node', '--config-path', '/opt/ika/config/fullnode.yaml']
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
 
   stress:
     networks:
@@ -174,13 +149,13 @@ services:
       - ./genesis/static/ika.keystore:/opt/ika/config/ika.keystore:ro
     restart: on-failure
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-file: "10"
-        max-size: "1g"
+        max-file: '10'
+        max-size: '1g'
 networks:
   ika-network:
     driver: bridge
     ipam:
       config:
-      - subnet: 10.0.0.0/24
+        - subnet: 10.0.0.0/24

@@ -22,7 +22,9 @@ In the Ika network, users need to securely manage their secret shares while main
 4. **Key management** - Deriving, storing, and retrieving cryptographic keys
 
 <Info title="Security Reminder">
-UserShareEncryptionKeys handles extremely sensitive cryptographic material. Always follow security best practices, conduct security reviews, and consider getting security audits for production applications.
+	UserShareEncryptionKeys handles extremely sensitive cryptographic material. Always follow security
+	best practices, conduct security reviews, and consider getting security audits for production
+	applications.
 </Info>
 
 ## Supported Curves
@@ -52,6 +54,7 @@ For example:
 - To use `SchnorrkelSubstrate`, create keys with `Curve.RISTRETTO`
 
 Using mismatched curves will cause all operations to fail.
+
 </Warning>
 
 ## Creating UserShareEncryptionKeys
@@ -93,11 +96,10 @@ const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.
 ```
 
 <Info title="Choosing the Right Curve">
-Choose your curve based on the signature algorithm you intend to use:
-- **SECP256K1**: Best for Ethereum, Bitcoin (ECDSA), and general ECDSA use cases
-- **ED25519**: Best for high-performance EdDSA signatures
-- **SECP256R1**: For NIST P-256 compliance requirements
-- **RISTRETTO**: For Substrate/Polkadot ecosystem compatibility
+	Choose your curve based on the signature algorithm you intend to use: - **SECP256K1**: Best for
+	Ethereum, Bitcoin (ECDSA), and general ECDSA use cases - **ED25519**: Best for high-performance
+	EdDSA signatures - **SECP256R1**: For NIST P-256 compliance requirements - **RISTRETTO**: For
+	Substrate/Polkadot ecosystem compatibility
 </Info>
 
 ### From Serialized Bytes
@@ -125,7 +127,8 @@ await secureStorage.store('user-share-keys', serializedBytes);
 ```
 
 <Warning title="Security Warning">
-Always store serialized keys securely. The serialized data contains sensitive cryptographic material including private keys. Use appropriate encryption and access controls for storage.
+	Always store serialized keys securely. The serialized data contains sensitive cryptographic
+	material including private keys. Use appropriate encryption and access controls for storage.
 </Warning>
 
 ## Key Methods and Operations
@@ -224,7 +227,9 @@ try {
 ```
 
 <Warning title="Security Warning">
-When handling transferred dWallets, always verify that `sourceEncryptionKey` belongs to the expected sender. Don't fetch this from the network without proper verification - the sender's public key should be known to you through secure channels.
+	When handling transferred dWallets, always verify that `sourceEncryptionKey` belongs to the
+	expected sender. Don't fetch this from the network without proper verification - the sender's
+	public key should be known to you through secure channels.
 </Warning>
 
 ### Decrypting User Shares
@@ -274,6 +279,7 @@ The `UserShareEncryptionKeys` instance MUST have been created with the same curv
 **For transferred/existing dWallets:** You must check the dWallet's curve and create UserShareEncryptionKeys with the matching curve (see "For Existing or Transferred dWallets" section above).
 
 If the curves don't match, all operations including decryption will fail.
+
 </Warning>
 
 <Info title="Decryption Process">
@@ -285,4 +291,5 @@ The `decryptUserShare` method performs several security checks:
 4. **Verifies consistency** - Ensures the decrypted share matches the dWallet's public output
 
 This multi-layer verification ensures the integrity and authenticity of your secret shares.
+
 </Info>

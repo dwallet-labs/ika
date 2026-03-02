@@ -57,10 +57,10 @@ public fun my_function(
 
 ### Mutable vs Immutable Reference
 
-| Reference Type | Use When |
-|----------------|----------|
-| `&mut DWalletCoordinator` | Performing operations (DKG, presign, sign) |
-| `&DWalletCoordinator` | Reading state (checking dWallet existence, getting pricing) |
+| Reference Type            | Use When                                                    |
+| ------------------------- | ----------------------------------------------------------- |
+| `&mut DWalletCoordinator` | Performing operations (DKG, presign, sign)                  |
+| `&DWalletCoordinator`     | Reading state (checking dWallet existence, getting pricing) |
 
 Most operations require a mutable reference because they modify coordinator state.
 
@@ -193,11 +193,11 @@ public fun is_presign_valid(self: &DWalletCoordinator, presign_cap: &UnverifiedP
 In your TypeScript code, get the coordinator ID from the Ika client:
 
 ```typescript
-import { IkaClient, getNetworkConfig } from '@ika.xyz/sdk';
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 
 const ikaClient = new IkaClient({
-    suiClient,
-    config: getNetworkConfig('testnet'),
+	suiClient,
+	config: getNetworkConfig('testnet'),
 });
 await ikaClient.initialize();
 
@@ -209,11 +209,11 @@ Then pass it to your Move function:
 
 ```typescript
 tx.moveCall({
-    target: `${packageId}::my_module::my_function`,
-    arguments: [
-        tx.object(coordinatorId),  // DWalletCoordinator
-        // ... other arguments
-    ],
+	target: `${packageId}::my_module::my_function`,
+	arguments: [
+		tx.object(coordinatorId), // DWalletCoordinator
+		// ... other arguments
+	],
 });
 ```
 
@@ -225,10 +225,10 @@ The coordinator supports upgrades through a versioning system:
 - Upgrades migrate the inner state to new versions
 - Your code doesn't need to handle versioning directly
 
-
-<Callout type="info" title="The coordinator validates its version internally. If you encounter version errors, ensure you're using the latest Ika packages.">
-</Callout>
-
+<Callout
+	type="info"
+	title="The coordinator validates its version internally. If you encounter version errors, ensure you're using the latest Ika packages."
+></Callout>
 
 ## Next Steps
 

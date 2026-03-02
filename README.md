@@ -6,7 +6,7 @@
 
 Ika is a decentralized platform empowering Web3 builders to create protocols that operate natively across any blockchain
 with zero-trust security (eliminating the risk of trusted third parties that can be hacked or act maliciously). At the
-core of this architecture is the ***dWallet***, a programmable and transferable zero-trust signing mechanism that ensures user
+core of this architecture is the **_dWallet_**, a programmable and transferable zero-trust signing mechanism that ensures user
 consent is cryptographically enforced, allowing developers to build secure, decentralized applications that operate
 across the entire Web3 ecosystem.
 
@@ -14,12 +14,12 @@ across the entire Web3 ecosystem.
 
 The dWallet is an innovative Web3 building block that has the following attributes:
 
-* _Noncollusive_: The user is always required to generate a signature.
-* _Massively decentralized_: Beside the user, a 2/3 threshold of a network that can include hundreds of
+- _Noncollusive_: The user is always required to generate a signature.
+- _Massively decentralized_: Beside the user, a 2/3 threshold of a network that can include hundreds of
   nodes, is also required to generate a signature.
-* _Multi-Chain_: Using the default authentication method of blockchains - the signature - dWallets can offer universal
+- _Multi-Chain_: Using the default authentication method of blockchains - the signature - dWallets can offer universal
   and native multi-chain interoperability, without the cross-chain risks of wrapping, bridging or messaging.
-* _cryptographically secure_: The security of dWallets is based on cryptography, instead of hardware or trust
+- _cryptographically secure_: The security of dWallets is based on cryptography, instead of hardware or trust
   assumptions.
 
 dWallets are the only way that exists today for Web3 builders to achieve secure, multi-chain interoperability, without
@@ -68,8 +68,8 @@ and years of open source development that we are building upon with the Ika.
 
 Use the following links to learn more about Ika and its ecosystem:
 
-* Learn more about working with dWallets in the [Ika Documentation](https://docs.dwallet.io/).
-* Find out more about the Ika community on the [community](https://ika.xyz/community/) page.
+- Learn more about working with dWallets in the [Ika Documentation](https://docs.dwallet.io/).
+- Find out more about the Ika community on the [community](https://ika.xyz/community/) page.
 
 ## Acknowledgement
 

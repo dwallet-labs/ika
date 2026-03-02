@@ -13,6 +13,7 @@ This example demonstrates a cross-chain wallet that creates an Ethereum address 
 ## Overview
 
 KeySpring enables:
+
 - Creating Ethereum wallets using any existing wallet (MetaMask, Phantom, etc.) or passkeys
 - Sending ETH transactions on Base Sepolia testnet
 - Non-custodial key management — secret key share never leaves the browser
@@ -75,22 +76,22 @@ When using a passkey instead of a wallet:
 
 ## Supported Authentication Methods
 
-| Method               | Type     | Notes                                      |
-| -------------------- | -------- | ------------------------------------------ |
-| **Passkey**          | WebAuthn | Face ID, Touch ID, Windows Hello, YubiKey  |
-| MetaMask             | Ethereum |                                            |
-| Phantom (Ethereum)   | Ethereum |                                            |
-| Phantom (Solana)     | Solana   |                                            |
-| Other Solana wallets | Solana   |                                            |
+| Method               | Type     | Notes                                     |
+| -------------------- | -------- | ----------------------------------------- |
+| **Passkey**          | WebAuthn | Face ID, Touch ID, Windows Hello, YubiKey |
+| MetaMask             | Ethereum |                                           |
+| Phantom (Ethereum)   | Ethereum |                                           |
+| Phantom (Solana)     | Solana   |                                           |
+| Other Solana wallets | Solana   |                                           |
 
 ### Passkey Browser Support
 
-| Platform   | Browser          | Platform Passkey | Hardware Key |
-| ---------- | ---------------- | ---------------- | ------------ |
-| macOS 15+  | Chrome/Safari 18+| Yes              | Chrome only  |
-| Windows 11 | Chrome/Edge      | Yes              | Yes          |
-| iOS 18+    | Safari           | Yes              | No           |
-| Android    | Chrome           | Yes              | USB only     |
+| Platform   | Browser           | Platform Passkey | Hardware Key |
+| ---------- | ----------------- | ---------------- | ------------ |
+| macOS 15+  | Chrome/Safari 18+ | Yes              | Chrome only  |
+| Windows 11 | Chrome/Edge       | Yes              | Yes          |
+| iOS 18+    | Safari            | Yes              | No           |
+| Android    | Chrome            | Yes              | USB only     |
 
 > Passkey support requires the WebAuthn PRF extension for deterministic key derivation.
 

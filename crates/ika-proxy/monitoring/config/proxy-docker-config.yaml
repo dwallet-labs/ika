@@ -119,7 +119,6 @@ metrics-address: localhost:9184
 # Format: IP:PORT or hostname:PORT
 # This field is required
 histogram-address: localhost:9185
-
 # ============================================================================
 # CONFIGURATION EXAMPLES FOR DIFFERENT DEPLOYMENT SCENARIOS
 # ============================================================================

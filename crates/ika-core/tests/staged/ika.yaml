@@ -108,7 +108,7 @@ CheckpointContentsV1:
 CheckpointData:
   STRUCT:
     - checkpoint_summary:
-        TYPENAME: "ika_types::message_envelope::Envelope<ika_types::messages_checkpoint::CheckpointSummary, ika_types::crypto::AuthorityQuorumSignInfo<true>>"
+        TYPENAME: 'ika_types::message_envelope::Envelope<ika_types::messages_checkpoint::CheckpointSummary, ika_types::crypto::AuthorityQuorumSignInfo<true>>'
     - checkpoint_contents:
         TYPENAME: CheckpointContents
     - transactions:
@@ -141,7 +141,7 @@ CheckpointSummary:
 CheckpointTransaction:
   STRUCT:
     - transaction:
-        TYPENAME: "ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>"
+        TYPENAME: 'ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>'
     - effects:
         TYPENAME: TransactionEffects
     - events:
@@ -385,7 +385,7 @@ Event:
 ExecutionData:
   STRUCT:
     - transaction:
-        TYPENAME: "ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>"
+        TYPENAME: 'ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>'
     - effects:
         TYPENAME: TransactionEffects
 ExecutionDigests:
@@ -1203,16 +1203,15 @@ ZkLoginAuthenticatorAsBytes:
 ZkLoginPublicIdentifier:
   NEWTYPESTRUCT:
     SEQ: U8
-"ika_types::message_envelope::Envelope<ika_types::messages_checkpoint::CheckpointSummary, ika_types::crypto::AuthorityQuorumSignInfo<true>>":
+'ika_types::message_envelope::Envelope<ika_types::messages_checkpoint::CheckpointSummary, ika_types::crypto::AuthorityQuorumSignInfo<true>>':
   STRUCT:
     - data:
         TYPENAME: CheckpointSummary
     - auth_signature:
         TYPENAME: AuthorityQuorumSignInfo
-"ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>":
+'ika_types::message_envelope::Envelope<ika_types::transaction::SenderSignedData, ika_types::crypto::EmptySignInfo>':
   STRUCT:
     - data:
         TYPENAME: SenderSignedData
     - auth_signature:
         TYPENAME: EmptySignInfo
-

@@ -1,7 +1,5 @@
 {
-  "title": "Operators",
-  "root": true,
-  "pages": [
-    "index"
-  ]
+	"title": "Operators",
+	"root": true,
+	"pages": ["index"]
 }

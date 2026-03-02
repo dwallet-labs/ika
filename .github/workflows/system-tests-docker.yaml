@@ -16,7 +16,7 @@ env:
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   CLOUDSDK_CORE_PROJECT: common-449616
-  DOCKER_TAG: "us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}"
+  DOCKER_TAG: 'us-docker.pkg.dev/common-449616/ika-common-containers/ika-node:${{ github.event.inputs.imageTag }}'
 
 jobs:
   build-and-push:

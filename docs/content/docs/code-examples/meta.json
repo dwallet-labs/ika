@@ -1,7 +1,5 @@
 {
-  "title": "Code Examples",
-  "root": true,
-  "pages": [
-    "index"
-  ]
+	"title": "Code Examples",
+	"root": true,
+	"pages": ["index"]
 }
