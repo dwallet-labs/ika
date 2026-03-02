@@ -701,8 +701,10 @@ pub(crate) fn send_advance_results_between_parties_excluding(
 }
 
 /// Maximum iterations when waiting for rayon computations to complete.
-/// At 100ms per iteration, this gives ~60 seconds before failing.
-const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 600;
+/// At 100ms per iteration, this gives ~180 seconds before failing.
+/// The generous limit accounts for rayon thread pool contention when
+/// the full integration test suite runs in a single process.
+const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
 
 /// Wait for all parties' in-flight rayon computations to complete.
 ///
@@ -1350,7 +1352,9 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration(vec![]).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for rayon crypto computations to complete — presigns cannot
+        // appear in the pool until the cryptographic computation finishes.
+        wait_for_computations(test_state).await;
         let pool_size = test_state
             .epoch_stores
             .first()
@@ -1362,10 +1366,8 @@ pub(crate) async fn advance_rounds_while_presign_pool_empty(
         }
     }
     panic!(
-        "Presign pool for {:?} did not fill after {} rounds (~{} seconds)",
-        signature_algorithm,
-        MAX_WAIT_ROUNDS,
-        MAX_WAIT_ROUNDS / 10
+        "Presign pool for {:?} did not fill after {} rounds",
+        signature_algorithm, MAX_WAIT_ROUNDS,
     );
 }
 
