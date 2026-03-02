@@ -30,29 +30,9 @@ use tracing::info;
 /// test feasible within a reasonable time budget.
 async fn sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = utils::create_test_protocol_config_guard();
     let epoch_id = 1;
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
-    };
+    let mut test_state = utils::build_test_state(4);
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
@@ -157,29 +137,9 @@ async fn sign_flow_test() {
 /// test feasible within a reasonable time budget.
 async fn future_sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = utils::create_test_protocol_config_guard();
     let epoch_id = 1;
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
-    };
+    let mut test_state = utils::build_test_state(4);
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()

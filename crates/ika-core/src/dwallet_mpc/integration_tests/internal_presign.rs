@@ -438,8 +438,9 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
     }
 
-    // Run a few rounds to process the requests and let InternalSign sessions become active.
-    for _ in 0..4 {
+    // Run enough rounds to process the requests, let InternalSign sessions become active,
+    // and for the non-idle status to propagate through consensus voting.
+    for _ in 0..10 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
