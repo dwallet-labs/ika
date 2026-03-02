@@ -372,7 +372,7 @@ const result = await executeTransaction(suiClient, transaction);
 
 // Extract the transferred encrypted share ID from the event
 const reEncryptEvent = result.events?.find((event) =>
-	event.type.includes('EncryptedShareVerificationRequestEvent'),
+	event.eventType.includes('EncryptedShareVerificationRequestEvent'),
 );
 
 const transferredEncryptedShareId = /* extract from event */;
@@ -408,7 +408,7 @@ const result = await executeTransaction(suiClient, transaction);
 
 // Extract the transferred encrypted share ID from the event
 const reEncryptEvent = result.events?.find((event) =>
-	event.type.includes('EncryptedShareVerificationRequestEvent'),
+	event.eventType.includes('EncryptedShareVerificationRequestEvent'),
 );
 
 const transferredEncryptedShareId = /* extract from event */;
