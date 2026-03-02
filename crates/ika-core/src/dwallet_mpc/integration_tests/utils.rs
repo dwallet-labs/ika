@@ -227,17 +227,20 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
     }
 
-    fn mark_presign_as_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<()> {
-        // No-op in tests: the production "used" check is per session_identifier, but a single
-        // presign session can produce multiple presigns that share the same session_identifier.
-        // The production store deduplicates by (key_id, session_sequence_number) key, preventing
-        // duplicates. The test store's pop() already removes entries, which is sufficient.
+    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
+        self.used_presigns
+            .lock()
+            .unwrap()
+            .insert(presign_session_id);
         Ok(())
     }
 
-    fn is_presign_used(&self, _presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        // Always false: see mark_presign_as_used comment.
-        Ok(false)
+    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
+        Ok(self
+            .used_presigns
+            .lock()
+            .unwrap()
+            .contains(&presign_session_id))
     }
 
     fn next_internal_sessions_status_update(
@@ -1140,7 +1143,7 @@ pub(crate) fn count_sessions_by_type(
 /// Creates an `IntegrationTestState` from the output of `create_dwallet_mpc_services`.
 #[cfg(test)]
 pub(crate) fn build_test_state(size: usize) -> IntegrationTestState {
-    let (committee, _) = Committee::new_simple_test_committee();
+    let (committee, _) = Committee::new_simple_test_committee_of_size(size);
     let (
         dwallet_mpc_services,
         sui_data_senders,

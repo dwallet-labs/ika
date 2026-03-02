@@ -8,7 +8,6 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_PRESIGN_SESSIONS_TO_INSTANTIATE, build_test_state, create_test_protocol_config_guard,
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
-use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use tracing::info;
 
 /// All signature algorithms that have internal presign pools.
@@ -510,6 +509,10 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
 /// Uses `wait_for_computations` to give rayon threads sufficient wall-clock
 /// time to complete each MPC round, so presigns are actually deposited into
 /// the pool and the monotonic counters advance.
+///
+/// Phase 1: Run rounds until the EdDSA pool naturally reaches min_pool_size.
+/// Phase 2: Verify `network_is_idle()` is true, then continue running rounds
+///          until the pool grows to max_pool_size.
 #[tokio::test]
 #[cfg(test)]
 async fn test_internal_presign_continues_when_idle() {
@@ -524,12 +527,7 @@ async fn test_internal_presign_continues_when_idle() {
             .last_session_to_complete_in_current_epoch = 400;
     }
 
-    // Create network key.
-    let (consensus_round, _network_key_bytes, network_key_id) =
-        create_network_key_test(&mut test_state).await;
-    test_state.consensus_round = consensus_round as usize;
-
-    // Extract all needed config values in a scope block to avoid borrow conflicts.
+    // Extract all needed config values before creating the network key.
     let (max_pool_size, min_pool_size) = {
         let protocol_config = &test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
@@ -550,32 +548,19 @@ async fn test_internal_presign_continues_when_idle() {
         min_pool_size, max_pool_size
     );
 
-    // Pre-populate EdDSA pool to min_pool_size so we can verify growth beyond min.
-    let mock_session_id = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
-    for epoch_store in &test_state.epoch_stores {
-        let presigns: Vec<Vec<u8>> = (0..min_pool_size).map(|_| vec![0u8; 32]).collect();
-        epoch_store
-            .insert_presigns(
-                DWalletSignatureAlgorithm::EdDSA,
-                network_key_id,
-                1,
-                mock_session_id,
-                presigns,
-            )
-            .expect("failed to insert presigns");
-    }
+    // Create network key.
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
 
-    let pool_size_before = test_state.epoch_stores[0]
-        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
-        .unwrap_or(0);
-    assert_eq!(
-        pool_size_before, min_pool_size,
-        "pool should start at min_pool_size"
-    );
-
-    // Run rounds with computation waits; since we're idle, presign sessions
-    // should spawn, complete, and deposit presigns beyond min_pool_size.
-    for round_idx in 0..80 {
+    // Run rounds with computation waits. The pool fills naturally:
+    // 1. Pool grows to min_pool_size (always happens, regardless of idle status).
+    // 2. Presign sessions complete, session count drops, validators report idle.
+    // 3. Idle status propagates through consensus voting → network_is_idle flips to true.
+    // 4. Pool continues growing to max_pool_size (only happens when idle).
+    let mut reached_min = false;
+    let mut became_idle = false;
+    for round_idx in 0..150 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -588,10 +573,26 @@ async fn test_internal_presign_continues_when_idle() {
         }
         utils::wait_for_computations(&mut test_state).await;
 
-        // Early exit: once the pool exceeds max_pool_size, stop running rounds.
         let current_pool_size = test_state.epoch_stores[0]
             .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
             .unwrap_or(0);
+
+        if current_pool_size >= min_pool_size && !reached_min {
+            reached_min = true;
+            info!(
+                round_idx,
+                current_pool_size, min_pool_size, "EdDSA pool reached min_pool_size"
+            );
+        }
+
+        if test_state.dwallet_mpc_services[0].network_is_idle() && !became_idle {
+            became_idle = true;
+            info!(
+                round_idx,
+                "network_is_idle flipped to true — pool should now grow toward max"
+            );
+        }
+
         if current_pool_size >= max_pool_size {
             info!(
                 round_idx,
@@ -600,6 +601,15 @@ async fn test_internal_presign_continues_when_idle() {
             break;
         }
     }
+    assert!(
+        reached_min,
+        "EdDSA pool should naturally reach min_pool_size={} via real presign sessions",
+        min_pool_size
+    );
+    assert!(
+        became_idle,
+        "network_is_idle should have flipped to true after presign sessions completed"
+    );
 
     let pool_size_final = test_state.epoch_stores[0]
         .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)

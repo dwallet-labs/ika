@@ -19,6 +19,7 @@ use crate::dwallet_mpc::integration_tests::utils::{
 };
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use std::collections::HashSet;
 use sui_types::base_types::ObjectID;
 use tracing::info;
 
@@ -75,7 +76,7 @@ async fn test_internal_sign_flow() {
     .await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Record pool size before signing
+    // Record pool size and snapshot pool contents (session IDs) before signing.
     let pool_size_before = test_state.epoch_stores[0]
         .presign_pool_size(signature_algorithm, network_key_id)
         .expect("failed to get pool size");
@@ -84,6 +85,13 @@ async fn test_internal_sign_flow() {
         pool_size_before > 0,
         "pool should have at least one presign"
     );
+    let presign_session_ids_before: HashSet<SessionIdentifier> = test_state.epoch_stores[0]
+        .presign_pools
+        .lock()
+        .unwrap()
+        .get(&(signature_algorithm, network_key_id))
+        .map(|pool| pool.iter().map(|(id, _)| *id).collect())
+        .unwrap_or_default();
 
     // Send an InternalSignRequest to all validators via the channel
     let test_message = b"test message to sign internally".to_vec();
@@ -151,9 +159,24 @@ async fn test_internal_sign_flow() {
         sign_output.signature.len()
     );
 
-    // The sign consumed a presign, but background presign sessions may have also completed,
-    // so we can't assert the pool strictly decreased. The successful signature output above
-    // is sufficient proof that a presign was consumed.
+    // Verify that exactly one presign from the pre-sign snapshot was consumed.
+    let used_presigns = test_state.epoch_stores[0]
+        .used_presigns
+        .lock()
+        .unwrap()
+        .clone();
+    let consumed_from_snapshot: HashSet<_> = used_presigns
+        .intersection(&presign_session_ids_before)
+        .collect();
+    info!(
+        "Used presigns: {:?}, from snapshot: {:?}",
+        used_presigns.len(),
+        consumed_from_snapshot.len()
+    );
+    assert!(
+        !consumed_from_snapshot.is_empty(),
+        "at least one presign from the pre-sign pool snapshot should have been consumed"
+    );
 
     info!("Internal sign E2E test completed");
 }
