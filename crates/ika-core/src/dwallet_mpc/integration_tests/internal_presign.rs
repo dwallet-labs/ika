@@ -609,12 +609,25 @@ async fn test_internal_presign_continues_when_idle() {
         pool_size_final, min_pool_size, max_pool_size
     );
 
-    // With sessions_to_instantiate=1 and the in-flight guard preventing overlap,
-    // the pool should reach exactly max_pool_size — no overshoot.
-    assert_eq!(
-        pool_size_final, max_pool_size,
-        "pool should reach exactly max_pool_size (max={}, got={})",
-        max_pool_size, pool_size_final
+    // The pool can overshoot max_pool_size because multipresign sessions produce
+    // presigns in batches — a session started when pool < max can complete and deposit
+    // multiple presigns, pushing the pool past max by up to
+    // sessions_to_instantiate * (n - threshold).
+    let max_overshoot = TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
+        * (test_state.dwallet_mpc_services.len() as u64
+            - test_state.committee.quorum_threshold() as u64);
+    assert!(
+        pool_size_final >= max_pool_size,
+        "pool should reach at least max_pool_size (max={}, got={})",
+        max_pool_size,
+        pool_size_final
+    );
+    assert!(
+        pool_size_final <= max_pool_size + max_overshoot,
+        "pool should not overshoot beyond max_pool_size + max_overshoot (max={}, overshoot={}, got={})",
+        max_pool_size,
+        max_overshoot,
+        pool_size_final
     );
 
     info!("Test completed: internal presigns continue when idle");
