@@ -85,11 +85,9 @@ fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard 
 ///
 /// Asserts:
 /// 1. `network_is_idle` starts as `false` (default).
-/// 2. After presign sessions complete and pools reach minimum, session count
-///    drops to 0 and `network_is_idle()` flips to `true` via consensus majority.
-/// 3. Idle-fill condition or next delay-aligned round creates new sessions,
-///    `network_is_idle()` flips back to `false`.
-/// 4. Status updates submitted to consensus carry the correct `is_idle` flag.
+/// 2. `network_is_idle()` undergoes at least 2 transitions through the consensus
+///    path, proving a full cycle (e.g. not_idle → idle → not_idle).
+/// 3. Status updates submitted to consensus carry the correct `is_idle` flag.
 #[tokio::test]
 #[cfg(test)]
 async fn test_validators_compute_idle_status_correctly() {
@@ -130,21 +128,18 @@ async fn test_validators_compute_idle_status_correctly() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Run enough rounds for the full idle lifecycle:
+    // Run enough rounds for the full idle lifecycle.
     //
-    // With pool minimum=1, delay=20, 5 algorithm pairs (1 session each = 5 sessions):
+    // With pool minimum=1, delay=20, 5 algorithm pairs (1 session each):
     //
-    // 1. First delay-aligned round: 5 presign sessions created,
-    //    total sessions (5) >= idle_threshold (5) → not idle.
-    // 2. Sessions complete over the next few rounds, presigns enter pools.
-    //    Each pool reaches >= 1 = minimum.
-    // 3. No new sessions until next delay-aligned round (20 rounds away).
-    //    Session count drops to 0 → idle locally.
-    // 4. Status updates propagate through consensus, network_is_idle() flips to true.
-    // 5. Idle-fill condition (pool < maximum && network_is_idle) triggers new sessions
-    //    → not idle again.
-    let mut network_saw_not_idle = false;
-    let mut network_saw_idle = false;
+    // The network goes through at least one full transition cycle via consensus:
+    //   not_idle (sessions running) → idle (sessions complete, pools filled)
+    //                                → not_idle (idle-fill creates new sessions)
+    //
+    // We track transitions (state changes) in network_is_idle(). Two transitions
+    // prove a full cycle regardless of which state comes first.
+    let mut transition_count = 0u32;
+    let mut last_idle_state: Option<bool> = None;
     let mut status_updates_received = false;
 
     for round in 0..80 {
@@ -173,31 +168,27 @@ async fn test_validators_compute_idle_status_correctly() {
         // Once status updates have propagated, track network_is_idle() transitions.
         if status_updates_received {
             let is_idle = test_state.dwallet_mpc_services[0].network_is_idle();
-            if is_idle {
-                if !network_saw_idle {
-                    info!(
-                        "network_is_idle() is true via consensus at round {}",
-                        test_state.consensus_round
-                    );
-                }
-                network_saw_idle = true;
-            } else {
-                if !network_saw_not_idle {
-                    let session_count = manager.sessions.len();
-                    info!(
-                        "network_is_idle() is false via consensus at round {} (sessions={}, threshold={})",
-                        test_state.consensus_round, session_count, idle_threshold
-                    );
-                }
-                network_saw_not_idle = true;
+            if last_idle_state != Some(is_idle) {
+                let session_count = manager.sessions.len();
+                info!(
+                    "network_is_idle() transitioned to {} at round {} (sessions={}, threshold={}, transition #{})",
+                    is_idle,
+                    test_state.consensus_round,
+                    session_count,
+                    idle_threshold,
+                    transition_count + 1
+                );
+                last_idle_state = Some(is_idle);
+                transition_count += 1;
             }
         }
 
-        // Early exit once we've observed both transitions.
-        if network_saw_idle && network_saw_not_idle {
+        // Early exit once we've observed a full cycle (at least 3 transitions):
+        // e.g. not_idle → idle → not_idle, proving both directions work.
+        if transition_count >= 3 {
             info!(
-                "Both idle transitions observed by round {}, exiting early",
-                round
+                "Full idle lifecycle observed by round {} ({} transitions)",
+                round, transition_count
             );
             break;
         }
@@ -209,16 +200,12 @@ async fn test_validators_compute_idle_status_correctly() {
         "expected idle_status_by_party to be populated after consensus rounds"
     );
 
-    // Verify network_is_idle was observed as true through the consensus path.
+    // Verify we observed at least 3 transitions, proving a full cycle
+    // (not_idle → idle → not_idle) through the consensus-agreed path.
     assert!(
-        network_saw_idle,
-        "expected network_is_idle() to be true via consensus after pools filled and sessions completed"
-    );
-
-    // Verify network_is_idle was observed as false through the consensus path.
-    assert!(
-        network_saw_not_idle,
-        "expected network_is_idle() to be false after enough presign sessions were created"
+        transition_count >= 3,
+        "expected at least 3 network_is_idle() transitions (full not_idle → idle → not_idle cycle), got {}",
+        transition_count
     );
 
     // Also verify that status updates were submitted to consensus with the correct is_idle flag.
