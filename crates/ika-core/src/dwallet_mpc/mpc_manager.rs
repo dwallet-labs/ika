@@ -793,25 +793,35 @@ impl DWalletMPCManager {
     /// Instantiates a generic internal sign session.
     ///
     /// Pops a presign from the internal pool, wraps it, and creates the sign session.
+    /// Returns `true` if the session was successfully instantiated, `false` on error.
     pub(super) fn instantiate_internal_sign_session(
         &mut self,
         sequence_number: u64,
         message: Vec<u8>,
-    ) {
+    ) -> bool {
         // Derive config values internally
-        let dwallet_network_encryption_key_id = self
-            .internal_signing_network_encryption_key_id()
-            .expect("caller should check has_internal_signing_network_key() first");
+        let Some(dwallet_network_encryption_key_id) =
+            self.internal_signing_network_encryption_key_id()
+        else {
+            error!(
+                sequence_number,
+                should_never_happen = true,
+                "No internal signing network key available — caller should check \
+                 has_internal_signing_network_key() first"
+            );
+            return false;
+        };
 
         let curve = self.protocol_config.internal_signing_curve();
         let signature_algorithm = self.protocol_config.internal_signing_algorithm();
         let hash_scheme: group::HashScheme =
             self.protocol_config.internal_signing_hash_scheme().into();
-        let network_dkg_output_bytes = self
+        let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
-            .map(|key_data| key_data.network_dkg_output().as_bytes().to_vec())
-            .unwrap_or_else(|e| {
+        {
+            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
                     sequence_number,
@@ -819,14 +829,27 @@ impl DWalletMPCManager {
                     should_never_happen = true,
                     "Failed to get network encryption key data for internal sign session"
                 );
-                panic!("Failed to get network encryption key data: {e:?}")
-            });
+                return false;
+            }
+        };
 
         // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign) = self
+        let (presign_session_id, presign) = match self
             .epoch_store
             .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
-            .unwrap_or_else(|e| {
+        {
+            Ok(Some(pair)) => pair,
+            Ok(None) => {
+                error!(
+                    sequence_number,
+                    ?signature_algorithm,
+                    should_never_happen = true,
+                    "No presign available in pool — caller should check \
+                     has_internal_signing_presign_available() first"
+                );
+                return false;
+            }
+            Err(e) => {
                 error!(
                     sequence_number,
                     ?signature_algorithm,
@@ -834,9 +857,9 @@ impl DWalletMPCManager {
                     should_never_happen = true,
                     "Failed to get presign from internal pool for internal signing"
                 );
-                panic!("Failed to get presign from internal pool: {e:?}")
-            })
-            .expect("caller should check has_internal_signing_presign_available() first");
+                return false;
+            }
+        };
 
         // Check if this presign has already been used (safety check)
         if self
@@ -848,9 +871,9 @@ impl DWalletMPCManager {
                 sequence_number,
                 ?presign_session_id,
                 should_never_happen = true,
-                "Presign has already been used - this should not happen"
+                "Presign has already been used — this should not happen"
             );
-            panic!("Presign has already been used: {presign_session_id:?}");
+            return false;
         }
 
         // Mark the presign as used to prevent double-spending
@@ -862,21 +885,23 @@ impl DWalletMPCManager {
                 should_never_happen = true,
                 "Failed to mark presign as used"
             );
-            panic!("Failed to mark presign as used: {e:?}");
+            return false;
         }
 
         // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
         // with the sign session input path, which expects this wrapping.
-        let wrapped_presign =
-            bcs::to_bytes(&VersionedPresignOutput::V2(presign)).unwrap_or_else(|e| {
+        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+            Ok(bytes) => bytes,
+            Err(e) => {
                 error!(
                     sequence_number,
                     error = ?e,
                     should_never_happen = true,
                     "Failed to wrap presign in VersionedPresignOutput for internal sign"
                 );
-                panic!("Failed to wrap presign: {e:?}")
-            });
+                return false;
+            }
+        };
 
         let request = DWalletSessionRequest::new_internal_sign(
             self.epoch_id,
@@ -907,6 +932,7 @@ impl DWalletMPCManager {
         );
 
         self.new_session(&session_identifier, status, session_computation_type);
+        true
     }
 
     /// Checks if this manager has an internal signing network key available

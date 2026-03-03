@@ -410,11 +410,11 @@ impl DWalletMPCService {
                 return true; // no presign yet, keep in buffer
             }
 
-            self.dwallet_mpc_manager.instantiate_internal_sign_session(
+            let instantiated = self.dwallet_mpc_manager.instantiate_internal_sign_session(
                 request.sequence_number,
                 request.message.clone(),
             );
-            false // instantiated, remove from buffer
+            !instantiated // keep in buffer if instantiation failed
         });
     }
 
