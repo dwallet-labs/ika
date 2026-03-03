@@ -142,6 +142,7 @@ use ika_core::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use ika_core::consensus_handler::ConsensusHandlerInitializer;
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use ika_core::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
@@ -934,6 +935,14 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<ValidatorComponents> {
+        // Create channels for internal sign sessions.
+        // Input channel: no sender yet (future callers will send requests).
+        let (_internal_sign_sender, internal_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignRequest>();
+        // Output channel: MPC service sends completed signatures here.
+        let (internal_sign_output_sender, _internal_sign_output_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignOutput>();
+
         let (checkpoint_service, checkpoint_service_tasks) = Self::start_dwallet_checkpoint_service(
             config,
             consensus_adapter.clone(),
@@ -979,6 +988,8 @@ impl IkaNode {
             epoch_store.epoch(),
             epoch_store.committee().clone(),
             epoch_store.protocol_config().clone(),
+            internal_sign_receiver,
+            internal_sign_output_sender,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter

@@ -21,6 +21,7 @@ use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
 };
 use crate::dwallet_mpc::party_ids_to_authority_names;
+use crate::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
@@ -59,6 +60,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
@@ -95,6 +97,11 @@ pub struct DWalletMPCService {
     processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
+    /// Receiver for internal sign requests.
+    internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
+    /// Buffer for internal sign requests that couldn't be processed yet
+    /// (e.g., key not yet agreed). Retried each service loop iteration.
+    pending_internal_sign_requests: Vec<InternalSignRequest>,
 }
 
 impl DWalletMPCService {
@@ -111,6 +118,8 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
+        internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
+        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -140,6 +149,7 @@ impl DWalletMPCService {
             sui_data_receivers.clone(),
             protocol_config.clone(),
             epoch_store.clone(),
+            internal_sign_output_sender,
         );
 
         Self {
@@ -163,6 +173,8 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
+            internal_sign_receiver,
+            pending_internal_sign_requests: Vec::new(),
         }
     }
 
@@ -177,8 +189,17 @@ impl DWalletMPCService {
         authority_name: AuthorityName,
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
-    ) -> Self {
-        DWalletMPCService {
+    ) -> (
+        Self,
+        UnboundedSender<InternalSignRequest>,
+        UnboundedReceiver<InternalSignOutput>,
+    ) {
+        let (internal_sign_request_sender, internal_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignRequest>();
+        let (internal_sign_output_sender, internal_sign_output_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<InternalSignOutput>();
+
+        let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
             epoch_store: epoch_store.clone(),
             dwallet_submit_to_consensus,
@@ -196,6 +217,7 @@ impl DWalletMPCService {
                 sui_data_receivers.clone(),
                 ProtocolConfig::get_for_max_version_UNSAFE(),
                 epoch_store,
+                internal_sign_output_sender,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -211,7 +233,15 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
-        }
+            internal_sign_receiver,
+            pending_internal_sign_requests: Vec::new(),
+        };
+
+        (
+            service,
+            internal_sign_request_sender,
+            internal_sign_output_receiver,
+        )
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -224,6 +254,21 @@ impl DWalletMPCService {
     #[allow(dead_code)]
     pub(crate) fn dwallet_mpc_manager_mut(&mut self) -> &mut DWalletMPCManager {
         &mut self.dwallet_mpc_manager
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn number_of_consensus_rounds(&self) -> u64 {
+        self.number_of_consensus_rounds
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn network_is_idle(&self) -> bool {
+        self.network_is_idle
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
+        self.last_read_consensus_round
     }
 
     /// Test helper: receive and process completed cryptographic computations
@@ -316,6 +361,9 @@ impl DWalletMPCService {
         debug!("Running DWalletMPCService loop");
         self.sync_last_session_to_complete_in_current_epoch().await;
 
+        // Process any pending internal sign requests.
+        self.process_internal_sign_requests();
+
         // Receive **new** dWallet MPC events and save them in the local DB.
         let rejected_sessions = self
             .handle_new_requests(newly_instantiated_network_key_ids)
@@ -334,22 +382,40 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
-    async fn process_cryptographic_computations(&mut self) {
-        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
-            warn!("No last read consensus round, cannot perform cryptographic computation");
+    /// Process internal sign requests received via the channel.
+    /// Drains the channel into a pending buffer, then instantiates sessions
+    /// for requests whose network key is already available.
+    fn process_internal_sign_requests(&mut self) {
+        while let Ok(request) = self.internal_sign_receiver.try_recv() {
+            info!(
+                sequence_number = request.sequence_number,
+                message_len = request.message.len(),
+                "Received internal sign request"
+            );
+            self.pending_internal_sign_requests.push(request);
+        }
+
+        if self.pending_internal_sign_requests.is_empty() {
             return;
-        };
+        }
 
-        let (computation_results, is_idle) = self
-            .dwallet_mpc_manager
-            .perform_cryptographic_computation(last_read_consensus_round)
-            .await;
+        self.pending_internal_sign_requests.retain(|request| {
+            if !self.dwallet_mpc_manager.has_internal_signing_network_key() {
+                return true; // key not yet available, keep in buffer
+            }
+            if !self
+                .dwallet_mpc_manager
+                .has_internal_signing_presign_available()
+            {
+                return true; // no presign yet, keep in buffer
+            }
 
-        self.handle_computation_results_and_submit_to_consensus(computation_results)
-            .await;
-
-        // Send status update to consensus using the result from cryptographic computations
-        self.send_status_update_to_consensus(is_idle).await;
+            let instantiated = self.dwallet_mpc_manager.instantiate_internal_sign_session(
+                request.sequence_number,
+                request.message.clone(),
+            );
+            !instantiated // keep in buffer if instantiation failed
+        });
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -415,6 +481,25 @@ impl DWalletMPCService {
                 self.sent_network_key_ids.insert(key_data.id);
             }
         }
+    }
+
+    async fn process_cryptographic_computations(&mut self) {
+        let Some(last_read_consensus_round) = self.last_read_consensus_round else {
+            warn!("No last read consensus round, cannot perform cryptographic computation");
+            return;
+        };
+
+        let (computation_results, is_idle) = self
+            .dwallet_mpc_manager
+            .perform_cryptographic_computation(last_read_consensus_round)
+            .await;
+
+        self.handle_computation_results_and_submit_to_consensus(computation_results)
+            .await;
+
+        // TODO: do this only if the status changed.
+        // Send status update to consensus using the result from cryptographic computations
+        self.send_status_update_to_consensus(is_idle).await;
     }
 
     async fn handle_new_requests(
@@ -681,6 +766,12 @@ impl DWalletMPCService {
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
                     .into_iter()
+                    .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
+                    .filter(|request| {
+                        !self
+                            .processed_global_presign_sequence_numbers
+                            .contains(&request.session_sequence_number)
+                    })
                     .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
 
@@ -1041,13 +1132,13 @@ impl DWalletMPCService {
                     }
                 }
                 Err(err) => match request.session_type {
-                    // TODO: InternalSign
-                    SessionType::InternalPresign => {
+                    SessionType::InternalPresign | SessionType::InternalSign => {
                         error!(
                             should_never_happen =? true,
                             session_identifier=?session.session_identifier,
+                            session_type=?request.session_type,
                             error=?err,
-                            "internal presign session failed",
+                            "internal session failed",
                         );
                     }
                     _ => {
@@ -1175,16 +1266,13 @@ impl DWalletMPCService {
                 }
             },
             SessionType::InternalSign => match &session_request.protocol_data {
-                ProtocolData::InternalSign { data, .. } => {
+                ProtocolData::InternalSign { .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
                         DWalletInternalMPCOutputKind::InternalSign {
                             output,
-                            curve: data.curve,
-                            signature_algorithm: data.signature_algorithm,
-                            hash_scheme: data.hash_scheme,
-                            checkpoint_sequence_number: session_request.session_sequence_number,
+                            sequence_number: session_request.session_sequence_number,
                         },
                         malicious_authorities,
                     ))

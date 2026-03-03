@@ -608,10 +608,8 @@ impl DWalletMPCService {
             info!(
                 ?epoch_id,
                 our_epoch_id = self.epoch,
-                "Received uncompleted requests for a different epoch, ignoring"
+                "Received uncompleted requests from a different epoch, processing anyway"
             );
-
-            return vec![];
         }
 
         uncompleted_requests

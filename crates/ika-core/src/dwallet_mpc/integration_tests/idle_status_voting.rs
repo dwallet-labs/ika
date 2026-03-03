@@ -1,78 +1,141 @@
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
-use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
-use ika_types::committee::Committee;
-use ika_types::messages_dwallet_mpc::SessionType;
+use crate::dwallet_mpc::integration_tests::utils::{
+    TEST_IDLE_SESSION_COUNT_THRESHOLD, build_test_state, create_test_protocol_config_guard,
+};
+use ika_protocol_config::ProtocolConfig;
 use tracing::info;
 
-/// Test that validators correctly compute and report their idle status.
-/// The idle status is based on the number of ready-to-advance sessions
-/// plus currently running computations compared to a threshold.
+/// Creates a protocol config override guard tuned for the idle-status lifecycle test.
+///
+/// Key differences from the standard test config:
+/// - Pool minimum sizes = 1 (pools fill after a single completed session per algorithm).
+/// - Consensus round delay = 20 (large gap between instantiation checks, giving
+///   sessions time to complete and idle status time to propagate through consensus).
+/// - All sessions_to_instantiate = 1 (uniform across algorithms).
+///
+/// This creates a clear idle window: after the first batch of presign sessions
+/// completes and pools reach minimum, no new sessions are created until the next
+/// delay-aligned round. During that gap, session count drops to 0, validators
+/// report idle, and `network_is_idle()` flips to `true` via consensus majority.
+#[cfg(test)]
+fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard {
+    let pool_minimum = 1u64;
+    let pool_maximum = 12u64;
+    let delay = 20u64;
+    let sessions_to_instantiate = 1u64;
+
+    ProtocolConfig::apply_overrides_for_testing(move |_version, mut config| {
+        config.set_idle_session_count_threshold_for_testing(TEST_IDLE_SESSION_COUNT_THRESHOLD);
+
+        config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256k1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256k1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256k1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_secp256r1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256r1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256r1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256r1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_eddsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_eddsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_eddsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_eddsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_minimum_size_for_testing(pool_minimum);
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_schnorrkel_substrate_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_taproot_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_taproot_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_taproot_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_taproot_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_sign_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_sign_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_sign_presign_consensus_round_delay_for_testing(delay);
+        config
+            .set_internal_sign_presign_sessions_to_instantiate_for_testing(sessions_to_instantiate);
+
+        config
+    })
+}
+
+/// Test that validators correctly compute and report their idle status
+/// through the consensus-agreed `network_is_idle()` path, not just the local
+/// `compute_is_idle()` function.
+///
+/// Uses a custom config with pool minimum=1 and delay=20 to create a clear
+/// idle window after the first batch of presign sessions fills the pools.
+///
+/// Asserts:
+/// 1. `network_is_idle` starts as `false` (default).
+/// 2. `network_is_idle()` undergoes at least 2 transitions through the consensus
+///    path, proving a full cycle (e.g. not_idle → idle → not_idle).
+/// 3. Status updates submitted to consensus carry the correct `is_idle` flag.
 #[tokio::test]
 #[cfg(test)]
 async fn test_validators_compute_idle_status_correctly() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = create_idle_status_test_config_guard();
 
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee: committee.clone(),
-        sui_data_senders,
-    };
+    let mut test_state = build_test_state(4);
 
-    // Configure services
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
-    // Get the idle threshold from config
     let idle_threshold = test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
         .protocol_config
         .idle_session_count_threshold();
 
     info!("Idle threshold from config: {}", idle_threshold);
+    assert_eq!(
+        idle_threshold, TEST_IDLE_SESSION_COUNT_THRESHOLD,
+        "test config should set idle_threshold={}",
+        TEST_IDLE_SESSION_COUNT_THRESHOLD
+    );
 
-    // Initially, with no sessions, validators should be idle
+    // Initially, network_is_idle starts as false (default value).
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
-        let manager = service.dwallet_mpc_manager();
-        let session_count = manager.sessions.len();
-        let is_idle = manager.compute_is_idle(0); // 0 ready-to-advance sessions
-
-        info!(
-            "Validator {}: session_count={}, is_idle={}",
-            i, session_count, is_idle
-        );
-
-        // With no ready sessions and few running computations, should be idle
         assert!(
-            is_idle,
-            "Validator {} should be idle with {} sessions (threshold: {})",
-            i, session_count, idle_threshold
+            !service.network_is_idle(),
+            "Validator {} network_is_idle should start as false (default)",
+            i,
         );
     }
 
-    // Create network key to enable internal presigns
+    // Create network key to enable internal presigns.
     let (consensus_round, _network_key_bytes, _network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Run several consensus rounds to generate internal presign sessions
-    for _ in 0..30 {
+    // Run enough rounds for the full idle lifecycle.
+    //
+    // With pool minimum=1, delay=20, 5 algorithm pairs (1 session each):
+    //
+    // The network goes through at least one full transition cycle via consensus:
+    //   not_idle (sessions running) → idle (sessions complete, pools filled)
+    //                                → not_idle (idle-fill creates new sessions)
+    //
+    // We track transitions (state changes) in network_is_idle(). Two transitions
+    // prove a full cycle regardless of which state comes first.
+    let mut transition_count = 0u32;
+    let mut last_idle_state: Option<bool> = None;
+    let mut status_updates_received = false;
+
+    for round in 0..80 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -84,167 +147,93 @@ async fn test_validators_compute_idle_status_correctly() {
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration(vec![]).await;
         }
-    }
 
-    // Check session counts after running for a while
-    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
-        let manager = service.dwallet_mpc_manager();
-        let session_count = manager.sessions.len();
-        let internal_presign_count = manager
-            .sessions
-            .iter()
-            .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
-            .count();
+        // Give rayon threads time to finish MPC computations between rounds.
+        utils::wait_for_computations(&mut test_state).await;
 
-        info!(
-            "Validator {}: total_sessions={}, internal_presigns={}",
-            i, session_count, internal_presign_count
-        );
+        // Check if idle_status_by_party is populated — confirms status updates
+        // have been received and processed from consensus.
+        let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+        if !manager.idle_status_by_party.is_empty() {
+            status_updates_received = true;
+        }
 
-        // Verify sessions are being created
-        assert!(
-            session_count > 0,
-            "Validator {} should have created some sessions",
-            i
-        );
-    }
+        // Once status updates have propagated, track network_is_idle() transitions.
+        if status_updates_received {
+            let is_idle = test_state.dwallet_mpc_services[0].network_is_idle();
+            if last_idle_state != Some(is_idle) {
+                let session_count = manager.sessions.len();
+                info!(
+                    "network_is_idle() transitioned to {} at round {} (sessions={}, threshold={}, transition #{})",
+                    is_idle,
+                    test_state.consensus_round,
+                    session_count,
+                    idle_threshold,
+                    transition_count + 1
+                );
+                last_idle_state = Some(is_idle);
+                transition_count += 1;
+            }
+        }
 
-    info!("Test passed: Validators correctly compute idle status");
-}
-
-/// Test that idle status affects internal presign session creation.
-/// When validators are idle, they should continue creating internal presigns
-/// even if the pool is at minimum size.
-#[tokio::test]
-#[cfg(test)]
-async fn test_idle_status_affects_internal_presign_creation() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
-
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee: committee.clone(),
-        sui_data_senders,
-    };
-
-    // Configure services
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
-    // Create network key first
-    let (consensus_round, _network_key_bytes, _network_key_id) =
-        create_network_key_test(&mut test_state).await;
-    test_state.consensus_round = consensus_round as usize;
-
-    // Track the initial state
-    let initial_internal_presign_count: usize = test_state.dwallet_mpc_services[0]
-        .dwallet_mpc_manager()
-        .sessions
-        .iter()
-        .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
-        .count();
-
-    info!(
-        "Initial internal presign count: {}",
-        initial_internal_presign_count
-    );
-
-    // Run several consensus rounds while idle
-    // The system should create internal presigns even without external requests
-    for _ in 0..20 {
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            test_state.consensus_round as u64,
-        );
-        test_state.consensus_round += 1;
-
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+        // Early exit once we've observed a full cycle (at least 3 transitions):
+        // e.g. not_idle → idle → not_idle, proving both directions work.
+        if transition_count >= 3 {
+            info!(
+                "Full idle lifecycle observed by round {} ({} transitions)",
+                round, transition_count
+            );
+            break;
         }
     }
 
-    // Check that internal presigns were created
-    let final_internal_presign_count: usize = test_state.dwallet_mpc_services[0]
-        .dwallet_mpc_manager()
-        .sessions
-        .iter()
-        .filter(|(id, _)| id.session_type() == SessionType::InternalPresign)
-        .count();
-
-    info!(
-        "Final internal presign count: {}",
-        final_internal_presign_count
-    );
-
-    // Verify that internal presigns were created
+    // Verify status updates were received and processed.
     assert!(
-        final_internal_presign_count > initial_internal_presign_count,
-        "Internal presigns should have been created. Initial: {}, Final: {}",
-        initial_internal_presign_count,
-        final_internal_presign_count
+        status_updates_received,
+        "expected idle_status_by_party to be populated after consensus rounds"
     );
 
-    info!("Test passed: Idle status affects internal presign creation");
+    // Verify we observed at least 3 transitions, proving a full cycle
+    // (not_idle → idle → not_idle) through the consensus-agreed path.
+    assert!(
+        transition_count >= 3,
+        "expected at least 3 network_is_idle() transitions (full not_idle → idle → not_idle cycle), got {}",
+        transition_count
+    );
+
+    info!("Test passed: validators correctly compute idle status via consensus");
 }
 
-/// Test that status updates are properly distributed through consensus.
-/// Each validator sends its status update, and the consensus mechanism
-/// should distribute these to all other validators.
+/// Test that status updates are properly distributed through consensus and
+/// that the service reads and processes them (not just the test harness).
+///
+/// Verifies:
+/// 1. Each validator submits InternalSessionsStatusUpdate to consensus each round.
+/// 2. After distribution, each validator's epoch store has status updates from all others.
+/// 3. The service reads these via `next_internal_sessions_status_update` and processes them.
 #[tokio::test]
 #[cfg(test)]
 async fn test_status_updates_distributed_through_consensus() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = create_test_protocol_config_guard();
 
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee: committee.clone(),
-        sui_data_senders,
-    };
-
-    // Configure services
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
+    let mut test_state = build_test_state(4);
 
     // Create network key
     let (consensus_round, _network_key_bytes, _network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Run several consensus rounds to allow status updates to flow
+    // Run several rounds: the service loop submits status updates to consensus,
+    // send_advance_results_between_parties distributes them to epoch stores,
+    // and the next service loop reads them via next_internal_sessions_status_update.
     for round in 0..10 {
+        // First, run service loops to generate status updates
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+
+        // Distribute results to all parties
         utils::send_advance_results_between_parties(
             &test_state.committee,
             &mut test_state.sent_consensus_messages_collectors,
@@ -253,138 +242,66 @@ async fn test_status_updates_distributed_through_consensus() {
         );
         test_state.consensus_round += 1;
 
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
-        }
-
-        // Check status updates in epoch stores
-        // After several rounds, validators should have received status updates
-        if round > 5 {
+        if round > 3 {
+            // After a few rounds, verify each epoch store has received status updates
             for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-                let status_updates = epoch_store.round_to_status_updates.lock().unwrap();
-                let total_updates: usize = status_updates.values().map(|v| v.len()).sum();
+                let updates = epoch_store.round_to_status_updates.lock().unwrap();
+                let total: usize = updates.values().map(|v| v.len()).sum();
                 info!(
-                    "Round {}: Validator {} has received {} total status updates",
-                    round, i, total_updates
+                    "Round {}: Validator {} has {} total status updates in epoch store",
+                    round, i, total
+                );
+                assert!(
+                    total > 0,
+                    "Validator {} should have received status updates by round {}",
+                    i,
+                    round
                 );
             }
         }
     }
 
-    // Verify that at least some status updates were distributed
-    let mut total_status_updates = 0usize;
-    for epoch_store in &test_state.epoch_stores {
-        let status_updates = epoch_store.round_to_status_updates.lock().unwrap();
-        total_status_updates += status_updates.values().map(|v| v.len()).sum::<usize>();
-    }
+    let num_validators = test_state.dwallet_mpc_services.len();
 
-    info!(
-        "Total status updates across all validators: {}",
-        total_status_updates
-    );
-
-    // Status updates should have been distributed
-    // Each round, each validator sends 1 status update, and it gets distributed to all
-    assert!(
-        total_status_updates > 0,
-        "Status updates should have been distributed through consensus"
-    );
-
-    info!("Test passed: Status updates distributed through consensus");
-}
-
-/// Test that weighted majority voting on idle status works correctly.
-/// When the majority of validators report idle status, the network should
-/// agree on being idle.
-#[tokio::test]
-#[cfg(test)]
-async fn test_weighted_majority_voting_on_idle_status() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
-
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee: committee.clone(),
-        sui_data_senders,
-    };
-
-    // Configure services
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
-    // Create network key
-    let (consensus_round, _network_key_bytes, _network_key_id) =
-        create_network_key_test(&mut test_state).await;
-    test_state.consensus_round = consensus_round as usize;
-
-    // Get the idle threshold
-    let idle_threshold = test_state.dwallet_mpc_services[0]
-        .dwallet_mpc_manager()
-        .protocol_config
-        .idle_session_count_threshold();
-
-    info!("Idle threshold: {}", idle_threshold);
-
-    // With minimal activity, all validators should be idle
-    // Run a few rounds to let the system stabilize
-    for _ in 0..5 {
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            test_state.consensus_round as u64,
-        );
-        test_state.consensus_round += 1;
-
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
-        }
-    }
-
-    // Check individual validator idle status
-    let mut idle_validators = 0;
+    // Final verification: the service should have processed status updates.
+    // Check that idle_status_by_party in the manager is populated (the service
+    // reads from epoch store and calls handle_status_updates which populates this).
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         let manager = service.dwallet_mpc_manager();
-        let is_idle = manager.compute_is_idle(0);
-        if is_idle {
-            idle_validators += 1;
-        }
-        info!("Validator {} is_idle: {}", i, is_idle);
-    }
-
-    info!("{} out of 4 validators report being idle", idle_validators);
-
-    // Run more consensus rounds to build up majority vote
-    for _ in 0..15 {
-        utils::send_advance_results_between_parties(
-            &test_state.committee,
-            &mut test_state.sent_consensus_messages_collectors,
-            &mut test_state.epoch_stores,
-            test_state.consensus_round as u64,
+        let idle_status_count = manager.idle_status_by_party.len();
+        info!(
+            "Validator {}: idle_status_by_party has {} entries",
+            i, idle_status_count
         );
-        test_state.consensus_round += 1;
+        // After enough rounds, each validator should have received idle status from all parties.
+        assert_eq!(
+            idle_status_count, num_validators,
+            "Validator {} should have idle status from all {} parties (got {})",
+            i, num_validators, idle_status_count
+        );
+    }
 
-        for service in test_state.dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
+    // Verify that each validator's idle_status_by_party entries are consistent:
+    // all validators should agree on each party's idle status.
+    let reference_statuses: Vec<_> = test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .idle_status_by_party
+        .iter()
+        .map(|(party, is_idle)| (*party, *is_idle))
+        .collect();
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate().skip(1) {
+        let manager = service.dwallet_mpc_manager();
+        for (party, expected_idle) in &reference_statuses {
+            let actual_idle = manager.idle_status_by_party.get(party);
+            assert_eq!(
+                actual_idle,
+                Some(expected_idle),
+                "Validator {} disagrees with validator 0 on party {:?}'s idle status",
+                i,
+                party
+            );
         }
     }
 
-    // The test verifies that the idle status voting mechanism is working
-    // by ensuring validators can compute and share their idle status
-    info!("Test passed: Weighted majority voting on idle status verified");
+    info!("Test passed: status updates distributed through consensus and processed by service");
 }

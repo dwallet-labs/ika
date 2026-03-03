@@ -43,6 +43,8 @@ async fn create_dwallet_test() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -53,6 +55,8 @@ async fn create_dwallet_test() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -85,6 +89,8 @@ async fn make_dwallet_public() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -95,6 +101,8 @@ async fn make_dwallet_public() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -156,6 +164,8 @@ async fn create_imported_dwallet() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -166,6 +176,8 @@ async fn create_imported_dwallet() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -234,6 +246,8 @@ async fn create_imported_dwallet_v2() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -244,6 +258,8 @@ async fn create_imported_dwallet_v2() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service

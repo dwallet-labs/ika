@@ -23,6 +23,8 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _internal_sign_request_senders,
+        _internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let network_key_id = ObjectID::random();
 

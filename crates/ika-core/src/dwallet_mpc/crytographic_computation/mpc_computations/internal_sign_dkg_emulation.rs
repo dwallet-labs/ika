@@ -1,10 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Internal Checkpoint DKG Module
+//! Internal Sign DKG Module
 //!
 //! This module provides functionality to compute the decentralized party DKG output
-//! for internal checkpoint signing. It emulates the centralized party (user) using
+//! for internal signing. It emulates the centralized party (user) using
 //! a deterministic zero-returning RNG (`ZeroRng`), enabling the network to perform
 //! internal signing operations without requiring an actual user.
 //!
@@ -17,7 +17,7 @@
 //! # Usage
 //!
 //! This module is used when creating a network key to also prepare the internal
-//! checkpoint DKG output. The output can then be used for signing checkpoints
+//! internal sign DKG output. The output can then be used for internal signing
 //! without requiring user participation.
 
 use std::collections::HashMap;
@@ -29,8 +29,8 @@ use dwallet_mpc_centralized_party::{
     CentralizedDKGWasmResult, advance_sign_by_protocol_with_rng, centralized_dkg_output_v2_with_rng,
 };
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, VersionedDwalletUserSecretShare,
-    VersionedPublicKeyShareAndProof,
+    DWalletCurve, DWalletSignatureAlgorithm, VersionedCentralizedDKGPublicOutput,
+    VersionedDwalletUserSecretShare, VersionedPublicKeyShareAndProof,
 };
 use dwallet_rng::ZeroRng;
 use group::OsCsRng;
@@ -65,14 +65,14 @@ pub struct EmulatedCentralizedDKGResult {
     pub public_output: Vec<u8>,
 }
 
-/// The complete internal checkpoint DKG output containing both centralized and
+/// The complete internal sign DKG output containing both centralized and
 /// decentralized party DKG results.
 ///
 /// This is computed at network key instantiation time and stored in the network
 /// key public data. It allows InternalSign to use the Sign protocol directly
 /// instead of DKGAndSign, avoiding redundant DKG computation at sign time.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InternalCheckpointDKGOutput {
+pub struct InternalSignDKGOutput {
     /// The emulated centralized party DKG result.
     pub centralized_dkg_result: EmulatedCentralizedDKGResult,
 
@@ -84,7 +84,7 @@ pub struct InternalCheckpointDKGOutput {
 /// Emulates the centralized party DKG for a given curve using ZeroRng.
 ///
 /// This function creates a deterministic "user" DKG output that can be used
-/// for internal checkpoint signing. All validators calling this function with
+/// for internal signing. All validators calling this function with
 /// the same inputs will produce identical outputs.
 ///
 /// # Arguments
@@ -105,7 +105,7 @@ pub struct InternalCheckpointDKGOutput {
 /// This function uses ZeroRng which provides NO randomness. The output is
 /// deterministic and the "secret" key share is not secret at all.
 /// This is intentional for internal signing operations.
-pub fn emulate_centralized_dkg_for_internal_signing(
+pub fn emulate_centralized_dkg_for_internal_sign(
     curve: DWalletCurve,
     protocol_public_parameters: &[u8],
     session_id: &[u8],
@@ -265,7 +265,7 @@ where
 /// # Arguments
 ///
 /// * `signature_algorithm` - The signature algorithm (e.g., EdDSA)
-/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_internal_signing`
+/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_internal_sign`
 /// * `message` - The message to sign
 /// * `hash_scheme` - The hash scheme to use
 /// * `presign` - The presign data (from internal presign pool)
@@ -369,9 +369,23 @@ where
     let zero_secret_key_share =
         get_zero_centralized_secret_internal::<SCALAR_LIMBS, ScalarValue>()?;
 
-    // Deserialize the centralized party DKG public output
+    // Deserialize the centralized party DKG public output, unwrapping the versioned envelope.
+    // Internal signing always produces V2 via `centralized_dkg_output_v2_with_rng`.
+    let versioned_dkg_output =
+        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(&emulated_dkg_result.public_output)
+            .map_err(DwalletMPCError::BcsError)?;
     let centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput =
-        bcs::from_bytes(&emulated_dkg_result.public_output).map_err(DwalletMPCError::BcsError)?;
+        match versioned_dkg_output {
+            VersionedCentralizedDKGPublicOutput::V2(output) => {
+                bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())
+                    .map_err(DwalletMPCError::BcsError)?
+            }
+            VersionedCentralizedDKGPublicOutput::V1(_) => {
+                return Err(DwalletMPCError::InternalError(
+                    "Internal sign DKG output should always be V2, got V1".to_string(),
+                ));
+            }
+        };
 
     // CRITICAL: Using ZeroRng for deterministic output.
     // This is intentional - all validators must produce identical outputs,
@@ -448,7 +462,7 @@ where
     // consensus_round value doesn't matter for single-round DKG with no message exchange
     let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, &empty_messages)?
         .ok_or_else(|| DwalletMPCError::InternalError(
-            "Internal checkpoint DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
+            "Internal sign DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
         ))?;
 
     let result = compute_dwallet_dkg::<P>(
@@ -467,12 +481,12 @@ where
             ..
         } => Ok(public_output_value),
         GuaranteedOutputDeliveryRoundResult::Advance { .. } => Err(DwalletMPCError::InternalError(
-            "Internal checkpoint DKG did not finalize in single round as expected".to_string(),
+            "Internal sign DKG did not finalize in single round as expected".to_string(),
         )),
     }
 }
 
-/// Computes the decentralized party DKG output for internal checkpoint signing.
+/// Computes the decentralized party DKG output for internal signing.
 ///
 /// This function runs the decentralized party DKG protocol locally. Since the DKG
 /// is a single-round protocol, each validator can compute their contribution
@@ -571,7 +585,7 @@ pub fn compute_decentralized_dkg_output(
     }
 }
 
-/// Gets the session identifier for internal checkpoint DKG.
+/// Gets the session identifier for internal sign DKG.
 ///
 /// This creates a deterministic session ID based on the network key ID,
 /// curve, and signature algorithm, ensuring all validators agree on the same
@@ -589,14 +603,14 @@ pub fn compute_decentralized_dkg_output(
 ///
 /// # Returns
 ///
-/// A `SessionIdentifier` for the internal checkpoint DKG.
-pub fn internal_checkpoint_dkg_session_id(
+/// A `SessionIdentifier` for the internal sign DKG.
+pub fn internal_sign_dkg_session_id(
     network_key_id: &[u8],
     curve: DWalletCurve,
     signature_algorithm: DWalletSignatureAlgorithm,
 ) -> SessionIdentifier {
     // Compute a deterministic preimage using Merlin transcript
-    let mut transcript = Transcript::new(b"Internal Checkpoint DKG Session ID");
+    let mut transcript = Transcript::new(b"Internal Sign DKG Session ID");
     transcript.append_message(b"network_key_id", network_key_id);
     transcript.append_message(b"curve", curve.to_string().as_bytes());
     transcript.append_message(
@@ -612,7 +626,7 @@ pub fn internal_checkpoint_dkg_session_id(
     SessionIdentifier::new(SessionType::System, session_id_preimage)
 }
 
-/// Computes the full internal checkpoint DKG output for checkpoint signing.
+/// Computes the full internal sign DKG output for internal signing.
 ///
 /// This function computes both the centralized party DKG (emulated with ZeroRng)
 /// and the decentralized party DKG outputs. The decentralized DKG is a single-round
@@ -631,69 +645,45 @@ pub fn internal_checkpoint_dkg_session_id(
 ///
 /// # Returns
 ///
-/// A tuple of (curve, algorithm, serialized_output) if successful, or None if the
-/// computation fails.
-pub fn compute_internal_checkpoint_dkg_output(
+/// The serialized DKG output if successful, or an error if the computation fails.
+pub fn compute_internal_sign_dkg_output(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
     algorithm: DWalletSignatureAlgorithm,
     protocol_pp: &[u8],
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
-) -> Option<(DWalletCurve, DWalletSignatureAlgorithm, Vec<u8>)> {
+) -> DwalletMPCResult<Vec<u8>> {
     // Compute the session ID for deterministic DKG
-    let session_id = internal_checkpoint_dkg_session_id(network_key_id, curve, algorithm);
+    let session_id = internal_sign_dkg_session_id(network_key_id, curve, algorithm);
 
     // Emulate the centralized party DKG
     let centralized_result =
-        match emulate_centralized_dkg_for_internal_signing(curve, protocol_pp, session_id.as_ref())
-        {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    ?curve,
-                    ?algorithm,
-                    "Failed to compute internal checkpoint centralized DKG output"
-                );
-                return None;
-            }
-        };
+        emulate_centralized_dkg_for_internal_sign(curve, protocol_pp, session_id.as_ref())?;
 
     // Convert session_id to CommitmentSizedNumber for the decentralized DKG
     let session_id = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
 
     // Compute the decentralized party DKG output
-    let decentralized_dkg_public_output = match compute_decentralized_dkg_output(
+    let decentralized_dkg_public_output = compute_decentralized_dkg_output(
         curve,
         session_id,
         protocol_pp,
         &centralized_result,
         access_structure,
         party_id,
-    ) {
-        Ok(output) => output,
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                ?curve,
-                ?algorithm,
-                "Failed to compute internal checkpoint decentralized DKG output"
-            );
-            return None;
-        }
-    };
+    )?;
 
-    // Create the full internal checkpoint DKG output
-    let output = InternalCheckpointDKGOutput {
+    // Create the full internal sign DKG output
+    let output = InternalSignDKGOutput {
         centralized_dkg_result: centralized_result,
         decentralized_dkg_public_output,
     };
 
     // Serialize the full output
-    let serialized_output = bcs::to_bytes(&output).ok()?;
+    let serialized_output = bcs::to_bytes(&output).map_err(DwalletMPCError::BcsError)?;
 
-    Some((curve, algorithm, serialized_output))
+    Ok(serialized_output)
 }
 
 #[cfg(test)]
@@ -701,33 +691,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_internal_checkpoint_dkg_session_id_is_deterministic() {
+    fn test_internal_sign_dkg_session_id_is_deterministic() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let first_call = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
-        let second_call = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let first_call = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let second_call = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
 
         assert_eq!(first_call, second_call);
     }
 
     #[test]
-    fn test_internal_checkpoint_dkg_session_id_varies_with_inputs() {
+    fn test_internal_sign_dkg_session_id_varies_with_inputs() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let original = internal_checkpoint_dkg_session_id(&network_key_id, curve, algorithm);
+        let original = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
 
         // Different network key
         let different_key = [2u8; 32];
-        let with_different_key =
-            internal_checkpoint_dkg_session_id(&different_key, curve, algorithm);
+        let with_different_key = internal_sign_dkg_session_id(&different_key, curve, algorithm);
 
         // Different curve
         let with_different_curve =
-            internal_checkpoint_dkg_session_id(&network_key_id, DWalletCurve::Secp256k1, algorithm);
+            internal_sign_dkg_session_id(&network_key_id, DWalletCurve::Secp256k1, algorithm);
 
         assert_ne!(original, with_different_key);
         assert_ne!(original, with_different_curve);

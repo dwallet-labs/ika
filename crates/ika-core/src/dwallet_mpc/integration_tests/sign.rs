@@ -30,30 +30,32 @@ use tracing::info;
 /// test feasible within a reasonable time budget.
 async fn sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = utils::create_test_protocol_config_guard();
     let epoch_id = 1;
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-    };
+    let mut test_state = utils::build_test_state(4);
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
             .last_session_to_complete_in_current_epoch = 400;
     }
+
+    // Verify test protocol config is in effect.
+    let pc = &test_state.dwallet_mpc_services[0]
+        .dwallet_mpc_manager()
+        .protocol_config;
+    info!(
+        delay = pc.get_internal_presign_consensus_round_delay(
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        ),
+        min_pool = pc.get_internal_presign_pool_minimum_size(
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        ),
+        enabled = pc.internal_presign_sessions_enabled(),
+        "sign_flow_test: EdDSA presign config"
+    );
+
     let (consensus_round, network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     // Use Curve25519 (EdDSA): EdDSA presigns do not require class groups operations and
@@ -153,25 +155,9 @@ async fn sign_flow_test() {
 /// test feasible within a reasonable time budget.
 async fn future_sign_flow_test() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
+    let _guard = utils::create_test_protocol_config_guard();
     let epoch_id = 1;
-    let (
-        dwallet_mpc_services,
-        sui_data_senders,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut test_state = IntegrationTestState {
-        dwallet_mpc_services,
-        sent_consensus_messages_collectors,
-        epoch_stores,
-        notify_services,
-        crypto_round: 1,
-        consensus_round: 1,
-        committee,
-        sui_data_senders,
-    };
+    let mut test_state = utils::build_test_state(4);
     for service in &mut test_state.dwallet_mpc_services {
         service
             .dwallet_mpc_manager_mut()
@@ -570,6 +556,8 @@ async fn global_presign_request_uses_correct_metadata_test() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -580,6 +568,8 @@ async fn global_presign_request_uses_correct_metadata_test() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        internal_sign_request_senders,
+        internal_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service

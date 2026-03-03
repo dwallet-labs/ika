@@ -73,13 +73,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "70092a93de2144d19f2c0744b289af58e0e4219c"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "babbb483"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }

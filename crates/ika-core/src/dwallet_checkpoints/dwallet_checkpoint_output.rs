@@ -15,7 +15,7 @@ use ika_types::messages_dwallet_checkpoint::{
     SignedDWalletCheckpointMessage, VerifiedDWalletCheckpointMessage,
 };
 use std::sync::Arc;
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, info, instrument, trace, warn};
 
 #[async_trait]
 pub trait DWalletCheckpointOutput: Sync + Send + 'static {
