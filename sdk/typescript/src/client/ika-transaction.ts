@@ -421,7 +421,7 @@ export class IkaTransaction {
 			coordinatorTx.acceptEncryptedUserShare(
 				this.#ikaClient.ikaConfig,
 				this.#getCoordinatorObjectRef(),
-				dWallet.id.id,
+				dWallet.id,
 				encryptedUserSecretKeyShareId,
 				await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
 				this.#transaction,
@@ -439,8 +439,8 @@ export class IkaTransaction {
 			coordinatorTx.acceptEncryptedUserShare(
 				this.#ikaClient.ikaConfig,
 				this.#getCoordinatorObjectRef(),
-				dWallet.id.id,
-				destinationEncryptedUserSecretKeyShare.id.id,
+				dWallet.id,
+				destinationEncryptedUserSecretKeyShare.id,
 				await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
 					dWallet,
 					sourceEncryptedUserSecretKeyShare,
@@ -507,7 +507,7 @@ export class IkaTransaction {
 		coordinatorTx.requestMakeDwalletUserSecretKeySharesPublic(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
+			dWallet.id,
 			secretShare,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -1954,7 +1954,7 @@ export class IkaTransaction {
 		return coordinatorTx.requestPresign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
+			dWallet.id,
 			signatureAlgorithmNumber,
 			this.createSessionIdentifier(),
 			ikaCoin,
@@ -2132,7 +2132,7 @@ export class IkaTransaction {
 		return coordinatorTx.requestFutureSign(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			userSignatureInputs.activeDWallet.id.id,
+			userSignatureInputs.activeDWallet.id,
 			verifiedPresignCap,
 			userSignatureInputs.message,
 			hashNumber,
@@ -2258,7 +2258,7 @@ export class IkaTransaction {
 		return coordinatorTx.requestReEncryptUserShareFor(
 			this.#ikaClient.ikaConfig,
 			this.#getCoordinatorObjectRef(),
-			dWallet.id.id,
+			dWallet.id,
 			destinationEncryptionKeyAddress,
 			await encryptSecretShare(
 				fromNumberToCurve(destinationEncryptionKeyObj.curve),
@@ -2266,7 +2266,7 @@ export class IkaTransaction {
 				new Uint8Array(destinationEncryptionKeyObj.encryption_key),
 				publicParameters,
 			),
-			sourceEncryptedUserSecretKeyShare.id.id,
+			sourceEncryptedUserSecretKeyShare.id,
 			this.createSessionIdentifier(),
 			ikaCoin,
 			suiCoin,

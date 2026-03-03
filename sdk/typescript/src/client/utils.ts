@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { DynamicFieldInfo, SuiClient, SuiObjectResponse } from '@mysten/sui/client';
+import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
 
 import { InvalidObjectError } from './errors.js';
 
@@ -13,34 +13,52 @@ import { InvalidObjectError } from './errors.js';
  * @returns The BCS-encoded bytes of the object
  * @throws {InvalidObjectError} If the response doesn't contain valid BCS data
  */
-export function objResToBcs(resp: SuiObjectResponse): string {
-	if (resp.data?.bcs?.dataType !== 'moveObject') {
-		throw new InvalidObjectError(
-			`Response bcs missing: ${JSON.stringify(resp.data?.type, null, 2)}`,
-		);
+export function objResToBcs(
+	resp:
+		| SuiClientTypes.Object<{
+				content: true;
+		  }>
+		| SuiClientTypes.GetObjectResponse<{
+				content: true;
+		  }>
+		| Error,
+): Uint8Array<ArrayBuffer> {
+	if (resp instanceof Error) {
+		throw resp;
 	}
 
-	return resp.data.bcs.bcsBytes;
+	if ('object' in resp) {
+		resp = resp.object;
+	}
+
+	if (!resp.content) {
+		throw new InvalidObjectError(`Response bcs missing: ${JSON.stringify(resp.type, null, 2)}`);
+	}
+
+	return new Uint8Array(resp.content);
 }
 
 export async function fetchAllDynamicFields(
-	suiClient: SuiClient,
+	suiClient: ClientWithCoreApi,
 	parentId: string,
-): Promise<DynamicFieldInfo[]> {
+): Promise<SuiClientTypes.DynamicFieldEntry[]> {
 	const allFields: any[] = [];
 	let cursor: string | null = null;
 
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
-		const response = await suiClient.getDynamicFields({
+		const response = await suiClient.core.listDynamicFields({
 			parentId,
 			cursor,
 		});
-		allFields.push(...response.data);
-		if (response.nextCursor === cursor) {
+
+		allFields.push(...response.dynamicFields);
+
+		if (response.cursor === cursor) {
 			break;
 		}
-		cursor = response.nextCursor;
+
+		cursor = response.cursor;
 	}
 
 	return allFields;

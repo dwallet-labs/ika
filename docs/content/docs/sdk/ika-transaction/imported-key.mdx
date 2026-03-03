@@ -72,7 +72,7 @@ import {
 	IkaClient,
 	prepareImportedKeyDWalletVerification,
 	UserShareEncryptionKeys,
-} from '@ika-network/ika-sdk';
+} from '@ika.xyz/sdk';
 
 const signerAddress = '0xabcdef1234567890';
 const curve = Curve.SECP256K1; // Choose based on your key type
@@ -105,7 +105,7 @@ const importDWalletVerificationInput = await prepareImportedKeyDWalletVerificati
 ### Step 2: Request Import Verification
 
 ```typescript
-import { IkaTransaction } from '@ika-network/ika-sdk';
+import { IkaTransaction } from '@ika.xyz/sdk';
 import { Transaction } from '@mysten/sui/transactions';
 
 const suiTransaction = new Transaction();
@@ -149,16 +149,16 @@ import {
 	CoordinatorInnerModule,
 	ImportedKeyDWallet,
 	SessionsManagerModule,
-} from '@ika-network/ika-sdk';
+} from '@ika.xyz/sdk';
 
 // Find the verification event
 const verificationEvent = result.events?.find((event) =>
-	event.type.includes('DWalletImportedKeyVerificationRequestEvent'),
+	event.eventType.includes('DWalletImportedKeyVerificationRequestEvent'),
 );
 
 const parsedVerificationEvent = SessionsManagerModule.DWalletSessionEvent(
 	CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
-).fromBase64(verificationEvent?.bcs);
+).parse(new Uint8Array(verificationEvent?.bcs ?? []));
 
 const dWalletID = parsedVerificationEvent.event_data.dwallet_id;
 const encryptedUserSecretKeyShareId =
@@ -196,7 +196,7 @@ const acceptShareIkaTransaction = new IkaTransaction({
 // Accept the encrypted user share
 await acceptShareIkaTransaction.acceptEncryptedUserShare({
 	dWallet: importedKeyDWallet,
-	encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+	encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id,
 	userPublicOutput: importDWalletVerificationInput.userPublicOutput,
 });
 
@@ -221,7 +221,7 @@ Presigns are pre-computed cryptographic nonces required for signature generation
 - **DWallet-Specific Presign**: Required for ECDSA algorithms (ECDSASecp256k1, ECDSASecp256r1)
 
 ```typescript
-import { Hash, SignatureAlgorithm } from '@ika-network/ika-sdk';
+import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 
 const signatureAlgorithm = SignatureAlgorithm.ECDSASecp256k1;
 const hashScheme = Hash.KECCAK256;
@@ -267,11 +267,11 @@ destroyEmptyIkaToken(suiTransaction, ikaClient.ikaConfig, ikaToken);
 const result = await executeTransaction(suiClient, suiTransaction);
 
 // Extract presign ID from event
-const presignEvent = result.events?.find((event) => event.type.includes('PresignRequestEvent'));
+const presignEvent = result.events?.find((event) => event.eventType.includes('PresignRequestEvent'));
 
 const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
 	CoordinatorInnerModule.PresignRequestEvent,
-).fromBase64(presignEvent?.bcs);
+).parse(new Uint8Array(presignEvent?.bcs ?? []));
 
 // Wait for presign to complete
 const presign = await ikaClient.getPresignInParticularState(
@@ -334,11 +334,11 @@ destroyEmptyIkaToken(signTransaction, ikaClient.ikaConfig, emptyIKACoin);
 const signResult = await executeTransaction(suiClient, signTransaction);
 
 // Extract sign ID from event
-const signEvent = signResult.events?.find((event) => event.type.includes('SignRequestEvent'));
+const signEvent = signResult.events?.find((event) => event.eventType.includes('SignRequestEvent'));
 
 const signEventData = SessionsManagerModule.DWalletSessionEvent(
 	CoordinatorInnerModule.SignRequestEvent,
-).fromBase64(signEvent?.bcs);
+).parse(new Uint8Array(signEvent?.bcs ?? []));
 
 // Wait for signature completion
 const sign = await ikaClient.getSignInParticularState(
@@ -512,11 +512,11 @@ destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 await executeTransaction(suiClient, transaction);
 
 // Fetch the completed signature
-const signEvent = result.events?.find((event) => event.type.includes('SignRequestEvent'));
+const signEvent = result.events?.find((event) => event.eventType.includes('SignRequestEvent'));
 
 const signEventData = SessionsManagerModule.DWalletSessionEvent(
 	CoordinatorInnerModule.SignRequestEvent,
-).fromBase64(signEvent?.bcs);
+).parse(new Uint8Array(signEvent?.bcs ?? []));
 
 const signature = await ikaClient.getSignInParticularState(
 	signEventData.event_data.sign_id,
@@ -571,7 +571,7 @@ destroyEmptyIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
 await executeTransaction(suiClient, transaction);
 
 // Wait for dWallet to have public shares
-const publicDWallet = await ikaClient.getDWalletInParticularState(activeDWallet.id.id, 'Active', {
+const publicDWallet = await ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active', {
 	timeout: 30000,
 	interval: 2000,
 });

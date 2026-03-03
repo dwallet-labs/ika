@@ -388,7 +388,7 @@ await executeTransaction(suiClient, transaction);
 
 // Wait for the dWallet to have public shares
 const sharedDWallet = await ikaClient.getDWalletInParticularState(
-	zeroTrustDWallet.id.id,
+	zeroTrustDWallet.id,
 	'Active',
 	{ timeout: 30000, interval: 2000 },
 );

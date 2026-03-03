@@ -1,5 +1,5 @@
 import { bcs } from '@mysten/sui/bcs';
-import { SuiClient } from '@mysten/sui/client';
+import { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { expect } from 'vitest';
 
@@ -7,6 +7,7 @@ import {
 	CoordinatorInnerModule,
 	createRandomSessionIdentifier,
 	Curve,
+	DWallet,
 	Hash,
 	IkaClient,
 	prepareDKGAsync,
@@ -31,7 +32,7 @@ import {
 const PublicKeyBCS = bcs.vector(bcs.u8());
 
 export interface DKGTestSetup {
-	suiClient: SuiClient;
+	suiClient: ClientWithCoreApi;
 	ikaClient: IkaClient;
 	userShareEncryptionKeys: UserShareEncryptionKeys;
 	signerAddress: string;
@@ -132,12 +133,14 @@ export async function requestPresignForDKG(
 
 	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
 
-	const presignEvent = result.events?.find((event) => event.type.includes('PresignRequestEvent'));
+	const presignEvent = result.events?.find((event) =>
+		event.eventType.includes('PresignRequestEvent'),
+	);
 	expect(presignEvent).toBeDefined();
 
 	const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.PresignRequestEvent,
-	).fromBase64(presignEvent?.bcs as string);
+	).parse(new Uint8Array(presignEvent?.bcs ?? []));
 
 	const presign = await retryUntil(
 		() =>
@@ -223,7 +226,8 @@ export async function executeDKGRequest<S extends SignatureAlgorithm = never>(
 
 	const dkgEvent = result.events?.find((event) => {
 		return (
-			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+			event.eventType.includes('DWalletDKGRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
 		);
 	});
 
@@ -231,7 +235,7 @@ export async function executeDKGRequest<S extends SignatureAlgorithm = never>(
 
 	const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletDKGRequestEvent,
-	).fromBase64(dkgEvent?.bcs as string);
+	).parse(new Uint8Array(dkgEvent?.bcs ?? []));
 
 	expect(parsedDkgEvent).toBeDefined();
 
@@ -264,7 +268,7 @@ export async function waitForDWalletAwaitingSignature(
 
 	expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
 	expect(awaitingKeyHolderSignatureDWallet.state.$kind).toBe('AwaitingKeyHolderSignature');
-	expect(awaitingKeyHolderSignatureDWallet.id.id).toBe(dWalletID);
+	expect(awaitingKeyHolderSignatureDWallet.id).toBe(dWalletID);
 
 	return awaitingKeyHolderSignatureDWallet as ZeroTrustDWallet;
 }
@@ -297,7 +301,7 @@ export async function acceptUserShareAndActivate(
 
 	await ikaTransaction.acceptEncryptedUserShare({
 		dWallet: awaitingKeyHolderSignatureDWallet,
-		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id.id,
+		encryptedUserSecretKeyShareId: encryptedUserSecretKeyShare.id,
 		userPublicOutput: new Uint8Array(userPublicOutput),
 	});
 
@@ -312,7 +316,7 @@ export async function acceptUserShareAndActivate(
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
-	expect(activeDWallet.id.id).toBe(dWalletID);
+	expect(activeDWallet.id).toBe(dWalletID);
 
 	return activeDWallet as ZeroTrustDWallet;
 }
@@ -434,7 +438,8 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 
 	const dkgEvent = result.events?.find((event) => {
 		return (
-			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+			event.eventType.includes('DWalletDKGRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
 		);
 	});
 
@@ -442,7 +447,7 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 
 	const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletDKGRequestEvent,
-	).fromBase64(dkgEvent?.bcs as string);
+	).parse(new Uint8Array(dkgEvent?.bcs ?? []));
 
 	expect(parsedDkgEvent).toBeDefined();
 
@@ -459,7 +464,7 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
-	expect(activeDWallet.id.id).toBe(dWalletID);
+	expect(activeDWallet.id).toBe(dWalletID);
 }
 
 export async function runCompleteSharedDKGFlowWithSign(
@@ -534,7 +539,8 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	const dkgEvent = result.events?.find((event) => {
 		return (
-			event.type.includes('DWalletDKGRequestEvent') && event.type.includes('DWalletSessionEvent')
+			event.eventType.includes('DWalletDKGRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
 		);
 	});
 
@@ -542,7 +548,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	const parsedDkgEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.DWalletDKGRequestEvent,
-	).fromBase64(dkgEvent?.bcs as string);
+	).parse(new Uint8Array(dkgEvent?.bcs ?? []));
 
 	expect(parsedDkgEvent).toBeDefined();
 
@@ -559,7 +565,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	expect(activeDWallet).toBeDefined();
 	expect(activeDWallet.state.$kind).toBe('Active');
-	expect(activeDWallet.id.id).toBe(dWalletID);
+	expect(activeDWallet.id).toBe(dWalletID);
 }
 
 export async function runGlobalPresignTest(
@@ -600,14 +606,17 @@ export async function runGlobalPresignTest(
 	const result = await executeTestTransaction(suiClient, suiTransaction, testName);
 
 	const presignEvent = result.events?.find((event) => {
-		return event.type.includes('PresignRequestEvent') && event.type.includes('DWalletSessionEvent');
+		return (
+			event.eventType.includes('PresignRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
+		);
 	});
 
 	expect(presignEvent).toBeDefined();
 
 	const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
 		CoordinatorInnerModule.PresignRequestEvent,
-	).fromBase64(presignEvent?.bcs as string);
+	).parse(new Uint8Array(presignEvent?.bcs ?? []));
 
 	expect(parsedPresignEvent).toBeDefined();
 	expect(parsedPresignEvent.event_data.presign_id).toBeDefined();
@@ -622,4 +631,63 @@ export async function runGlobalPresignTest(
 
 	expect(presign).toBeDefined();
 	expect(presign.state.$kind).toBe('Completed');
+}
+
+export async function testPresign(
+	ikaClient: IkaClient,
+	suiClient: ClientWithCoreApi,
+	dWallet: DWallet,
+	curve: Curve,
+	signatureAlgorithm: SignatureAlgorithm,
+	signerAddress: string,
+	testName: string,
+) {
+	const transaction = new Transaction();
+	const ikaTransaction = createTestIkaTransaction(ikaClient, transaction);
+
+	const emptyIKACoin = createEmptyTestIkaToken(transaction, ikaClient.ikaConfig);
+
+	let unverifiedPresignCap;
+
+	if (
+		dWallet.is_imported_key_dwallet &&
+		(signatureAlgorithm === SignatureAlgorithm.ECDSASecp256k1 ||
+			signatureAlgorithm === SignatureAlgorithm.ECDSASecp256r1)
+	) {
+		unverifiedPresignCap = ikaTransaction.requestPresign({
+			dWallet,
+			signatureAlgorithm,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	} else {
+		unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
+			curve,
+			dwalletNetworkEncryptionKeyId: dWallet.dwallet_network_encryption_key_id,
+			signatureAlgorithm,
+			ikaCoin: emptyIKACoin,
+			suiCoin: transaction.gas,
+		});
+	}
+
+	transaction.transferObjects([unverifiedPresignCap], signerAddress);
+
+	destroyEmptyTestIkaToken(transaction, ikaClient.ikaConfig, emptyIKACoin);
+
+	const result = await executeTestTransaction(suiClient, transaction, testName);
+
+	const presignRequestEvent = result.events?.find((event) => {
+		return (
+			event.eventType.includes('PresignRequestEvent') &&
+			event.eventType.includes('DWalletSessionEvent')
+		);
+	});
+
+	if (!presignRequestEvent) {
+		throw new Error('Failed to find PresignRequestEvent');
+	}
+
+	return SessionsManagerModule.DWalletSessionEvent(
+		CoordinatorInnerModule.PresignRequestEvent,
+	).parse(new Uint8Array(presignRequestEvent.bcs ?? []));
 }

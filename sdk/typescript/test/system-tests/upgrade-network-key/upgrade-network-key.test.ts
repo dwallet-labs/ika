@@ -18,16 +18,16 @@ import {
 	requestTestFaucetFunds,
 	waitForEpochSwitch,
 } from '../../helpers/test-utils';
+import { testSignCombination } from '../../integration/all-combinations.test';
+import { testImportedKeyScenario } from '../../integration/imported-key.test';
+import { createConfigMaps } from '../config-map';
+import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
 import {
 	deployUpgradedPackage,
 	getProtocolCapID,
 	getPublisherKeypair,
 	migrateCoordinator,
-} from '../../move-upgrade/upgrade-ika-twopc-mpc.test';
-import { testSignCombination } from '../../v2/all-combinations.test';
-import { testImportedKeyScenario } from '../../v2/imported-key.test';
-import { createConfigMaps } from '../config-map';
-import { deployIkaNetwork, NAMESPACE_NAME, NETWORK_SERVICE_NAME, TEST_ROOT_DIR } from '../globals';
+} from '../move-upgrade/upgrade-ika-twopc-mpc.test';
 import {
 	createFullnodePod,
 	createPods,
