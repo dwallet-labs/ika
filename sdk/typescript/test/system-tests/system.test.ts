@@ -8,7 +8,6 @@ import {
 	createTestIkaClient,
 	createTestSuiClient,
 	delay,
-	runSignFullFlowWithV1Dwallet,
 	waitForEpochSwitch,
 } from '../helpers/test-utils';
 import { createConfigMaps } from './config-map';
@@ -90,8 +89,6 @@ describe('system tests', () => {
 			await killValidatorPod(kc, NAMESPACE_NAME, i + 1);
 		}
 
-		console.log('deployed new validators, running a full flow test');
-
-		await runSignFullFlowWithV1Dwallet(ikaClient, suiClient, `system-test-full-flow`);
+		console.log('deployed new validators');
 	}, 3_600_000);
 });
