@@ -557,6 +557,7 @@ async fn test_internal_presign_continues_when_idle() {
     // 4. Pool continues growing to max_pool_size (only happens when idle).
     let mut reached_min = false;
     let mut became_idle = false;
+    let mut pool_size_when_idle_above_min: Option<u64> = None;
     for round_idx in 0..150 {
         utils::send_advance_results_between_parties(
             &test_state.committee,
@@ -590,6 +591,14 @@ async fn test_internal_presign_continues_when_idle() {
             );
         }
 
+        if reached_min && became_idle && pool_size_when_idle_above_min.is_none() {
+            pool_size_when_idle_above_min = Some(current_pool_size);
+            info!(
+                round_idx,
+                current_pool_size, "Both reached_min and became_idle true — snapshotting pool size"
+            );
+        }
+
         if current_pool_size >= max_pool_size {
             info!(
                 round_idx,
@@ -614,6 +623,17 @@ async fn test_internal_presign_continues_when_idle() {
     info!(
         "Final EdDSA pool size={} (min={}, max={})",
         pool_size_final, min_pool_size, max_pool_size
+    );
+
+    // Directly prove: after the pool was at/above min AND the network was idle,
+    // presigns continued to be created (pool grew beyond the snapshot).
+    let snapshot = pool_size_when_idle_above_min
+        .expect("pool should have been above min while idle at some point");
+    assert!(
+        pool_size_final > snapshot,
+        "pool should grow after being at/above min while idle (snapshot={}, final={})",
+        snapshot,
+        pool_size_final
     );
 
     // The pool can overshoot max_pool_size because multipresign sessions produce
