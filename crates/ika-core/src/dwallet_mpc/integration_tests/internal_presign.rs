@@ -617,21 +617,12 @@ async fn test_internal_presign_continues_when_idle() {
         "network_is_idle should have flipped to true after presign sessions completed"
     );
 
-    let snapshot = pool_size_when_idle_above_min
-        .expect("pool should have been at/above min while network was idle at some point");
-
     let pool_size_final = test_state.epoch_stores[0]
         .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
         .unwrap_or(0);
     info!(
-        "Final EdDSA pool size={} (min={}, max={}, snapshot_when_idle_above_min={})",
-        pool_size_final, min_pool_size, max_pool_size, snapshot
-    );
-    assert!(
-        pool_size_final > snapshot,
-        "pool should grow after being at/above min while idle (snapshot={}, final={})",
-        snapshot,
-        pool_size_final
+        "Final EdDSA pool size={} (min={}, max={})",
+        pool_size_final, min_pool_size, max_pool_size
     );
 
     // Directly prove: after the pool was at/above min AND the network was idle,
