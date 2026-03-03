@@ -13,6 +13,7 @@ Presigning creates cryptographic material (nonces) that are required before crea
 ## Overview
 
 Presigns:
+
 - Must be created **before** signing
 - Are **consumed** when used (one presign = one signature)
 - Go through **verification** before use
@@ -134,11 +135,10 @@ let is_ready = coordinator.is_presign_valid(&unverified_cap);
 let verified_cap = coordinator.verify_presign_cap(unverified_cap, ctx);
 ```
 
-
 <Callout type="warn" title="Verification Timing">
-`verify_presign_cap()` will fail if the network hasn't completed the presign yet. Either check with `is_presign_valid()` first, or ensure enough time has passed.
+	`verify_presign_cap()` will fail if the network hasn't completed the presign yet. Either check
+	with `is_presign_valid()` first, or ensure enough time has passed.
 </Callout>
-
 
 ## Presign Pool Management
 
@@ -282,13 +282,13 @@ public fun add_presign(
 
 ## Algorithm and Curve Compatibility
 
-| Signature Algorithm | Presign Type | Curve |
-|---------------------|--------------|-------|
-| Taproot | Global | SECP256K1 |
-| Schnorr | Global | SECP256K1 |
-| EdDSA | Global | ED25519 |
-| SchnorrkelSubstrate | Global | RISTRETTO |
-| ECDSASecp256k1 | Global | SECP256K1 |
+| Signature Algorithm       | Presign Type     | Curve     |
+| ------------------------- | ---------------- | --------- |
+| Taproot                   | Global           | SECP256K1 |
+| Schnorr                   | Global           | SECP256K1 |
+| EdDSA                     | Global           | ED25519   |
+| SchnorrkelSubstrate       | Global           | RISTRETTO |
+| ECDSASecp256k1            | Global           | SECP256K1 |
 | ECDSASecp256k1 (Imported) | dWallet-specific | SECP256K1 |
 
 ## Best Practices

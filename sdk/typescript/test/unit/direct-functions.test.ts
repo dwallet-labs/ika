@@ -364,9 +364,8 @@ describe('Cryptography Direct Functions', () => {
 		it('should handle invalid network DKG output', async () => {
 			const invalidOutput = new Uint8Array(10);
 
-			const { networkDkgPublicOutputToProtocolPublicParameters } = await import(
-				'../../src/client/cryptography'
-			);
+			const { networkDkgPublicOutputToProtocolPublicParameters } =
+				await import('../../src/client/cryptography');
 
 			await expect(
 				networkDkgPublicOutputToProtocolPublicParameters(Curve.SECP256K1, invalidOutput),
@@ -379,9 +378,8 @@ describe('Cryptography Direct Functions', () => {
 			const invalidReconfigOutput = new Uint8Array(10);
 			const invalidNetworkOutput = new Uint8Array(10);
 
-			const { reconfigurationPublicOutputToProtocolPublicParameters } = await import(
-				'../../src/client/cryptography'
-			);
+			const { reconfigurationPublicOutputToProtocolPublicParameters } =
+				await import('../../src/client/cryptography');
 
 			await expect(
 				reconfigurationPublicOutputToProtocolPublicParameters(
@@ -468,9 +466,8 @@ describe('Cryptography Direct Functions', () => {
 			crypto.getRandomValues(presign);
 			crypto.getRandomValues(message);
 
-			const { createUserSignMessageWithPublicOutput } = await import(
-				'../../src/client/cryptography'
-			);
+			const { createUserSignMessageWithPublicOutput } =
+				await import('../../src/client/cryptography');
 
 			// With mock data, this should fail
 			await expect(

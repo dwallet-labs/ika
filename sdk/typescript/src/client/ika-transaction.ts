@@ -1837,6 +1837,7 @@ export class IkaTransaction {
 	}
 
 	// @ts-expect-error - TODO: Add system functions
+	// eslint-disable-next-line no-unused-private-class-members
 	#getSystemObjectRef() {
 		if (!this.#systemObjectRef) {
 			this.#systemObjectRef = this.#transaction.sharedObjectRef({

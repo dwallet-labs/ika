@@ -58,19 +58,21 @@ Unless otherwise specified, most of these examples assume `Rust` and `cargo` are
 
 ### Running the existing examples
 
-In the root folder of the `ika` repository (or in the `ika-sdk` crate folder), you can individually run examples using the command  `cargo run --example filename` (without `.rs` extension). For example:
-* `cargo run --example ika_client` -- this one requires a local Ika network running (see [here](#Connecting to Ika Network
-)). If you do not have a local Ika network running, please skip this example.
-* `cargo run --example coin_read_api`
-* `cargo run --example event_api` -- note that this will subscribe to a stream and thus the program will not terminate unless forced (Ctrl+C)
-* `cargo run --example governance_api`
-* `cargo run --example read_api`
-* `cargo run --example programmable_transactions_api`
-* `cargo run --example sign_tx_guide`
+In the root folder of the `ika` repository (or in the `ika-sdk` crate folder), you can individually run examples using the command `cargo run --example filename` (without `.rs` extension). For example:
+
+- `cargo run --example ika_client` -- this one requires a local Ika network running (see [here](#Connecting to Ika Network
+  )). If you do not have a local Ika network running, please skip this example.
+- `cargo run --example coin_read_api`
+- `cargo run --example event_api` -- note that this will subscribe to a stream and thus the program will not terminate unless forced (Ctrl+C)
+- `cargo run --example governance_api`
+- `cargo run --example read_api`
+- `cargo run --example programmable_transactions_api`
+- `cargo run --example sign_tx_guide`
 
 ### Basic Examples
 
 #### Connecting to Ika Network
+
 The `IkaClientBuilder` struct provides a connection to the JSON-RPC server that you use for all read-only operations. The default URLs to connect to the Ika network are:
 
 - Local: http://127.0.0.1:9000
@@ -81,7 +83,6 @@ The `IkaClientBuilder` struct provides a connection to the JSON-RPC server that 
 For all available servers, see [here](https://ika.io/networkinfo).
 
 For running a local Ika network, please follow [this guide](https://docs.ika.io/build/ika-local-network) for installing Ika and [this guide](https://docs.ika.io/build/ika-local-network#start-the-local-network) for starting the local Ika network.
-
 
 ```rust
 use ika_sdk::IkaClientBuilder;
@@ -110,6 +111,7 @@ async fn main() -> Result<(), anyhow::Error> {
 ```
 
 #### Read the total coin balance for each coin type owned by this address
+
 ```rust
 use std::str::FromStr;
 use ika_sdk::types::base_types::IkaAddress;
@@ -170,6 +172,7 @@ See the programmable transactions [example](https://github.com/MystenLabs/sui/bl
 4. Making a move
 
    Run the following command in the [`tic-tac-toe/cli` directory](https://github.com/MystenLabs/sui/tree/main/examples/tic-tac-toe/cli) to make a move in an existing game, as the active address in the CLI, replacing the game ID and address accordingly:
+
    ```shell
    cargo run -- move --package-id <<tic-tac-toe package object ID>> --row $R --col $C <<game ID>>
    ```

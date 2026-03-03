@@ -6,7 +6,7 @@ sidebar_position: 1
 sidebar_label: dWallet Types Overview
 ---
 
-import { Info, Warning, Tip } from '@/components/InfoBox';
+import { Info, Tip, Warning } from '@/components/InfoBox';
 
 # dWallet Types Overview
 
@@ -15,7 +15,8 @@ dWallets use 2PC-MPC (Two-Party Computation Multi-Party Computation) to split cr
 ## Zero-Trust dWallets
 
 <Tip title="Two-Share Model">
-The key is split between you (user share) and the network (network share). Both shares are required to create signatures.
+	The key is split between you (user share) and the network (network share). Both shares are
+	required to create signatures.
 </Tip>
 
 A Zero-Trust dWallet has two shares:
@@ -31,7 +32,8 @@ Without your user share, the network cannot create any signatures. You maintain 
 ## Shared dWallets
 
 <Info title="Network-Controlled for Automation">
-The user share is public, enabling the network to create signatures autonomously. Perfect for DAOs, smart contracts, and automated systems.
+	The user share is public, enabling the network to create signatures autonomously. Perfect for
+	DAOs, smart contracts, and automated systems.
 </Info>
 
 A Shared dWallet has a public user share stored on-chain. This means:
@@ -47,7 +49,8 @@ Since both shares are accessible to the network, it can create signatures withou
 ## Imported Key dWallets
 
 <Warning title="Existing Key Import">
-Import an existing private key into the dWallet system, with options for Zero-Trust or Shared configurations.
+	Import an existing private key into the dWallet system, with options for Zero-Trust or Shared
+	configurations.
 </Warning>
 
 An Imported Key dWallet brings an existing private key into the dWallet system. You can import it as:
@@ -71,18 +74,21 @@ Your original private key still exists outside the dWallet system. If compromise
 ## Which One Should You Pick?
 
 **Go with Zero-Trust if:**
+
 - You need user-controlled wallets where users maintain full signing authority
 - Building custody solutions or personal wallets
 - Regulatory or compliance requirements mandate user participation in signing
 - You want maximum security with the zero-trust 2PC model
 
 **Pick Shared if:**
+
 - Building DAOs that need automated treasury management
 - Creating smart contract systems that sign programmatically
 - Developing automated trading bots or autonomous systems
 - You want to delegate signing authority to the network or smart contracts
 
 **Choose Imported Key if:**
+
 - You need to bring existing keys into the dWallet system
 - You can configure it as Zero-Trust (user control) or Shared (network control)
 - Be aware that your original private key remains a security consideration

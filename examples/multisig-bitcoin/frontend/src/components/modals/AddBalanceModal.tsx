@@ -117,4 +117,3 @@ export function AddBalanceModal({ open, onOpenChange, onAddIka, onAddSui }: AddB
 		</Dialog>
 	);
 }
-

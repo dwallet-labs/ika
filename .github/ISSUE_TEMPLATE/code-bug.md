@@ -11,6 +11,7 @@ assignees: ''
 Fill this in with the concrete steps needed to reproduce the bug. When providing code in the reproduction steps, use the smallest snippet of code that demonstrates the issue, removing any extraneous details.
 
 e.g.
+
 1. Call function <function call>.
 2. Use return value and call <other function call>.
 
@@ -30,5 +31,5 @@ e.g.
 
 ## System Information
 
-* OS: <specify OS version>
-* Compiler: <specify compiler version>
+- OS: <specify OS version>
+- Compiler: <specify compiler version>

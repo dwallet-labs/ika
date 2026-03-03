@@ -3,11 +3,11 @@
 class-groups-key-pair-and-proof:
   path: fake.key
 # Update this value to the location you want Sui to store its database.
-db-path: "/opt/ika/db"
+db-path: '/opt/ika/db'
 
 # For ipv4, update this to "/ip4/X.X.X.X/tcp/8080/http"
-network-address: "/dns/localhost/tcp/8080/http"
-metrics-address: "0.0.0.0:9184"
+network-address: '/dns/localhost/tcp/8080/http'
+metrics-address: '0.0.0.0:9184'
 sui-connector-config:
   sui-rpc-url: SUI_RPC_URL
   sui-chain-identifier: SUI_CHAIN_IDENTITY
@@ -20,10 +20,9 @@ sui-connector-config:
     path: /opt/ika/key-pairs/notifier.key
 p2p-config:
   external-address: /dns/HOSTNAME/udp/8084
-  listen-address: "0.0.0.0:8084"
+  listen-address: '0.0.0.0:8084'
   # add state-sync seed peers below
-  seed-peers:
-    SEED_PEERS
+  seed-peers: SEED_PEERS
   # todo(zeev): check if it's relevant?
 #      state-sync:
 #        checkpoint-content-timeout-ms: 10000
@@ -40,7 +39,7 @@ authority-store-pruning-config:
 state-archive-write-config:
   concurrency: 0
   use-for-pruning-watermark: false
-state-archive-read-config: [ ]
+state-archive-read-config: []
   #authority-overload-config:
   #max-txn-age-in-queue:
   #  secs: 0

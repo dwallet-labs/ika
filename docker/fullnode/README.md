@@ -2,16 +2,15 @@
 
 Follow the steps in this Readme to install and configure a Ika Full node for testing locally using Docker. The instructions were validated on the following operating system/processor combinations:
 
- * Linux/AMD64
- * Darwin/AMD64
- * Darwin/ARM64
+- Linux/AMD64
+- Darwin/AMD64
+- Darwin/ARM64
 
 ## Prerequisites
 
- * [Install Docker](https://docs.docker.com/get-docker/) 
- * [Install Docker Compose](https://docs.docker.com/compose/install/)
- * Download the Full node [docker-compose.yaml](https://github.com/MystenLabs/sui/blob/main/docker/fullnode/docker-compose.yaml) file.
-
+- [Install Docker](https://docs.docker.com/get-docker/)
+- [Install Docker Compose](https://docs.docker.com/compose/install/)
+- Download the Full node [docker-compose.yaml](https://github.com/MystenLabs/sui/blob/main/docker/fullnode/docker-compose.yaml) file.
 
 ## Configure Ika Full node
 
@@ -25,7 +24,7 @@ wget https://github.com/MystenLabs/sui/raw/main/crates/ika-config/data/fullnode-
 
 The genesis blob contains the information that defined the Ika network configuration. Before you can start the Full node, you need to download the most recent file to ensure compatibility with the version of Ika you use. Use the following command to download the [genesis.blob](https://github.com/MystenLabs/sui-genesis/raw/main/devnet/genesis.blob) from the `devnet` branch of the Ika repository:
 
-```wget https://github.com/MystenLabs/sui-genesis/raw/main/devnet/genesis.blob```
+`wget https://github.com/MystenLabs/sui-genesis/raw/main/devnet/genesis.blob`
 
 ## Start your Ika Full node
 
@@ -45,11 +44,12 @@ After the Full node starts you can test the JSON-RPC interfaces.
 
 Ika Explorer supports connecting to a local network. To view activity on your local Full node, open the URL: [https://explorer.ika.io/?network=local](https://explorer.ika.io/?network=local).
 
-You can also change the network that Ika Explorer connects to by select it in the Ika Explorer interface. 
+You can also change the network that Ika Explorer connects to by select it in the Ika Explorer interface.
 
 ### Stop the Full node
 
 Run the following command to stop the Full node when you finish using it:
+
 ```shell
 docker compose stop
 ```
@@ -68,7 +68,7 @@ docker compose up -d
 
 ### Reset the environment
 
-If you continue to see issues, stop the Full node (`docker compose stop`) and delete the Docker container and volume. Then run the following command to start a new instance of the Full node using the same genesis blob. 
+If you continue to see issues, stop the Full node (`docker compose stop`) and delete the Docker container and volume. Then run the following command to start a new instance of the Full node using the same genesis blob.
 
 ```shell
 docker compose down --volumes
@@ -77,11 +77,13 @@ docker compose down --volumes
 ### Stats (CPU/MEM USAGE %)
 
 To view usage details for the Full node running in Docker, run the following command:
+
 ```shell
 docker stats
 ```
 
 This command shows a live data stream of the Docker container resource usage, such as CPU and memory. To view data for all containers, use the following command:
+
 ```shell
 docker stats -a
 ```
@@ -123,13 +125,16 @@ sed -i 's/127.0.0.1/0.0.0.0/' fullnode-template.yaml
 
 Download each package. For example, on macOS use [homebrew](https://brew.sh/):
 
-```brew install wget curl```
+`brew install wget curl`
 
 ### Learn more about Ika
- * https://docs.ika.io/learn
+
+- https://docs.ika.io/learn
 
 ### Learn more about building and running a Full node from source code
- * https://docs.ika.io/build/fullnode
+
+- https://docs.ika.io/build/fullnode
 
 ### Learn more about Docker Compose
- * https://docs.docker.com/compose/gettingstarted/
+
+- https://docs.docker.com/compose/gettingstarted/

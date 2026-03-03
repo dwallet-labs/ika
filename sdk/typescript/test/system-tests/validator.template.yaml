@@ -38,7 +38,7 @@ p2p-config:
 state-archive-write-config:
   concurrency: 0
   use-for-pruning-watermark: false
-state-archive-read-config: [ ]
+state-archive-read-config: []
 #authority-overload-config:
 #  max-txn-age-in-queue:
 #    secs: 0

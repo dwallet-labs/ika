@@ -74,7 +74,8 @@ sdk/
 ### Rust
 
 **DO:**
-- Rust 1.90 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
+
+- Rust 1.93 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
 - Prefer functional style; use iterators, `map`, `filter`, `fold` over loops
 - Shadow variables when transforming and old value won't be used (keep naming simple)
 - Put imports at file top (e.g., `use std::collections::HashSet;`)
@@ -86,6 +87,7 @@ sdk/
 - When moving code between files, copy-paste identically (easier to review)
 
 **DON'T:**
+
 - **NEVER use `unsafe`** - no exceptions
 - Don't use mutable variables unless absolutely necessary
 - Don't use fully-qualified paths inline in code (use `HashSet` after importing, not `std::collections::HashSet`)
@@ -100,6 +102,7 @@ sdk/
 - Don't exceed 20 function arguments (clippy enforced)
 
 ### Move
+
 - Use `sui move build` for compilation
 - Format with `pnpm prettier:fix-move`
 
@@ -134,6 +137,7 @@ cd sdk/typescript && pnpm test
 3. **Don't waste time implementing an alternative** - You'll just have to redo it
 
 **Stop and consult the user when:**
+
 - The specified approach hits an unexpected obstacle
 - You're tempted to "simplify" by doing something different
 - You think there's a "better" way than what was requested
@@ -144,6 +148,7 @@ cd sdk/typescript && pnpm test
 ## Git Workflow
 
 **DO:**
+
 - Run `cargo fmt --all` before any commit, and include all formatted files in the commit
 - Always work on dedicated feature/fix branches
 - Commit and push after each completed task
@@ -151,6 +156,7 @@ cd sdk/typescript && pnpm test
 - For PR fixes: checkout the PR branch, fix comments, push to that branch
 
 **DON'T:**
+
 - Don't push/commit to `main`, `master`, or `dev` branches
 - Don't use `--no-verify` to skip git hooks
 

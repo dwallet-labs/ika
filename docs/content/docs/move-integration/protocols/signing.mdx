@@ -13,6 +13,7 @@ Direct signing creates a signature immediately in a single transaction. Use this
 ## Overview
 
 Signing requires:
+
 1. A **VerifiedPresignCap** (from presigning)
 2. A **MessageApproval** (authorizes signing the specific message)
 3. A **message_centralized_signature** (user's partial signature from SDK)
@@ -45,11 +46,11 @@ let approval = coordinator.approve_imported_key_message(
 
 ### Parameters
 
-| Parameter | Description | Example Values |
-|-----------|-------------|----------------|
-| `signature_algorithm` | Algorithm to use | 0=ECDSA, 1=Taproot, 4=EdDSA |
-| `hash_scheme` | Hash function | 0=SHA256, 1=KECCAK256 |
-| `message` | Bytes to sign | Transaction hash, message bytes |
+| Parameter             | Description      | Example Values                  |
+| --------------------- | ---------------- | ------------------------------- |
+| `signature_algorithm` | Algorithm to use | 0=ECDSA, 1=Taproot, 4=EdDSA     |
+| `hash_scheme`         | Hash function    | 0=SHA256, 1=KECCAK256           |
+| `message`             | Bytes to sign    | Transaction hash, message bytes |
 
 ## Request Sign
 
@@ -198,57 +199,54 @@ fun return_payment_coins(self: &mut Signer, ika: Coin<IKA>, sui: Coin<SUI>) {
 
 ```typescript
 import {
-    IkaClient,
-    IkaTransaction,
-    createUserSignMessageWithPublicOutput,
-    Curve,
-    SignatureAlgorithm,
-    Hash,
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	Hash,
+	IkaClient,
+	IkaTransaction,
+	SignatureAlgorithm,
 } from '@ika.xyz/sdk';
 import { Transaction } from '@mysten/sui/transactions';
 
 async function signMessage(
-    signer: Signer,
-    message: Uint8Array,
-    presign: Presign,
-    dWallet: SharedDWallet,
+	signer: Signer,
+	message: Uint8Array,
+	presign: Presign,
+	dWallet: SharedDWallet,
 ) {
-    // Get completed presign data
-    const completedPresign = await ikaClient.getPresignInParticularState(
-        presign.id,
-        'Completed',
-    );
+	// Get completed presign data
+	const completedPresign = await ikaClient.getPresignInParticularState(presign.id, 'Completed');
 
-    // Create user's partial signature
-    const messageCentralizedSignature = createUserSignMessageWithPublicOutput(
-        Curve.SECP256K1,
-        completedPresign.presign,
-        message,
-        dWallet.publicOutput,
-        dWallet.publicUserSecretKeyShare,
-    );
+	// Create user's partial signature
+	const messageCentralizedSignature = createUserSignMessageWithPublicOutput(
+		Curve.SECP256K1,
+		completedPresign.presign,
+		message,
+		dWallet.publicOutput,
+		dWallet.publicUserSecretKeyShare,
+	);
 
-    // Build transaction
-    const tx = new Transaction();
+	// Build transaction
+	const tx = new Transaction();
 
-    tx.moveCall({
-        target: `${packageId}::signer::sign_message`,
-        arguments: [
-            tx.object(signerId),
-            tx.object(coordinatorId),
-            tx.pure.vector('u8', Array.from(message)),
-            tx.pure.vector('u8', Array.from(messageCentralizedSignature)),
-        ],
-    });
+	tx.moveCall({
+		target: `${packageId}::signer::sign_message`,
+		arguments: [
+			tx.object(signerId),
+			tx.object(coordinatorId),
+			tx.pure.vector('u8', Array.from(message)),
+			tx.pure.vector('u8', Array.from(messageCentralizedSignature)),
+		],
+	});
 
-    const result = await suiClient.signAndExecuteTransaction({
-        transaction: tx,
-        signer: keypair,
-    });
+	const result = await suiClient.signAndExecuteTransaction({
+		transaction: tx,
+		signer: keypair,
+	});
 
-    // Extract sign ID from events
-    const signId = extractSignIdFromEvents(result.events);
-    return signId;
+	// Extract sign ID from events
+	const signId = extractSignIdFromEvents(result.events);
+	return signId;
 }
 ```
 
@@ -262,10 +260,7 @@ const signSession = await ikaClient.waitForSignCompletion(signId);
 const signature = signSession.signature;
 
 // Parse signature if needed
-const parsedSignature = parseSignatureFromSignOutput(
-    SignatureAlgorithm.Taproot,
-    signature,
-);
+const parsedSignature = parseSignatureFromSignOutput(SignatureAlgorithm.Taproot, signature);
 ```
 
 ## Signing for Bitcoin Taproot
@@ -316,11 +311,11 @@ public fun sign_ethereum_transaction(
 
 ## Error Handling
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| Presign not valid | Network hasn't completed presign | Wait and retry, or check with `is_presign_valid()` |
-| Invalid message approval | Capability doesn't match dWallet | Use correct DWalletCap |
-| Insufficient funds | Not enough IKA/SUI | Fund the contract |
+| Error                    | Cause                            | Solution                                           |
+| ------------------------ | -------------------------------- | -------------------------------------------------- |
+| Presign not valid        | Network hasn't completed presign | Wait and retry, or check with `is_presign_valid()` |
+| Invalid message approval | Capability doesn't match dWallet | Use correct DWalletCap                             |
+| Insufficient funds       | Not enough IKA/SUI               | Fund the contract                                  |
 
 ## Best Practices
 
@@ -332,6 +327,7 @@ public fun sign_ethereum_transaction(
 ## When to Use Future Signing Instead
 
 Use [Future Signing](/docs/move-integration/protocols/future-signing) when:
+
 - You need governance approval before signing
 - Multiple parties must approve the transaction
 - You want to separate commitment from execution

@@ -74,15 +74,15 @@ remote-write:
   url: https://mimir.example.com/api/v1/push
   username: your-username
   password: your-password
-  pool-max-idle-per-host: 8  # Connection pool size (default: 8)
+  pool-max-idle-per-host: 8 # Connection pool size (default: 8)
 
 # Dynamic peer validation (discovers validators from blockchain)
 dynamic-peers:
-  url: https://fullnode.mainnet.ika.io:443  # Ika JSON-RPC endpoint
-  interval: 30  # Polling interval in seconds
-  hostname: proxy.example.com  # Hostname for self-signed cert (optional)
-  certificate-file: /path/to/cert.pem  # Custom TLS certificate (optional)
-  private-key: /path/to/key.pem        # Custom private key (optional)
+  url: https://fullnode.mainnet.ika.io:443 # Ika JSON-RPC endpoint
+  interval: 30 # Polling interval in seconds
+  hostname: proxy.example.com # Hostname for self-signed cert (optional)
+  certificate-file: /path/to/cert.pem # Custom TLS certificate (optional)
+  private-key: /path/to/key.pem # Custom private key (optional)
 
 # Static peer validation (manually configured peers)
 static-peers:
@@ -91,8 +91,8 @@ static-peers:
       peer-id: 4e2f113e61784fdcd611650f36595db8f79e9420319f42a5b571dc2f2b295af2
 
 # Metrics server addresses
-metrics-address: localhost:9184      # Proxy metrics endpoint
-histogram-address: localhost:9185    # Histogram relay endpoint
+metrics-address: localhost:9184 # Proxy metrics endpoint
+histogram-address: localhost:9185 # Histogram relay endpoint
 ```
 
 ### Configuration Options
@@ -119,8 +119,8 @@ histogram-address: localhost:9185    # Histogram relay endpoint
 #### Static Peer Configuration
 
 - **`pub-keys`**: Array of manually configured trusted peers
-    - **`name`**: Human-readable identifier for the peer
-    - **`peer-id`**: Ed25519 public key of the peer (hex encoded)
+  - **`name`**: Human-readable identifier for the peer
+  - **`peer-id`**: Ed25519 public key of the peer (hex encoded)
 
 ## Usage
 
@@ -152,9 +152,9 @@ The proxy supports several environment variables for runtime configuration:
 #### Metrics Ingestion
 
 - **`POST /publish/metrics`**: Accepts Prometheus protobuf metrics from Ika nodes
-    - Requires valid TLS client certificate
-    - Content-Type: `application/x-protobuf`
-    - Validates peer against allowlist
+  - Requires valid TLS client certificate
+  - Content-Type: `application/x-protobuf`
+  - Validates peer against allowlist
 
 #### Monitoring Endpoints
 
@@ -274,19 +274,19 @@ spec:
 ### Common Issues
 
 1. **Certificate Validation Failures**
-    - Ensure client certificates are properly configured
-    - Check that peer public keys are in the validator set
-    - Verify TLS certificate paths and permissions
+   - Ensure client certificates are properly configured
+   - Check that peer public keys are in the validator set
+   - Verify TLS certificate paths and permissions
 
 2. **Connection Timeouts**
-    - Adjust `NODE_CLIENT_TIMEOUT` and `MIMIR_CLIENT_TIMEOUT`
-    - Check network connectivity to remote write endpoint
-    - Monitor connection pool settings
+   - Adjust `NODE_CLIENT_TIMEOUT` and `MIMIR_CLIENT_TIMEOUT`
+   - Check network connectivity to remote write endpoint
+   - Monitor connection pool settings
 
 3. **Peer Discovery Issues**
-    - Verify JSON-RPC endpoint accessibility
-    - Check polling interval configuration
-    - Monitor JSON-RPC metrics for errors
+   - Verify JSON-RPC endpoint accessibility
+   - Check polling interval configuration
+   - Monitor JSON-RPC metrics for errors
 
 ### Debug Mode
 

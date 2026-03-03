@@ -40,14 +40,12 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          # Version of pnpm to install, must match `package.json` "packageManager" field.
-          version: 9.1.1
           run_install: false
 
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 21.x
+          node-version: 22.x
           cache: 'pnpm'
 
       - name: Install wasm pack

@@ -10,11 +10,12 @@ sidebar_label: Imported Key dWallet
 
 An Imported Key dWallet allows you to import an existing private key into the Ika network, enabling you to leverage the network's distributed signing capabilities while maintaining control over your existing keys.
 
-
 <Callout type="info" title="Already have a key?">
-Imported Key dWallets are ideal when you need to use an existing private key (e.g., from Bitcoin, Ethereum, or other blockchains) within the Ika network's signing infrastructure. For new wallets, consider [Zero-Trust dWallets](/docs/sdk/ika-transaction/zero-trust) or [Shared dWallets](/docs/sdk/ika-transaction/shared-dwallet).
+	Imported Key dWallets are ideal when you need to use an existing private key (e.g., from Bitcoin,
+	Ethereum, or other blockchains) within the Ika network's signing infrastructure. For new wallets,
+	consider [Zero-Trust dWallets](/docs/sdk/ika-transaction/zero-trust) or [Shared
+	dWallets](/docs/sdk/ika-transaction/shared-dwallet).
 </Callout>
-
 
 ## Architecture
 
@@ -145,11 +146,7 @@ const result = await executeTransaction(suiClient, suiTransaction);
 ### Step 3: Wait for Verification
 
 ```typescript
-import {
-	CoordinatorInnerModule,
-	ImportedKeyDWallet,
-	SessionsManagerModule,
-} from '@ika.xyz/sdk';
+import { CoordinatorInnerModule, ImportedKeyDWallet, SessionsManagerModule } from '@ika.xyz/sdk';
 
 // Find the verification event
 const verificationEvent = result.events?.find((event) =>
@@ -267,7 +264,9 @@ destroyEmptyIkaToken(suiTransaction, ikaClient.ikaConfig, ikaToken);
 const result = await executeTransaction(suiClient, suiTransaction);
 
 // Extract presign ID from event
-const presignEvent = result.events?.find((event) => event.eventType.includes('PresignRequestEvent'));
+const presignEvent = result.events?.find((event) =>
+	event.eventType.includes('PresignRequestEvent'),
+);
 
 const parsedPresignEvent = SessionsManagerModule.DWalletSessionEvent(
 	CoordinatorInnerModule.PresignRequestEvent,
