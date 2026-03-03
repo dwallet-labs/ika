@@ -1105,9 +1105,9 @@ export class IkaClient {
 				const lastReconfigOutput = (
 					await Promise.all(
 						reconfigOutputsDFs.map(async (df) => {
-							const name = bcs.Address.parse(df.name.bcs);
+							const name = bcs.u32().parse(df.name.bcs);
 							const reconfigObject = await this.client.core.getObject({
-								objectId: df.childId!,
+								objectId: df.fieldId,
 								include: { content: true },
 							});
 
