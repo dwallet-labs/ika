@@ -13,6 +13,7 @@ The Distributed Key Generation (DKG) protocol creates a new dWallet by generatin
 ## Overview
 
 DKG creates:
+
 - A **DWalletCap** capability that authorizes signing operations
 - Key shares distributed between user and network (neither party has the full key)
 - A public key that can receive funds on other chains (Bitcoin, Ethereum, etc.)
@@ -69,17 +70,17 @@ Use the SDK to prepare the cryptographic parameters:
 
 ```typescript
 import {
-    IkaClient,
-    UserShareEncryptionKeys,
-    prepareDKGAsync,
-    createRandomSessionIdentifier,
-    Curve,
+	createRandomSessionIdentifier,
+	Curve,
+	IkaClient,
+	prepareDKGAsync,
+	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
 
 // Create user encryption keys
 const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
-    new TextEncoder().encode('your-seed'),
-    Curve.SECP256K1,
+	new TextEncoder().encode('your-seed'),
+	Curve.SECP256K1,
 );
 
 // Create random session identifier
@@ -87,11 +88,11 @@ const sessionIdentifier = createRandomSessionIdentifier();
 
 // Prepare DKG parameters
 const dkgData = await prepareDKGAsync(
-    ikaClient,
-    Curve.SECP256K1,
-    userShareEncryptionKeys,
-    sessionIdentifier,
-    signerAddress,
+	ikaClient,
+	Curve.SECP256K1,
+	userShareEncryptionKeys,
+	sessionIdentifier,
+	signerAddress,
 );
 
 // Get network encryption key
@@ -104,17 +105,17 @@ const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
 const tx = new Transaction();
 
 tx.moveCall({
-    target: `${packageId}::my_module::create_dwallet`,
-    arguments: [
-        tx.object(coordinatorId),
-        tx.object(ikaCoinId),
-        tx.splitCoins(tx.gas, [1000000]),  // SUI for fees
-        tx.pure.id(networkKey.id),
-        tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
-        tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
-        tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
-        tx.pure.vector('u8', Array.from(sessionIdentifier)),
-    ],
+	target: `${packageId}::my_module::create_dwallet`,
+	arguments: [
+		tx.object(coordinatorId),
+		tx.object(ikaCoinId),
+		tx.splitCoins(tx.gas, [1000000]), // SUI for fees
+		tx.pure.id(networkKey.id),
+		tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
+		tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
+		tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
+		tx.pure.vector('u8', Array.from(sessionIdentifier)),
+	],
 });
 ```
 
@@ -312,10 +313,7 @@ After DKG completes, you can get the public key from the dWallet:
 const dWallet = await ikaClient.getDWallet(dwalletId);
 
 // Get public key for receiving funds
-const publicKey = publicKeyFromDWalletOutput(
-    Curve.SECP256K1,
-    dWallet.publicOutput,
-);
+const publicKey = publicKeyFromDWalletOutput(Curve.SECP256K1, dWallet.publicOutput);
 ```
 
 ## Best Practices

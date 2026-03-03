@@ -1,15 +1,11 @@
 {
-    "release_binaries": [
-        "ika",
-        "ika-node",
-        "ika-data-ingestion"
-    ],
-    "internal_binaries": [
-        "stress",
-        "ika-proxy",
-        "ika-metric-checker",
-        "ika-analytics-indexer",
-        "ika-security-watchdog",
+	"release_binaries": ["ika", "ika-node", "ika-data-ingestion"],
+	"internal_binaries": [
+		"stress",
+		"ika-proxy",
+		"ika-metric-checker",
+		"ika-analytics-indexer",
+		"ika-security-watchdog",
 		"ikaop"
 	]
 }

@@ -41,6 +41,7 @@ fun create_session_identifier(
 ```
 
 This approach:
+
 - Guarantees uniqueness within the transaction
 - Uses Sui's built-in randomness
 - Is simple and reliable
@@ -59,11 +60,10 @@ fun create_session_with_custom_bytes(
 }
 ```
 
-
 <Callout type="warn" title="Uniqueness Required">
-If you use custom bytes, you must ensure they are unique across all operations. Duplicate session identifiers will cause the operation to fail.
+	If you use custom bytes, you must ensure they are unique across all operations. Duplicate session
+	identifiers will cause the operation to fail.
 </Callout>
-
 
 ## Using Session Identifiers
 
@@ -203,12 +203,12 @@ const sessionBytes = createRandomSessionIdentifier();
 
 // Pass to Move function
 tx.moveCall({
-    target: `${packageId}::my_module::create_dwallet`,
-    arguments: [
-        tx.object(coordinatorId),
-        tx.pure.vector('u8', sessionBytes),  // Session bytes
-        // ... other args
-    ],
+	target: `${packageId}::my_module::create_dwallet`,
+	arguments: [
+		tx.object(coordinatorId),
+		tx.pure.vector('u8', sessionBytes), // Session bytes
+		// ... other args
+	],
 });
 ```
 
@@ -234,10 +234,10 @@ public fun create_dwallet(
 
 ## Common Errors
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| Session already exists | Reusing session bytes | Generate new unique bytes |
-| Invalid session | Session not registered | Call `register_session_identifier` first |
+| Error                  | Cause                  | Solution                                 |
+| ---------------------- | ---------------------- | ---------------------------------------- |
+| Session already exists | Reusing session bytes  | Generate new unique bytes                |
+| Invalid session        | Session not registered | Call `register_session_identifier` first |
 
 ## Next Steps
 

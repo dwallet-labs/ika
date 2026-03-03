@@ -1,4 +1,4 @@
-version: "3.8"
+version: '3.8'
 services:
   #  ika-proxy:
   #    image: ika-proxy:latest
@@ -14,7 +14,7 @@ services:
     container_name: mimir
     image: grafana/mimir:latest
     ports:
-      - "9009:9009"
+      - '9009:9009'
     volumes:
       - ./config/mimir.yaml:/etc/mimir/mimir.yaml
     command:
@@ -34,7 +34,7 @@ services:
       - ./config/grafana-datasource.yaml:/etc/grafana/provisioning/datasources/provisioning-datasources.yaml:ro
       - grafana-storage:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - '3000:3000'
 
 volumes:
   grafana-storage:

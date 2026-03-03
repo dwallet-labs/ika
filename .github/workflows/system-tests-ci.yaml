@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       SUI_FULLNODE_URL:
-        description: "Sui Fullnode URL"
+        description: 'Sui Fullnode URL'
         required: false
         type: string
       SUI_FAUCET_URL:
-        description: "Sui Faucet URL"
+        description: 'Sui Faucet URL'
         required: false
         type: string
       ika_config_json:
-        description: "Ika Config JSON"
+        description: 'Ika Config JSON'
         required: true
         type: string
 
@@ -85,4 +85,3 @@ jobs:
         env:
           SUI_TESTNET_URL: ${{ github.event.inputs.SUI_FULLNODE_URL }}
           SUI_FAUCET_URL: ${{ github.event.inputs.SUI_FAUCET_URL }}
-

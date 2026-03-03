@@ -13,6 +13,7 @@ Future signing splits the signature process into two phases, allowing you to sep
 ## Overview
 
 Future signing enables:
+
 - **Governance Workflows**: Vote on transactions before signing
 - **Multisig Approvals**: Require multiple parties to approve
 - **Time-Delayed Execution**: Commit now, execute later
@@ -43,12 +44,12 @@ public fun request_future_sign(
 
 ### Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `dwallet_id` | ID of the dWallet to sign with |
-| `presign_cap` | Verified presign (consumed) |
-| `message` | The message bytes to sign |
-| `hash_scheme` | Hash function (e.g., 0=SHA256) |
+| Parameter                       | Description                       |
+| ------------------------------- | --------------------------------- |
+| `dwallet_id`                    | ID of the dWallet to sign with    |
+| `presign_cap`                   | Verified presign (consumed)       |
+| `message`                       | The message bytes to sign         |
+| `hash_scheme`                   | Hash function (e.g., 0=SHA256)    |
 | `message_centralized_signature` | User's partial signature from SDK |
 
 ## Phase 2: Complete Signing
@@ -433,6 +434,7 @@ let sign_id = coordinator.request_imported_key_sign_with_partial_user_signature_
 ## When to Use Direct Signing Instead
 
 Use [Direct Signing](/docs/move-integration/protocols/signing) when:
+
 - You have immediate authority to sign
 - No approval workflow is needed
 - Simplicity is preferred

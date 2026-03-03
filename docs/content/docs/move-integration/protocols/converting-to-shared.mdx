@@ -10,15 +10,15 @@ sidebar_label: Converting to Shared
 
 This guide explains how to convert a zero-trust dWallet (encrypted user share) or imported key dWallet to a shared dWallet (public user share). This enables contracts to sign autonomously without user interaction.
 
-
 <Callout type="warn" title="Irreversible Operation">
-Converting a dWallet to shared mode is **irreversible**. Once the user secret key share is made public, it cannot be made private again. Only proceed if you understand the security implications.
+	Converting a dWallet to shared mode is **irreversible**. Once the user secret key share is made
+	public, it cannot be made private again. Only proceed if you understand the security implications.
 </Callout>
-
 
 ## Overview
 
 When you initially create a dWallet, you have two options:
+
 - **Zero-trust mode**: User share is encrypted, requiring user interaction for every signature
 - **Shared mode**: User share is public, enabling autonomous contract signing
 
@@ -32,11 +32,10 @@ To convert a zero-trust dWallet to shared mode, you must have:
 2. **Ownership of the dWallet** - Only the dWallet owner can initiate conversion
 3. **IKA and SUI tokens** - For protocol fees
 
-
 <Callout type="info" title="Save Your Secret Key Share">
-When creating a zero-trust dWallet, always save the `userSecretKeyShare` returned from `prepareDKGAsync()` if you might want to convert to shared mode later.
+	When creating a zero-trust dWallet, always save the `userSecretKeyShare` returned from
+	`prepareDKGAsync()` if you might want to convert to shared mode later.
 </Callout>
-
 
 ## Move Integration
 
@@ -56,15 +55,15 @@ public fun request_make_dwallet_user_secret_key_shares_public(
 
 ### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `self` | `&mut DWalletCoordinator` | The coordinator shared object |
-| `dwallet_id` | `ID` | The ID of the dWallet to convert |
-| `public_user_secret_key_shares` | `vector<u8>` | The user secret key share to make public |
-| `session_identifier` | `SessionIdentifier` | Unique session ID for this operation |
-| `payment_ika` | `&mut Coin<IKA>` | IKA tokens for protocol fees |
-| `payment_sui` | `&mut Coin<SUI>` | SUI tokens for gas fees |
-| `ctx` | `&mut TxContext` | Transaction context |
+| Parameter                       | Type                      | Description                              |
+| ------------------------------- | ------------------------- | ---------------------------------------- |
+| `self`                          | `&mut DWalletCoordinator` | The coordinator shared object            |
+| `dwallet_id`                    | `ID`                      | The ID of the dWallet to convert         |
+| `public_user_secret_key_shares` | `vector<u8>`              | The user secret key share to make public |
+| `session_identifier`            | `SessionIdentifier`       | Unique session ID for this operation     |
+| `payment_ika`                   | `&mut Coin<IKA>`          | IKA tokens for protocol fees             |
+| `payment_sui`                   | `&mut Coin<SUI>`          | SUI tokens for gas fees                  |
+| `ctx`                           | `&mut TxContext`          | Transaction context                      |
 
 ### Contract Example
 
@@ -118,15 +117,15 @@ The SDK provides a convenient method for converting dWallets:
 ### Using IkaTransaction
 
 ```typescript
-import { IkaClient, IkaTransaction, Curve, prepareDKGAsync } from '@ika.xyz/sdk';
+import { Curve, IkaClient, IkaTransaction, prepareDKGAsync } from '@ika.xyz/sdk';
 
 // Step 1: Create a zero-trust dWallet (save the secret share!)
 const dkgData = await prepareDKGAsync(
-    ikaClient,
-    Curve.SECP256K1,
-    userShareEncryptionKeys,
-    bytesToHash,
-    senderAddress
+	ikaClient,
+	Curve.SECP256K1,
+	userShareEncryptionKeys,
+	bytesToHash,
+	senderAddress,
 );
 
 // IMPORTANT: Save this for later conversion
@@ -136,14 +135,14 @@ const savedSecretShare = dkgData.userSecretKeyShare;
 
 // Step 2: Convert to shared mode
 const tx = new IkaTransaction(ikaClient, {
-    userShareEncryptionKeys,
+	userShareEncryptionKeys,
 });
 
 tx.makeDWalletUserSecretKeySharesPublic({
-    dWallet: zerTrustDWallet,  // Your ZeroTrustDWallet or ImportedKeyDWallet
-    secretShare: savedSecretShare,
-    ikaCoin: tx.splitIkaCoins(1_000_000n),
-    suiCoin: tx.splitSuiCoins(1_000_000n),
+	dWallet: zerTrustDWallet, // Your ZeroTrustDWallet or ImportedKeyDWallet
+	secretShare: savedSecretShare,
+	ikaCoin: tx.splitIkaCoins(1_000_000n),
+	suiCoin: tx.splitSuiCoins(1_000_000n),
 });
 
 const result = await ikaClient.executeTransaction(tx);
@@ -174,12 +173,12 @@ import { prepareImportedKeyDWalletVerification } from '@ika.xyz/sdk';
 
 // When importing a key
 const importData = await prepareImportedKeyDWalletVerification(
-    ikaClient,
-    Curve.SECP256K1,
-    userShareEncryptionKeys,
-    bytesToHash,
-    privateKey,
-    senderAddress
+	ikaClient,
+	Curve.SECP256K1,
+	userShareEncryptionKeys,
+	bytesToHash,
+	privateKey,
+	senderAddress,
 );
 
 // Save this for potential conversion
@@ -190,9 +189,9 @@ const savedSecretShare = importData.userSecretKeyShare;
 
 After conversion, your dWallet type changes:
 
-| Before | After |
-|--------|-------|
-| `ZeroTrustDWallet` | `SharedDWallet` |
+| Before                            | After                         |
+| --------------------------------- | ----------------------------- |
+| `ZeroTrustDWallet`                | `SharedDWallet`               |
 | `ImportedKeyDWallet` (zero-trust) | `ImportedKeyDWallet` (shared) |
 
 The SDK's `getDWalletType()` method reflects these changes:
@@ -207,6 +206,7 @@ const type = ikaClient.getDWalletType(dWallet);
 ### When to Convert
 
 Convert to shared mode when:
+
 - Your contract needs to sign autonomously (DAOs, automated systems)
 - You're transferring dWallet ownership to a smart contract
 - Multiple parties need to authorize signatures through contract logic
@@ -214,6 +214,7 @@ Convert to shared mode when:
 ### When to Stay Zero-Trust
 
 Keep zero-trust mode when:
+
 - You want maximum security with user approval for every signature
 - The dWallet holds high-value assets
 - You're the sole controller and prefer explicit authorization
@@ -236,9 +237,9 @@ After submitting the conversion request, the Ika network processes it asynchrono
 const dWallet = await ikaClient.getDWallet(dWalletId);
 
 if (dWallet.public_user_secret_key_share) {
-    console.log('dWallet is now in shared mode');
+	console.log('dWallet is now in shared mode');
 } else {
-    console.log('dWallet is still in zero-trust mode');
+	console.log('dWallet is still in zero-trust mode');
 }
 ```
 
@@ -246,11 +247,11 @@ if (dWallet.public_user_secret_key_share) {
 
 Common errors when converting:
 
-| Error | Cause |
-|-------|-------|
-| `EDWalletUserSecretKeySharesAlreadyPublic` | dWallet is already in shared mode |
-| Invalid session | Session identifier was already used |
-| Insufficient payment | Not enough IKA or SUI for fees |
+| Error                                      | Cause                               |
+| ------------------------------------------ | ----------------------------------- |
+| `EDWalletUserSecretKeySharesAlreadyPublic` | dWallet is already in shared mode   |
+| Invalid session                            | Session identifier was already used |
+| Insufficient payment                       | Not enough IKA or SUI for fees      |
 
 ## Next Steps
 

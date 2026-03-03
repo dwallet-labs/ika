@@ -211,14 +211,12 @@ const hash = Hash.Merlin;
 ## Best Practices
 
 1. **Choose the Right Curve**: Select the curve based on your target blockchain or application:
-
    - Use `SECP256K1` for Bitcoin and Ethereum
    - Use `SECP256R1` for WebAuthn and enterprise applications
    - Use `ED25519` for Solana and high-performance applications
    - Use `RISTRETTO` for Polkadot and Substrate chains
 
 2. **Use Appropriate Hash Schemes**: Each blockchain expects signatures with specific hash schemes:
-
    - Ethereum requires `KECCAK256`
    - Bitcoin Legacy requires `DoubleSHA256`
    - Bitcoin Taproot requires `SHA256`

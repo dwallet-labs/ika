@@ -45,7 +45,6 @@ export async function fetchAllDynamicFields(
 	const allFields: any[] = [];
 	let cursor: string | null = null;
 
-	// eslint-disable-next-line no-constant-condition
 	while (true) {
 		const response = await suiClient.core.listDynamicFields({
 			parentId,

@@ -105,22 +105,22 @@ When using a passkey instead of a wallet:
 
 ## Supported Authentication Methods
 
-| Method               | Type     | Works? | Notes                                      |
-| -------------------- | -------- | ------ | ------------------------------------------ |
-| **Passkey**          | WebAuthn | ✅     | Face ID, Touch ID, Windows Hello, YubiKey  |
-| MetaMask             | Ethereum | ✅     |                                            |
-| Phantom (Ethereum)   | Ethereum | ✅     |                                            |
-| Phantom (Solana)     | Solana   | ✅     |                                            |
-| Other Solana wallets | Solana   | ✅     |                                            |
+| Method               | Type     | Works? | Notes                                     |
+| -------------------- | -------- | ------ | ----------------------------------------- |
+| **Passkey**          | WebAuthn | ✅     | Face ID, Touch ID, Windows Hello, YubiKey |
+| MetaMask             | Ethereum | ✅     |                                           |
+| Phantom (Ethereum)   | Ethereum | ✅     |                                           |
+| Phantom (Solana)     | Solana   | ✅     |                                           |
+| Other Solana wallets | Solana   | ✅     |                                           |
 
 ### Passkey Browser Support
 
-| Platform   | Browser          | Platform Passkey | Hardware Key |
-| ---------- | ---------------- | ---------------- | ------------ |
-| macOS 15+  | Chrome/Safari 18+| ✅               | Chrome only  |
-| Windows 11 | Chrome/Edge      | ✅               | ✅           |
-| iOS 18+    | Safari           | ✅               | ❌           |
-| Android    | Chrome           | ✅               | USB only     |
+| Platform   | Browser           | Platform Passkey | Hardware Key |
+| ---------- | ----------------- | ---------------- | ------------ |
+| macOS 15+  | Chrome/Safari 18+ | ✅               | Chrome only  |
+| Windows 11 | Chrome/Edge       | ✅               | ✅           |
+| iOS 18+    | Safari            | ✅               | ❌           |
+| Android    | Chrome            | ✅               | USB only     |
 
 > **Note**: Passkey support requires the WebAuthn PRF extension for deterministic key derivation.
 

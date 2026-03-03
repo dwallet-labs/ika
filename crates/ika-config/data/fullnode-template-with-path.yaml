@@ -1,16 +1,16 @@
 # Update this value to the location you want Ika to store its database
-db-path: "ikadb"
+db-path: 'ikadb'
 
 # For ipv4, update this to "/ipv4/X.X.X.X/tcp/8080/http"
-network-address: "/dns/localhost/tcp/8080/http"
-metrics-address: "0.0.0.0:9184"
+network-address: '/dns/localhost/tcp/8080/http'
+metrics-address: '0.0.0.0:9184'
 # this address is also used for web socket connections
-json-rpc-address: "0.0.0.0:9000"
+json-rpc-address: '0.0.0.0:9000'
 enable-event-processing: true
 
 genesis:
   # Update this to the location of where the genesis file is stored
-  genesis-file-location: "genesis.blob"
+  genesis-file-location: 'genesis.blob'
 
 authority-store-pruning-config:
   num-latest-epoch-dbs-to-retain: 3
@@ -21,10 +21,10 @@ authority-store-pruning-config:
   pruning-run-delay-seconds: 60
 
 protocol-key-pair:
-  path: "protocol.key"
-network-key-pair: 
-  path: "network.key"
-account-key-pair: 
-  path: "account.key"
-worker-key-pair: 
-  path: "worker.key"
+  path: 'protocol.key'
+network-key-pair:
+  path: 'network.key'
+account-key-pair:
+  path: 'account.key'
+worker-key-pair:
+  path: 'worker.key'

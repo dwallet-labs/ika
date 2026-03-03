@@ -69,19 +69,19 @@ jobs:
       - name: 'Build and Push Docker Image'
         run: |
           set -e
-          
+
           # Set repository details
           REPO_NAME="us-docker.pkg.dev/common-449616/ika-common-containers"
           IMAGE_NAME="ika-proxy"
           VERSION="v${{ inputs.version }}"
           NETWORK="${{ inputs.network }}"
-          
+
           DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
-          
+
           # Set up environment variables for build script
           export GH_DEPLOY_KEY="${{ secrets.GH_DEPLOY_KEY }}"
           export DOCKER_TAG="${REPO_NAME}/${IMAGE_NAME}:${NETWORK}-${VERSION}"
-          
+
           # Navigate to docker build directory
           cd docker/ika-proxy
 
@@ -92,6 +92,6 @@ jobs:
           # Push the image
           echo "Pushing Docker image: ${DOCKER_TAG}"
           docker push ${DOCKER_TAG}
-          
+
           echo "Successfully built and pushed:"
           echo "- ${DOCKER_TAG}"

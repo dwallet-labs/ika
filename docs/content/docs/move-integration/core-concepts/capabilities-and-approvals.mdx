@@ -14,16 +14,16 @@ Ika uses a capability-based authorization system to control access to dWallet op
 
 Capabilities are objects that grant specific permissions:
 
-| Capability | Purpose | Created By |
-|------------|---------|------------|
-| `DWalletCap` | Authorize signing for a dWallet | DKG protocol |
-| `ImportedKeyDWalletCap` | Authorize signing for imported key dWallet | Import verification |
-| `UnverifiedPresignCap` | Reference to a presign (needs verification) | Presign request |
-| `VerifiedPresignCap` | Verified presign ready for signing | Presign verification |
-| `UnverifiedPartialUserSignatureCap` | Partial signature (needs verification) | Future sign request |
-| `VerifiedPartialUserSignatureCap` | Verified partial signature | Partial signature verification |
-| `MessageApproval` | Authorization to sign a specific message | `approve_message()` |
-| `ImportedKeyMessageApproval` | Message approval for imported keys | `approve_imported_key_message()` |
+| Capability                          | Purpose                                     | Created By                       |
+| ----------------------------------- | ------------------------------------------- | -------------------------------- |
+| `DWalletCap`                        | Authorize signing for a dWallet             | DKG protocol                     |
+| `ImportedKeyDWalletCap`             | Authorize signing for imported key dWallet  | Import verification              |
+| `UnverifiedPresignCap`              | Reference to a presign (needs verification) | Presign request                  |
+| `VerifiedPresignCap`                | Verified presign ready for signing          | Presign verification             |
+| `UnverifiedPartialUserSignatureCap` | Partial signature (needs verification)      | Future sign request              |
+| `VerifiedPartialUserSignatureCap`   | Verified partial signature                  | Partial signature verification   |
+| `MessageApproval`                   | Authorization to sign a specific message    | `approve_message()`              |
+| `ImportedKeyMessageApproval`        | Message approval for imported keys          | `approve_imported_key_message()` |
 
 ## DWalletCap
 
@@ -58,11 +58,10 @@ let message_approval = coordinator.approve_message(
 let dwallet_id: ID = dwallet_cap.dwallet_id();
 ```
 
-
 <Callout type="warn" title="Security">
-The `DWalletCap` controls who can sign with your dWallet. Never expose it outside your contract without proper access controls.
+	The `DWalletCap` controls who can sign with your dWallet. Never expose it outside your contract
+	without proper access controls.
 </Callout>
-
 
 ## ImportedKeyDWalletCap
 

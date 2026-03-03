@@ -13,7 +13,10 @@ import { Info, Warning } from '@/components/InfoBox';
 The Ika SDK provides a comprehensive set of cryptographic functions for creating and managing dWallets. These low-level functions handle Distributed Key Generation (DKG), encryption, signing, and verification operations.
 
 <Warning title="Security Critical">
-The functions in this module handle extremely sensitive cryptographic material. Always follow security best practices, conduct thorough security reviews, and consider getting security audits for production applications. Secret key shares must NEVER be sent to anyone or stored anywhere unencrypted.
+	The functions in this module handle extremely sensitive cryptographic material. Always follow
+	security best practices, conduct thorough security reviews, and consider getting security audits
+	for production applications. Secret key shares must NEVER be sent to anyone or stored anywhere
+	unencrypted.
 </Warning>
 
 ## Overview
@@ -48,7 +51,9 @@ interface DKGRequestInput {
 ```
 
 <Warning title="Security Warning">
-The `userSecretKeyShare` field contains your private key material. Never send it to anyone or store it anywhere unencrypted. Only use it for signing operations and immediately clear it from memory when done.
+	The `userSecretKeyShare` field contains your private key material. Never send it to anyone or
+	store it anywhere unencrypted. Only use it for signing operations and immediately clear it from
+	memory when done.
 </Warning>
 
 ### ImportDWalletVerificationRequestInput
@@ -108,7 +113,8 @@ console.log('Decryption key length:', decryptionKey.length);
 ```
 
 <Info title="Supported Curves">
-Currently supports: `SECP256K1`, `SECP256R1`, `RISTRETTO`, and `ED25519`. Other curves will throw an error.
+	Currently supports: `SECP256K1`, `SECP256R1`, `RISTRETTO`, and `ED25519`. Other curves will throw
+	an error.
 </Info>
 
 ### prepareDKG
@@ -162,7 +168,8 @@ console.log('Public output length:', dkgData.userPublicOutput.length);
 ```
 
 <Warning title="Security Warning">
-The returned `userSecretKeyShare` must be kept private. Store it securely or use it immediately in signing operations, then clear it from memory.
+	The returned `userSecretKeyShare` must be kept private. Store it securely or use it immediately in
+	signing operations, then clear it from memory.
 </Warning>
 
 ### prepareDKGAsync
@@ -207,7 +214,9 @@ const dkgData = await prepareDKGAsync(
 ```
 
 <Info title="Convenience Method">
-This function is a convenience wrapper that combines fetching protocol parameters and preparing DKG data in a single call. Use this for simpler code when you don't need to cache protocol parameters.
+	This function is a convenience wrapper that combines fetching protocol parameters and preparing
+	DKG data in a single call. Use this for simpler code when you don't need to cache protocol
+	parameters.
 </Info>
 
 ### Generating Public Keys Without Creating dWallets
@@ -254,14 +263,17 @@ console.log('Generated public key:', Buffer.from(publicKey).toString('hex'));
 ```
 
 <Info title="No Network Transaction Required">
-This approach generates all cryptographic material locally. No dWallet is created on the network, and no transaction fees are incurred. You can later decide to create a dWallet using the same DKG data if needed.
+	This approach generates all cryptographic material locally. No dWallet is created on the network,
+	and no transaction fees are incurred. You can later decide to create a dWallet using the same DKG
+	data if needed.
 </Info>
 
 <Warning title="Important Notes">
-- Keep the `userSecretKeyShare` from `dkgData` secure if you plan to create a dWallet later
-- The generated public key is deterministic based on the session identifier and sender address
-- To create an actual dWallet with this public key later, you'll need to use the same `dkgData` in a dWallet creation transaction
-- The public key alone cannot be used for signing without creating a dWallet on the network
+	- Keep the `userSecretKeyShare` from `dkgData` secure if you plan to create a dWallet later - The
+	generated public key is deterministic based on the session identifier and sender address - To
+	create an actual dWallet with this public key later, you'll need to use the same `dkgData` in a
+	dWallet creation transaction - The public key alone cannot be used for signing without creating a
+	dWallet on the network
 </Warning>
 
 ### prepareImportedKeyDWalletVerification
@@ -315,7 +327,9 @@ const verificationData = await prepareImportedKeyDWalletVerification(
 ```
 
 <Warning title="Private Key Security">
-The `privateKey` parameter contains your complete private key. Handle it with extreme care and ensure it's sourced from a secure location. After import, the key material will be distributed across the network through secure multi-party computation.
+	The `privateKey` parameter contains your complete private key. Handle it with extreme care and
+	ensure it's sourced from a secure location. After import, the key material will be distributed
+	across the network through secure multi-party computation.
 </Warning>
 
 ## Encryption Operations
@@ -358,7 +372,9 @@ console.log('Encrypted share length:', encryptedShare.length);
 ```
 
 <Info title="Verifiable Encryption">
-The returned data includes not just the encrypted share, but also a zero-knowledge proof that the encryption was performed correctly. This allows the network to verify the encryption without learning anything about the secret share.
+	The returned data includes not just the encrypted share, but also a zero-knowledge proof that the
+	encryption was performed correctly. This allows the network to verify the encryption without
+	learning anything about the secret share.
 </Info>
 
 ## Signing Operations
@@ -495,6 +511,7 @@ The SDK provides two functions for creating sign messages:
 - Use `createUserSignMessageWithCentralizedOutput` when you have the centralized DKG output
 
 Both functions produce the same result, they just accept different input formats for verification.
+
 </Info>
 
 ## Verification Operations
@@ -629,7 +646,8 @@ if (!match) {
 ```
 
 <Warning title="Security Critical">
-Always verify that user and network DKG outputs match before using a dWallet. Mismatched outputs indicate a problem with the DKG process and could compromise security.
+	Always verify that user and network DKG outputs match before using a dWallet. Mismatched outputs
+	indicate a problem with the DKG process and could compromise security.
 </Warning>
 
 ## Key Conversion Operations
@@ -722,7 +740,9 @@ console.log('Public key generated locally:', Buffer.from(publicKey).toString('he
 ```
 
 <Info title="Offline Key Generation">
-You can use this function with `prepareDKG` to generate public keys completely offline, without any network interaction. This is useful for pre-computing addresses, testing, or air-gapped key generation.
+	You can use this function with `prepareDKG` to generate public keys completely offline, without
+	any network interaction. This is useful for pre-computing addresses, testing, or air-gapped key
+	generation.
 </Info>
 
 ### networkDkgPublicOutputToProtocolPublicParameters
@@ -817,7 +837,8 @@ function sessionIdentifierDigest(
 **Returns:** The KECCAK-256 digest of the versioned and domain-separated session identifier
 
 <Info title="Internal Use">
-This function is typically used internally by higher-level functions like `prepareDKG`. You usually don't need to call it directly unless you're implementing custom cryptographic protocols.
+	This function is typically used internally by higher-level functions like `prepareDKG`. You
+	usually don't need to call it directly unless you're implementing custom cryptographic protocols.
 </Info>
 
 ### createRandomSessionIdentifier
@@ -872,7 +893,9 @@ const publicOutput = await verifyAndGetDWalletDKGPublicOutput(
 ```
 
 <Warning title="Security Warning">
-For withSecrets flows, the public key or public output must be saved by the developer during DKG, NOT fetched from the network, to ensure proper verification. Always verify signatures before using public outputs.
+	For withSecrets flows, the public key or public output must be saved by the developer during DKG,
+	NOT fetched from the network, to ensure proper verification. Always verify signatures before using
+	public outputs.
 </Warning>
 
 ## Deprecated Functions
