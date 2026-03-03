@@ -45,13 +45,8 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
     let mut test_state = build_test_state(4);
 
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
     // Create a network key (required for internal presigns).
+    // create_network_key_test sets last_session_to_complete_in_current_epoch internally.
     let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
@@ -485,6 +480,13 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
     }
 
+    // Verify network stayed non-idle throughout Phase 3 — confirms pool stability
+    // was due to the non-idle guard, not coincidence (e.g. no delay-aligned round firing).
+    assert!(
+        !test_state.dwallet_mpc_services[0].network_is_idle(),
+        "system should still be non-idle after Phase 3 rounds"
+    );
+
     // Assert pool sizes are exactly unchanged for non-internal-sign algorithms.
     for (curve, algorithm, size_before) in &pool_sizes_before {
         let size_after = test_state.epoch_stores[0]
@@ -521,12 +523,6 @@ async fn test_internal_presign_continues_when_idle() {
     let _guard = create_test_protocol_config_guard();
 
     let mut test_state = build_test_state(4);
-
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
 
     // Extract all needed config values before creating the network key.
     let (max_pool_size, min_pool_size) = {
@@ -640,6 +636,35 @@ async fn test_internal_presign_continues_when_idle() {
         max_overshoot,
         pool_size_final
     );
+
+    // Verify idle-fill triggered for all algorithms by checking instantiation counts.
+    // We can't assert pool sizes because ECDSA presigns are multi-round with class
+    // groups — EdDSA reaches max before ECDSA sessions complete enough batches.
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+    for (curve, algorithm) in ALL_ALGORITHMS {
+        if *curve == DWalletCurve::Curve25519 && *algorithm == DWalletSignatureAlgorithm::EdDSA {
+            continue; // Already verified above.
+        }
+        let instantiated = manager
+            .instantiated_internal_presign_sessions
+            .get(&(*curve, *algorithm))
+            .copied()
+            .unwrap_or(0);
+        assert!(
+            instantiated > 0,
+            "{:?}/{:?}: idle-fill should have instantiated at least one presign session (got={})",
+            curve,
+            algorithm,
+            instantiated
+        );
+        let algo_pool = test_state.epoch_stores[0]
+            .presign_pool_size(*algorithm, network_key_id)
+            .unwrap_or(0);
+        info!(
+            "{:?}/{:?}: instantiated={}, pool_size={}",
+            curve, algorithm, instantiated, algo_pool
+        );
+    }
 
     info!("Test completed: internal presigns continue when idle");
 }

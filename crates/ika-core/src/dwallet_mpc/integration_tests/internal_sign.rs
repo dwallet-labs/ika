@@ -37,12 +37,6 @@ async fn test_internal_sign_flow() {
 
     let mut test_state = build_test_state(4);
 
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
     // Create a network key (required for internal signing)
     let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;

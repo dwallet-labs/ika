@@ -585,7 +585,8 @@ pub(crate) fn send_advance_results_between_parties(
                 .round_to_verified_checkpoint
                 .lock()
                 .unwrap()
-                .insert(new_data_consensus_round, vec![]);
+                .entry(new_data_consensus_round)
+                .or_default();
 
             // Distribute internal MPC outputs (e.g. completed internal presign sessions) to all parties
             other_epoch_store
@@ -692,7 +693,8 @@ pub(crate) fn send_advance_results_between_parties_excluding(
                 .round_to_verified_checkpoint
                 .lock()
                 .unwrap()
-                .insert(new_data_consensus_round, vec![]);
+                .entry(new_data_consensus_round)
+                .or_default();
             other_epoch_store
                 .round_to_internal_outputs
                 .lock()

@@ -4,7 +4,6 @@ use crate::dwallet_mpc::integration_tests::utils::{
     TEST_IDLE_SESSION_COUNT_THRESHOLD, build_test_state, create_test_protocol_config_guard,
 };
 use ika_protocol_config::ProtocolConfig;
-use ika_types::messages_consensus::ConsensusTransactionKind;
 use tracing::info;
 
 /// Creates a protocol config override guard tuned for the idle-status lifecycle test.
@@ -95,12 +94,6 @@ async fn test_validators_compute_idle_status_correctly() {
     let _guard = create_idle_status_test_config_guard();
 
     let mut test_state = build_test_state(4);
-
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
 
     let idle_threshold = test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
@@ -226,12 +219,6 @@ async fn test_status_updates_distributed_through_consensus() {
 
     let mut test_state = build_test_state(4);
 
-    for service in &mut test_state.dwallet_mpc_services {
-        service
-            .dwallet_mpc_manager_mut()
-            .last_session_to_complete_in_current_epoch = 400;
-    }
-
     // Create network key
     let (consensus_round, _network_key_bytes, _network_key_id) =
         create_network_key_test(&mut test_state).await;
@@ -245,26 +232,6 @@ async fn test_status_updates_distributed_through_consensus() {
         for service in test_state.dwallet_mpc_services.iter_mut() {
             service.run_service_loop_iteration(vec![]).await;
         }
-
-        // Count status updates submitted by each validator
-        let status_update_count: usize = test_state
-            .sent_consensus_messages_collectors
-            .iter()
-            .map(|collector| {
-                collector
-                    .submitted_messages
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|msg| {
-                        matches!(
-                            msg.kind,
-                            ConsensusTransactionKind::InternalSessionsStatusUpdate(_)
-                        )
-                    })
-                    .count()
-            })
-            .sum();
 
         // Distribute results to all parties
         utils::send_advance_results_between_parties(
