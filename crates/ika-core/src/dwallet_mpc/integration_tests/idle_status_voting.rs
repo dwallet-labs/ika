@@ -65,11 +65,12 @@ fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard 
             sessions_to_instantiate,
         );
 
-        config.set_internal_sign_presign_pool_minimum_size_for_testing(pool_minimum);
-        config.set_internal_sign_presign_pool_maximum_size_for_testing(pool_maximum);
-        config.set_internal_sign_presign_consensus_round_delay_for_testing(delay);
-        config
-            .set_internal_sign_presign_sessions_to_instantiate_for_testing(sessions_to_instantiate);
+        config.set_network_owned_address_sign_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_network_owned_address_sign_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_network_owned_address_sign_presign_consensus_round_delay_for_testing(delay);
+        config.set_network_owned_address_sign_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
 
         config
     })

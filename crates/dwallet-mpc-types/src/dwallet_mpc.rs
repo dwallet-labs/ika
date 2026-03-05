@@ -127,21 +127,21 @@ pub struct NetworkEncryptionKeyPublicData {
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 
-    /// The DKG output for internal signing.
+    /// The DKG output for network-owned-address signing.
     ///
     /// This field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
-    /// the network to perform internal signing operations
+    /// the network to perform network-owned-address signing operations
     /// without requiring an actual user.
     ///
     /// # Security Model
     ///
     /// The "user" (centralized party) key share is effectively zero/deterministic, meaning
-    /// there is no user secret to protect. Security for internal signing comes entirely
+    /// there is no user secret to protect. Security for network-owned-address signing comes entirely
     /// from the network's threshold signature scheme, not from randomness.
     ///
     /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
-    pub internal_sign_dkg_output: Vec<u8>,
+    pub network_owned_address_sign_dkg_output: Vec<u8>,
 }
 
 #[derive(
@@ -440,16 +440,16 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the internal sign DKG output.
+    /// Returns the network-owned-address sign DKG output.
     ///
     /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
-    pub fn internal_sign_dkg_output(&self) -> &[u8] {
-        &self.internal_sign_dkg_output
+    pub fn network_owned_address_sign_dkg_output(&self) -> &[u8] {
+        &self.network_owned_address_sign_dkg_output
     }
 
     /// Returns the serialized protocol public parameters for the given curve.
     ///
-    /// This is useful for internal signing operations where the protocol public
+    /// This is useful for network-owned-address signing operations where the protocol public
     /// parameters need to be passed to emulation functions.
     pub fn serialized_protocol_public_parameters_for_curve(
         &self,

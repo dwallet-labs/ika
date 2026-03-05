@@ -40,8 +40,8 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
@@ -52,8 +52,8 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         consensus_round: 1,
         committee,
         sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
     utils::send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     loop {

@@ -78,15 +78,15 @@ pub struct SignData {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
-#[display("InternalSign")]
-pub struct InternalSignData {
+#[display("NetworkOwnedAddressSign")]
+pub struct NetworkOwnedAddressSignData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
 }
 
-impl From<&InternalSignData> for SignData {
-    fn from(internal: &InternalSignData) -> Self {
+impl From<&NetworkOwnedAddressSignData> for SignData {
+    fn from(internal: &NetworkOwnedAddressSignData) -> Self {
         SignData {
             curve: internal.curve,
             signature_algorithm: internal.signature_algorithm,
@@ -176,8 +176,8 @@ pub enum ProtocolData {
         message_centralized_signature: SerializedWrappedMPCPublicOutput,
     },
 
-    InternalSign {
-        data: InternalSignData,
+    NetworkOwnedAddressSign {
+        data: NetworkOwnedAddressSignData,
         dwallet_network_encryption_key_id: ObjectID,
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
@@ -340,7 +340,7 @@ pub fn internal_presign_protocol_data(
     }
 }
 
-pub fn internal_sign_protocol_data(
+pub fn network_owned_address_sign_protocol_data(
     curve: DWalletCurve,
     signature_algorithm: DWalletSignatureAlgorithm,
     hash_scheme: HashScheme,
@@ -348,8 +348,8 @@ pub fn internal_sign_protocol_data(
     message: Vec<u8>,
     presign: SerializedWrappedMPCPublicOutput,
 ) -> ProtocolData {
-    ProtocolData::InternalSign {
-        data: InternalSignData {
+    ProtocolData::NetworkOwnedAddressSign {
+        data: NetworkOwnedAddressSignData {
             curve,
             signature_algorithm,
             hash_scheme,
@@ -488,7 +488,7 @@ impl ProtocolData {
                 dwallet_network_encryption_key_id,
                 ..
             }
-            | ProtocolData::InternalSign {
+            | ProtocolData::NetworkOwnedAddressSign {
                 dwallet_network_encryption_key_id,
                 ..
             }

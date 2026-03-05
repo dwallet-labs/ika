@@ -21,7 +21,7 @@ use crate::dwallet_mpc::mpc_session::{
     ComputationResultData, SessionComputationType, SessionStatus,
 };
 use crate::dwallet_mpc::party_ids_to_authority_names;
-use crate::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
+use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
@@ -97,11 +97,11 @@ pub struct DWalletMPCService {
     processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
-    /// Receiver for internal sign requests.
-    internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
-    /// Buffer for internal sign requests that couldn't be processed yet
+    /// Receiver for network-owned-address sign requests.
+    network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
-    pending_internal_sign_requests: Vec<InternalSignRequest>,
+    pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
 }
 
 impl DWalletMPCService {
@@ -118,8 +118,8 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
-        internal_sign_receiver: UnboundedReceiver<InternalSignRequest>,
-        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
+        network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -149,7 +149,7 @@ impl DWalletMPCService {
             sui_data_receivers.clone(),
             protocol_config.clone(),
             epoch_store.clone(),
-            internal_sign_output_sender,
+            network_owned_address_sign_output_sender,
         );
 
         Self {
@@ -173,8 +173,8 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
-            internal_sign_receiver,
-            pending_internal_sign_requests: Vec::new(),
+            network_owned_address_sign_receiver,
+            pending_network_owned_address_sign_requests: Vec::new(),
         }
     }
 
@@ -191,13 +191,13 @@ impl DWalletMPCService {
         sui_data_receivers: SuiDataReceivers,
     ) -> (
         Self,
-        UnboundedSender<InternalSignRequest>,
-        UnboundedReceiver<InternalSignOutput>,
+        UnboundedSender<NetworkOwnedAddressSignRequest>,
+        UnboundedReceiver<NetworkOwnedAddressSignOutput>,
     ) {
-        let (internal_sign_request_sender, internal_sign_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<InternalSignRequest>();
-        let (internal_sign_output_sender, internal_sign_output_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<InternalSignOutput>();
+        let (network_owned_address_sign_request_sender, network_owned_address_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
@@ -217,7 +217,7 @@ impl DWalletMPCService {
                 sui_data_receivers.clone(),
                 ProtocolConfig::get_for_max_version_UNSAFE(),
                 epoch_store,
-                internal_sign_output_sender,
+                network_owned_address_sign_output_sender,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,
@@ -233,14 +233,14 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
-            internal_sign_receiver,
-            pending_internal_sign_requests: Vec::new(),
+            network_owned_address_sign_receiver,
+            pending_network_owned_address_sign_requests: Vec::new(),
         };
 
         (
             service,
-            internal_sign_request_sender,
-            internal_sign_output_receiver,
+            network_owned_address_sign_request_sender,
+            network_owned_address_sign_output_receiver,
         )
     }
 
@@ -361,8 +361,8 @@ impl DWalletMPCService {
         debug!("Running DWalletMPCService loop");
         self.sync_last_session_to_complete_in_current_epoch().await;
 
-        // Process any pending internal sign requests.
-        self.process_internal_sign_requests();
+        // Process any pending network-owned-address sign requests.
+        self.process_network_owned_address_sign_requests();
 
         // Receive **new** dWallet MPC events and save them in the local DB.
         let rejected_sessions = self
@@ -382,40 +382,47 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
-    /// Process internal sign requests received via the channel.
+    /// Process network-owned-address sign requests received via the channel.
     /// Drains the channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
-    fn process_internal_sign_requests(&mut self) {
-        while let Ok(request) = self.internal_sign_receiver.try_recv() {
+    fn process_network_owned_address_sign_requests(&mut self) {
+        while let Ok(request) = self.network_owned_address_sign_receiver.try_recv() {
             info!(
                 sequence_number = request.sequence_number,
                 message_len = request.message.len(),
-                "Received internal sign request"
+                "Received network-owned-address sign request"
             );
-            self.pending_internal_sign_requests.push(request);
+            self.pending_network_owned_address_sign_requests
+                .push(request);
         }
 
-        if self.pending_internal_sign_requests.is_empty() {
+        if self.pending_network_owned_address_sign_requests.is_empty() {
             return;
         }
 
-        self.pending_internal_sign_requests.retain(|request| {
-            if !self.dwallet_mpc_manager.has_internal_signing_network_key() {
-                return true; // key not yet available, keep in buffer
-            }
-            if !self
-                .dwallet_mpc_manager
-                .has_internal_signing_presign_available()
-            {
-                return true; // no presign yet, keep in buffer
-            }
+        self.pending_network_owned_address_sign_requests
+            .retain(|request| {
+                if !self
+                    .dwallet_mpc_manager
+                    .has_network_owned_address_signing_network_key()
+                {
+                    return true; // key not yet available, keep in buffer
+                }
+                if !self
+                    .dwallet_mpc_manager
+                    .has_network_owned_address_signing_presign_available()
+                {
+                    return true; // no presign yet, keep in buffer
+                }
 
-            let instantiated = self.dwallet_mpc_manager.instantiate_internal_sign_session(
-                request.sequence_number,
-                request.message.clone(),
-            );
-            !instantiated // keep in buffer if instantiation failed
-        });
+                let instantiated = self
+                    .dwallet_mpc_manager
+                    .instantiate_network_owned_address_sign_session(
+                        request.sequence_number,
+                        request.message.clone(),
+                    );
+                !instantiated // keep in buffer if instantiation failed
+            });
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -1132,7 +1139,7 @@ impl DWalletMPCService {
                     }
                 }
                 Err(err) => match request.session_type {
-                    SessionType::InternalPresign | SessionType::InternalSign => {
+                    SessionType::InternalPresign | SessionType::NetworkOwnedAddressSign => {
                         error!(
                             should_never_happen =? true,
                             session_identifier=?session.session_identifier,
@@ -1265,12 +1272,12 @@ impl DWalletMPCService {
                     None
                 }
             },
-            SessionType::InternalSign => match &session_request.protocol_data {
-                ProtocolData::InternalSign { .. } => {
+            SessionType::NetworkOwnedAddressSign => match &session_request.protocol_data {
+                ProtocolData::NetworkOwnedAddressSign { .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
-                        DWalletInternalMPCOutputKind::InternalSign {
+                        DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                             output,
                             sequence_number: session_request.session_sequence_number,
                         },
@@ -1398,10 +1405,10 @@ impl DWalletMPCService {
 
                 vec![tx]
             }
-            ProtocolData::InternalSign { .. } => {
+            ProtocolData::NetworkOwnedAddressSign { .. } => {
                 error!(
                     should_never_happen =? true,
-                    "received an internal sign session for checkpointing"
+                    "received an network-owned-address sign session for checkpointing"
                 );
                 vec![]
             }
