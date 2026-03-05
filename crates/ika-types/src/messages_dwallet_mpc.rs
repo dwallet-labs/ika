@@ -86,7 +86,7 @@ pub enum DWalletInternalMPCOutputKind {
         session_sequence_number: u64,
         dwallet_network_encryption_key_id: ObjectID,
     },
-    InternalSign {
+    NetworkOwnedAddressSign {
         output: Vec<u8>,
         sequence_number: u64,
     },
@@ -338,7 +338,7 @@ pub enum SessionType {
     User,
     System,
     InternalPresign,
-    InternalSign,
+    NetworkOwnedAddressSign,
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -378,9 +378,9 @@ impl SessionIdentifier {
                 &session_identifier_preimage,
             ]
             .concat(),
-            SessionType::InternalSign => [
+            SessionType::NetworkOwnedAddressSign => [
                 version.to_be_bytes().as_slice(),
-                b"INTERNAL_SIGN",
+                b"NETWORK_OWNED_ADDRESS_SIGN",
                 &session_identifier_preimage,
             ]
             .concat(),

@@ -51,8 +51,8 @@ use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSi
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
-pub(crate) mod internal_sign_dkg_emulation;
 pub(crate) mod network_dkg;
+pub(crate) mod network_owned_address_sign_dkg_emulation;
 pub(crate) mod presign;
 pub(crate) mod reconfiguration;
 pub(crate) mod sign;
@@ -199,7 +199,7 @@ impl ProtocolCryptographicData {
                     decryption_key_shares: decryption_key_shares.clone(),
                 }
             }
-            ProtocolData::InternalSign {
+            ProtocolData::NetworkOwnedAddressSign {
                 data,
                 dwallet_network_encryption_key_id,
                 ..
@@ -223,7 +223,7 @@ impl ProtocolCryptographicData {
                 let decryption_key_shares = decryption_key_shares
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::InternalSign {
+                ProtocolCryptographicData::NetworkOwnedAddressSign {
                     data: data.clone(),
                     public_input: public_input.clone(),
                     advance_request,
@@ -931,7 +931,7 @@ impl ProtocolCryptographicData {
                 public_input.to_string(),
                 advance_request.to_string(),
             )),
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input: SignPublicInputByProtocol::Secp256k1ECDSA(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 decryption_key_shares,
@@ -959,7 +959,7 @@ impl ProtocolCryptographicData {
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input: SignPublicInputByProtocol::Secp256k1Taproot(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1Taproot(advance_request),
                 decryption_key_shares,
@@ -987,7 +987,7 @@ impl ProtocolCryptographicData {
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input: SignPublicInputByProtocol::Secp256r1(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Secp256r1(advance_request),
                 decryption_key_shares,
@@ -1015,7 +1015,7 @@ impl ProtocolCryptographicData {
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input: SignPublicInputByProtocol::Curve25519(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Curve25519(advance_request),
                 decryption_key_shares,
@@ -1043,7 +1043,7 @@ impl ProtocolCryptographicData {
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input: SignPublicInputByProtocol::Ristretto(public_input),
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 decryption_key_shares,
@@ -1071,7 +1071,7 @@ impl ProtocolCryptographicData {
                     &mut rng,
                 )
             }
-            ProtocolCryptographicData::InternalSign {
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
                 public_input,
                 advance_request,
                 ..

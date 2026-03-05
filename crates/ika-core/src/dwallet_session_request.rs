@@ -1,6 +1,6 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::request_protocol_data::{
-    ProtocolData, internal_presign_protocol_data, internal_sign_protocol_data,
+    ProtocolData, internal_presign_protocol_data, network_owned_address_sign_protocol_data,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
@@ -86,11 +86,11 @@ impl DWalletSessionRequest {
         }
     }
 
-    /// Creates a new internal sign session request.
+    /// Creates a new network-owned-address sign session request.
     ///
     /// The session identifier is derived deterministically from the epoch and
     /// sequence number, ensuring all validators create the same session.
-    pub fn new_internal_sign(
+    pub fn new_network_owned_address_sign(
         epoch: u64,
         sequence_number: u64,
         curve: DWalletCurve,
@@ -101,7 +101,8 @@ impl DWalletSessionRequest {
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
     ) -> Self {
-        let mut transcript = Transcript::new(b"Internal Sign session identifier preimage");
+        let mut transcript =
+            Transcript::new(b"NetworkOwnedAddressSign session identifier preimage");
         transcript.append_message(b"epoch", &epoch.to_be_bytes());
         transcript.append_message(
             b"checkpoint sequence number",
@@ -126,10 +127,10 @@ impl DWalletSessionRequest {
             &mut session_identifier_preimage,
         );
 
-        let session_type = SessionType::InternalSign;
+        let session_type = SessionType::NetworkOwnedAddressSign;
         let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
 
-        let protocol_data = internal_sign_protocol_data(
+        let protocol_data = network_owned_address_sign_protocol_data(
             curve,
             signature_algorithm,
             hash_scheme,
@@ -195,16 +196,16 @@ impl Ord for DWalletSessionRequest {
             (SessionType::InternalPresign, SessionType::InternalPresign) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
-            (SessionType::InternalSign, SessionType::InternalSign) => self
+            (SessionType::NetworkOwnedAddressSign, SessionType::NetworkOwnedAddressSign) => self
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
             // Internal presign sessions are of the lowest priority (handled last)
             (SessionType::InternalPresign, _) => Ordering::Greater,
             (_, SessionType::InternalPresign) => Ordering::Less,
 
-            // Internal sign sessions are of the highest priority (handled first)
-            (SessionType::InternalSign, _) => Ordering::Less,
-            (_, SessionType::InternalSign) => Ordering::Greater,
+            // Network-owned-address sign sessions are of the highest priority (handled first)
+            (SessionType::NetworkOwnedAddressSign, _) => Ordering::Less,
+            (_, SessionType::NetworkOwnedAddressSign) => Ordering::Greater,
         }
     }
 }
@@ -277,7 +278,7 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: Some(data.signature_algorithm),
             },
-            ProtocolData::InternalSign { data, .. } => DWalletSessionRequestMetricData {
+            ProtocolData::NetworkOwnedAddressSign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),
                 hash_scheme: Some(data.hash_scheme),
@@ -362,7 +363,7 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: Some(data.signature_algorithm),
                 }
             }
-            ProtocolCryptographicData::InternalSign { data, .. } => {
+            ProtocolCryptographicData::NetworkOwnedAddressSign { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: Some(data.curve),

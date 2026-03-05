@@ -46,7 +46,7 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
-use crate::dwallet_mpc::InternalSignOutput;
+use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -162,8 +162,8 @@ pub(crate) struct DWalletMPCManager {
     /// The epoch store for persisting presign pools to disk.
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
-    /// Channel sender for completed internal sign session outputs.
-    internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
+    /// Channel sender for completed network-owned-address sign session outputs.
+    network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
 }
 
 impl DWalletMPCManager {
@@ -179,7 +179,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
+        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -193,7 +193,7 @@ impl DWalletMPCManager {
             sui_data_receivers,
             protocol_config,
             epoch_store,
-            internal_sign_output_sender,
+            network_owned_address_sign_output_sender,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -214,7 +214,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-        internal_sign_output_sender: UnboundedSender<InternalSignOutput>,
+        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -267,7 +267,7 @@ impl DWalletMPCManager {
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
             epoch_store,
-            internal_sign_output_sender,
+            network_owned_address_sign_output_sender,
         })
     }
 
@@ -613,9 +613,9 @@ impl DWalletMPCManager {
         ]
     }
 
-    /// Returns the network encryption key ID used for internal signing (the oldest by DKG epoch).
+    /// Returns the network encryption key ID used for network-owned-address signing (the oldest by DKG epoch).
     /// Used by internal presign session instantiation to determine internal-signing-specific pool params.
-    fn internal_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
+    fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
         self.network_keys
             .network_encryption_keys
             .iter()
@@ -632,39 +632,43 @@ impl DWalletMPCManager {
         network_is_idle: bool,
     ) {
         // Check if we are ready to instantiate internal sessions, which depend on the consensus agreed (synced) network key data.
-        let agreed_internal_signing_key_id = match self.internal_signing_network_encryption_key_id()
-        {
-            Some(id) => id,
-            None => return,
-        };
+        let agreed_network_owned_address_signing_key_id =
+            match self.network_owned_address_signing_network_encryption_key_id() {
+                Some(id) => id,
+                None => return,
+            };
 
-        let internal_signing_curve = self.protocol_config.internal_signing_curve();
-        let internal_signing_algorithm = self.protocol_config.internal_signing_algorithm();
+        let network_owned_address_signing_curve =
+            self.protocol_config.network_owned_address_signing_curve();
+        let network_owned_address_signing_algorithm = self
+            .protocol_config
+            .network_owned_address_signing_algorithm();
 
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
             {
                 for signature_algorithm in signature_algorithms {
-                    let is_internal_signing_presign = agreed_internal_signing_key_id == key_id
-                        && curve == internal_signing_curve
-                        && signature_algorithm == internal_signing_algorithm;
+                    let is_network_owned_address_signing_presign =
+                        agreed_network_owned_address_signing_key_id == key_id
+                            && curve == network_owned_address_signing_curve
+                            && signature_algorithm == network_owned_address_signing_algorithm;
 
                     let (
                         minimal_pool_size,
                         maximum_pool_size,
                         consensus_round_delay,
                         sessions_to_instantiate,
-                    ) = if is_internal_signing_presign {
+                    ) = if is_network_owned_address_signing_presign {
                         (
                             self.protocol_config
-                                .internal_sign_presign_pool_minimum_size(),
+                                .network_owned_address_sign_presign_pool_minimum_size(),
                             self.protocol_config
-                                .internal_sign_presign_pool_maximum_size(),
+                                .network_owned_address_sign_presign_pool_maximum_size(),
                             self.protocol_config
-                                .internal_sign_presign_consensus_round_delay(),
+                                .network_owned_address_sign_presign_consensus_round_delay(),
                             self.protocol_config
-                                .internal_sign_presign_sessions_to_instantiate(),
+                                .network_owned_address_sign_presign_sessions_to_instantiate(),
                         )
                     } else {
                         (
@@ -790,32 +794,36 @@ impl DWalletMPCManager {
             .is_ok()
     }
 
-    /// Instantiates a generic internal sign session.
+    /// Instantiates a generic network-owned-address sign session.
     ///
     /// Pops a presign from the internal pool, wraps it, and creates the sign session.
     /// Returns `true` if the session was successfully instantiated, `false` on error.
-    pub(super) fn instantiate_internal_sign_session(
+    pub(super) fn instantiate_network_owned_address_sign_session(
         &mut self,
         sequence_number: u64,
         message: Vec<u8>,
     ) -> bool {
         // Derive config values internally
         let Some(dwallet_network_encryption_key_id) =
-            self.internal_signing_network_encryption_key_id()
+            self.network_owned_address_signing_network_encryption_key_id()
         else {
             error!(
                 sequence_number,
                 should_never_happen = true,
-                "No internal signing network key available — caller should check \
-                 has_internal_signing_network_key() first"
+                "No network-owned-address signing network key available — caller should check \
+                 has_network_owned_address_signing_network_key() first"
             );
             return false;
         };
 
-        let curve = self.protocol_config.internal_signing_curve();
-        let signature_algorithm = self.protocol_config.internal_signing_algorithm();
-        let hash_scheme: group::HashScheme =
-            self.protocol_config.internal_signing_hash_scheme().into();
+        let curve = self.protocol_config.network_owned_address_signing_curve();
+        let signature_algorithm = self
+            .protocol_config
+            .network_owned_address_signing_algorithm();
+        let hash_scheme: group::HashScheme = self
+            .protocol_config
+            .network_owned_address_signing_hash_scheme()
+            .into();
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -827,7 +835,7 @@ impl DWalletMPCManager {
                     sequence_number,
                     error = ?e,
                     should_never_happen = true,
-                    "Failed to get network encryption key data for internal sign session"
+                    "Failed to get network encryption key data for network-owned-address sign session"
                 );
                 return false;
             }
@@ -845,7 +853,7 @@ impl DWalletMPCManager {
                     ?signature_algorithm,
                     should_never_happen = true,
                     "No presign available in pool — caller should check \
-                     has_internal_signing_presign_available() first"
+                     has_network_owned_address_signing_presign_available() first"
                 );
                 return false;
             }
@@ -855,7 +863,7 @@ impl DWalletMPCManager {
                     ?signature_algorithm,
                     error = ?e,
                     should_never_happen = true,
-                    "Failed to get presign from internal pool for internal signing"
+                    "Failed to get presign from internal pool for network-owned-address signing"
                 );
                 return false;
             }
@@ -897,13 +905,13 @@ impl DWalletMPCManager {
                     sequence_number,
                     error = ?e,
                     should_never_happen = true,
-                    "Failed to wrap presign in VersionedPresignOutput for internal sign"
+                    "Failed to wrap presign in VersionedPresignOutput for network-owned-address sign"
                 );
                 return false;
             }
         };
 
-        let request = DWalletSessionRequest::new_internal_sign(
+        let request = DWalletSessionRequest::new_network_owned_address_sign(
             self.epoch_id,
             sequence_number,
             curve,
@@ -928,24 +936,27 @@ impl DWalletMPCManager {
             ?signature_algorithm,
             ?session_identifier,
             message_length = message.len(),
-            "instantiating internal sign session",
+            "instantiating network-owned-address sign session",
         );
 
         self.new_session(&session_identifier, status, session_computation_type);
         true
     }
 
-    /// Checks if this manager has an internal signing network key available
-    pub(super) fn has_internal_signing_network_key(&self) -> bool {
-        self.internal_signing_network_encryption_key_id().is_some()
+    /// Checks if this manager has an network-owned-address signing network key available
+    pub(super) fn has_network_owned_address_signing_network_key(&self) -> bool {
+        self.network_owned_address_signing_network_encryption_key_id()
+            .is_some()
     }
 
-    /// Checks if this manager has a presign available for internal signing
-    pub(super) fn has_internal_signing_presign_available(&self) -> bool {
-        let Some(key_id) = self.internal_signing_network_encryption_key_id() else {
+    /// Checks if this manager has a presign available for network-owned-address signing
+    pub(super) fn has_network_owned_address_signing_presign_available(&self) -> bool {
+        let Some(key_id) = self.network_owned_address_signing_network_encryption_key_id() else {
             return false;
         };
-        let signature_algorithm = self.protocol_config.internal_signing_algorithm();
+        let signature_algorithm = self
+            .protocol_config
+            .network_owned_address_signing_algorithm();
 
         self.epoch_store
             .presign_pool_size(signature_algorithm, key_id)
@@ -1087,7 +1098,7 @@ impl DWalletMPCManager {
                     }
                     SessionType::System => true,
                     SessionType::InternalPresign => true,
-                    SessionType::InternalSign => true,
+                    SessionType::NetworkOwnedAddressSign => true,
                 };
 
                 if should_advance {
@@ -1238,8 +1249,9 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.protocol_config.internal_signing_curve(),
-                    self.protocol_config.internal_signing_algorithm(),
+                    self.protocol_config.network_owned_address_signing_curve(),
+                    self.protocol_config
+                        .network_owned_address_signing_algorithm(),
                     self.party_id,
                 )
                 .await;
@@ -1431,28 +1443,31 @@ impl DWalletMPCManager {
                     .entry((curve, signature_algorithm))
                     .or_insert(0) += 1;
             }
-            DWalletInternalMPCOutputKind::InternalSign {
+            DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,
                 sequence_number,
             } => {
                 info!(
                     sequence_number,
-                    curve = ?self.protocol_config.internal_signing_curve(),
-                    signature_algorithm = ?self.protocol_config.internal_signing_algorithm(),
+                    curve = ?self.protocol_config.network_owned_address_signing_curve(),
+                    signature_algorithm = ?self.protocol_config.network_owned_address_signing_algorithm(),
                     signature_length = output.len(),
                     signature_hex = %hex::encode(&output),
-                    "Internal sign completed"
+                    "Network-owned-address sign completed"
                 );
-                let sign_output = InternalSignOutput {
+                let sign_output = NetworkOwnedAddressSignOutput {
                     sequence_number,
                     signature: output,
                 };
-                if let Err(e) = self.internal_sign_output_sender.send(sign_output) {
+                if let Err(e) = self
+                    .network_owned_address_sign_output_sender
+                    .send(sign_output)
+                {
                     error!(
                         sequence_number,
                         error = ?e,
                         should_never_happen = true,
-                        "Failed to send internal sign output to channel"
+                        "Failed to send network-owned-address sign output to channel"
                     );
                 }
             }

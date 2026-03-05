@@ -142,7 +142,7 @@ fn centralized_dkg_output_v2<P: twopc_mpc::dkg::Protocol>(
 /// Executes the centralized party DKG with a custom RNG.
 ///
 /// This is a lower-level function that allows callers to provide their own RNG,
-/// enabling deterministic output for internal signing (using ZeroRng) or
+/// enabling deterministic output for network-owned-address signing (using ZeroRng) or
 /// random output for user-initiated DKG (using OsCsRng).
 ///
 /// # Type Parameters
@@ -730,7 +730,7 @@ fn advance_sign_by_protocol<P: twopc_mpc::sign::Protocol>(
 /// Executes the centralized party signing with a custom RNG.
 ///
 /// This is a lower-level function that allows callers to provide their own RNG,
-/// enabling deterministic output for internal signing (using ZeroRng) or
+/// enabling deterministic output for network-owned-address signing (using ZeroRng) or
 /// random output for user-initiated signing (using OsCsRng).
 ///
 /// # Type Parameters

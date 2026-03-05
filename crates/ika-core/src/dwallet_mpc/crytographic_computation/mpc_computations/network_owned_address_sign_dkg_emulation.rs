@@ -1,23 +1,23 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Internal Sign DKG Module
+//! NetworkOwnedAddressSign DKG Module
 //!
 //! This module provides functionality to compute the decentralized party DKG output
-//! for internal signing. It emulates the centralized party (user) using
+//! for network-owned-address signing. It emulates the centralized party (user) using
 //! a deterministic zero-returning RNG (`ZeroRng`), enabling the network to perform
-//! internal signing operations without requiring an actual user.
+//! network-owned-address signing operations without requiring an actual user.
 //!
 //! # Security Model
 //!
 //! The "user" (centralized party) key share is effectively zero/deterministic, meaning
-//! there is no user secret to protect. Security for internal signing comes entirely
+//! there is no user secret to protect. Security for network-owned-address signing comes entirely
 //! from the network's threshold signature scheme, not from user randomness.
 //!
 //! # Usage
 //!
 //! This module is used when creating a network key to also prepare the internal
-//! internal sign DKG output. The output can then be used for internal signing
+//! network-owned-address sign DKG output. The output can then be used for network-owned-address signing
 //! without requiring user participation.
 
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg:
 ///
 /// The secret key share is zero (derived from ZeroRng) and is not stored here.
 /// When needed for signing, a zero scalar is used directly.
-/// This is intentional for internal signing where there is no user secret to protect.
+/// This is intentional for network-owned-address signing where there is no user secret to protect.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EmulatedCentralizedDKGResult {
     /// The public key share and proof from the emulated centralized party.
@@ -65,14 +65,14 @@ pub struct EmulatedCentralizedDKGResult {
     pub public_output: Vec<u8>,
 }
 
-/// The complete internal sign DKG output containing both centralized and
+/// The complete network-owned-address sign DKG output containing both centralized and
 /// decentralized party DKG results.
 ///
 /// This is computed at network key instantiation time and stored in the network
-/// key public data. It allows InternalSign to use the Sign protocol directly
+/// key public data. It allows NetworkOwnedAddressSign to use the Sign protocol directly
 /// instead of DKGAndSign, avoiding redundant DKG computation at sign time.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct InternalSignDKGOutput {
+pub struct NetworkOwnedAddressSignDKGOutput {
     /// The emulated centralized party DKG result.
     pub centralized_dkg_result: EmulatedCentralizedDKGResult,
 
@@ -84,7 +84,7 @@ pub struct InternalSignDKGOutput {
 /// Emulates the centralized party DKG for a given curve using ZeroRng.
 ///
 /// This function creates a deterministic "user" DKG output that can be used
-/// for internal signing. All validators calling this function with
+/// for network-owned-address signing. All validators calling this function with
 /// the same inputs will produce identical outputs.
 ///
 /// # Arguments
@@ -104,8 +104,8 @@ pub struct InternalSignDKGOutput {
 ///
 /// This function uses ZeroRng which provides NO randomness. The output is
 /// deterministic and the "secret" key share is not secret at all.
-/// This is intentional for internal signing operations.
-pub fn emulate_centralized_dkg_for_internal_sign(
+/// This is intentional for network-owned-address signing operations.
+pub fn emulate_centralized_dkg_for_network_owned_address_sign(
     curve: DWalletCurve,
     protocol_public_parameters: &[u8],
     session_id: &[u8],
@@ -148,7 +148,7 @@ pub fn emulate_centralized_dkg_for_internal_sign(
 /// # Security Warning
 ///
 /// This function uses ZeroRng - a deterministic RNG that always returns zeros.
-/// The output is intentionally deterministic for internal signing operations.
+/// The output is intentionally deterministic for network-owned-address signing operations.
 fn emulate_centralized_dkg_v2<P, const SCALAR_LIMBS: usize, ScalarValue>(
     protocol_pp_bytes: &[u8],
     session_id_bytes: &[u8],
@@ -197,7 +197,7 @@ where
     })
 }
 
-/// Returns the serialized zero centralized party "secret" key share for internal signing.
+/// Returns the serialized zero centralized party "secret" key share for network-owned-address signing.
 ///
 /// This function returns a zero scalar without performing any DKG computation.
 /// The emulated centralized DKG uses ZeroRng which always produces zero bytes,
@@ -211,7 +211,7 @@ where
 /// # Security Note
 ///
 /// The returned "secret" is NOT actually secret - it's explicitly zero.
-/// This is intentional for internal signing where there is no user secret to protect.
+/// This is intentional for network-owned-address signing where there is no user secret to protect.
 /// The security comes from the network's threshold signature, not from this value.
 ///
 /// # Returns
@@ -256,7 +256,7 @@ where
     Ok(centralized_secret_output)
 }
 
-/// Emulates the centralized party's partial signature for internal signing.
+/// Emulates the centralized party's partial signature for network-owned-address signing.
 ///
 /// This function creates a deterministic partial signature using ZeroRng to emulate
 /// the centralized party. All validators calling this function with the same inputs
@@ -265,7 +265,7 @@ where
 /// # Arguments
 ///
 /// * `signature_algorithm` - The signature algorithm (e.g., EdDSA)
-/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_internal_sign`
+/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_network_owned_address_sign`
 /// * `message` - The message to sign
 /// * `hash_scheme` - The hash scheme to use
 /// * `presign` - The presign data (from internal presign pool)
@@ -278,7 +278,7 @@ where
 /// # Security Warning
 ///
 /// This function uses ZeroRng which provides NO randomness. The output is
-/// deterministic. This is intentional for internal signing operations.
+/// deterministic. This is intentional for network-owned-address signing operations.
 pub fn emulate_centralized_party_partial_signature(
     signature_algorithm: DWalletSignatureAlgorithm,
     emulated_dkg_result: &EmulatedCentralizedDKGResult,
@@ -365,12 +365,12 @@ fn emulate_sign_centralized<P: twopc_mpc::sign::Protocol, const SCALAR_LIMBS: us
 where
     ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,
 {
-    // Get the zero secret key share (the centralized party's secret is always zero for internal signing)
+    // Get the zero secret key share (the centralized party's secret is always zero for network-owned-address signing)
     let zero_secret_key_share =
         get_zero_centralized_secret_internal::<SCALAR_LIMBS, ScalarValue>()?;
 
     // Deserialize the centralized party DKG public output, unwrapping the versioned envelope.
-    // Internal signing always produces V2 via `centralized_dkg_output_v2_with_rng`.
+    // Network-owned-address signing always produces V2 via `centralized_dkg_output_v2_with_rng`.
     let versioned_dkg_output =
         bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(&emulated_dkg_result.public_output)
             .map_err(DwalletMPCError::BcsError)?;
@@ -382,7 +382,7 @@ where
             }
             VersionedCentralizedDKGPublicOutput::V1(_) => {
                 return Err(DwalletMPCError::InternalError(
-                    "Internal sign DKG output should always be V2, got V1".to_string(),
+                    "Network-owned-address sign DKG output should always be V2, got V1".to_string(),
                 ));
             }
         };
@@ -462,7 +462,7 @@ where
     // consensus_round value doesn't matter for single-round DKG with no message exchange
     let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, &empty_messages)?
         .ok_or_else(|| DwalletMPCError::InternalError(
-            "Internal sign DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
+            "Network-owned-address sign DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
         ))?;
 
     let result = compute_dwallet_dkg::<P>(
@@ -481,12 +481,13 @@ where
             ..
         } => Ok(public_output_value),
         GuaranteedOutputDeliveryRoundResult::Advance { .. } => Err(DwalletMPCError::InternalError(
-            "Internal sign DKG did not finalize in single round as expected".to_string(),
+            "Network-owned-address sign DKG did not finalize in single round as expected"
+                .to_string(),
         )),
     }
 }
 
-/// Computes the decentralized party DKG output for internal signing.
+/// Computes the decentralized party DKG output for network-owned-address signing.
 ///
 /// This function runs the decentralized party DKG protocol locally. Since the DKG
 /// is a single-round protocol, each validator can compute their contribution
@@ -585,7 +586,7 @@ pub fn compute_decentralized_dkg_output(
     }
 }
 
-/// Gets the session identifier for internal sign DKG.
+/// Gets the session identifier for network-owned-address sign DKG.
 ///
 /// This creates a deterministic session ID based on the network key ID,
 /// curve, and signature algorithm, ensuring all validators agree on the same
@@ -603,14 +604,14 @@ pub fn compute_decentralized_dkg_output(
 ///
 /// # Returns
 ///
-/// A `SessionIdentifier` for the internal sign DKG.
-pub fn internal_sign_dkg_session_id(
+/// A `SessionIdentifier` for the network-owned-address sign DKG.
+pub fn network_owned_address_sign_dkg_session_id(
     network_key_id: &[u8],
     curve: DWalletCurve,
     signature_algorithm: DWalletSignatureAlgorithm,
 ) -> SessionIdentifier {
     // Compute a deterministic preimage using Merlin transcript
-    let mut transcript = Transcript::new(b"Internal Sign DKG Session ID");
+    let mut transcript = Transcript::new(b"NetworkOwnedAddressSign DKG Session ID");
     transcript.append_message(b"network_key_id", network_key_id);
     transcript.append_message(b"curve", curve.to_string().as_bytes());
     transcript.append_message(
@@ -626,13 +627,13 @@ pub fn internal_sign_dkg_session_id(
     SessionIdentifier::new(SessionType::System, session_id_preimage)
 }
 
-/// Computes the full internal sign DKG output for internal signing.
+/// Computes the full network-owned-address sign DKG output for network-owned-address signing.
 ///
 /// This function computes both the centralized party DKG (emulated with ZeroRng)
 /// and the decentralized party DKG outputs. The decentralized DKG is a single-round
 /// protocol that can be computed independently by each validator.
 ///
-/// The output is stored in the network key public data and used for InternalSign
+/// The output is stored in the network key public data and used for NetworkOwnedAddressSign
 /// operations, allowing the Sign protocol to be used directly instead of DKGAndSign.
 ///
 /// # Arguments
@@ -646,7 +647,7 @@ pub fn internal_sign_dkg_session_id(
 /// # Returns
 ///
 /// The serialized DKG output if successful, or an error if the computation fails.
-pub fn compute_internal_sign_dkg_output(
+pub fn compute_network_owned_address_sign_dkg_output(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
     algorithm: DWalletSignatureAlgorithm,
@@ -655,11 +656,14 @@ pub fn compute_internal_sign_dkg_output(
     party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
     // Compute the session ID for deterministic DKG
-    let session_id = internal_sign_dkg_session_id(network_key_id, curve, algorithm);
+    let session_id = network_owned_address_sign_dkg_session_id(network_key_id, curve, algorithm);
 
     // Emulate the centralized party DKG
-    let centralized_result =
-        emulate_centralized_dkg_for_internal_sign(curve, protocol_pp, session_id.as_ref())?;
+    let centralized_result = emulate_centralized_dkg_for_network_owned_address_sign(
+        curve,
+        protocol_pp,
+        session_id.as_ref(),
+    )?;
 
     // Convert session_id to CommitmentSizedNumber for the decentralized DKG
     let session_id = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
@@ -674,8 +678,8 @@ pub fn compute_internal_sign_dkg_output(
         party_id,
     )?;
 
-    // Create the full internal sign DKG output
-    let output = InternalSignDKGOutput {
+    // Create the full network-owned-address sign DKG output
+    let output = NetworkOwnedAddressSignDKGOutput {
         centralized_dkg_result: centralized_result,
         decentralized_dkg_public_output,
     };
@@ -691,32 +695,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_internal_sign_dkg_session_id_is_deterministic() {
+    fn test_network_owned_address_sign_dkg_session_id_is_deterministic() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let first_call = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
-        let second_call = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let first_call =
+            network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let second_call =
+            network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
 
         assert_eq!(first_call, second_call);
     }
 
     #[test]
-    fn test_internal_sign_dkg_session_id_varies_with_inputs() {
+    fn test_network_owned_address_sign_dkg_session_id_varies_with_inputs() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
         let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let original = internal_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let original = network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
 
         // Different network key
         let different_key = [2u8; 32];
-        let with_different_key = internal_sign_dkg_session_id(&different_key, curve, algorithm);
+        let with_different_key =
+            network_owned_address_sign_dkg_session_id(&different_key, curve, algorithm);
 
         // Different curve
-        let with_different_curve =
-            internal_sign_dkg_session_id(&network_key_id, DWalletCurve::Secp256k1, algorithm);
+        let with_different_curve = network_owned_address_sign_dkg_session_id(
+            &network_key_id,
+            DWalletCurve::Secp256k1,
+            algorithm,
+        );
 
         assert_ne!(original, with_different_key);
         assert_ne!(original, with_different_curve);

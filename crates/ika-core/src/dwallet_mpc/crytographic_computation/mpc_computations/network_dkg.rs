@@ -6,7 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_sign_dkg_emulation::compute_internal_sign_dkg_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_network_owned_address_sign_dkg_output;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -308,8 +308,8 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-    internal_signing_curve: DWalletCurve,
-    internal_signing_algorithm: DWalletSignatureAlgorithm,
+    network_owned_address_signing_curve: DWalletCurve,
+    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
@@ -325,8 +325,8 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
-                    internal_signing_curve,
-                    internal_signing_algorithm,
+                    network_owned_address_signing_curve,
+                    network_owned_address_signing_algorithm,
                     party_id,
                 )
             }
@@ -338,8 +338,8 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
-                internal_signing_curve,
-                internal_signing_algorithm,
+                network_owned_address_signing_curve,
+                network_owned_address_signing_algorithm,
                 party_id,
             )
         };
@@ -360,8 +360,8 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    internal_signing_curve: DWalletCurve,
-    internal_signing_algorithm: DWalletSignatureAlgorithm,
+    network_owned_address_signing_curve: DWalletCurve,
+    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
@@ -406,23 +406,24 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute the internal sign DKG output for internal signing.
-            // Select the protocol PP for the internal signing curve.
-            let protocol_pp = match internal_signing_curve {
+            // Compute the network-owned-address sign DKG output for network-owned-address signing.
+            // Select the protocol PP for the network-owned-address signing curve.
+            let protocol_pp = match network_owned_address_signing_curve {
                 DWalletCurve::Secp256k1 => bcs::to_bytes(&*secp256k1_protocol_public_parameters)?,
                 DWalletCurve::Secp256r1 => bcs::to_bytes(&*secp256r1_protocol_public_parameters)?,
                 DWalletCurve::Ristretto => bcs::to_bytes(&*ristretto_protocol_public_parameters)?,
                 DWalletCurve::Curve25519 => bcs::to_bytes(&*curve25519_protocol_public_parameters)?,
             };
 
-            let internal_sign_dkg_output = compute_internal_sign_dkg_output(
-                &network_key_id,
-                internal_signing_curve,
-                internal_signing_algorithm,
-                &protocol_pp,
-                access_structure,
-                party_id,
-            )?;
+            let network_owned_address_sign_dkg_output =
+                compute_network_owned_address_sign_dkg_output(
+                    &network_key_id,
+                    network_owned_address_signing_curve,
+                    network_owned_address_signing_algorithm,
+                    &protocol_pp,
+                    access_structure,
+                    party_id,
+                )?;
 
             Ok(NetworkEncryptionKeyPublicData {
                 epoch,
@@ -438,7 +439,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                internal_sign_dkg_output,
+                network_owned_address_sign_dkg_output,
             })
         }
     }

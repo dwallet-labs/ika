@@ -4,7 +4,7 @@ use crate::authority::authority_per_epoch_store::{
 };
 use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
-use crate::dwallet_mpc::{InternalSignOutput, InternalSignRequest};
+use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
@@ -65,8 +65,10 @@ pub(crate) struct IntegrationTestState {
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
     pub(crate) sui_data_senders: Vec<SuiDataSenders>,
-    pub(crate) internal_sign_request_senders: Vec<UnboundedSender<InternalSignRequest>>,
-    pub(crate) internal_sign_output_receivers: Vec<UnboundedReceiver<InternalSignOutput>>,
+    pub(crate) network_owned_address_sign_request_senders:
+        Vec<UnboundedSender<NetworkOwnedAddressSignRequest>>,
+    pub(crate) network_owned_address_sign_output_receivers:
+        Vec<UnboundedReceiver<NetworkOwnedAddressSignOutput>>,
 }
 
 /// A testing implementation of the `DWalletMPCSubmitToConsensus` trait.
@@ -406,8 +408,8 @@ pub fn create_dwallet_mpc_services(
     Vec<Arc<TestingSubmitToConsensus>>,
     Vec<Arc<TestingAuthorityPerEpochStore>>,
     Vec<Arc<TestingDWalletCheckpointNotify>>,
-    Vec<UnboundedSender<InternalSignRequest>>,
-    Vec<UnboundedReceiver<InternalSignOutput>>,
+    Vec<UnboundedSender<NetworkOwnedAddressSignRequest>>,
+    Vec<UnboundedReceiver<NetworkOwnedAddressSignOutput>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
@@ -477,8 +479,8 @@ fn create_dwallet_mpc_service(
     Arc<TestingSubmitToConsensus>,
     Arc<TestingAuthorityPerEpochStore>,
     Arc<TestingDWalletCheckpointNotify>,
-    UnboundedSender<InternalSignRequest>,
-    UnboundedReceiver<InternalSignOutput>,
+    UnboundedSender<NetworkOwnedAddressSignRequest>,
+    UnboundedReceiver<NetworkOwnedAddressSignOutput>,
 ) {
     let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
     let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
@@ -1057,7 +1059,7 @@ pub(crate) const TEST_PRESIGN_POOL_MINIMUM_SIZE: u64 = 4;
 pub(crate) const TEST_PRESIGN_POOL_MAXIMUM_SIZE: u64 = 12;
 pub(crate) const TEST_PRESIGN_CONSENSUS_ROUND_DELAY: u64 = 2;
 pub(crate) const TEST_PRESIGN_SESSIONS_TO_INSTANTIATE: u64 = 1;
-pub(crate) const TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE: u64 = 2;
+pub(crate) const TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE: u64 = 2;
 
 /// Creates a protocol config override guard with small, test-friendly values.
 ///
@@ -1134,18 +1136,18 @@ pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
             TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 
-        // Internal sign presign pool
-        config.set_internal_sign_presign_pool_minimum_size_for_testing(
+        // Network-owned-address sign presign pool
+        config.set_network_owned_address_sign_presign_pool_minimum_size_for_testing(
             TEST_PRESIGN_POOL_MINIMUM_SIZE,
         );
-        config.set_internal_sign_presign_pool_maximum_size_for_testing(
+        config.set_network_owned_address_sign_presign_pool_maximum_size_for_testing(
             TEST_PRESIGN_POOL_MAXIMUM_SIZE,
         );
-        config.set_internal_sign_presign_consensus_round_delay_for_testing(
+        config.set_network_owned_address_sign_presign_consensus_round_delay_for_testing(
             TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
         );
-        config.set_internal_sign_presign_sessions_to_instantiate_for_testing(
-            TEST_INTERNAL_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        config.set_network_owned_address_sign_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 
         config
@@ -1180,8 +1182,8 @@ pub(crate) fn build_test_state(size: usize) -> IntegrationTestState {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = create_dwallet_mpc_services(size);
     IntegrationTestState {
         dwallet_mpc_services,
@@ -1192,8 +1194,8 @@ pub(crate) fn build_test_state(size: usize) -> IntegrationTestState {
         consensus_round: 1,
         committee,
         sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     }
 }
 

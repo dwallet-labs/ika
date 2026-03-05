@@ -1,8 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_sign_dkg_emulation::InternalSignDKGOutput;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::internal_sign_dkg_emulation::emulate_centralized_party_partial_signature;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::NetworkOwnedAddressSignDKGOutput;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
@@ -260,7 +260,7 @@ pub(crate) fn session_input_from_request(
             )?),
             None,
         )),
-        ProtocolData::InternalSign {
+        ProtocolData::NetworkOwnedAddressSign {
             data,
             dwallet_network_encryption_key_id,
             message,
@@ -270,12 +270,13 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Get the stored internal sign DKG output (contains both centralized and decentralized DKG).
+            // Get the stored network-owned-address sign DKG output (contains both centralized and decentralized DKG).
             // This is pre-computed during network key construction.
-            let stored_dkg_output_bytes = encryption_key_public_data.internal_sign_dkg_output();
+            let stored_dkg_output_bytes =
+                encryption_key_public_data.network_owned_address_sign_dkg_output();
 
-            // Deserialize the stored internal sign DKG output.
-            let internal_sign_dkg_output: InternalSignDKGOutput =
+            // Deserialize the stored network-owned-address sign DKG output.
+            let network_owned_address_sign_dkg_output: NetworkOwnedAddressSignDKGOutput =
                 bcs::from_bytes(stored_dkg_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
             // Get the serialized protocol public parameters for the curve
@@ -294,10 +295,10 @@ pub(crate) fn session_input_from_request(
             // All validators will produce identical output.
             // NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
             // Currently, we are using schnorr signatures for which it is cheap;
-            // if in the future we should support other signature algorithms for internal sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
+            // if in the future we should support other signature algorithms for network-owned-address sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
             let message_centralized_signature = emulate_centralized_party_partial_signature(
                 data.signature_algorithm,
-                &internal_sign_dkg_output.centralized_dkg_result,
+                &network_owned_address_sign_dkg_output.centralized_dkg_result,
                 message.clone(),
                 data.hash_scheme,
                 &presign_bytes,
@@ -309,7 +310,7 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
-                    &internal_sign_dkg_output.decentralized_dkg_public_output,
+                    &network_owned_address_sign_dkg_output.decentralized_dkg_public_output,
                     message.clone(),
                     presign,
                     &message_centralized_signature,

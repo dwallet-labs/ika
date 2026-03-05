@@ -125,9 +125,9 @@ impl RootSeed {
 ///
 /// 1. **Determinism is Required**: All validators must produce identical outputs when
 ///    emulating the "centralized party" (user) role in the 2PC-MPC protocol for
-///    internal signing operations (e.g., checkpoint signing).
+///    network-owned-address signing operations (e.g., checkpoint signing).
 ///
-/// 2. **No Secret is Protected**: The "user secret" in internal signing is not actually
+/// 2. **No Secret is Protected**: The "user secret" in network-owned-address signing is not actually
 ///    secret - it's a placeholder that all validators agree upon. The security comes
 ///    from the network's threshold signature, not from randomness.
 ///
@@ -141,13 +141,13 @@ impl RootSeed {
 /// twopc_mpc library. However, instead of generating random bytes, it always
 /// fills buffers with zeros.
 ///
-/// # Security Model for Internal Signing
+/// # Security Model for Network-Owned-Address Signing
 ///
 /// In the 2PC-MPC protocol:
 /// - Normal dWallet operations: User provides real randomness, protecting their key share
 /// - Internal network signing: No user exists; validators collectively act as both parties
 ///
-/// For internal signing (e.g., checkpoints), the "user randomness" doesn't provide security
+/// For network-owned-address signing (e.g., checkpoints), the "user randomness" doesn't provide security
 /// because:
 /// 1. There is no user secret to protect
 /// 2. Security comes from the network's distributed key (threshold signature)
@@ -231,7 +231,7 @@ impl RngCore for ZeroRng {
 ///
 /// This trait is implemented ONLY to satisfy the type system requirements of the
 /// twopc_mpc library, which requires [`CryptoRng`] bounds. The actual cryptographic
-/// security for internal signing comes from the network's threshold signature,
+/// security for network-owned-address signing comes from the network's threshold signature,
 /// NOT from this RNG.
 ///
 /// **NEVER** use this RNG in any context where randomness is expected to provide security.

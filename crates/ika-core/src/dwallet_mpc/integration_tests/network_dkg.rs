@@ -36,8 +36,8 @@ async fn test_network_dkg_full_flow() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
@@ -48,8 +48,8 @@ async fn test_network_dkg_full_flow() {
         consensus_round: 1,
         committee,
         sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
     create_network_key_test(&mut test_state).await;
 }
@@ -66,8 +66,8 @@ async fn test_network_key_reconfiguration() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -78,8 +78,8 @@ async fn test_network_key_reconfiguration() {
         consensus_round: 1,
         committee: committee.clone(),
         sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
     let (consensus_round, _, key_id) = create_network_key_test(&mut test_state).await;
     let (
@@ -88,8 +88,8 @@ async fn test_network_key_reconfiguration() {
         _next_epoch_sent_consensus_messages_collectors,
         _next_epoch_epoch_stores,
         _next_epoch_notify_services,
-        _next_epoch_internal_sign_request_senders,
-        _next_epoch_internal_sign_output_receivers,
+        _next_epoch_network_owned_address_sign_request_senders,
+        _next_epoch_network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut next_committee = (*next_epoch_dwallet_mpc_services[0].committee.clone()).clone();
     next_committee.epoch = epoch_id + 1;

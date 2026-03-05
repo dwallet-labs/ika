@@ -28,8 +28,8 @@ async fn network_key_received_after_start_event() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
@@ -40,8 +40,8 @@ async fn network_key_received_after_start_event() {
         consensus_round: 1,
         committee: committee.clone(),
         sui_data_senders,
-        internal_sign_request_senders,
-        internal_sign_output_receivers,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
 
     send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;

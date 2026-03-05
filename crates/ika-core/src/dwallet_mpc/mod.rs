@@ -14,15 +14,15 @@ use tracing::error;
 /// Request to trigger an internal MPC signing session.
 /// Sent to the MPC service to initiate a sign session using the internal presign pool.
 #[derive(Debug, Clone)]
-pub struct InternalSignRequest {
+pub struct NetworkOwnedAddressSignRequest {
     pub sequence_number: u64,
     pub message: Vec<u8>,
 }
 
 /// Output from a completed internal MPC signing session.
-/// Sent to the internal sign output channel for consumers.
+/// Sent to the network-owned-address sign output channel for consumers.
 #[derive(Debug, Clone)]
-pub struct InternalSignOutput {
+pub struct NetworkOwnedAddressSignOutput {
     pub sequence_number: u64,
     pub signature: Vec<u8>,
 }
