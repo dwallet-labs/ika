@@ -6,7 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_network_owned_address_sign_dkg_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::{NetworkOwnedAddressSignDKGOutput, compute_network_owned_address_sign_dkg_output};
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -16,7 +16,9 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    public_key_from_centralized_dkg_output_by_curve,
 };
+use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -308,8 +310,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-    network_owned_address_signing_curve: DWalletCurve,
-    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
@@ -325,8 +325,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
-                    network_owned_address_signing_curve,
-                    network_owned_address_signing_algorithm,
                     party_id,
                 )
             }
@@ -338,8 +336,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
-                network_owned_address_signing_curve,
-                network_owned_address_signing_algorithm,
                 party_id,
             )
         };
@@ -354,14 +350,198 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
         .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
+/// Per-algorithm DKG output and public key for network-owned-address signing.
+pub(crate) struct PerAlgorithmNoaSignData {
+    pub dkg_output: Vec<u8>,
+    pub public_key: Vec<u8>,
+}
+
+/// Computes the DKG output and extracts the public key for a single (curve, algorithm) pair.
+fn compute_noa_sign_dkg_and_public_key(
+    network_key_id: &[u8; 32],
+    curve: DWalletCurve,
+    algorithm: DWalletSignatureAlgorithm,
+    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
+) -> DwalletMPCResult<PerAlgorithmNoaSignData> {
+    let protocol_pp = match curve {
+        DWalletCurve::Secp256k1 => bcs::to_bytes(secp256k1_protocol_public_parameters)?,
+        DWalletCurve::Secp256r1 => bcs::to_bytes(secp256r1_protocol_public_parameters)?,
+        DWalletCurve::Ristretto => bcs::to_bytes(ristretto_protocol_public_parameters)?,
+        DWalletCurve::Curve25519 => bcs::to_bytes(curve25519_protocol_public_parameters)?,
+    };
+
+    let dkg_output = compute_network_owned_address_sign_dkg_output(
+        network_key_id,
+        curve,
+        algorithm,
+        &protocol_pp,
+        access_structure,
+        party_id,
+    )?;
+
+    // Deserialize the DKG output to extract the public key from the centralized DKG result.
+    let noa_dkg_output: NetworkOwnedAddressSignDKGOutput =
+        bcs::from_bytes(&dkg_output).map_err(DwalletMPCError::BcsError)?;
+
+    let curve_u32 = match curve {
+        DWalletCurve::Secp256k1 => 0,
+        DWalletCurve::Secp256r1 => 1,
+        DWalletCurve::Curve25519 => 2,
+        DWalletCurve::Ristretto => 3,
+    };
+    let public_key = public_key_from_centralized_dkg_output_by_curve(
+        curve_u32,
+        &noa_dkg_output.centralized_dkg_result.public_output,
+    )
+    .map_err(|e| {
+        DwalletMPCError::InternalError(format!(
+            "Failed to extract public key for {algorithm:?}: {e}"
+        ))
+    })?;
+
+    Ok(PerAlgorithmNoaSignData {
+        dkg_output,
+        public_key,
+    })
+}
+
+/// Computes DKG outputs and public keys for all supported (curve, algorithm) pairs.
+pub(crate) fn compute_all_noa_sign_dkg_outputs(
+    network_key_id: &[u8; 32],
+    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
+) -> DwalletMPCResult<HashMap<DWalletSignatureAlgorithm, PerAlgorithmNoaSignData>> {
+    supported_curve_to_signature_algorithms()
+        .into_iter()
+        .flat_map(|(curve, algorithms)| {
+            algorithms
+                .into_iter()
+                .map(move |algorithm| (curve, algorithm))
+        })
+        .map(|(curve, algorithm)| {
+            let data = compute_noa_sign_dkg_and_public_key(
+                network_key_id,
+                curve,
+                algorithm,
+                secp256k1_protocol_public_parameters,
+                secp256r1_protocol_public_parameters,
+                ristretto_protocol_public_parameters,
+                curve25519_protocol_public_parameters,
+                access_structure,
+                party_id,
+            )?;
+            Ok((algorithm, data))
+        })
+        .collect()
+}
+
+/// Builds the `NetworkEncryptionKeyPublicData` from per-algorithm NOA sign data.
+pub(crate) fn build_network_encryption_key_public_data(
+    epoch: u64,
+    dkg_at_epoch: u64,
+    state: NetworkDecryptionKeyPublicOutputType,
+    latest_network_reconfiguration_public_output: Option<
+        VersionedDecryptionKeyReconfigurationOutput,
+    >,
+    network_dkg_output: VersionedNetworkDkgOutput,
+    secp256k1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256k1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    >,
+    secp256r1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256r1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+    >,
+    ristretto_protocol_public_parameters: Arc<
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    >,
+    ristretto_decryption_key_share_public_parameters: Arc<
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+    >,
+    curve25519_protocol_public_parameters: Arc<
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    >,
+    curve25519_decryption_key_share_public_parameters: Arc<
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    >,
+    noa_sign_data: &HashMap<DWalletSignatureAlgorithm, PerAlgorithmNoaSignData>,
+) -> NetworkEncryptionKeyPublicData {
+    NetworkEncryptionKeyPublicData {
+        epoch,
+        dkg_at_epoch,
+        state,
+        latest_network_reconfiguration_public_output,
+        network_dkg_output,
+        secp256k1_protocol_public_parameters,
+        secp256k1_decryption_key_share_public_parameters,
+        secp256r1_protocol_public_parameters,
+        secp256r1_decryption_key_share_public_parameters,
+        ristretto_protocol_public_parameters,
+        ristretto_decryption_key_share_public_parameters,
+        curve25519_protocol_public_parameters,
+        curve25519_decryption_key_share_public_parameters,
+        ecdsa_secp256k1_network_owned_address_sign_dkg_output: noa_sign_data
+            [&DWalletSignatureAlgorithm::ECDSASecp256k1]
+            .dkg_output
+            .clone(),
+        ecdsa_secp256r1_network_owned_address_sign_dkg_output: noa_sign_data
+            [&DWalletSignatureAlgorithm::ECDSASecp256r1]
+            .dkg_output
+            .clone(),
+        eddsa_network_owned_address_sign_dkg_output: noa_sign_data
+            [&DWalletSignatureAlgorithm::EdDSA]
+            .dkg_output
+            .clone(),
+        schnorrkel_substrate_network_owned_address_sign_dkg_output: noa_sign_data
+            [&DWalletSignatureAlgorithm::SchnorrkelSubstrate]
+            .dkg_output
+            .clone(),
+        taproot_network_owned_address_sign_dkg_output: noa_sign_data
+            [&DWalletSignatureAlgorithm::Taproot]
+            .dkg_output
+            .clone(),
+        ecdsa_secp256k1_network_owned_address_sign_public_key: noa_sign_data
+            [&DWalletSignatureAlgorithm::ECDSASecp256k1]
+            .public_key
+            .clone(),
+        ecdsa_secp256r1_network_owned_address_sign_public_key: noa_sign_data
+            [&DWalletSignatureAlgorithm::ECDSASecp256r1]
+            .public_key
+            .clone(),
+        eddsa_network_owned_address_sign_public_key: noa_sign_data
+            [&DWalletSignatureAlgorithm::EdDSA]
+            .public_key
+            .clone(),
+        schnorrkel_substrate_network_owned_address_sign_public_key: noa_sign_data
+            [&DWalletSignatureAlgorithm::SchnorrkelSubstrate]
+            .public_key
+            .clone(),
+        taproot_network_owned_address_sign_public_key: noa_sign_data
+            [&DWalletSignatureAlgorithm::Taproot]
+            .public_key
+            .clone(),
+    }
+}
+
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
     dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    network_owned_address_signing_curve: DWalletCurve,
-    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
@@ -406,30 +586,22 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute the network-owned-address sign DKG output for network-owned-address signing.
-            // Select the protocol PP for the network-owned-address signing curve.
-            let protocol_pp = match network_owned_address_signing_curve {
-                DWalletCurve::Secp256k1 => bcs::to_bytes(&*secp256k1_protocol_public_parameters)?,
-                DWalletCurve::Secp256r1 => bcs::to_bytes(&*secp256r1_protocol_public_parameters)?,
-                DWalletCurve::Ristretto => bcs::to_bytes(&*ristretto_protocol_public_parameters)?,
-                DWalletCurve::Curve25519 => bcs::to_bytes(&*curve25519_protocol_public_parameters)?,
-            };
+            // Compute DKG outputs and extract public keys for all 5 signature algorithms.
+            let noa_sign_data = compute_all_noa_sign_dkg_outputs(
+                &network_key_id,
+                &secp256k1_protocol_public_parameters,
+                &secp256r1_protocol_public_parameters,
+                &ristretto_protocol_public_parameters,
+                &curve25519_protocol_public_parameters,
+                access_structure,
+                party_id,
+            )?;
 
-            let network_owned_address_sign_dkg_output =
-                compute_network_owned_address_sign_dkg_output(
-                    &network_key_id,
-                    network_owned_address_signing_curve,
-                    network_owned_address_signing_algorithm,
-                    &protocol_pp,
-                    access_structure,
-                    party_id,
-                )?;
-
-            Ok(NetworkEncryptionKeyPublicData {
+            Ok(build_network_encryption_key_public_data(
                 epoch,
                 dkg_at_epoch,
-                state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                latest_network_reconfiguration_public_output: None,
+                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                None,
                 network_dkg_output,
                 secp256k1_protocol_public_parameters,
                 secp256k1_decryption_key_share_public_parameters,
@@ -439,8 +611,8 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                network_owned_address_sign_dkg_output,
-            })
+                &noa_sign_data,
+            ))
         }
     }
 }

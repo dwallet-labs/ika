@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::debug_variable_chunks;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_network_owned_address_sign_dkg_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::{
+    build_network_encryption_key_public_data, compute_all_noa_sign_dkg_outputs,
+};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, ReconfigurationParty, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData, ReconfigurationParty,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
@@ -261,8 +263,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    network_owned_address_signing_curve: DWalletCurve,
-    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
@@ -304,41 +304,33 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute the network-owned-address sign DKG output for network-owned-address signing.
-            // Select the protocol PP for the network-owned-address signing curve.
-            let protocol_pp = match network_owned_address_signing_curve {
-                DWalletCurve::Secp256k1 => bcs::to_bytes(&*secp256k1_protocol_public_parameters)?,
-                DWalletCurve::Secp256r1 => bcs::to_bytes(&*secp256r1_protocol_public_parameters)?,
-                DWalletCurve::Ristretto => bcs::to_bytes(&*ristretto_protocol_public_parameters)?,
-                DWalletCurve::Curve25519 => bcs::to_bytes(&*curve25519_protocol_public_parameters)?,
-            };
+            // Compute DKG outputs and extract public keys for all 5 signature algorithms.
+            let noa_sign_data = compute_all_noa_sign_dkg_outputs(
+                &network_key_id,
+                &secp256k1_protocol_public_parameters,
+                &secp256r1_protocol_public_parameters,
+                &ristretto_protocol_public_parameters,
+                &curve25519_protocol_public_parameters,
+                access_structure,
+                party_id,
+            )?;
 
-            let network_owned_address_sign_dkg_output =
-                compute_network_owned_address_sign_dkg_output(
-                    &network_key_id,
-                    network_owned_address_signing_curve,
-                    network_owned_address_signing_algorithm,
-                    &protocol_pp,
-                    access_structure,
-                    party_id,
-                )?;
-
-            Ok(NetworkEncryptionKeyPublicData {
+            Ok(build_network_encryption_key_public_data(
                 epoch,
                 dkg_at_epoch,
-                state: NetworkDecryptionKeyPublicOutputType::Reconfiguration,
-                latest_network_reconfiguration_public_output: Some(mpc_public_output),
-                secp256k1_decryption_key_share_public_parameters,
+                NetworkDecryptionKeyPublicOutputType::Reconfiguration,
+                Some(mpc_public_output),
+                bcs::from_bytes(network_dkg_public_output)?,
                 secp256k1_protocol_public_parameters,
-                network_dkg_output: bcs::from_bytes(network_dkg_public_output)?,
-                secp256r1_decryption_key_share_public_parameters,
-                ristretto_decryption_key_share_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
                 secp256r1_protocol_public_parameters,
+                secp256r1_decryption_key_share_public_parameters,
                 ristretto_protocol_public_parameters,
+                ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                network_owned_address_sign_dkg_output,
-            })
+                &noa_sign_data,
+            ))
         }
     }
 }

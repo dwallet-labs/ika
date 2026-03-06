@@ -17,7 +17,9 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     build_test_state, create_test_protocol_config_guard,
 };
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
+};
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::collections::HashSet;
 use tracing::info;
@@ -47,15 +49,13 @@ async fn test_network_owned_address_sign_flow() {
     );
     test_state.consensus_round = consensus_round as usize;
 
-    let protocol_config = &test_state.dwallet_mpc_services[0]
-        .dwallet_mpc_manager()
-        .protocol_config;
-    let signature_algorithm = protocol_config.network_owned_address_signing_algorithm();
-    let curve = protocol_config.network_owned_address_signing_curve();
+    // Use EdDSA for the test — it's the fastest algorithm and exercises the full flow.
+    let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
+    let hash_scheme = DWalletHashScheme::SHA512;
 
     info!(
-        "Network-owned-address signing config: curve={:?}, algorithm={:?}",
-        curve, signature_algorithm
+        "Network-owned-address signing test: algorithm={:?}, hash_scheme={:?}",
+        signature_algorithm, hash_scheme
     );
 
     // Wait for the internal presign pool to populate with real presigns
@@ -93,11 +93,15 @@ async fn test_network_owned_address_sign_flow() {
     let test_message = b"test message to sign internally".to_vec();
     let sequence_number = 42u64;
 
-    for sender in &test_state.network_owned_address_sign_request_senders {
-        sender
+    for sender_map in &test_state.network_owned_address_sign_request_senders {
+        sender_map
+            .get(&signature_algorithm)
+            .expect("missing sender for algorithm")
             .send(NetworkOwnedAddressSignRequest {
                 sequence_number,
                 message: test_message.clone(),
+                signature_algorithm,
+                hash_scheme,
             })
             .expect("failed to send network-owned-address sign request");
     }

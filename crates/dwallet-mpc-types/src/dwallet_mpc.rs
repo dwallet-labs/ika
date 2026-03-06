@@ -127,9 +127,9 @@ pub struct NetworkEncryptionKeyPublicData {
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 
-    /// The DKG output for network-owned-address signing.
+    /// Per-algorithm DKG outputs for network-owned-address signing.
     ///
-    /// This field holds the centralized party DKG output created using a deterministic
+    /// Each field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
     /// the network to perform network-owned-address signing operations
     /// without requiring an actual user.
@@ -140,8 +140,20 @@ pub struct NetworkEncryptionKeyPublicData {
     /// there is no user secret to protect. Security for network-owned-address signing comes entirely
     /// from the network's threshold signature scheme, not from randomness.
     ///
-    /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
-    pub network_owned_address_sign_dkg_output: Vec<u8>,
+    /// Each output is BCS-serialized `NetworkOwnedAddressSignDKGOutput`.
+    pub ecdsa_secp256k1_network_owned_address_sign_dkg_output: Vec<u8>,
+    pub ecdsa_secp256r1_network_owned_address_sign_dkg_output: Vec<u8>,
+    pub eddsa_network_owned_address_sign_dkg_output: Vec<u8>,
+    pub schnorrkel_substrate_network_owned_address_sign_dkg_output: Vec<u8>,
+    pub taproot_network_owned_address_sign_dkg_output: Vec<u8>,
+
+    /// Per-algorithm extracted public keys for network-owned-address signing.
+    /// These are the actual group element bytes extracted from the centralized DKG output.
+    pub ecdsa_secp256k1_network_owned_address_sign_public_key: Vec<u8>,
+    pub ecdsa_secp256r1_network_owned_address_sign_public_key: Vec<u8>,
+    pub eddsa_network_owned_address_sign_public_key: Vec<u8>,
+    pub schnorrkel_substrate_network_owned_address_sign_public_key: Vec<u8>,
+    pub taproot_network_owned_address_sign_public_key: Vec<u8>,
 }
 
 #[derive(
@@ -440,11 +452,48 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the network-owned-address sign DKG output.
-    ///
-    /// The output is BCS-serialized `VersionedDwalletDKGPublicOutput`.
-    pub fn network_owned_address_sign_dkg_output(&self) -> &[u8] {
-        &self.network_owned_address_sign_dkg_output
+    /// Returns the network-owned-address sign DKG output for the given signature algorithm.
+    pub fn network_owned_address_sign_dkg_output(
+        &self,
+        algorithm: DWalletSignatureAlgorithm,
+    ) -> &[u8] {
+        match algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                &self.ecdsa_secp256k1_network_owned_address_sign_dkg_output
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                &self.ecdsa_secp256r1_network_owned_address_sign_dkg_output
+            }
+            DWalletSignatureAlgorithm::EdDSA => &self.eddsa_network_owned_address_sign_dkg_output,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                &self.schnorrkel_substrate_network_owned_address_sign_dkg_output
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                &self.taproot_network_owned_address_sign_dkg_output
+            }
+        }
+    }
+
+    /// Returns the network-owned-address sign public key for the given signature algorithm.
+    pub fn network_owned_address_sign_public_key(
+        &self,
+        algorithm: DWalletSignatureAlgorithm,
+    ) -> &[u8] {
+        match algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                &self.ecdsa_secp256k1_network_owned_address_sign_public_key
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                &self.ecdsa_secp256r1_network_owned_address_sign_public_key
+            }
+            DWalletSignatureAlgorithm::EdDSA => &self.eddsa_network_owned_address_sign_public_key,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                &self.schnorrkel_substrate_network_owned_address_sign_public_key
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                &self.taproot_network_owned_address_sign_public_key
+            }
+        }
     }
 
     /// Returns the serialized protocol public parameters for the given curve.

@@ -22,6 +22,7 @@ use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
 };
+use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -588,31 +589,6 @@ impl DWalletMPCManager {
         }
     }
 
-    fn get_supported_curve_to_signature_algorithm()
-    -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
-        vec![
-            (
-                DWalletCurve::Secp256k1,
-                vec![
-                    DWalletSignatureAlgorithm::ECDSASecp256k1,
-                    DWalletSignatureAlgorithm::Taproot,
-                ],
-            ),
-            (
-                DWalletCurve::Secp256r1,
-                vec![DWalletSignatureAlgorithm::ECDSASecp256r1],
-            ),
-            (
-                DWalletCurve::Curve25519,
-                vec![DWalletSignatureAlgorithm::EdDSA],
-            ),
-            (
-                DWalletCurve::Ristretto,
-                vec![DWalletSignatureAlgorithm::SchnorrkelSubstrate],
-            ),
-        ]
-    }
-
     /// Returns the network encryption key ID used for network-owned-address signing (the oldest by DKG epoch).
     /// Used by internal presign session instantiation to determine internal-signing-specific pool params.
     fn network_owned_address_signing_network_encryption_key_id(&self) -> Option<ObjectID> {
@@ -638,21 +614,12 @@ impl DWalletMPCManager {
                 None => return,
             };
 
-        let network_owned_address_signing_curve =
-            self.protocol_config.network_owned_address_signing_curve();
-        let network_owned_address_signing_algorithm = self
-            .protocol_config
-            .network_owned_address_signing_algorithm();
-
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
         for key_id in agreed_key_ids {
-            for (curve, signature_algorithms) in Self::get_supported_curve_to_signature_algorithm()
-            {
+            for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
                 for signature_algorithm in signature_algorithms {
                     let is_network_owned_address_signing_presign =
-                        agreed_network_owned_address_signing_key_id == key_id
-                            && curve == network_owned_address_signing_curve
-                            && signature_algorithm == network_owned_address_signing_algorithm;
+                        agreed_network_owned_address_signing_key_id == key_id;
 
                     let (
                         minimal_pool_size,
@@ -662,13 +629,21 @@ impl DWalletMPCManager {
                     ) = if is_network_owned_address_signing_presign {
                         (
                             self.protocol_config
-                                .network_owned_address_sign_presign_pool_minimum_size(),
+                                .get_network_owned_address_sign_presign_pool_minimum_size(
+                                    signature_algorithm,
+                                ),
                             self.protocol_config
-                                .network_owned_address_sign_presign_pool_maximum_size(),
+                                .get_network_owned_address_sign_presign_pool_maximum_size(
+                                    signature_algorithm,
+                                ),
                             self.protocol_config
-                                .network_owned_address_sign_presign_consensus_round_delay(),
+                                .get_network_owned_address_sign_presign_consensus_round_delay(
+                                    signature_algorithm,
+                                ),
                             self.protocol_config
-                                .network_owned_address_sign_presign_sessions_to_instantiate(),
+                                .get_network_owned_address_sign_presign_sessions_to_instantiate(
+                                    signature_algorithm,
+                                ),
                         )
                     } else {
                         (
@@ -802,8 +777,10 @@ impl DWalletMPCManager {
         &mut self,
         sequence_number: u64,
         message: Vec<u8>,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: DWalletHashScheme,
     ) -> bool {
-        // Derive config values internally
+        // Derive config values from the request
         let Some(dwallet_network_encryption_key_id) =
             self.network_owned_address_signing_network_encryption_key_id()
         else {
@@ -816,14 +793,20 @@ impl DWalletMPCManager {
             return false;
         };
 
-        let curve = self.protocol_config.network_owned_address_signing_curve();
-        let signature_algorithm = self
-            .protocol_config
-            .network_owned_address_signing_algorithm();
-        let hash_scheme: group::HashScheme = self
-            .protocol_config
-            .network_owned_address_signing_hash_scheme()
-            .into();
+        let curve = supported_curve_to_signature_algorithms()
+            .into_iter()
+            .find_map(|(curve, algorithms)| {
+                algorithms.contains(&signature_algorithm).then_some(curve)
+            })
+            .unwrap_or_else(|| {
+                error!(
+                    ?signature_algorithm,
+                    should_never_happen = true,
+                    "Unknown signature algorithm — no curve mapping found"
+                );
+                DWalletCurve::Secp256k1
+            });
+        let hash_scheme: group::HashScheme = hash_scheme.into();
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -950,13 +933,14 @@ impl DWalletMPCManager {
     }
 
     /// Checks if this manager has a presign available for network-owned-address signing
-    pub(super) fn has_network_owned_address_signing_presign_available(&self) -> bool {
+    /// for the given signature algorithm.
+    pub(super) fn has_network_owned_address_signing_presign_available(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> bool {
         let Some(key_id) = self.network_owned_address_signing_network_encryption_key_id() else {
             return false;
         };
-        let signature_algorithm = self
-            .protocol_config
-            .network_owned_address_signing_algorithm();
 
         self.epoch_store
             .presign_pool_size(signature_algorithm, key_id)
@@ -1249,9 +1233,6 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.protocol_config.network_owned_address_signing_curve(),
-                    self.protocol_config
-                        .network_owned_address_signing_algorithm(),
                     self.party_id,
                 )
                 .await;
@@ -1449,8 +1430,6 @@ impl DWalletMPCManager {
             } => {
                 info!(
                     sequence_number,
-                    curve = ?self.protocol_config.network_owned_address_signing_curve(),
-                    signature_algorithm = ?self.protocol_config.network_owned_address_signing_algorithm(),
                     signature_length = output.len(),
                     signature_hex = %hex::encode(&output),
                     "Network-owned-address sign completed"

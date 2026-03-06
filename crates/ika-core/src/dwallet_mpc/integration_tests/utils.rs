@@ -65,8 +65,9 @@ pub(crate) struct IntegrationTestState {
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
     pub(crate) sui_data_senders: Vec<SuiDataSenders>,
+    /// Per-algorithm senders for network-owned-address sign requests.
     pub(crate) network_owned_address_sign_request_senders:
-        Vec<UnboundedSender<NetworkOwnedAddressSignRequest>>,
+        Vec<HashMap<DWalletSignatureAlgorithm, UnboundedSender<NetworkOwnedAddressSignRequest>>>,
     pub(crate) network_owned_address_sign_output_receivers:
         Vec<UnboundedReceiver<NetworkOwnedAddressSignOutput>>,
 }
@@ -408,7 +409,7 @@ pub fn create_dwallet_mpc_services(
     Vec<Arc<TestingSubmitToConsensus>>,
     Vec<Arc<TestingAuthorityPerEpochStore>>,
     Vec<Arc<TestingDWalletCheckpointNotify>>,
-    Vec<UnboundedSender<NetworkOwnedAddressSignRequest>>,
+    Vec<HashMap<DWalletSignatureAlgorithm, UnboundedSender<NetworkOwnedAddressSignRequest>>>,
     Vec<UnboundedReceiver<NetworkOwnedAddressSignOutput>>,
 ) {
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
@@ -445,7 +446,7 @@ pub fn create_dwallet_mpc_services(
         dwallet_submit_to_consensus,
         epoch_store,
         notify_service,
-        sign_request_sender,
+        sign_request_sender_map,
         sign_output_receiver,
     ) in dwallet_mpc_services
     {
@@ -454,7 +455,7 @@ pub fn create_dwallet_mpc_services(
         consensus_stores.push(dwallet_submit_to_consensus);
         epoch_stores.push(epoch_store);
         notify_services.push(notify_service);
-        sign_request_senders.push(sign_request_sender);
+        sign_request_senders.push(sign_request_sender_map);
         sign_output_receivers.push(sign_output_receiver);
     }
     (
@@ -479,30 +480,31 @@ fn create_dwallet_mpc_service(
     Arc<TestingSubmitToConsensus>,
     Arc<TestingAuthorityPerEpochStore>,
     Arc<TestingDWalletCheckpointNotify>,
-    UnboundedSender<NetworkOwnedAddressSignRequest>,
+    HashMap<DWalletSignatureAlgorithm, UnboundedSender<NetworkOwnedAddressSignRequest>>,
     UnboundedReceiver<NetworkOwnedAddressSignOutput>,
 ) {
     let (sui_data_receivers, sui_data_senders) = SuiDataReceivers::new_for_testing();
     let dwallet_submit_to_consensus = Arc::new(TestingSubmitToConsensus::new());
     let epoch_store = Arc::new(TestingAuthorityPerEpochStore::new());
     let checkpoint_notify = Arc::new(TestingDWalletCheckpointNotify::new());
-    let (service, sign_request_sender, sign_output_receiver) = DWalletMPCService::new_for_testing(
-        epoch_store.clone(),
-        seed,
-        dwallet_submit_to_consensus.clone(),
-        Arc::new(TestingAuthorityState::new()),
-        checkpoint_notify.clone(),
-        *authority_name,
-        committee.clone(),
-        sui_data_receivers.clone(),
-    );
+    let (service, sign_request_sender_map, sign_output_receiver) =
+        DWalletMPCService::new_for_testing(
+            epoch_store.clone(),
+            seed,
+            dwallet_submit_to_consensus.clone(),
+            Arc::new(TestingAuthorityState::new()),
+            checkpoint_notify.clone(),
+            *authority_name,
+            committee.clone(),
+            sui_data_receivers.clone(),
+        );
     (
         service,
         sui_data_senders,
         dwallet_submit_to_consensus,
         epoch_store,
         checkpoint_notify,
-        sign_request_sender,
+        sign_request_sender_map,
         sign_output_receiver,
     )
 }
@@ -1136,17 +1138,73 @@ pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
             TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 
-        // Network-owned-address sign presign pool
-        config.set_network_owned_address_sign_presign_pool_minimum_size_for_testing(
-            TEST_PRESIGN_POOL_MINIMUM_SIZE,
-        );
-        config.set_network_owned_address_sign_presign_pool_maximum_size_for_testing(
-            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
-        );
-        config.set_network_owned_address_sign_presign_consensus_round_delay_for_testing(
+        // Network-owned-address sign presign pools (per algorithm)
+        config
+            .set_network_owned_address_sign_ecdsa_secp256k1_presign_pool_minimum_size_for_testing(
+                TEST_PRESIGN_POOL_MINIMUM_SIZE,
+            );
+        config
+            .set_network_owned_address_sign_ecdsa_secp256k1_presign_pool_maximum_size_for_testing(
+                TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+            );
+        config.set_network_owned_address_sign_ecdsa_secp256k1_presign_consensus_round_delay_for_testing(
             TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
         );
-        config.set_network_owned_address_sign_presign_sessions_to_instantiate_for_testing(
+        config.set_network_owned_address_sign_ecdsa_secp256k1_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config
+            .set_network_owned_address_sign_ecdsa_secp256r1_presign_pool_minimum_size_for_testing(
+                TEST_PRESIGN_POOL_MINIMUM_SIZE,
+            );
+        config
+            .set_network_owned_address_sign_ecdsa_secp256r1_presign_pool_maximum_size_for_testing(
+                TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+            );
+        config.set_network_owned_address_sign_ecdsa_secp256r1_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_sign_ecdsa_secp256r1_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_network_owned_address_sign_eddsa_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_eddsa_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_eddsa_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_sign_eddsa_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_network_owned_address_sign_schnorrkel_substrate_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_schnorrkel_substrate_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_schnorrkel_substrate_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_sign_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_network_owned_address_sign_taproot_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_taproot_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_sign_taproot_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_sign_taproot_presign_sessions_to_instantiate_for_testing(
             TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 

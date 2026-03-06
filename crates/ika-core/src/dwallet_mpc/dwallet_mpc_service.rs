@@ -26,6 +26,8 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+#[cfg(any(test, feature = "test-utils"))]
+use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -97,9 +99,16 @@ pub struct DWalletMPCService {
     processed_global_presign_sequence_numbers: HashSet<u64>,
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
-    /// Receiver for network-owned-address sign requests.
-    network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
-    /// Buffer for network-owned-address sign requests that couldn't be processed yet
+    /// Per-algorithm receivers for network-owned-address sign requests.
+    ecdsa_secp256k1_network_owned_address_sign_receiver:
+        UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    ecdsa_secp256r1_network_owned_address_sign_receiver:
+        UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    eddsa_network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    schnorrkel_substrate_network_owned_address_sign_receiver:
+        UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    taproot_network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    /// Per-algorithm buffers for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
 }
@@ -118,7 +127,21 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
-        network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+        ecdsa_secp256k1_network_owned_address_sign_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
+        ecdsa_secp256r1_network_owned_address_sign_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
+        eddsa_network_owned_address_sign_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
+        schnorrkel_substrate_network_owned_address_sign_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
+        taproot_network_owned_address_sign_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
         network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
@@ -173,13 +196,18 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
-            network_owned_address_sign_receiver,
+            ecdsa_secp256k1_network_owned_address_sign_receiver,
+            ecdsa_secp256r1_network_owned_address_sign_receiver,
+            eddsa_network_owned_address_sign_receiver,
+            schnorrkel_substrate_network_owned_address_sign_receiver,
+            taproot_network_owned_address_sign_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
         }
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
+    #[allow(clippy::type_complexity)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -191,13 +219,38 @@ impl DWalletMPCService {
         sui_data_receivers: SuiDataReceivers,
     ) -> (
         Self,
-        UnboundedSender<NetworkOwnedAddressSignRequest>,
+        HashMap<DWalletSignatureAlgorithm, UnboundedSender<NetworkOwnedAddressSignRequest>>,
         UnboundedReceiver<NetworkOwnedAddressSignOutput>,
     ) {
-        let (network_owned_address_sign_request_sender, network_owned_address_sign_receiver) =
+        let (ecdsa_secp256k1_sender, ecdsa_secp256k1_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (ecdsa_secp256r1_sender, ecdsa_secp256r1_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (eddsa_sender, eddsa_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (schnorrkel_substrate_sender, schnorrkel_substrate_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (taproot_sender, taproot_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+
+        let mut senders = HashMap::new();
+        senders.insert(
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+            ecdsa_secp256k1_sender,
+        );
+        senders.insert(
+            DWalletSignatureAlgorithm::ECDSASecp256r1,
+            ecdsa_secp256r1_sender,
+        );
+        senders.insert(DWalletSignatureAlgorithm::EdDSA, eddsa_sender);
+        senders.insert(
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+            schnorrkel_substrate_sender,
+        );
+        senders.insert(DWalletSignatureAlgorithm::Taproot, taproot_sender);
 
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
@@ -233,15 +286,15 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
-            network_owned_address_sign_receiver,
+            ecdsa_secp256k1_network_owned_address_sign_receiver: ecdsa_secp256k1_receiver,
+            ecdsa_secp256r1_network_owned_address_sign_receiver: ecdsa_secp256r1_receiver,
+            eddsa_network_owned_address_sign_receiver: eddsa_receiver,
+            schnorrkel_substrate_network_owned_address_sign_receiver: schnorrkel_substrate_receiver,
+            taproot_network_owned_address_sign_receiver: taproot_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
         };
 
-        (
-            service,
-            network_owned_address_sign_request_sender,
-            network_owned_address_sign_output_receiver,
-        )
+        (service, senders, network_owned_address_sign_output_receiver)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -382,14 +435,65 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids
     }
 
-    /// Process network-owned-address sign requests received via the channel.
-    /// Drains the channel into a pending buffer, then instantiates sessions
+    /// Process network-owned-address sign requests received via per-algorithm channels.
+    /// Drains each algorithm's channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
     fn process_network_owned_address_sign_requests(&mut self) {
-        while let Ok(request) = self.network_owned_address_sign_receiver.try_recv() {
+        // Drain all per-algorithm receivers into the shared pending buffer.
+        while let Ok(request) = self
+            .ecdsa_secp256k1_network_owned_address_sign_receiver
+            .try_recv()
+        {
             info!(
                 sequence_number = request.sequence_number,
                 message_len = request.message.len(),
+                algorithm = ?request.signature_algorithm,
+                "Received network-owned-address sign request"
+            );
+            self.pending_network_owned_address_sign_requests
+                .push(request);
+        }
+        while let Ok(request) = self
+            .ecdsa_secp256r1_network_owned_address_sign_receiver
+            .try_recv()
+        {
+            info!(
+                sequence_number = request.sequence_number,
+                message_len = request.message.len(),
+                algorithm = ?request.signature_algorithm,
+                "Received network-owned-address sign request"
+            );
+            self.pending_network_owned_address_sign_requests
+                .push(request);
+        }
+        while let Ok(request) = self.eddsa_network_owned_address_sign_receiver.try_recv() {
+            info!(
+                sequence_number = request.sequence_number,
+                message_len = request.message.len(),
+                algorithm = ?request.signature_algorithm,
+                "Received network-owned-address sign request"
+            );
+            self.pending_network_owned_address_sign_requests
+                .push(request);
+        }
+        while let Ok(request) = self
+            .schnorrkel_substrate_network_owned_address_sign_receiver
+            .try_recv()
+        {
+            info!(
+                sequence_number = request.sequence_number,
+                message_len = request.message.len(),
+                algorithm = ?request.signature_algorithm,
+                "Received network-owned-address sign request"
+            );
+            self.pending_network_owned_address_sign_requests
+                .push(request);
+        }
+        while let Ok(request) = self.taproot_network_owned_address_sign_receiver.try_recv() {
+            info!(
+                sequence_number = request.sequence_number,
+                message_len = request.message.len(),
+                algorithm = ?request.signature_algorithm,
                 "Received network-owned-address sign request"
             );
             self.pending_network_owned_address_sign_requests
@@ -410,9 +514,11 @@ impl DWalletMPCService {
                 }
                 if !self
                     .dwallet_mpc_manager
-                    .has_network_owned_address_signing_presign_available()
+                    .has_network_owned_address_signing_presign_available(
+                        request.signature_algorithm,
+                    )
                 {
-                    return true; // no presign yet, keep in buffer
+                    return true; // no presign yet for this algorithm, keep in buffer
                 }
 
                 let instantiated = self
@@ -420,6 +526,8 @@ impl DWalletMPCService {
                     .instantiate_network_owned_address_sign_session(
                         request.sequence_number,
                         request.message.clone(),
+                        request.signature_algorithm,
+                        request.hash_scheme,
                     );
                 !instantiated // keep in buffer if instantiation failed
             });

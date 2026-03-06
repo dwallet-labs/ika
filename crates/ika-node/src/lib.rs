@@ -935,9 +935,16 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         sui_data_receivers: SuiDataReceivers,
     ) -> Result<ValidatorComponents> {
-        // Create channels for network-owned-address sign sessions.
-        // Input channel: no sender yet (future callers will send requests).
-        let (_network_owned_address_sign_sender, network_owned_address_sign_receiver) =
+        // Create per-algorithm channels for network-owned-address sign sessions.
+        let (_ecdsa_secp256k1_noa_sign_sender, ecdsa_secp256k1_noa_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (_ecdsa_secp256r1_noa_sign_sender, ecdsa_secp256r1_noa_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (_eddsa_noa_sign_sender, eddsa_noa_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (_schnorrkel_substrate_noa_sign_sender, schnorrkel_substrate_noa_sign_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (_taproot_noa_sign_sender, taproot_noa_sign_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
         // Output channel: MPC service sends completed signatures here.
         let (network_owned_address_sign_output_sender, _network_owned_address_sign_output_receiver) =
@@ -988,7 +995,11 @@ impl IkaNode {
             epoch_store.epoch(),
             epoch_store.committee().clone(),
             epoch_store.protocol_config().clone(),
-            network_owned_address_sign_receiver,
+            ecdsa_secp256k1_noa_sign_receiver,
+            ecdsa_secp256r1_noa_sign_receiver,
+            eddsa_noa_sign_receiver,
+            schnorrkel_substrate_noa_sign_receiver,
+            taproot_noa_sign_receiver,
             network_owned_address_sign_output_sender,
         );
 
