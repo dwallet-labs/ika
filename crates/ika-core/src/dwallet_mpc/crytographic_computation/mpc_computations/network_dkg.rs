@@ -6,7 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_network_owned_address_sign_dkg_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::{NetworkOwnedAddressSignDKGOutput, compute_network_owned_address_sign_dkg_output};
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -16,6 +16,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    public_key_from_centralized_dkg_output_by_curve,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
@@ -308,8 +309,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-    network_owned_address_signing_curve: DWalletCurve,
-    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
@@ -325,8 +324,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
-                    network_owned_address_signing_curve,
-                    network_owned_address_signing_algorithm,
                     party_id,
                 )
             }
@@ -338,8 +335,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
-                network_owned_address_signing_curve,
-                network_owned_address_signing_algorithm,
                 party_id,
             )
         };
@@ -354,14 +349,198 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
         .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
+/// Per-curve DKG output and public key for network-owned-address signing.
+pub(crate) struct PerCurveNetworkOwnedAddressDkgData {
+    pub dkg_output: Vec<u8>,
+    pub public_key: Vec<u8>,
+}
+
+/// Holds per-curve DKG data for all 4 supported curves.
+pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
+    pub secp256k1: PerCurveNetworkOwnedAddressDkgData,
+    pub secp256r1: PerCurveNetworkOwnedAddressDkgData,
+    pub curve25519: PerCurveNetworkOwnedAddressDkgData,
+    pub ristretto: PerCurveNetworkOwnedAddressDkgData,
+}
+
+/// Computes the DKG output and extracts the public key for a single curve.
+///
+/// Uses a canonical signature algorithm for DKG session ID derivation (the first
+/// algorithm associated with the curve). The DKG output itself is curve-level
+/// and shared by all algorithms on the same curve.
+fn compute_network_owned_address_dkg_and_public_key(
+    network_key_id: &[u8; 32],
+    curve: DWalletCurve,
+    canonical_algorithm: DWalletSignatureAlgorithm,
+    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
+) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData> {
+    let protocol_pp = match curve {
+        DWalletCurve::Secp256k1 => bcs::to_bytes(secp256k1_protocol_public_parameters)?,
+        DWalletCurve::Secp256r1 => bcs::to_bytes(secp256r1_protocol_public_parameters)?,
+        DWalletCurve::Ristretto => bcs::to_bytes(ristretto_protocol_public_parameters)?,
+        DWalletCurve::Curve25519 => bcs::to_bytes(curve25519_protocol_public_parameters)?,
+    };
+
+    let dkg_output = compute_network_owned_address_sign_dkg_output(
+        network_key_id,
+        curve,
+        canonical_algorithm,
+        &protocol_pp,
+        access_structure,
+        party_id,
+    )?;
+
+    // Deserialize the DKG output to extract the public key from the centralized DKG result.
+    let noa_dkg_output: NetworkOwnedAddressSignDKGOutput =
+        bcs::from_bytes(&dkg_output).map_err(DwalletMPCError::BcsError)?;
+
+    let public_key = public_key_from_centralized_dkg_output_by_curve(
+        curve.as_u32(),
+        &noa_dkg_output.centralized_dkg_result.public_output,
+    )
+    .map_err(|e| {
+        DwalletMPCError::InternalError(format!("Failed to extract public key for {curve:?}: {e}"))
+    })?;
+
+    Ok(PerCurveNetworkOwnedAddressDkgData {
+        dkg_output,
+        public_key,
+    })
+}
+
+/// Computes DKG outputs and public keys for all 4 curves.
+pub(crate) fn compute_all_network_owned_address_dkg_outputs(
+    network_key_id: &[u8; 32],
+    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    access_structure: &WeightedThresholdAccessStructure,
+    party_id: group::PartyID,
+) -> DwalletMPCResult<AllCurvesNetworkOwnedAddressDkgData> {
+    let secp256k1 = compute_network_owned_address_dkg_and_public_key(
+        network_key_id,
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::ECDSASecp256k1,
+        secp256k1_protocol_public_parameters,
+        secp256r1_protocol_public_parameters,
+        ristretto_protocol_public_parameters,
+        curve25519_protocol_public_parameters,
+        access_structure,
+        party_id,
+    )?;
+    let secp256r1 = compute_network_owned_address_dkg_and_public_key(
+        network_key_id,
+        DWalletCurve::Secp256r1,
+        DWalletSignatureAlgorithm::ECDSASecp256r1,
+        secp256k1_protocol_public_parameters,
+        secp256r1_protocol_public_parameters,
+        ristretto_protocol_public_parameters,
+        curve25519_protocol_public_parameters,
+        access_structure,
+        party_id,
+    )?;
+    let curve25519 = compute_network_owned_address_dkg_and_public_key(
+        network_key_id,
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+        secp256k1_protocol_public_parameters,
+        secp256r1_protocol_public_parameters,
+        ristretto_protocol_public_parameters,
+        curve25519_protocol_public_parameters,
+        access_structure,
+        party_id,
+    )?;
+    let ristretto = compute_network_owned_address_dkg_and_public_key(
+        network_key_id,
+        DWalletCurve::Ristretto,
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        secp256k1_protocol_public_parameters,
+        secp256r1_protocol_public_parameters,
+        ristretto_protocol_public_parameters,
+        curve25519_protocol_public_parameters,
+        access_structure,
+        party_id,
+    )?;
+    Ok(AllCurvesNetworkOwnedAddressDkgData {
+        secp256k1,
+        secp256r1,
+        curve25519,
+        ristretto,
+    })
+}
+
+/// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
+pub(crate) fn build_network_encryption_key_public_data(
+    epoch: u64,
+    dkg_at_epoch: u64,
+    state: NetworkDecryptionKeyPublicOutputType,
+    latest_network_reconfiguration_public_output: Option<
+        VersionedDecryptionKeyReconfigurationOutput,
+    >,
+    network_dkg_output: VersionedNetworkDkgOutput,
+    secp256k1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256k1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    >,
+    secp256r1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256r1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+    >,
+    ristretto_protocol_public_parameters: Arc<
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    >,
+    ristretto_decryption_key_share_public_parameters: Arc<
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+    >,
+    curve25519_protocol_public_parameters: Arc<
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    >,
+    curve25519_decryption_key_share_public_parameters: Arc<
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    >,
+    noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
+) -> NetworkEncryptionKeyPublicData {
+    NetworkEncryptionKeyPublicData {
+        epoch,
+        dkg_at_epoch,
+        state,
+        latest_network_reconfiguration_public_output,
+        network_dkg_output,
+        secp256k1_protocol_public_parameters,
+        secp256k1_decryption_key_share_public_parameters,
+        secp256r1_protocol_public_parameters,
+        secp256r1_decryption_key_share_public_parameters,
+        ristretto_protocol_public_parameters,
+        ristretto_decryption_key_share_public_parameters,
+        curve25519_protocol_public_parameters,
+        curve25519_decryption_key_share_public_parameters,
+        secp256k1_network_owned_address_dkg_output: noa_dkg_data.secp256k1.dkg_output.clone(),
+        secp256r1_network_owned_address_dkg_output: noa_dkg_data.secp256r1.dkg_output.clone(),
+        curve25519_network_owned_address_dkg_output: noa_dkg_data.curve25519.dkg_output.clone(),
+        ristretto_network_owned_address_dkg_output: noa_dkg_data.ristretto.dkg_output.clone(),
+        secp256k1_network_owned_address_public_key: noa_dkg_data.secp256k1.public_key.clone(),
+        secp256r1_network_owned_address_public_key: noa_dkg_data.secp256r1.public_key.clone(),
+        curve25519_network_owned_address_public_key: noa_dkg_data.curve25519.public_key.clone(),
+        ristretto_network_owned_address_public_key: noa_dkg_data.ristretto.public_key.clone(),
+    }
+}
+
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
     dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    network_owned_address_signing_curve: DWalletCurve,
-    network_owned_address_signing_algorithm: DWalletSignatureAlgorithm,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
@@ -406,30 +585,22 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute the network-owned-address sign DKG output for network-owned-address signing.
-            // Select the protocol PP for the network-owned-address signing curve.
-            let protocol_pp = match network_owned_address_signing_curve {
-                DWalletCurve::Secp256k1 => bcs::to_bytes(&*secp256k1_protocol_public_parameters)?,
-                DWalletCurve::Secp256r1 => bcs::to_bytes(&*secp256r1_protocol_public_parameters)?,
-                DWalletCurve::Ristretto => bcs::to_bytes(&*ristretto_protocol_public_parameters)?,
-                DWalletCurve::Curve25519 => bcs::to_bytes(&*curve25519_protocol_public_parameters)?,
-            };
+            // Compute DKG outputs and extract public keys for all 4 curves.
+            let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
+                &network_key_id,
+                &secp256k1_protocol_public_parameters,
+                &secp256r1_protocol_public_parameters,
+                &ristretto_protocol_public_parameters,
+                &curve25519_protocol_public_parameters,
+                access_structure,
+                party_id,
+            )?;
 
-            let network_owned_address_sign_dkg_output =
-                compute_network_owned_address_sign_dkg_output(
-                    &network_key_id,
-                    network_owned_address_signing_curve,
-                    network_owned_address_signing_algorithm,
-                    &protocol_pp,
-                    access_structure,
-                    party_id,
-                )?;
-
-            Ok(NetworkEncryptionKeyPublicData {
+            Ok(build_network_encryption_key_public_data(
                 epoch,
                 dkg_at_epoch,
-                state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                latest_network_reconfiguration_public_output: None,
+                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                None,
                 network_dkg_output,
                 secp256k1_protocol_public_parameters,
                 secp256k1_decryption_key_share_public_parameters,
@@ -439,8 +610,8 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                network_owned_address_sign_dkg_output,
-            })
+                &noa_dkg_data,
+            ))
         }
     }
 }

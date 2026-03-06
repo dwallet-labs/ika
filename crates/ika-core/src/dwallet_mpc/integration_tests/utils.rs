@@ -65,6 +65,7 @@ pub(crate) struct IntegrationTestState {
     pub(crate) consensus_round: usize,
     pub(crate) committee: Committee,
     pub(crate) sui_data_senders: Vec<SuiDataSenders>,
+    /// Senders for network-owned-address sign requests.
     pub(crate) network_owned_address_sign_request_senders:
         Vec<UnboundedSender<NetworkOwnedAddressSignRequest>>,
     pub(crate) network_owned_address_sign_output_receivers:
@@ -1136,17 +1137,73 @@ pub(crate) fn create_test_protocol_config_guard() -> OverrideGuard {
             TEST_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 
-        // Network-owned-address sign presign pool
-        config.set_network_owned_address_sign_presign_pool_minimum_size_for_testing(
+        // Network-owned-address sign presign pools (per algorithm)
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size_for_testing(
             TEST_PRESIGN_POOL_MINIMUM_SIZE,
         );
-        config.set_network_owned_address_sign_presign_pool_maximum_size_for_testing(
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size_for_testing(
             TEST_PRESIGN_POOL_MAXIMUM_SIZE,
         );
-        config.set_network_owned_address_sign_presign_consensus_round_delay_for_testing(
+        config.set_network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay_for_testing(
             TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
         );
-        config.set_network_owned_address_sign_presign_sessions_to_instantiate_for_testing(
+        config
+            .set_network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate_for_testing(
+                TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+            );
+
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config
+            .set_network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate_for_testing(
+                TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+            );
+
+        config.set_network_owned_address_eddsa_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_eddsa_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_eddsa_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_eddsa_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_minimum_size_for_testing(
+                TEST_PRESIGN_POOL_MINIMUM_SIZE,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_maximum_size_for_testing(
+                TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+            );
+        config.set_network_owned_address_schnorrkel_substrate_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+        );
+
+        config.set_network_owned_address_taproot_presign_pool_minimum_size_for_testing(
+            TEST_PRESIGN_POOL_MINIMUM_SIZE,
+        );
+        config.set_network_owned_address_taproot_presign_pool_maximum_size_for_testing(
+            TEST_PRESIGN_POOL_MAXIMUM_SIZE,
+        );
+        config.set_network_owned_address_taproot_presign_consensus_round_delay_for_testing(
+            TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
+        );
+        config.set_network_owned_address_taproot_presign_sessions_to_instantiate_for_testing(
             TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
         );
 

@@ -65,10 +65,64 @@ fn create_idle_status_test_config_guard() -> ika_protocol_config::OverrideGuard 
             sessions_to_instantiate,
         );
 
-        config.set_network_owned_address_sign_presign_pool_minimum_size_for_testing(pool_minimum);
-        config.set_network_owned_address_sign_presign_pool_maximum_size_for_testing(pool_maximum);
-        config.set_network_owned_address_sign_presign_consensus_round_delay_for_testing(delay);
-        config.set_network_owned_address_sign_presign_sessions_to_instantiate_for_testing(
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size_for_testing(
+            pool_minimum,
+        );
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size_for_testing(
+            pool_maximum,
+        );
+        config.set_network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay_for_testing(
+            delay,
+        );
+        config
+            .set_network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size_for_testing(
+            pool_minimum,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size_for_testing(
+            pool_maximum,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay_for_testing(
+            delay,
+        );
+        config
+            .set_network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config.set_network_owned_address_eddsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_network_owned_address_eddsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_network_owned_address_eddsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_network_owned_address_eddsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_minimum_size_for_testing(
+                pool_minimum,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_maximum_size_for_testing(
+                pool_maximum,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_consensus_round_delay_for_testing(
+                delay,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config
+            .set_network_owned_address_taproot_presign_pool_minimum_size_for_testing(pool_minimum);
+        config
+            .set_network_owned_address_taproot_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_network_owned_address_taproot_presign_consensus_round_delay_for_testing(delay);
+        config.set_network_owned_address_taproot_presign_sessions_to_instantiate_for_testing(
             sessions_to_instantiate,
         );
 

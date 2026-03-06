@@ -147,6 +147,25 @@ lazy_static! {
     };
 }
 
+/// Returns all supported (curve, signature_algorithms) pairs.
+///
+/// This is the canonical source of truth, derived from
+/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`].
+pub fn supported_curve_to_signature_algorithms()
+-> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
+    SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+        .iter()
+        .filter_map(|(curve_u32, algo_map)| {
+            let curve = try_into_curve(*curve_u32).ok()?;
+            let algorithms: Vec<_> = algo_map
+                .keys()
+                .filter_map(|algo_u32| try_into_signature_algorithm(*curve_u32, *algo_u32).ok())
+                .collect();
+            Some((curve, algorithms))
+        })
+        .collect()
+}
+
 /// Convert curve u32 to DWalletCurve enum
 pub fn try_into_curve(curve: u32) -> Result<DWalletCurve, DwalletNetworkMPCError> {
     if !SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES.contains_key(&curve) {

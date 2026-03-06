@@ -1,6 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
 use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
 use ika_types::crypto::AuthorityName;
@@ -17,6 +18,9 @@ use tracing::error;
 pub struct NetworkOwnedAddressSignRequest {
     pub sequence_number: u64,
     pub message: Vec<u8>,
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub hash_scheme: DWalletHashScheme,
 }
 
 /// Output from a completed internal MPC signing session.
@@ -25,6 +29,8 @@ pub struct NetworkOwnedAddressSignRequest {
 pub struct NetworkOwnedAddressSignOutput {
     pub sequence_number: u64,
     pub signature: Vec<u8>,
+    pub curve: DWalletCurve,
+    pub signature_algorithm: DWalletSignatureAlgorithm,
 }
 
 pub mod dwallet_mpc_service;

@@ -89,6 +89,8 @@ pub enum DWalletInternalMPCOutputKind {
     NetworkOwnedAddressSign {
         output: Vec<u8>,
         sequence_number: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
     },
 }
 

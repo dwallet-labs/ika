@@ -98,7 +98,7 @@ pub struct DWalletMPCService {
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
     /// Receiver for network-owned-address sign requests.
-    network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    network_owned_address_sign_requests_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
@@ -118,7 +118,9 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
-        network_owned_address_sign_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+        network_owned_address_sign_requests_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignRequest,
+        >,
         network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
@@ -173,13 +175,14 @@ impl DWalletMPCService {
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
             sent_network_key_ids: HashSet::new(),
-            network_owned_address_sign_receiver,
+            network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
         }
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
+    #[allow(clippy::type_complexity)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -194,8 +197,11 @@ impl DWalletMPCService {
         UnboundedSender<NetworkOwnedAddressSignRequest>,
         UnboundedReceiver<NetworkOwnedAddressSignOutput>,
     ) {
-        let (network_owned_address_sign_request_sender, network_owned_address_sign_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        let (
+            network_owned_address_sign_request_sender,
+            network_owned_address_sign_request_receiver,
+        ) = tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
@@ -233,7 +239,8 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
             sent_network_key_ids: HashSet::new(),
-            network_owned_address_sign_receiver,
+            network_owned_address_sign_requests_receiver:
+                network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
         };
 
@@ -386,10 +393,13 @@ impl DWalletMPCService {
     /// Drains the channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
     fn process_network_owned_address_sign_requests(&mut self) {
-        while let Ok(request) = self.network_owned_address_sign_receiver.try_recv() {
+        // Drain the receiver into the shared pending buffer.
+        while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
             info!(
                 sequence_number = request.sequence_number,
                 message_len = request.message.len(),
+                curve = ?request.curve,
+                algorithm = ?request.signature_algorithm,
                 "Received network-owned-address sign request"
             );
             self.pending_network_owned_address_sign_requests
@@ -410,9 +420,11 @@ impl DWalletMPCService {
                 }
                 if !self
                     .dwallet_mpc_manager
-                    .has_network_owned_address_signing_presign_available()
+                    .has_network_owned_address_signing_presign_available(
+                        request.signature_algorithm,
+                    )
                 {
-                    return true; // no presign yet, keep in buffer
+                    return true; // no presign yet for this algorithm, keep in buffer
                 }
 
                 let instantiated = self
@@ -420,6 +432,9 @@ impl DWalletMPCService {
                     .instantiate_network_owned_address_sign_session(
                         request.sequence_number,
                         request.message.clone(),
+                        request.curve,
+                        request.signature_algorithm,
+                        request.hash_scheme,
                     );
                 !instantiated // keep in buffer if instantiation failed
             });
@@ -1273,13 +1288,15 @@ impl DWalletMPCService {
                 }
             },
             SessionType::NetworkOwnedAddressSign => match &session_request.protocol_data {
-                ProtocolData::NetworkOwnedAddressSign { .. } => {
+                ProtocolData::NetworkOwnedAddressSign { data, .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
                         DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                             output,
                             sequence_number: session_request.session_sequence_number,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
                         },
                         malicious_authorities,
                     ))

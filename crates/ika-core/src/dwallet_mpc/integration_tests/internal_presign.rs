@@ -5,10 +5,9 @@ use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
     TEST_PRESIGN_CONSENSUS_ROUND_DELAY, TEST_PRESIGN_POOL_MAXIMUM_SIZE,
-    TEST_PRESIGN_POOL_MINIMUM_SIZE, TEST_PRESIGN_SESSIONS_TO_INSTANTIATE, build_test_state,
-    create_test_protocol_config_guard,
+    TEST_PRESIGN_POOL_MINIMUM_SIZE, build_test_state, create_test_protocol_config_guard,
 };
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use tracing::info;
 
 /// All signature algorithms that have internal presign pools.
@@ -52,64 +51,43 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
-    // Read per-(curve, algo) config. The production code uses `network_owned_address_sign_presign_*`
-    // config for the (network_owned_address_signing_curve, network_owned_address_signing_algorithm) pair, and
-    // per-algorithm config for everything else.
+    // Read per-algorithm config. Since there is only one network key in the test,
+    // it is the NOA signing key, so ALL algorithms use `network_owned_address_sign_*_presign_*` config.
     let protocol_config = &test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
         .protocol_config;
-    let network_owned_address_signing_curve = protocol_config.network_owned_address_signing_curve();
-    let network_owned_address_signing_algorithm =
-        protocol_config.network_owned_address_signing_algorithm();
 
     // Verify test config constants match what the protocol config returns.
-    for (curve, algorithm) in ALL_ALGORITHMS {
-        let is_network_owned_address_signing = *curve == network_owned_address_signing_curve
-            && *algorithm == network_owned_address_signing_algorithm;
-        let delay = if is_network_owned_address_signing {
-            protocol_config.network_owned_address_sign_presign_consensus_round_delay()
-        } else {
-            protocol_config.get_internal_presign_consensus_round_delay(*curve, *algorithm)
-        };
-        let sessions_to_instantiate = if is_network_owned_address_signing {
-            protocol_config.network_owned_address_sign_presign_sessions_to_instantiate()
-        } else {
-            protocol_config.get_internal_presign_sessions_to_instantiate(*curve, *algorithm)
-        };
-        let min_pool = if is_network_owned_address_signing {
-            protocol_config.network_owned_address_sign_presign_pool_minimum_size()
-        } else {
-            protocol_config.get_internal_presign_pool_minimum_size(*curve, *algorithm)
-        };
-        let max_pool = if is_network_owned_address_signing {
-            protocol_config.network_owned_address_sign_presign_pool_maximum_size()
-        } else {
-            protocol_config.get_internal_presign_pool_maximum_size(*curve, *algorithm)
-        };
+    for (_curve, algorithm) in ALL_ALGORITHMS {
+        let delay =
+            protocol_config.get_network_owned_address_presign_consensus_round_delay(*algorithm);
+        let sessions_to_instantiate =
+            protocol_config.get_network_owned_address_presign_sessions_to_instantiate(*algorithm);
+        let min_pool =
+            protocol_config.get_network_owned_address_presign_pool_minimum_size(*algorithm);
+        let max_pool =
+            protocol_config.get_network_owned_address_presign_pool_maximum_size(*algorithm);
         assert_eq!(
             delay, TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
-            "{:?}/{:?}: delay should be {}",
-            curve, algorithm, TEST_PRESIGN_CONSENSUS_ROUND_DELAY
+            "{:?}: delay should be {}",
+            algorithm, TEST_PRESIGN_CONSENSUS_ROUND_DELAY
         );
-        let expected_sessions = if is_network_owned_address_signing {
-            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
-        } else {
-            TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
-        };
         assert_eq!(
-            sessions_to_instantiate, expected_sessions,
-            "{:?}/{:?}: sessions_to_instantiate should be {}",
-            curve, algorithm, expected_sessions
+            sessions_to_instantiate,
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE,
+            "{:?}: sessions_to_instantiate should be {}",
+            algorithm,
+            TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
         );
         assert_eq!(
             min_pool, TEST_PRESIGN_POOL_MINIMUM_SIZE,
-            "{:?}/{:?}: min_pool should be {}",
-            curve, algorithm, TEST_PRESIGN_POOL_MINIMUM_SIZE
+            "{:?}: min_pool should be {}",
+            algorithm, TEST_PRESIGN_POOL_MINIMUM_SIZE
         );
         assert_eq!(
             max_pool, TEST_PRESIGN_POOL_MAXIMUM_SIZE,
-            "{:?}/{:?}: max_pool should be {}",
-            curve, algorithm, TEST_PRESIGN_POOL_MAXIMUM_SIZE
+            "{:?}: max_pool should be {}",
+            algorithm, TEST_PRESIGN_POOL_MAXIMUM_SIZE
         );
     }
 
@@ -176,17 +154,14 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
         utils::wait_for_computations(&mut test_state).await;
 
         // Verify per-(curve, algo) instantiation delta matches prediction.
+        // Since there is only one network key and it IS the NOA signing key,
+        // all algorithms use NOA sign presign config.
         for (curve, algorithm, pre_instantiated, pre_completed, pre_pool) in &pre_loop_snapshots {
-            let is_network_owned_address_signing = *curve == network_owned_address_signing_curve
-                && *algorithm == network_owned_address_signing_algorithm;
             let delay = TEST_PRESIGN_CONSENSUS_ROUND_DELAY;
             let min_pool = TEST_PRESIGN_POOL_MINIMUM_SIZE;
             let max_pool = TEST_PRESIGN_POOL_MAXIMUM_SIZE;
-            let sessions_to_instantiate = if is_network_owned_address_signing {
-                TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
-            } else {
-                TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
-            };
+            let sessions_to_instantiate =
+                TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE;
 
             let post_instantiated = test_state.dwallet_mpc_services[0]
                 .dwallet_mpc_manager()
@@ -298,18 +273,17 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 /// Test that internal presign sessions stop being created when the pool reaches minimum size
 /// and the system is not idle.
 ///
-/// Makes the system non-idle by sending `NetworkOwnedAddressSignRequest`s through the channel, which
-/// creates real `NetworkOwnedAddressSign` sessions that count toward the idle threshold. These sessions
-/// only consume presigns from the Curve25519/EdDSA pool (the network-owned-address signing curve), so
+/// Makes the system non-idle by sending `NetworkOwnedAddressSignRequest`s through the EdDSA
+/// channel, which creates real `NetworkOwnedAddressSign` sessions that count toward the idle
+/// threshold. These sessions only consume presigns from the EdDSA pool, so
 /// non-EdDSA pools remain unaffected.
 ///
-/// The network-owned-address signing curve (Curve25519/EdDSA) is excluded from all assertions because
-/// NetworkOwnedAddressSign sessions consume its presigns and its pool uses separate config
-/// (`network_owned_address_sign_presign_*`) with different `sessions_to_instantiate`.
+/// EdDSA is excluded from pool stability assertions because NetworkOwnedAddressSign sessions
+/// consume its presigns.
 ///
 /// Test flow:
 /// 1. Create network key, let all pools fill (system is idle).
-/// 2. Send NetworkOwnedAddressSignRequests → creates active NetworkOwnedAddressSign sessions → system becomes non-idle.
+/// 2. Send NetworkOwnedAddressSignRequests via EdDSA channel → creates active sessions → system becomes non-idle.
 /// 3. Snapshot non-EdDSA pool sizes, run more rounds, assert they stay exactly stable.
 #[tokio::test]
 #[cfg(test)]
@@ -325,50 +299,37 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     test_state.consensus_round = consensus_round as usize;
 
     // Extract config values needed throughout the test.
-    let (
-        non_network_owned_address_sign_algorithms,
-        per_algo_min_sizes,
-        network_owned_address_signing_algorithm,
-    ) = {
+    // We send NOA sign requests via the EdDSA channel, so exclude EdDSA from pool stability checks.
+    let noa_sign_algorithm = DWalletSignatureAlgorithm::EdDSA;
+    let noa_sign_hash_scheme = DWalletHashScheme::SHA512;
+
+    let (non_eddsa_algorithms, per_algo_min_sizes) = {
         let protocol_config = &test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .protocol_config;
 
-        let network_owned_address_signing_curve =
-            protocol_config.network_owned_address_signing_curve();
-        let network_owned_address_signing_algorithm =
-            protocol_config.network_owned_address_signing_algorithm();
-        let non_network_owned_address_sign_algorithms: Vec<(
-            DWalletCurve,
-            DWalletSignatureAlgorithm,
-        )> = ALL_ALGORITHMS
+        let non_eddsa_algorithms: Vec<(DWalletCurve, DWalletSignatureAlgorithm)> = ALL_ALGORITHMS
             .iter()
-            .filter(|(curve, algorithm)| {
-                !(*curve == network_owned_address_signing_curve
-                    && *algorithm == network_owned_address_signing_algorithm)
-            })
+            .filter(|(_, algorithm)| *algorithm != noa_sign_algorithm)
             .copied()
             .collect();
 
-        let per_algo_min_sizes: Vec<u64> = non_network_owned_address_sign_algorithms
+        // Since there is only one key and it IS the NOA signing key,
+        // all algorithms use NOA sign presign config.
+        let per_algo_min_sizes: Vec<u64> = non_eddsa_algorithms
             .iter()
-            .map(|(curve, algorithm)| {
-                protocol_config.get_internal_presign_pool_minimum_size(*curve, *algorithm)
+            .map(|(_, algorithm)| {
+                protocol_config.get_network_owned_address_presign_pool_minimum_size(*algorithm)
             })
             .collect();
 
         info!(
-            "idle_threshold={}, excluded=({:?}/{:?})",
+            "idle_threshold={}, excluded={:?}",
             protocol_config.idle_session_count_threshold(),
-            network_owned_address_signing_curve,
-            network_owned_address_signing_algorithm
+            noa_sign_algorithm
         );
 
-        (
-            non_network_owned_address_sign_algorithms,
-            per_algo_min_sizes,
-            network_owned_address_signing_algorithm,
-        )
+        (non_eddsa_algorithms, per_algo_min_sizes)
     };
 
     // === Phase 1: Let all pools fill while the system is idle ===
@@ -387,7 +348,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         }
         utils::wait_for_computations(&mut test_state).await;
 
-        let all_non_eddsa_at_min = non_network_owned_address_sign_algorithms
+        let all_non_eddsa_at_min = non_eddsa_algorithms
             .iter()
             .zip(per_algo_min_sizes.iter())
             .all(|((_, algorithm), min_size)| {
@@ -397,7 +358,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
                     >= *min_size
             });
         let eddsa_has_presigns = test_state.epoch_stores[0]
-            .presign_pool_size(network_owned_address_signing_algorithm, network_key_id)
+            .presign_pool_size(noa_sign_algorithm, network_key_id)
             .unwrap_or(0)
             > 0;
         if all_non_eddsa_at_min && eddsa_has_presigns {
@@ -407,9 +368,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     }
 
     // Verify all non-EdDSA pools reached min.
-    for ((curve, algorithm), min_size) in non_network_owned_address_sign_algorithms
-        .iter()
-        .zip(per_algo_min_sizes.iter())
+    for ((curve, algorithm), min_size) in non_eddsa_algorithms.iter().zip(per_algo_min_sizes.iter())
     {
         let pool_size = test_state.epoch_stores[0]
             .presign_pool_size(*algorithm, network_key_id)
@@ -439,6 +398,9 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
                 .send(NetworkOwnedAddressSignRequest {
                     sequence_number,
                     message: format!("idle-breaker-{}", sequence_number).into_bytes(),
+                    curve: DWalletCurve::Curve25519,
+                    signature_algorithm: noa_sign_algorithm,
+                    hash_scheme: noa_sign_hash_scheme,
                 })
                 .expect("failed to send network-owned-address sign request");
         }
@@ -467,7 +429,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
 
     // === Phase 3: Verify non-EdDSA pools are stable when non-idle + at/above min ===
     let pool_sizes_before: Vec<(DWalletCurve, DWalletSignatureAlgorithm, u64)> =
-        non_network_owned_address_sign_algorithms
+        non_eddsa_algorithms
             .iter()
             .map(|(curve, algorithm)| {
                 let size = test_state.epoch_stores[0]
@@ -536,18 +498,16 @@ async fn test_internal_presign_continues_when_idle() {
     let mut test_state = build_test_state(4);
 
     // Extract all needed config values before creating the network key.
+    // Since there is only one key in the test and it IS the NOA signing key,
+    // use NOA sign presign config.
     let (max_pool_size, min_pool_size) = {
         let protocol_config = &test_state.dwallet_mpc_services[0]
             .dwallet_mpc_manager()
             .protocol_config;
-        let max_pool_size = protocol_config.get_internal_presign_pool_maximum_size(
-            DWalletCurve::Curve25519,
-            DWalletSignatureAlgorithm::EdDSA,
-        );
-        let min_pool_size = protocol_config.get_internal_presign_pool_minimum_size(
-            DWalletCurve::Curve25519,
-            DWalletSignatureAlgorithm::EdDSA,
-        );
+        let max_pool_size = protocol_config
+            .get_network_owned_address_presign_pool_maximum_size(DWalletSignatureAlgorithm::EdDSA);
+        let min_pool_size = protocol_config
+            .get_network_owned_address_presign_pool_minimum_size(DWalletSignatureAlgorithm::EdDSA);
         (max_pool_size, min_pool_size)
     };
 
@@ -651,7 +611,7 @@ async fn test_internal_presign_continues_when_idle() {
     // presigns in batches — a session started when pool < max can complete and deposit
     // multiple presigns, pushing the pool past max by up to
     // sessions_to_instantiate * (n - threshold).
-    let max_overshoot = TEST_PRESIGN_SESSIONS_TO_INSTANTIATE
+    let max_overshoot = TEST_NETWORK_OWNED_ADDRESS_SIGN_PRESIGN_SESSIONS_TO_INSTANTIATE
         * (test_state.dwallet_mpc_services.len() as u64
             - test_state.committee.quorum_threshold() as u64);
     assert!(
