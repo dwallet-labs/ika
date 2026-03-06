@@ -1027,7 +1027,6 @@ impl AuthorityPerEpochStore {
 
     #[instrument(level = "debug", skip_all)]
     pub(crate) async fn process_consensus_transactions_and_commit_boundary<
-        'a,
         C: DWalletCheckpointServiceNotify,
     >(
         &self,

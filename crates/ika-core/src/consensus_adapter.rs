@@ -470,7 +470,7 @@ impl ConsensusAdapter {
                 // Filter out low scoring nodes
                 let high_scoring = low_scoring_authorities.get(authority).is_none();
 
-                keep || high_scoring //(connected && high_scoring)
+                keep || (connected && high_scoring)
             })
             .collect();
 
@@ -803,7 +803,10 @@ impl ConsensusAdapter {
                         .inc();
                     retries += 1;
 
-                    time::sleep(Duration::from_secs(10)).await;
+                    // Exponential backoff: 100ms, 200ms, 400ms, ..., capped at 10s
+                    let backoff =
+                        Duration::from_millis(100u64.saturating_mul(1u64 << retries.min(10)));
+                    time::sleep(backoff.min(Duration::from_secs(10))).await;
                 }
                 Ok((consensus_positions, status_waiter)) => {
                     break (consensus_positions, status_waiter);
@@ -824,7 +827,7 @@ impl ConsensusAdapter {
 
         self.metrics
             .sequencing_acknowledge_latency
-            .with_label_values(&[&bucket, tx_type])
+            .with_label_values(&[&bucket, &tx_type.to_string()])
             .observe(ack_start.elapsed().as_secs_f64());
 
         (consensus_positions, status_waiter)
@@ -1076,7 +1079,11 @@ impl Drop for InflightDropGuard<'_> {
         self.adapter
             .metrics
             .sequencing_certificate_latency
-            .with_label_values(&[&position, self.tx_type, processed_method])
+            .with_label_values(&[
+                &position.to_string(),
+                &self.tx_type.to_string(),
+                &processed_method.to_string(),
+            ])
             .observe(latency.as_secs_f64());
 
         // Only sample latency after consensus quorum is up. Otherwise, the wait for consensus

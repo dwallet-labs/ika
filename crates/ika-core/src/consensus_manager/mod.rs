@@ -138,12 +138,16 @@ impl ConsensusManager {
 
         let last_processed_commit_index =
             consensus_handler.last_processed_subdag_index() as CommitIndex;
-        let (commit_consumer, commit_receiver, _block_receiver) =
+        let (commit_consumer, commit_receiver) =
             CommitConsumerArgs::new(last_processed_commit_index, last_processed_commit_index);
         let monitor = commit_consumer.monitor();
 
-        let handler =
-            MysticetiConsensusHandler::new(consensus_handler, commit_receiver, monitor.clone());
+        let handler = MysticetiConsensusHandler::new(
+            last_processed_commit_index,
+            consensus_handler,
+            commit_receiver,
+            monitor.clone(),
+        );
 
         let mut consensus_handler = self.consensus_handler.lock().await;
         *consensus_handler = Some(handler);

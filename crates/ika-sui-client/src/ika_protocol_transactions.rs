@@ -48,7 +48,7 @@ pub async fn set_approved_upgrade_by_cap(
     digest: Option<Vec<u8>>,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
-    let client = context.get_client().await?;
+    let client = context.grpc_client()?;
     let protocol_cap_ref = client
         .transaction_builder()
         .get_object_ref(protocol_cap_id)
@@ -226,7 +226,7 @@ pub async fn try_migrate_system_by_cap(
     ika_system_object_id: ObjectID,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
-    let client = context.get_client().await?;
+    let client = context.grpc_client()?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let sender = context.active_address()?;
@@ -540,7 +540,7 @@ pub async fn get_verified_protocol_cap(
     protocol_cap_id: ObjectID,
     ptb: &mut ProgrammableTransactionBuilder,
 ) -> Result<Argument, anyhow::Error> {
-    let client = context.get_client().await?;
+    let client = context.grpc_client()?;
     let protocol_cap_ref = client
         .transaction_builder()
         .get_object_ref(protocol_cap_id)

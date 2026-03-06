@@ -24,7 +24,7 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
-use consensus_core::CommitConsumerMonitor;
+use consensus_core::{CommitConsumerMonitor, CommitIndex};
 use ika_protocol_config::ProtocolConfig;
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
@@ -381,18 +381,33 @@ pub(crate) struct MysticetiConsensusHandler {
 
 impl MysticetiConsensusHandler {
     pub(crate) fn new(
+        last_processed_commit_at_startup: CommitIndex,
         mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
         commit_consumer_monitor: Arc<CommitConsumerMonitor>,
     ) -> Self {
+        debug!(
+            last_processed_commit_at_startup,
+            "Starting consensus replay"
+        );
         let mut tasks = JoinSet::new();
         tasks.spawn(monitored_future!(async move {
             // TODO: pause when execution is overloaded, so consensus can detect the backpressure.
             while let Some(consensus_commit) = commit_receiver.recv().await {
                 let commit_index = consensus_commit.commit_ref.index;
-                consensus_handler
-                    .handle_consensus_commit(consensus_commit)
-                    .await;
+                // Skip commits that were already processed before startup.
+                // These may be replayed by consensus for crash recovery purposes.
+                if commit_index <= last_processed_commit_at_startup {
+                    debug!(
+                        commit_index,
+                        last_processed_commit_at_startup,
+                        "Skipping already-processed replayed commit"
+                    );
+                } else {
+                    consensus_handler
+                        .handle_consensus_commit(consensus_commit)
+                        .await;
+                }
                 commit_consumer_monitor.set_highest_handled_commit(commit_index);
             }
         }));
