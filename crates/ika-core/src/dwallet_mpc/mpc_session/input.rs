@@ -270,7 +270,7 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Get the stored network-owned-address sign DKG output for the specific algorithm
+            // Get the stored network-owned-address sign DKG output for the specific curve
             // (contains both centralized and decentralized DKG).
             // This is pre-computed during network key construction.
             let stored_dkg_output_bytes =

@@ -3,7 +3,8 @@
 
 //! Integration tests for network-owned-address signing.
 //!
-//! These tests verify that the network-owned-address signing flow works correctly:
+//! These tests verify that the network-owned-address signing flow works correctly
+//! for all supported signature algorithms:
 //! 1. Network key creation with network-owned-address sign DKG
 //! 2. Presign pool population
 //! 3. Network-owned-address sign session triggering
@@ -15,7 +16,7 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owne
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
-    build_test_state, create_test_protocol_config_guard,
+    IntegrationTestState, build_test_state, create_test_protocol_config_guard,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
@@ -24,22 +25,57 @@ use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use std::collections::HashSet;
 use tracing::info;
 
-/// Test that network-owned-address signing works end-to-end:
+/// All (curve, algorithm, hash_scheme) triples for network-owned-address signing E2E tests.
+const ALL_SIGNATURE_CONFIGURATIONS: &[(
+    DWalletCurve,
+    DWalletSignatureAlgorithm,
+    DWalletHashScheme,
+)] = &[
+    (
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::ECDSASecp256k1,
+        DWalletHashScheme::Keccak256,
+    ),
+    (
+        DWalletCurve::Secp256r1,
+        DWalletSignatureAlgorithm::ECDSASecp256r1,
+        DWalletHashScheme::SHA256,
+    ),
+    (
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+        DWalletHashScheme::SHA512,
+    ),
+    (
+        DWalletCurve::Ristretto,
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        DWalletHashScheme::Merlin,
+    ),
+    (
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::Taproot,
+        DWalletHashScheme::SHA256,
+    ),
+];
+
+/// End-to-end network-owned-address signing helper:
 /// 1. Create a network key
-/// 2. Wait for internal presign pool to populate
-/// 3. Send an NetworkOwnedAddressSignRequest via the channel
+/// 2. Wait for internal presign pool to populate for the given algorithm
+/// 3. Send a NetworkOwnedAddressSignRequest via the channel
 /// 4. Run consensus rounds until NetworkOwnedAddressSign session completes
 /// 5. Verify pool size decreased and presign was consumed
 /// 6. Verify NetworkOwnedAddressSignOutput appears on the output channel
-#[tokio::test]
-#[cfg(test)]
-async fn test_network_owned_address_sign_flow() {
+async fn network_owned_address_sign_flow(
+    curve: DWalletCurve,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    hash_scheme: DWalletHashScheme,
+) {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let _guard = create_test_protocol_config_guard();
 
     let mut test_state = build_test_state(4);
 
-    // Create a network key (required for network-owned-address signing)
+    // Create a network key (required for network-owned-address signing).
     let (consensus_round, _network_key_bytes, network_key_id) =
         create_network_key_test(&mut test_state).await;
 
@@ -49,16 +85,14 @@ async fn test_network_owned_address_sign_flow() {
     );
     test_state.consensus_round = consensus_round as usize;
 
-    // Use EdDSA for the test — it's the fastest algorithm and exercises the full flow.
-    let signature_algorithm = DWalletSignatureAlgorithm::EdDSA;
-    let hash_scheme = DWalletHashScheme::SHA512;
-
     info!(
-        "Network-owned-address signing test: algorithm={:?}, hash_scheme={:?}",
-        signature_algorithm, hash_scheme
+        ?curve,
+        ?signature_algorithm,
+        ?hash_scheme,
+        "Network-owned-address signing test"
     );
 
-    // Wait for the internal presign pool to populate with real presigns
+    // Wait for the internal presign pool to populate with real presigns.
     let start_round = test_state.consensus_round as u64;
     let consensus_round = utils::advance_rounds_while_presign_pool_empty(
         &mut test_state,
@@ -74,8 +108,8 @@ async fn test_network_owned_address_sign_flow() {
         .presign_pool_size(signature_algorithm, network_key_id)
         .expect("failed to get pool size");
     info!(
-        "Pool size before network-owned-address sign: {}",
-        pool_size_before
+        pool_size_before,
+        "Pool size before network-owned-address sign"
     );
     assert!(
         pool_size_before > 0,
@@ -89,7 +123,7 @@ async fn test_network_owned_address_sign_flow() {
         .map(|pool| pool.iter().map(|(id, _)| *id).collect())
         .unwrap_or_default();
 
-    // Send an NetworkOwnedAddressSignRequest to all validators via the channel
+    // Send a NetworkOwnedAddressSignRequest to all validators via the channel.
     let test_message = b"test message to sign internally".to_vec();
     let sequence_number = 42u64;
 
@@ -98,7 +132,7 @@ async fn test_network_owned_address_sign_flow() {
             .send(NetworkOwnedAddressSignRequest {
                 sequence_number,
                 message: test_message.clone(),
-                curve: DWalletCurve::Curve25519,
+                curve,
                 signature_algorithm,
                 hash_scheme,
             })
@@ -106,13 +140,11 @@ async fn test_network_owned_address_sign_flow() {
     }
 
     // Run service loop iterations to process the requests.
-    // The service's process_network_owned_address_sign_requests() drains the channel
-    // and calls instantiate_network_owned_address_sign_session().
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
 
-    // Check that NetworkOwnedAddressSign sessions were created
+    // Check that NetworkOwnedAddressSign sessions were created.
     let network_owned_address_sign_count: usize = test_state.dwallet_mpc_services[0]
         .dwallet_mpc_manager()
         .sessions
@@ -121,36 +153,14 @@ async fn test_network_owned_address_sign_flow() {
         .count();
 
     info!(
-        "Network-owned-address sign sessions created: {}",
-        network_owned_address_sign_count
+        network_owned_address_sign_count,
+        "Network-owned-address sign sessions created"
     );
 
     // Run consensus rounds with computation waits to complete the sign session.
     // Rayon threads need real wall-clock time to finish MPC computations.
-    let sign_output = {
-        let mut result = test_state.network_owned_address_sign_output_receivers[0]
-            .try_recv()
-            .ok();
-        let mut rounds = 0usize;
-        while result.is_none() && rounds < 150 {
-            utils::send_advance_results_between_parties(
-                &test_state.committee,
-                &mut test_state.sent_consensus_messages_collectors,
-                &mut test_state.epoch_stores,
-                test_state.consensus_round as u64,
-            );
-            test_state.consensus_round += 1;
-            for service in test_state.dwallet_mpc_services.iter_mut() {
-                service.run_service_loop_iteration(vec![]).await;
-            }
-            utils::wait_for_computations(&mut test_state).await;
-            result = test_state.network_owned_address_sign_output_receivers[0]
-                .try_recv()
-                .ok();
-            rounds += 1;
-        }
-        result.expect("NetworkOwnedAddressSignOutput not received after 150 consensus rounds")
-    };
+    let sign_output = wait_for_network_owned_address_sign_output(&mut test_state).await;
+
     assert_eq!(
         sign_output.sequence_number, sequence_number,
         "output sequence number should match request"
@@ -160,9 +170,9 @@ async fn test_network_owned_address_sign_flow() {
         "signature should not be empty"
     );
     info!(
-        "Received NetworkOwnedAddressSignOutput: sequence_number={}, signature_len={}",
-        sign_output.sequence_number,
-        sign_output.signature.len()
+        sequence_number = sign_output.sequence_number,
+        signature_len = sign_output.signature.len(),
+        "Received NetworkOwnedAddressSignOutput"
     );
 
     // Verify that exactly one presign from the pre-sign snapshot was consumed.
@@ -180,9 +190,9 @@ async fn test_network_owned_address_sign_flow() {
         })
         .collect();
     info!(
-        "Used presigns: {:?}, from snapshot: {:?}",
-        used_presigns.len(),
-        consumed_from_snapshot.len()
+        used_presigns_count = used_presigns.len(),
+        consumed_from_snapshot_count = consumed_from_snapshot.len(),
+        "Presign consumption check"
     );
     assert_eq!(
         consumed_from_snapshot.len(),
@@ -190,7 +200,126 @@ async fn test_network_owned_address_sign_flow() {
         "exactly one presign from the pre-sign pool snapshot should have been consumed"
     );
 
-    info!("Network-owned-address sign E2E test completed");
+    info!(
+        ?curve,
+        ?signature_algorithm,
+        "Network-owned-address sign E2E test completed"
+    );
+}
+
+/// Polls consensus rounds until a `NetworkOwnedAddressSignOutput` is received on the first
+/// validator's output channel, or panics after `MAX_SIGN_WAIT_ROUNDS` rounds.
+///
+/// ECDSA sign protocols have multiple MPC rounds with heavy computations, so we use the
+/// same generous limit as the presign pool wait (300 rounds).
+async fn wait_for_network_owned_address_sign_output(
+    test_state: &mut IntegrationTestState,
+) -> crate::dwallet_mpc::NetworkOwnedAddressSignOutput {
+    const MAX_SIGN_WAIT_ROUNDS: usize = 300;
+    let mut result = test_state.network_owned_address_sign_output_receivers[0]
+        .try_recv()
+        .ok();
+    let mut rounds = 0usize;
+    while result.is_none() && rounds < MAX_SIGN_WAIT_ROUNDS {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+        utils::wait_for_computations(test_state).await;
+        result = test_state.network_owned_address_sign_output_receivers[0]
+            .try_recv()
+            .ok();
+        rounds += 1;
+    }
+    result.unwrap_or_else(|| {
+        panic!(
+            "NetworkOwnedAddressSignOutput not received after {} consensus rounds",
+            MAX_SIGN_WAIT_ROUNDS,
+        )
+    })
+}
+
+// === Per-algorithm E2E tests ===
+
+/// ECDSA centralized party emulation with ZeroRng currently fails with
+/// `Commitment(InvalidPublicParameters)` in `SignCentralizedPartyV2`.
+///
+/// The Schnorr-based protocols (EdDSA, SchnorrkelSubstrate, Taproot) work because their
+/// commitment scheme tolerates a zero secret key share, while ECDSA's does not.
+///
+/// The centralized party partial signature emulation (`emulate_centralized_party_partial_signature`
+/// in `input.rs`) runs synchronously on the main thread outside any Rayon context.
+/// For Schnorr this is fine (cheap), but for ECDSA it would also be expensive even if
+/// the commitment issue were resolved. Two possible fixes:
+/// 1. Move the emulation into the Rayon cryptographic computation pipeline so it runs
+///    on the Rayon thread pool alongside the decentralized party sign computation.
+/// 2. Adapt the Sign protocol to accept a flag that makes it compute the centralized
+///    party partial signature internally (within its own Rayon task), eliminating the
+///    need to pre-compute it in `session_input_from_request`.
+///
+/// Unignore once the ECDSA `Commitment(InvalidPublicParameters)` issue is resolved.
+#[tokio::test]
+#[cfg(test)]
+#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
+async fn test_network_owned_address_sign_ecdsa_secp256k1() {
+    network_owned_address_sign_flow(
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::ECDSASecp256k1,
+        DWalletHashScheme::Keccak256,
+    )
+    .await;
+}
+
+/// See [`test_network_owned_address_sign_ecdsa_secp256k1`] for details on why this is ignored.
+#[tokio::test]
+#[cfg(test)]
+#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
+async fn test_network_owned_address_sign_ecdsa_secp256r1() {
+    network_owned_address_sign_flow(
+        DWalletCurve::Secp256r1,
+        DWalletSignatureAlgorithm::ECDSASecp256r1,
+        DWalletHashScheme::SHA256,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_eddsa() {
+    network_owned_address_sign_flow(
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+        DWalletHashScheme::SHA512,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_schnorrkel_substrate() {
+    network_owned_address_sign_flow(
+        DWalletCurve::Ristretto,
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        DWalletHashScheme::Merlin,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_taproot() {
+    network_owned_address_sign_flow(
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::Taproot,
+        DWalletHashScheme::SHA256,
+    )
+    .await;
 }
 
 /// Test that the network-owned-address sign DKG session ID is computed deterministically,
@@ -243,26 +372,9 @@ fn test_network_owned_address_sign_dkg_session_id_determinism() {
     );
 
     // Test various curve/algorithm combinations for uniqueness
-    let combinations = [
-        (
-            DWalletCurve::Secp256k1,
-            DWalletSignatureAlgorithm::ECDSASecp256k1,
-        ),
-        (
-            DWalletCurve::Secp256r1,
-            DWalletSignatureAlgorithm::ECDSASecp256r1,
-        ),
-        (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA),
-        (
-            DWalletCurve::Ristretto,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
-        ),
-        (DWalletCurve::Secp256k1, DWalletSignatureAlgorithm::Taproot),
-    ];
-
-    let session_ids: Vec<_> = combinations
+    let session_ids: Vec<_> = ALL_SIGNATURE_CONFIGURATIONS
         .iter()
-        .map(|(c, a)| network_owned_address_sign_dkg_session_id(&network_key_id, *c, *a))
+        .map(|(c, a, _)| network_owned_address_sign_dkg_session_id(&network_key_id, *c, *a))
         .collect();
 
     // All session IDs should be unique
@@ -272,7 +384,7 @@ fn test_network_owned_address_sign_dkg_session_id_determinism() {
                 assert_ne!(
                     id_a, id_b,
                     "session IDs for {:?} and {:?} should be different",
-                    combinations[i], combinations[j]
+                    ALL_SIGNATURE_CONFIGURATIONS[i], ALL_SIGNATURE_CONFIGURATIONS[j]
                 );
             }
         }
@@ -306,14 +418,14 @@ fn test_network_owned_address_sign_dkg_session_id_determinism() {
 
     info!(
         "Session ID determinism verified across {} curve/algorithm combinations",
-        combinations.len()
+        ALL_SIGNATURE_CONFIGURATIONS.len()
     );
 }
 
 /// Test that the network-owned-address sign DKG session ID derivation is stable across calls
 /// and unique per key. This verifies the deterministic input that seeds the DKG
 /// emulation, not the DKG computation itself (which requires real protocol public
-/// parameters and is covered by `test_network_owned_address_sign_flow`).
+/// parameters and is covered by the per-algorithm E2E tests).
 #[test]
 fn test_dkg_session_id_stability() {
     let key_id = [42u8; 32];
