@@ -93,13 +93,12 @@ async fn test_network_owned_address_sign_flow() {
     let test_message = b"test message to sign internally".to_vec();
     let sequence_number = 42u64;
 
-    for sender_map in &test_state.network_owned_address_sign_request_senders {
-        sender_map
-            .get(&signature_algorithm)
-            .expect("missing sender for algorithm")
+    for sender in &test_state.network_owned_address_sign_request_senders {
+        sender
             .send(NetworkOwnedAddressSignRequest {
                 sequence_number,
                 message: test_message.clone(),
+                curve: DWalletCurve::Curve25519,
                 signature_algorithm,
                 hash_scheme,
             })

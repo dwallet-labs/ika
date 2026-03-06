@@ -59,14 +59,14 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
 
     // Verify test config constants match what the protocol config returns.
     for (_curve, algorithm) in ALL_ALGORITHMS {
-        let delay = protocol_config
-            .get_network_owned_address_sign_presign_consensus_round_delay(*algorithm);
-        let sessions_to_instantiate = protocol_config
-            .get_network_owned_address_sign_presign_sessions_to_instantiate(*algorithm);
+        let delay =
+            protocol_config.get_network_owned_address_presign_consensus_round_delay(*algorithm);
+        let sessions_to_instantiate =
+            protocol_config.get_network_owned_address_presign_sessions_to_instantiate(*algorithm);
         let min_pool =
-            protocol_config.get_network_owned_address_sign_presign_pool_minimum_size(*algorithm);
+            protocol_config.get_network_owned_address_presign_pool_minimum_size(*algorithm);
         let max_pool =
-            protocol_config.get_network_owned_address_sign_presign_pool_maximum_size(*algorithm);
+            protocol_config.get_network_owned_address_presign_pool_maximum_size(*algorithm);
         assert_eq!(
             delay, TEST_PRESIGN_CONSENSUS_ROUND_DELAY,
             "{:?}: delay should be {}",
@@ -319,7 +319,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
         let per_algo_min_sizes: Vec<u64> = non_eddsa_algorithms
             .iter()
             .map(|(_, algorithm)| {
-                protocol_config.get_network_owned_address_sign_presign_pool_minimum_size(*algorithm)
+                protocol_config.get_network_owned_address_presign_pool_minimum_size(*algorithm)
             })
             .collect();
 
@@ -393,13 +393,12 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // These only consume presigns from the EdDSA pool (excluded from assertions).
     let num_sign_requests = 20u64;
     for sequence_number in 0..num_sign_requests {
-        for sender_map in &test_state.network_owned_address_sign_request_senders {
-            sender_map
-                .get(&noa_sign_algorithm)
-                .expect("missing sender for EdDSA algorithm")
+        for sender in &test_state.network_owned_address_sign_request_senders {
+            sender
                 .send(NetworkOwnedAddressSignRequest {
                     sequence_number,
                     message: format!("idle-breaker-{}", sequence_number).into_bytes(),
+                    curve: DWalletCurve::Curve25519,
                     signature_algorithm: noa_sign_algorithm,
                     hash_scheme: noa_sign_hash_scheme,
                 })
@@ -506,13 +505,9 @@ async fn test_internal_presign_continues_when_idle() {
             .dwallet_mpc_manager()
             .protocol_config;
         let max_pool_size = protocol_config
-            .get_network_owned_address_sign_presign_pool_maximum_size(
-                DWalletSignatureAlgorithm::EdDSA,
-            );
+            .get_network_owned_address_presign_pool_maximum_size(DWalletSignatureAlgorithm::EdDSA);
         let min_pool_size = protocol_config
-            .get_network_owned_address_sign_presign_pool_minimum_size(
-                DWalletSignatureAlgorithm::EdDSA,
-            );
+            .get_network_owned_address_presign_pool_minimum_size(DWalletSignatureAlgorithm::EdDSA);
         (max_pool_size, min_pool_size)
     };
 

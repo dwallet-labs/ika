@@ -127,7 +127,7 @@ pub struct NetworkEncryptionKeyPublicData {
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
 
-    /// Per-algorithm DKG outputs for network-owned-address signing.
+    /// Per-curve DKG outputs for network-owned-address signing.
     ///
     /// Each field holds the centralized party DKG output created using a deterministic
     /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
@@ -141,19 +141,19 @@ pub struct NetworkEncryptionKeyPublicData {
     /// from the network's threshold signature scheme, not from randomness.
     ///
     /// Each output is BCS-serialized `NetworkOwnedAddressSignDKGOutput`.
-    pub ecdsa_secp256k1_network_owned_address_sign_dkg_output: Vec<u8>,
-    pub ecdsa_secp256r1_network_owned_address_sign_dkg_output: Vec<u8>,
-    pub eddsa_network_owned_address_sign_dkg_output: Vec<u8>,
-    pub schnorrkel_substrate_network_owned_address_sign_dkg_output: Vec<u8>,
-    pub taproot_network_owned_address_sign_dkg_output: Vec<u8>,
+    /// DKG is per-curve (4 curves), not per-algorithm (5 algorithms).
+    /// Secp256k1 is shared by ECDSASecp256k1 and Taproot.
+    pub secp256k1_network_owned_address_dkg_output: Vec<u8>,
+    pub secp256r1_network_owned_address_dkg_output: Vec<u8>,
+    pub curve25519_network_owned_address_dkg_output: Vec<u8>,
+    pub ristretto_network_owned_address_dkg_output: Vec<u8>,
 
-    /// Per-algorithm extracted public keys for network-owned-address signing.
+    /// Per-curve extracted public keys for network-owned-address signing.
     /// These are the actual group element bytes extracted from the centralized DKG output.
-    pub ecdsa_secp256k1_network_owned_address_sign_public_key: Vec<u8>,
-    pub ecdsa_secp256r1_network_owned_address_sign_public_key: Vec<u8>,
-    pub eddsa_network_owned_address_sign_public_key: Vec<u8>,
-    pub schnorrkel_substrate_network_owned_address_sign_public_key: Vec<u8>,
-    pub taproot_network_owned_address_sign_public_key: Vec<u8>,
+    pub secp256k1_network_owned_address_public_key: Vec<u8>,
+    pub secp256r1_network_owned_address_public_key: Vec<u8>,
+    pub curve25519_network_owned_address_public_key: Vec<u8>,
+    pub ristretto_network_owned_address_public_key: Vec<u8>,
 }
 
 #[derive(
@@ -247,6 +247,19 @@ impl From<DWalletHashScheme> for group::HashScheme {
             DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
             DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
             DWalletHashScheme::Merlin => group::HashScheme::Merlin,
+        }
+    }
+}
+
+impl DWalletCurve {
+    /// Returns the u32 representation of this curve.
+    /// This is the inverse of [`try_into_curve`].
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            DWalletCurve::Secp256k1 => 0,
+            DWalletCurve::Secp256r1 => 1,
+            DWalletCurve::Curve25519 => 2,
+            DWalletCurve::Ristretto => 3,
         }
     }
 }
@@ -452,47 +465,23 @@ impl NetworkEncryptionKeyPublicData {
             .clone()
     }
 
-    /// Returns the network-owned-address sign DKG output for the given signature algorithm.
-    pub fn network_owned_address_sign_dkg_output(
-        &self,
-        algorithm: DWalletSignatureAlgorithm,
-    ) -> &[u8] {
-        match algorithm {
-            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                &self.ecdsa_secp256k1_network_owned_address_sign_dkg_output
-            }
-            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                &self.ecdsa_secp256r1_network_owned_address_sign_dkg_output
-            }
-            DWalletSignatureAlgorithm::EdDSA => &self.eddsa_network_owned_address_sign_dkg_output,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                &self.schnorrkel_substrate_network_owned_address_sign_dkg_output
-            }
-            DWalletSignatureAlgorithm::Taproot => {
-                &self.taproot_network_owned_address_sign_dkg_output
-            }
+    /// Returns the network-owned-address DKG output for the given curve.
+    pub fn network_owned_address_dkg_output(&self, curve: DWalletCurve) -> &[u8] {
+        match curve {
+            DWalletCurve::Secp256k1 => &self.secp256k1_network_owned_address_dkg_output,
+            DWalletCurve::Secp256r1 => &self.secp256r1_network_owned_address_dkg_output,
+            DWalletCurve::Curve25519 => &self.curve25519_network_owned_address_dkg_output,
+            DWalletCurve::Ristretto => &self.ristretto_network_owned_address_dkg_output,
         }
     }
 
-    /// Returns the network-owned-address sign public key for the given signature algorithm.
-    pub fn network_owned_address_sign_public_key(
-        &self,
-        algorithm: DWalletSignatureAlgorithm,
-    ) -> &[u8] {
-        match algorithm {
-            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                &self.ecdsa_secp256k1_network_owned_address_sign_public_key
-            }
-            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
-                &self.ecdsa_secp256r1_network_owned_address_sign_public_key
-            }
-            DWalletSignatureAlgorithm::EdDSA => &self.eddsa_network_owned_address_sign_public_key,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                &self.schnorrkel_substrate_network_owned_address_sign_public_key
-            }
-            DWalletSignatureAlgorithm::Taproot => {
-                &self.taproot_network_owned_address_sign_public_key
-            }
+    /// Returns the network-owned-address public key for the given curve.
+    pub fn network_owned_address_public_key(&self, curve: DWalletCurve) -> &[u8] {
+        match curve {
+            DWalletCurve::Secp256k1 => &self.secp256k1_network_owned_address_public_key,
+            DWalletCurve::Secp256r1 => &self.secp256r1_network_owned_address_public_key,
+            DWalletCurve::Curve25519 => &self.curve25519_network_owned_address_public_key,
+            DWalletCurve::Ristretto => &self.ristretto_network_owned_address_public_key,
         }
     }
 

@@ -629,19 +629,19 @@ impl DWalletMPCManager {
                     ) = if is_network_owned_address_signing_presign {
                         (
                             self.protocol_config
-                                .get_network_owned_address_sign_presign_pool_minimum_size(
+                                .get_network_owned_address_presign_pool_minimum_size(
                                     signature_algorithm,
                                 ),
                             self.protocol_config
-                                .get_network_owned_address_sign_presign_pool_maximum_size(
+                                .get_network_owned_address_presign_pool_maximum_size(
                                     signature_algorithm,
                                 ),
                             self.protocol_config
-                                .get_network_owned_address_sign_presign_consensus_round_delay(
+                                .get_network_owned_address_presign_consensus_round_delay(
                                     signature_algorithm,
                                 ),
                             self.protocol_config
-                                .get_network_owned_address_sign_presign_sessions_to_instantiate(
+                                .get_network_owned_address_presign_sessions_to_instantiate(
                                     signature_algorithm,
                                 ),
                         )
@@ -777,6 +777,7 @@ impl DWalletMPCManager {
         &mut self,
         sequence_number: u64,
         message: Vec<u8>,
+        curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: DWalletHashScheme,
     ) -> bool {
@@ -792,20 +793,6 @@ impl DWalletMPCManager {
             );
             return false;
         };
-
-        let curve = supported_curve_to_signature_algorithms()
-            .into_iter()
-            .find_map(|(curve, algorithms)| {
-                algorithms.contains(&signature_algorithm).then_some(curve)
-            })
-            .unwrap_or_else(|| {
-                error!(
-                    ?signature_algorithm,
-                    should_never_happen = true,
-                    "Unknown signature algorithm — no curve mapping found"
-                );
-                DWalletCurve::Secp256k1
-            });
         let hash_scheme: group::HashScheme = hash_scheme.into();
         let network_dkg_output_bytes = match self
             .network_keys
@@ -1427,9 +1414,13 @@ impl DWalletMPCManager {
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,
                 sequence_number,
+                curve,
+                signature_algorithm,
             } => {
                 info!(
                     sequence_number,
+                    ?curve,
+                    ?signature_algorithm,
                     signature_length = output.len(),
                     signature_hex = %hex::encode(&output),
                     "Network-owned-address sign completed"
@@ -1437,6 +1428,8 @@ impl DWalletMPCManager {
                 let sign_output = NetworkOwnedAddressSignOutput {
                     sequence_number,
                     signature: output,
+                    curve,
+                    signature_algorithm,
                 };
                 if let Err(e) = self
                     .network_owned_address_sign_output_sender

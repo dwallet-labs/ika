@@ -3,7 +3,7 @@
 
 use crate::debug_variable_chunks;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::{
-    build_network_encryption_key_public_data, compute_all_noa_sign_dkg_outputs,
+    build_network_encryption_key_public_data, compute_all_network_owned_address_dkg_outputs,
 };
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
@@ -304,8 +304,8 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute DKG outputs and extract public keys for all 5 signature algorithms.
-            let noa_sign_data = compute_all_noa_sign_dkg_outputs(
+            // Compute DKG outputs and extract public keys for all 4 curves.
+            let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
                 &network_key_id,
                 &secp256k1_protocol_public_parameters,
                 &secp256r1_protocol_public_parameters,
@@ -329,7 +329,7 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-                &noa_sign_data,
+                &noa_dkg_data,
             ))
         }
     }
