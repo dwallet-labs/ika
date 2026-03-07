@@ -39,23 +39,24 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use sui::client_commands::{
-    EphemeralArgs, PublishArgs, SuiClientCommandResult, SuiClientCommands, TestPublishArgs,
+    PublishArgs, SuiClientCommandResult, SuiClientCommands, TestPublishArgs,
     estimate_gas_budget_from_gas_cost, execute_dry_run, request_tokens_from_faucet,
 };
 use sui_config::SUI_CLIENT_CONFIG;
 use sui_keys::key_derive::generate_new_key;
 use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
+use sui_rpc_api::client::ExecutedTransaction;
+use sui_rpc_api::proto;
 use sui_sdk::SuiClient;
-use sui_sdk::rpc_types::{ObjectChange, SuiObjectDataOptions, SuiTransactionBlockResponse};
-use sui_sdk::rpc_types::{
-    SuiObjectDataFilter, SuiObjectResponseQuery, SuiTransactionBlockEffectsAPI,
-};
+use sui_sdk::SuiClientBuilder;
+use sui_sdk::rpc_types::SuiObjectDataOptions;
+use sui_sdk::rpc_types::{SuiObjectDataFilter, SuiObjectResponseQuery};
 use sui_sdk::sui_client_config::{SuiClientConfig, SuiEnv};
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
 use sui_types::coin::TreasuryCap;
 use sui_types::crypto::{SignatureScheme, SuiKeyPair};
-use sui_types::move_package::UpgradeCap;
+use sui_types::effects::TransactionEffectsAPI;
 use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{
@@ -161,7 +162,9 @@ pub async fn init_ika_on_sui(
 
     let mut context = WalletContext::new(&config_path)?;
 
-    let client = context.get_client().await?;
+    let client: SuiClient = SuiClientBuilder::default()
+        .build(context.get_active_env()?.rpc.clone())
+        .await?;
 
     let mut request_tokens_from_faucet_futures = vec![
         request_tokens_from_faucet(publisher_address, sui_faucet_url.clone()),
@@ -564,12 +567,15 @@ pub async fn set_global_presign_config(
     let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
 
     let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
-    if response.errors.is_empty() {
-        println!("Transaction executed successfully. {:?}", response.digest);
+    if response.effects.status().is_ok() {
+        println!(
+            "Transaction executed successfully. {:?}",
+            response.transaction.digest()
+        );
     } else {
         panic!(
             "Errors occurred during transaction execution: {:?}",
-            response.errors
+            response.effects.status()
         );
     }
     Ok(())
@@ -843,14 +849,15 @@ pub async fn ika_system_initialize(
 
     let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
 
-    let object_changes = response.object_changes.unwrap();
-
-    if response.errors.is_empty() {
-        println!("Transaction executed successfully. {:?}", response.digest);
+    if response.effects.status().is_ok() {
+        println!(
+            "Transaction executed successfully. {:?}",
+            response.transaction.digest()
+        );
     } else {
         panic!(
             "Errors occurred during transaction execution: {:?}",
-            response.errors
+            response.effects.status()
         );
     }
 
@@ -861,19 +868,9 @@ pub async fn ika_system_initialize(
         type_params: vec![],
     };
 
-    let dwallet_2pc_mpc_coordinator_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if dwallet_2pc_mpc_coordinator_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let dwallet_2pc_mpc_coordinator_id =
+        find_created_object_by_type(&response, &dwallet_2pc_mpc_coordinator_type)
+            .expect("DWallet 2PC MPC coordinator object not found");
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -948,10 +945,10 @@ pub async fn ika_system_set_witness_approving_advance_epoch(
 
     let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
 
-    if !response.errors.is_empty() {
+    if !response.effects.status().is_ok() {
         return Err(anyhow::Error::msg(format!(
             "Errors occurred during transaction execution: {:?}",
-            response.errors
+            response.effects.status()
         )));
     }
 
@@ -1032,10 +1029,10 @@ pub async fn ika_system_add_upgrade_cap_by_cap(
 
     let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
 
-    if !response.errors.is_empty() {
+    if !response.effects.status().is_ok() {
         return Err(anyhow::Error::msg(format!(
             "Errors occurred during transaction execution: {:?}",
-            response.errors
+            response.effects.status()
         )));
     }
 
@@ -1119,21 +1116,9 @@ pub async fn init_initialize(
 
     let response = execute_sui_transaction(publisher_address, tx_kind, context, vec![]).await?;
 
-    let object_changes = response.object_changes.unwrap();
-
-    let ika_system_object_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if System::type_(ika_system_package_id.into()) == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let system_type = System::type_(ika_system_package_id.into());
+    let ika_system_object_id =
+        find_created_object_by_type(&response, &system_type).expect("System object not found");
 
     let protocol_cap_type = StructTag {
         address: ika_common_package_id.into(),
@@ -1142,19 +1127,8 @@ pub async fn init_initialize(
         type_params: vec![],
     };
 
-    let protocol_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if protocol_cap_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let protocol_cap_id = find_created_object_by_type(&response, &protocol_cap_type)
+        .expect("ProtocolCap object not found");
 
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
@@ -1235,7 +1209,9 @@ async fn stake_ika(
         mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
-    let client = context.get_client().await?;
+    let client: SuiClient = SuiClientBuilder::default()
+        .build(context.get_active_env()?.rpc.clone())
+        .await?;
 
     let ika_supply_ref = client
         .transaction_builder()
@@ -1413,8 +1389,6 @@ async fn request_add_validator_candidate(
 
     let response = execute_sui_transaction(validator_address, tx_kind, context, vec![]).await?;
 
-    let object_changes = response.object_changes.unwrap();
-
     let validator_cap_type = StructTag {
         address: ika_common_package_id.into(),
         module: VALIDATOR_CAP_MODULE_NAME.into(),
@@ -1422,27 +1396,16 @@ async fn request_add_validator_candidate(
         type_params: vec![],
     };
 
-    let validator_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if validator_cap_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let validator_cap_id = find_created_object_by_type(&response, &validator_cap_type)
+        .expect("ValidatorCap object not found");
 
-    let validator_cap = context
-        .get_client()
+    let validator_cap_bcs = SuiClientBuilder::default()
+        .build(context.get_active_env()?.rpc.clone())
         .await?
         .read_api()
         .get_move_object_bcs(validator_cap_id)
         .await?;
-    let validator_cap: ValidatorCapV1 = bcs::from_bytes(&validator_cap)?;
+    let validator_cap: ValidatorCapV1 = bcs::from_bytes(&validator_cap_bcs)?;
 
     Ok((validator_cap.validator_id, validator_cap_id))
 }
@@ -1451,16 +1414,9 @@ pub async fn publish_ika_dwallet_2pc_mpc_package_to_sui(
     context: &mut WalletContext,
     contract_path: PathBuf,
 ) -> Result<(ObjectID, ObjectID, ObjectID), anyhow::Error> {
-    let object_changes = publish_package_to_sui(context, contract_path).await?;
-    let ika_dwallet_2pc_mpc_package_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Published { package_id, .. } => Some(*package_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let response = publish_package_to_sui(context, contract_path).await?;
+    let ika_dwallet_2pc_mpc_package_id =
+        find_published_package_id(&response).expect("Published package not found");
 
     let init_cap_type = StructTag {
         address: ika_dwallet_2pc_mpc_package_id.into(),
@@ -1469,33 +1425,13 @@ pub async fn publish_ika_dwallet_2pc_mpc_package_to_sui(
         type_params: vec![],
     };
 
-    let ika_dwallet_2pc_mpc_init_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if init_cap_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_dwallet_2pc_mpc_init_id =
+        find_created_object_by_type(&response, &init_cap_type).expect("Init cap object not found");
 
-    let ika_dwallet_2pc_mpc_package_upgrade_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if UpgradeCap::type_() == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_dwallet_2pc_mpc_package_upgrade_cap_id = response
+        .get_new_package_upgrade_cap()
+        .expect("UpgradeCap object not found")
+        .0;
 
     Ok((
         ika_dwallet_2pc_mpc_package_id,
@@ -1508,16 +1444,9 @@ pub async fn publish_ika_system_package_to_sui(
     context: &mut WalletContext,
     contract_path: PathBuf,
 ) -> Result<(ObjectID, ObjectID, ObjectID), anyhow::Error> {
-    let object_changes = publish_package_to_sui(context, contract_path).await?;
-    let ika_system_package_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Published { package_id, .. } => Some(*package_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let response = publish_package_to_sui(context, contract_path).await?;
+    let ika_system_package_id =
+        find_published_package_id(&response).expect("Published package not found");
 
     let init_cap_type = StructTag {
         address: ika_system_package_id.into(),
@@ -1526,33 +1455,13 @@ pub async fn publish_ika_system_package_to_sui(
         type_params: vec![],
     };
 
-    let init_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if init_cap_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let init_cap_id =
+        find_created_object_by_type(&response, &init_cap_type).expect("Init cap object not found");
 
-    let ika_system_package_upgrade_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if UpgradeCap::type_() == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_system_package_upgrade_cap_id = response
+        .get_new_package_upgrade_cap()
+        .expect("UpgradeCap object not found")
+        .0;
 
     Ok((
         ika_system_package_id,
@@ -1565,17 +1474,10 @@ pub async fn publish_ika_common_package_to_sui(
     context: &mut WalletContext,
     contract_path: PathBuf,
 ) -> Result<(ObjectID, ObjectID, ObjectID), anyhow::Error> {
-    let object_changes = publish_package_to_sui(context, contract_path).await?;
+    let response = publish_package_to_sui(context, contract_path).await?;
 
-    let ika_common_package_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Published { package_id, .. } => Some(*package_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_common_package_id =
+        find_published_package_id(&response).expect("Published package not found");
 
     let system_object_cap_type = StructTag {
         address: ika_common_package_id.into(),
@@ -1584,33 +1486,13 @@ pub async fn publish_ika_common_package_to_sui(
         type_params: vec![],
     };
 
-    let system_object_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if system_object_cap_type == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let system_object_cap_id = find_created_object_by_type(&response, &system_object_cap_type)
+        .expect("SystemObjectCap object not found");
 
-    let ika_common_package_upgrade_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if UpgradeCap::type_() == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_common_package_upgrade_cap_id = response
+        .get_new_package_upgrade_cap()
+        .expect("UpgradeCap object not found")
+        .0;
 
     Ok((
         ika_common_package_id,
@@ -1659,45 +1541,21 @@ pub async fn publish_ika_package_to_sui(
     context: &mut WalletContext,
     contract_path: PathBuf,
 ) -> Result<(ObjectID, ObjectID, ObjectID), anyhow::Error> {
-    let object_changes = publish_package_to_sui(context, contract_path).await?;
+    let response = publish_package_to_sui(context, contract_path).await?;
 
-    let ika_package_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Published { package_id, .. } => Some(*package_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let ika_package_id = find_published_package_id(&response).expect("Published package not found");
 
-    let treasury_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if TreasuryCap::is_treasury_type(object_type) => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let treasury_cap_id = find_created_object_by_type_predicate(&response, |type_str| {
+        type_str
+            .parse::<StructTag>()
+            .map(|st| TreasuryCap::is_treasury_type(&st))
+            .unwrap_or(false)
+    })
+    .expect("TreasuryCap object not found");
 
-    let ika_package_upgrade_cap_id = *object_changes
-        .iter()
-        .filter_map(|o| match o {
-            ObjectChange::Created {
-                object_id,
-                object_type,
-                ..
-            } if UpgradeCap::type_() == *object_type => Some(*object_id),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap();
+    let (ika_package_upgrade_cap_id, _, _) = response
+        .get_new_package_upgrade_cap()
+        .expect("UpgradeCap object not found");
 
     Ok((ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id))
 }
@@ -1705,7 +1563,7 @@ pub async fn publish_ika_package_to_sui(
 async fn publish_package_to_sui(
     context: &mut WalletContext,
     package_path: PathBuf,
-) -> Result<Vec<ObjectChange>, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let result = SuiClientCommands::TestPublish(TestPublishArgs {
         publish_args: PublishArgs {
             package_path,
@@ -1722,6 +1580,8 @@ async fn publish_package_to_sui(
                 warnings_are_errors: true,
                 json_errors: false,
                 additional_named_addresses: Default::default(),
+                environment: Some("localnet".to_string()),
+                pubfile_path: None,
                 ..Default::default()
             },
             payment: Default::default(),
@@ -1731,10 +1591,6 @@ async fn publish_package_to_sui(
             verify_deps: false,
             with_unpublished_dependencies: false,
         },
-        ephemeral: EphemeralArgs {
-            build_env: Some("localnet".to_string()),
-            pubfile_path: None,
-        },
         publish_unpublished_deps: false,
     })
     .execute(context)
@@ -1743,8 +1599,41 @@ async fn publish_package_to_sui(
         bail!("Unexpected result type after publishing the package.");
     };
 
-    let object_changes = response.object_changes.unwrap();
-    Ok(object_changes)
+    Ok(response)
+}
+
+fn find_published_package_id(response: &ExecutedTransaction) -> Option<ObjectID> {
+    response.get_new_package_obj().map(|(id, _, _)| id)
+}
+
+fn find_created_object_by_type(
+    response: &ExecutedTransaction,
+    expected_type: &StructTag,
+) -> Option<ObjectID> {
+    find_created_object_by_type_predicate(response, |type_str| {
+        type_str
+            .parse::<StructTag>()
+            .map(|st| st == *expected_type)
+            .unwrap_or(false)
+    })
+}
+
+fn find_created_object_by_type_predicate(
+    response: &ExecutedTransaction,
+    predicate: impl Fn(&str) -> bool,
+) -> Option<ObjectID> {
+    use proto::sui::rpc::v2::ChangedObject;
+    use proto::sui::rpc::v2::changed_object::{IdOperation, OutputObjectState};
+
+    response
+        .changed_objects
+        .iter()
+        .find(|o: &&ChangedObject| {
+            o.output_state() == OutputObjectState::ObjectWrite
+                && o.id_operation() == IdOperation::Created
+                && predicate(o.object_type())
+        })
+        .and_then(|o: &ChangedObject| o.object_id().parse().ok())
 }
 
 const DEFAULT_GAS_BUDGET: u64 = 5_000_000_000; // 5 SUI
@@ -1786,7 +1675,7 @@ pub(crate) async fn execute_sui_transaction(
     tx_kind: TransactionKind,
     context: &mut WalletContext,
     gas_payment: Vec<ObjectRef>,
-) -> Result<SuiTransactionBlockResponse, anyhow::Error> {
+) -> Result<ExecutedTransaction, anyhow::Error> {
     let gas_payment = if gas_payment.is_empty() {
         let Some(gas_ref) = context.get_one_gas_object_owned_by_address(signer).await? else {
             panic!("No gas object found in the wallet context.");
@@ -1813,7 +1702,9 @@ pub async fn estimate_gas_budget(
     gas_payment: Vec<ObjectRef>,
     sponsor: Option<SuiAddress>,
 ) -> Result<u64, anyhow::Error> {
-    let client = context.get_client().await?;
+    let client: SuiClient = SuiClientBuilder::default()
+        .build(context.get_active_env()?.rpc.clone())
+        .await?;
     let SuiClientCommandResult::DryRun(dry_run) =
         execute_dry_run(context, signer, kind, None, gas_price, gas_payment, sponsor).await?
     else {
@@ -1822,7 +1713,7 @@ pub async fn estimate_gas_budget(
     let rgp = client.read_api().get_reference_gas_price().await?;
 
     Ok(estimate_gas_budget_from_gas_cost(
-        dry_run.effects.gas_cost_summary(),
+        dry_run.transaction.effects.gas_cost_summary(),
         rgp,
     ))
 }

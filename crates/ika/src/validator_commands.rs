@@ -38,7 +38,6 @@ use ika_types::crypto::generate_proof_of_possession;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::{DEFAULT_COMMISSION_RATE, PricingInfoKey, PricingInfoValue};
 use serde::Serialize;
-use sui::validator_commands::write_transaction_response;
 use sui_config::PersistedConfig;
 use sui_keys::{
     key_derive::generate_new_key,
@@ -1228,6 +1227,30 @@ fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ClassGroupsKeyPa
     let class_groups_public_key_and_proof = Box::new(ClassGroupsKeyPairAndProof::from_seed(&seed));
 
     Ok(class_groups_public_key_and_proof)
+}
+
+pub fn write_transaction_response(
+    response: &SuiTransactionBlockResponse,
+) -> Result<String, fmt::Error> {
+    let success = response.status_ok().unwrap();
+    let lines = vec![
+        String::from("----- Transaction Digest ----"),
+        response.digest.to_string(),
+        String::from("\n----- Transaction Data ----"),
+        response
+            .transaction
+            .as_ref()
+            .map(|t| serde_json::to_string_pretty(t).unwrap())
+            .unwrap_or_default(),
+        String::from("----- Transaction Effects ----"),
+        response.effects.as_ref().unwrap().to_string(),
+    ];
+    let mut writer = String::new();
+    for line in lines {
+        let colorized_line = if success { line.green() } else { line.red() };
+        writeln!(writer, "{colorized_line}")?;
+    }
+    Ok(writer)
 }
 
 pub fn write_transaction_response_without_transaction_data(

@@ -25,7 +25,7 @@ concurrency:
 env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
-  rust_stable: 1.90
+  rust_stable: 1.94
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
   GCP_PROJECT: common-449616

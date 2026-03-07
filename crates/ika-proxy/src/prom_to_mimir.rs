@@ -4,7 +4,6 @@ use crate::remote_write;
 use crate::var;
 use itertools::Itertools;
 use prometheus::proto::{Counter, Gauge, Histogram, Metric, MetricFamily, MetricType};
-use protobuf::RepeatedField;
 use tracing::{debug, error};
 
 #[derive(Debug)]
@@ -12,21 +11,21 @@ pub struct Mimir<S> {
     state: S,
 }
 
-impl From<&Metric> for Mimir<RepeatedField<remote_write::Label>> {
+impl From<&Metric> for Mimir<Vec<remote_write::Label>> {
     fn from(m: &Metric) -> Self {
         // we consume metric labels from an owned version so we can sort them
         let mut m = m.to_owned();
         let mut sorted = m.take_label();
         sorted.sort_by(|a, b| {
-            (a.get_name(), a.get_value())
-                .partial_cmp(&(b.get_name(), b.get_value()))
+            (a.name(), a.value())
+                .partial_cmp(&(b.name(), b.value()))
                 .unwrap()
         });
-        let mut r = RepeatedField::<remote_write::Label>::default();
+        let mut r = Vec::<remote_write::Label>::default();
         for label in sorted {
             let lp = remote_write::Label {
-                name: label.get_name().into(),
-                value: label.get_value().into(),
+                name: label.name().into(),
+                value: label.value().into(),
             };
             r.push(lp);
         }
@@ -34,7 +33,7 @@ impl From<&Metric> for Mimir<RepeatedField<remote_write::Label>> {
     }
 }
 
-impl IntoIterator for Mimir<RepeatedField<remote_write::Label>> {
+impl IntoIterator for Mimir<Vec<remote_write::Label>> {
     type Item = remote_write::Label;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
@@ -47,7 +46,7 @@ impl From<&Counter> for Mimir<remote_write::Sample> {
     fn from(c: &Counter) -> Self {
         Self {
             state: remote_write::Sample {
-                value: c.get_value(),
+                value: c.value(),
                 ..Default::default()
             },
         }
@@ -57,7 +56,7 @@ impl From<&Gauge> for Mimir<remote_write::Sample> {
     fn from(c: &Gauge) -> Self {
         Self {
             state: remote_write::Sample {
-                value: c.get_value(),
+                value: c.value(),
                 ..Default::default()
             },
         }
@@ -138,8 +137,8 @@ impl IntoIterator for Mimir<Vec<remote_write::WriteRequest>> {
     }
 }
 
-impl Mimir<RepeatedField<remote_write::TimeSeries>> {
-    pub fn repeated(self) -> RepeatedField<remote_write::TimeSeries> {
+impl Mimir<Vec<remote_write::TimeSeries>> {
+    pub fn repeated(self) -> Vec<remote_write::TimeSeries> {
         self.state
     }
 }
@@ -147,36 +146,38 @@ impl Mimir<RepeatedField<remote_write::TimeSeries>> {
 impl From<MetricFamily> for Mimir<Vec<remote_write::TimeSeries>> {
     fn from(mf: MetricFamily) -> Self {
         let mut timeseries = vec![];
-        for metric in mf.get_metric() {
+        for metric in &mf.metric {
             let mut ts = remote_write::TimeSeries::default();
             ts.labels.extend(vec![
                 // mimir requires that we use __name__ as a key that points to a value
                 // of the metric name
                 remote_write::Label {
                     name: "__name__".into(),
-                    value: mf.get_name().into(),
+                    value: mf.name().into(),
                 },
             ]);
             ts.labels
-                .extend(Mimir::<RepeatedField<remote_write::Label>>::from(metric));
+                .extend(Mimir::<Vec<remote_write::Label>>::from(metric));
 
             // assumption here is that since a MetricFamily will have one MetricType, we'll only need
             // to look for one of these types.  Setting two different types on Metric at the same time
             // in a way that is conflicting with the MetricFamily type will result in undefined mimir
             // behavior, probably an error.
-            if metric.has_counter() {
-                let mut s = Mimir::<remote_write::Sample>::from(metric.get_counter()).sample();
-                s.timestamp = metric.get_timestamp_ms();
+            if metric.counter.is_some() {
+                let counter: &Counter = &metric.counter;
+                let mut s = Mimir::<remote_write::Sample>::from(counter).sample();
+                s.timestamp = metric.timestamp_ms();
                 ts.samples.push(s);
-            } else if metric.has_gauge() {
-                let mut s = Mimir::<remote_write::Sample>::from(metric.get_gauge()).sample();
-                s.timestamp = metric.get_timestamp_ms();
+            } else if metric.gauge.is_some() {
+                let gauge: &Gauge = &metric.gauge;
+                let mut s = Mimir::<remote_write::Sample>::from(gauge).sample();
+                s.timestamp = metric.timestamp_ms();
                 ts.samples.push(s);
-            } else if metric.has_histogram() {
+            } else if metric.histogram.is_some() {
                 // TODO implement
                 // ts.mut_histograms()
                 //     .push(Mimir::<remote_write::Histogram>::from(metric.get_histogram()).histogram());
-            } else if metric.has_summary() {
+            } else if metric.summary.is_some() {
                 // TODO implement
                 error!("summary is not implemented for a metric type");
             }
@@ -197,14 +198,13 @@ pub mod tests {
     use crate::prom_to_mimir::Mimir;
     use crate::remote_write;
     use prometheus::proto;
-    use protobuf::RepeatedField;
 
     // protobuf stuff
     pub fn create_metric_family(
         name: &str,
         help: &str,
         field_type: Option<proto::MetricType>,
-        metric: RepeatedField<proto::Metric>,
+        metric: Vec<proto::Metric>,
     ) -> proto::MetricFamily {
         // no public fields, cannot use literals
         let mut mf = proto::MetricFamily::default();
@@ -219,10 +219,7 @@ pub mod tests {
         mf
     }
     #[allow(dead_code)]
-    fn create_metric_gauge(
-        labels: RepeatedField<proto::LabelPair>,
-        gauge: proto::Gauge,
-    ) -> proto::Metric {
+    fn create_metric_gauge(labels: Vec<proto::LabelPair>, gauge: proto::Gauge) -> proto::Metric {
         let mut m = proto::Metric::default();
         m.set_label(labels);
         m.set_gauge(gauge);
@@ -231,7 +228,7 @@ pub mod tests {
     }
 
     pub fn create_metric_counter(
-        labels: RepeatedField<proto::LabelPair>,
+        labels: Vec<proto::LabelPair>,
         counter: proto::Counter,
     ) -> proto::Metric {
         let mut m = proto::Metric::default();
@@ -242,7 +239,7 @@ pub mod tests {
     }
 
     pub fn create_metric_histogram(
-        labels: RepeatedField<proto::LabelPair>,
+        labels: Vec<proto::LabelPair>,
         histogram: proto::Histogram,
     ) -> proto::Metric {
         let mut m = proto::Metric::default();
@@ -259,7 +256,7 @@ pub mod tests {
         let mut b = proto::Bucket::default();
         b.set_cumulative_count(1);
         b.set_upper_bound(1.0);
-        h.mut_bucket().push(b);
+        h.bucket.push(b);
         h
     }
 
@@ -310,13 +307,13 @@ pub mod tests {
                     "test_gauge",
                     "i'm a help message",
                     Some(proto::MetricType::GAUGE),
-                    RepeatedField::from(vec![create_metric_gauge(
-                        RepeatedField::from_vec(create_labels(vec![
+                    vec![create_metric_gauge(
+                        create_labels(vec![
                             ("host", "local-test-validator"),
                             ("network", "unittest-network"),
-                        ])),
+                        ]),
                         create_gauge(2046.0),
-                    )]),
+                    )],
                 ),
                 vec![create_timeseries_with_samples(
                     vec![
@@ -344,13 +341,13 @@ pub mod tests {
                     "test_counter",
                     "i'm a help message",
                     Some(proto::MetricType::GAUGE),
-                    RepeatedField::from(vec![create_metric_counter(
-                        RepeatedField::from_vec(create_labels(vec![
+                    vec![create_metric_counter(
+                        create_labels(vec![
                             ("host", "local-test-validator"),
                             ("network", "unittest-network"),
-                        ])),
+                        ]),
                         create_counter(2046.0),
-                    )]),
+                    )],
                 ),
                 vec![create_timeseries_with_samples(
                     vec![

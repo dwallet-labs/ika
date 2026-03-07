@@ -267,7 +267,9 @@ async fn main() -> Result<()> {
 
             // Create a WalletContext using the persisted SuiClientConfig.
             let context = WalletContext::new(&sui_config_path)?;
-            let client = context.get_client().await?;
+            let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
+                .build(context.get_active_env()?.rpc.clone())
+                .await?;
 
             println!("Using SUI client configuration from: {sui_config_path:?}");
 
@@ -310,7 +312,9 @@ async fn main() -> Result<()> {
 
             // Create a WalletContext and obtain a Sui client.
             let mut context = WalletContext::new(&sui_config_path)?;
-            let client = context.get_client().await?;
+            let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
+                .build(context.get_active_env()?.rpc.clone())
+                .await?;
 
             let mut initiation_parameters = InitiationParameters::new();
             if let Some(epoch_duration_ms) = epoch_duration_ms {
@@ -448,7 +452,9 @@ async fn main() -> Result<()> {
 
             // Create a WalletContext and Sui client.
             let mut context = WalletContext::new(&sui_config_path)?;
-            let client = context.get_client().await?;
+            let client: sui_sdk::SuiClient = sui_sdk::SuiClientBuilder::default()
+                .build(context.get_active_env()?.rpc.clone())
+                .await?;
 
             let initiation_parameters = InitiationParameters::new();
 
