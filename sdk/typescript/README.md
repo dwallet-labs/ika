@@ -433,9 +433,32 @@ import {
 
 Unit and integration tests live under `test/`. Integration tests require an Ika localnet.
 
-### Starting a local network
+Start a localnet following the
+[Setup Ika Localnet docs](https://docs.ika.xyz/docs/sdk/setup-localnet):
 
-#### 1. Start the local Sui node
+```bash
+# Terminal 1 — Sui localnet
+RUST_LOG="off,sui_node=info" sui start --with-faucet --force-regenesis --epoch-duration-ms 1000000000000000
+
+# Terminal 2 — Ika localnet
+cargo run --bin ika --release --no-default-features -- start
+```
+
+Run SDK tests:
+
+```bash
+pnpm --filter @ika.xyz/sdk test:unit
+pnpm --filter @ika.xyz/sdk test:integration
+```
+
+System tests live under `test/system-tests/` and have their own setup; they are **not** run by the
+commands above.
+
+## Local network testing (step-by-step)
+
+A more detailed guide for running the full local network and SDK integration tests.
+
+### 1. Start the local Sui node
 
 From the repo root:
 
@@ -445,7 +468,7 @@ bash scripts/run_sui.sh
 
 Wait until you see `SuiNode started!` in the output.
 
-#### 2. Start the local Ika network
+### 2. Start the local Ika network
 
 In a separate terminal, from the repo root:
 
@@ -459,7 +482,7 @@ repo root with the new package and object IDs.
 
 The first run builds in release mode and takes several minutes.
 
-#### 3. Wait for network DKG to complete
+### 3. Wait for network DKG to complete
 
 Watch the Ika output for:
 - `Available CPU cores for Rayon cryptographic computations` — validators starting
@@ -467,7 +490,7 @@ Watch the Ika output for:
 
 This typically takes 2–5 minutes after the validators start.
 
-#### 4. Copy the config to the SDK
+### 4. Copy the config to the SDK
 
 ```bash
 cp ika_config.json sdk/typescript/ika_config.json
@@ -476,7 +499,7 @@ cp ika_config.json sdk/typescript/ika_config.json
 **This is critical.** The SDK integration tests read `ika_config.json` to find Sui object IDs. If the
 file contains stale IDs from a previous deployment, all tests fail with `Object does not exist`.
 
-#### 5. Install SDK dependencies
+### 5. Install SDK dependencies
 
 ```bash
 cd sdk/typescript
@@ -492,7 +515,7 @@ If the SDK needs a fresh build:
 pnpm build
 ```
 
-### Running integration tests
+### 6. Run integration tests
 
 Run all integration tests sequentially with per-test progress reporting:
 
@@ -508,15 +531,6 @@ Options:
 | `--filter <pattern>`  | Only run matching test files (e.g., `--filter "dwallet*"`) |
 
 Tests run in dependency order: foundational tests first, comprehensive combination tests last.
-
-### Running unit tests
-
-```bash
-pnpm test:unit
-```
-
-System tests live under `test/system-tests/` and have their own setup; they are **not** run by the
-commands above.
 
 ### License
 
