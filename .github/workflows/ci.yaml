@@ -15,7 +15,7 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
   # Change to specific Rust release to pin or `stable` for the latest stable version.
-  rust_stable: 1.90
+  rust_stable: 1.94
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
 

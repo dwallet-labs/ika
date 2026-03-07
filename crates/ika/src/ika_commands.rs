@@ -215,11 +215,6 @@ impl IkaCommand {
                 let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    if let Ok(client) = context.get_client().await
-                        && let Err(e) = client.check_api_version()
-                    {
-                        eprintln!("{}", format!("[warning] {e}").yellow().bold());
-                    }
                     cmd.execute(&mut context).await?.print(!json);
                 } else {
                     // Print help
@@ -236,11 +231,6 @@ impl IkaCommand {
                 let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    if let Ok(client) = context.get_client().await
-                        && let Err(e) = client.check_api_version()
-                    {
-                        eprintln!("{}", format!("[warning] {e}").yellow().bold());
-                    }
                     cmd.execute(&mut context).await?.print(!json);
                 } else {
                     // Print help
