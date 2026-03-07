@@ -23,9 +23,9 @@ use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use tracing::{debug, error, info, instrument, warn};
 
+use ika_types::checkpoint::{CheckpointSequenceNumber, DWallet};
 use ika_types::committee::EpochId;
 use ika_types::committee::ProtocolVersion;
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use sui_macros::fail_point;
@@ -50,7 +50,7 @@ use crate::metrics::RateTracker;
 use crate::stake_aggregator::StakeAggregator;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
-use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use crate::checkpoints::CheckpointStore;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 #[cfg(msim)]
 use sui_types::committee::CommitteeTrait;
@@ -673,7 +673,7 @@ pub struct AuthorityState {
     /// from previous epoch that are executed but did not make into checkpoint.
     execution_lock: RwLock<EpochId>,
 
-    checkpoint_store: Arc<DWalletCheckpointStore>,
+    checkpoint_store: Arc<CheckpointStore<DWallet>>,
     committee_store: Arc<CommitteeStore>,
 
     pub metrics: Arc<AuthorityMetrics>,
@@ -752,7 +752,7 @@ impl AuthorityState {
         perpetual_tables: Arc<AuthorityPerpetualTables>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         committee_store: Arc<CommitteeStore>,
-        checkpoint_store: Arc<DWalletCheckpointStore>,
+        checkpoint_store: Arc<CheckpointStore<DWallet>>,
         prometheus_registry: &Registry,
         config: NodeConfig,
     ) -> Arc<Self> {
@@ -863,7 +863,7 @@ impl AuthorityState {
         Committee::clone(self.epoch_store_for_testing().committee())
     }
 
-    pub fn get_checkpoint_store(&self) -> &Arc<DWalletCheckpointStore> {
+    pub fn get_checkpoint_store(&self) -> &Arc<CheckpointStore<DWallet>> {
         &self.checkpoint_store
     }
 

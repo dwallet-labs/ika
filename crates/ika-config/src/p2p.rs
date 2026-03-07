@@ -3,11 +3,9 @@
 
 use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
 
+use ika_types::checkpoint::CheckpointSequenceNumber;
+use ika_types::digests::DWalletCheckpointMessageDigest;
 use ika_types::digests::SystemCheckpointMessageDigest;
-use ika_types::messages_dwallet_checkpoint::{
-    DWalletCheckpointMessageDigest, DWalletCheckpointSequenceNumber,
-};
-use ika_types::messages_system_checkpoints::SystemCheckpointSequenceNumber;
 use serde::{Deserialize, Serialize};
 use sui_types::multiaddr::Multiaddr;
 
@@ -104,10 +102,7 @@ pub struct StateSyncConfig {
     /// - in case of a network stall, to force the node to proceed with a manually-injected
     ///   dwallet checkpoint.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub pinned_dwallet_checkpoints: Vec<(
-        DWalletCheckpointSequenceNumber,
-        DWalletCheckpointMessageDigest,
-    )>,
+    pub pinned_dwallet_checkpoints: Vec<(CheckpointSequenceNumber, DWalletCheckpointMessageDigest)>,
 
     /// Query peers for their latest dwallet checkpoint every interval period.
     ///
@@ -193,10 +188,7 @@ pub struct StateSyncConfig {
     /// skip verification of pinned system checkpoints, and reject system checkpoints with digests that don't
     /// match pinned values for a given sequence number.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub pinned_system_checkpoints: Vec<(
-        SystemCheckpointSequenceNumber,
-        SystemCheckpointMessageDigest,
-    )>,
+    pub pinned_system_checkpoints: Vec<(CheckpointSequenceNumber, SystemCheckpointMessageDigest)>,
 
     /// Size of the broadcast channel use for notifying other systems of newly sync'ed system checkpoints.
     ///

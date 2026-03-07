@@ -9,11 +9,10 @@
 use crate::SuiDataReceivers;
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::authority::{AuthorityState, AuthorityStateTrait};
-use crate::consensus_manager::ReplayWaiter;
-use crate::dwallet_checkpoints::{
-    DWalletCheckpointServiceNotify, PendingDWalletCheckpoint, PendingDWalletCheckpointInfo,
-    PendingDWalletCheckpointV1,
+use crate::checkpoints::{
+    CheckpointServiceNotify, PendingCheckpoint, PendingCheckpointInfo, PendingCheckpointV1,
 };
+use crate::consensus_manager::ReplayWaiter;
 use crate::dwallet_mpc::crytographic_computation::ComputationId;
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
@@ -32,6 +31,7 @@ use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
+use ika_types::checkpoint::DWallet;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -67,7 +67,7 @@ pub struct DWalletMPCService {
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
     dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
-    dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+    dwallet_checkpoint_service: Arc<dyn CheckpointServiceNotify<DWallet> + Send + Sync>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
     end_of_publish: bool,
@@ -85,7 +85,7 @@ impl DWalletMPCService {
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
-        dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        dwallet_checkpoint_service: Arc<dyn CheckpointServiceNotify<DWallet> + Send + Sync>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
@@ -144,7 +144,7 @@ impl DWalletMPCService {
         seed: RootSeed,
         dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
         authority_state: Arc<dyn AuthorityStateTrait>,
-        checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        checkpoint_service: Arc<dyn CheckpointServiceNotify<DWallet> + Send + Sync>,
         authority_name: AuthorityName,
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
@@ -501,9 +501,9 @@ impl DWalletMPCService {
                 }
                 if !checkpoint_messages.is_empty() {
                     let pending_checkpoint =
-                        PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
+                        PendingCheckpoint::<DWallet>::V1(PendingCheckpointV1 {
                             messages: checkpoint_messages.clone(),
-                            details: PendingDWalletCheckpointInfo {
+                            details: PendingCheckpointInfo {
                                 checkpoint_height: consensus_round,
                             },
                         });

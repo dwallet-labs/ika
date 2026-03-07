@@ -268,218 +268,128 @@ impl From<ObjectID> for ChainIdentifier {
     }
 }
 
-/// Representation of a [`DWalletCheckpointMessageDigest`] digest
-#[derive(
-    Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
-)]
-pub struct DWalletCheckpointMessageDigest(Digest);
+/// Macro to define a checkpoint digest newtype wrapping `Digest`.
+/// Generates all standard trait impls (Display, Debug, FromStr, AsRef, From, etc.)
+macro_rules! define_checkpoint_digest {
+    ($name:ident, $debug_name:expr $(, $extra_derive:ident)*) => {
+        #[derive(
+            Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+            $($extra_derive,)*
+        )]
+        pub struct $name(Digest);
 
-impl DWalletCheckpointMessageDigest {
-    pub const fn new(digest: [u8; 32]) -> Self {
-        Self(Digest::new(digest))
-    }
+        impl $name {
+            pub const fn new(digest: [u8; 32]) -> Self {
+                Self(Digest::new(digest))
+            }
 
-    pub fn generate<R: rand::RngCore + rand::CryptoRng>(rng: R) -> Self {
-        Self(Digest::generate(rng))
-    }
+            pub fn generate<R: rand::RngCore + rand::CryptoRng>(rng: R) -> Self {
+                Self(Digest::generate(rng))
+            }
 
-    pub fn random() -> Self {
-        Self(Digest::random())
-    }
+            pub fn random() -> Self {
+                Self(Digest::random())
+            }
 
-    pub const fn inner(&self) -> &[u8; 32] {
-        self.0.inner()
-    }
+            pub const fn inner(&self) -> &[u8; 32] {
+                self.0.inner()
+            }
 
-    pub const fn into_inner(self) -> [u8; 32] {
-        self.0.into_inner()
-    }
+            pub const fn into_inner(self) -> [u8; 32] {
+                self.0.into_inner()
+            }
 
-    pub fn base58_encode(&self) -> String {
-        Base58::encode(self.0)
-    }
+            pub fn base58_encode(&self) -> String {
+                Base58::encode(self.0)
+            }
 
-    pub fn next_lexicographical(&self) -> Option<Self> {
-        self.0.next_lexicographical().map(Self)
-    }
-}
-
-impl AsRef<[u8]> for DWalletCheckpointMessageDigest {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<[u8; 32]> for DWalletCheckpointMessageDigest {
-    fn as_ref(&self) -> &[u8; 32] {
-        self.0.as_ref()
-    }
-}
-
-impl From<DWalletCheckpointMessageDigest> for [u8; 32] {
-    fn from(digest: DWalletCheckpointMessageDigest) -> Self {
-        digest.into_inner()
-    }
-}
-
-impl From<[u8; 32]> for DWalletCheckpointMessageDigest {
-    fn from(digest: [u8; 32]) -> Self {
-        Self::new(digest)
-    }
-}
-
-impl TryFrom<Vec<u8>> for DWalletCheckpointMessageDigest {
-    type Error = IkaError;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Self, IkaError> {
-        Digest::try_from(bytes).map(DWalletCheckpointMessageDigest)
-    }
-}
-
-impl fmt::Display for DWalletCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Debug for DWalletCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("DWalletCheckpointDigest")
-            .field(&self.0)
-            .finish()
-    }
-}
-
-impl fmt::LowerHex for DWalletCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl fmt::UpperHex for DWalletCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
-    }
-}
-
-impl std::str::FromStr for DWalletCheckpointMessageDigest {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut result = [0; 32];
-        let buffer = Base58::decode(s).map_err(|e| anyhow::anyhow!(e))?;
-        if buffer.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid digest length. Expected 32 bytes"));
+            pub fn next_lexicographical(&self) -> Option<Self> {
+                self.0.next_lexicographical().map(Self)
+            }
         }
-        result.copy_from_slice(&buffer);
-        Ok(DWalletCheckpointMessageDigest::new(result))
-    }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
-pub struct DWalletCheckpointContentsDigest(Digest);
-
-impl DWalletCheckpointContentsDigest {
-    pub const fn new(digest: [u8; 32]) -> Self {
-        Self(Digest::new(digest))
-    }
-
-    pub fn generate<R: rand::RngCore + rand::CryptoRng>(rng: R) -> Self {
-        Self(Digest::generate(rng))
-    }
-
-    pub fn random() -> Self {
-        Self(Digest::random())
-    }
-
-    pub const fn inner(&self) -> &[u8; 32] {
-        self.0.inner()
-    }
-
-    pub const fn into_inner(self) -> [u8; 32] {
-        self.0.into_inner()
-    }
-
-    pub fn base58_encode(&self) -> String {
-        Base58::encode(self.0)
-    }
-
-    pub fn next_lexicographical(&self) -> Option<Self> {
-        self.0.next_lexicographical().map(Self)
-    }
-}
-
-impl AsRef<[u8]> for DWalletCheckpointContentsDigest {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<[u8; 32]> for DWalletCheckpointContentsDigest {
-    fn as_ref(&self) -> &[u8; 32] {
-        self.0.as_ref()
-    }
-}
-
-impl TryFrom<Vec<u8>> for DWalletCheckpointContentsDigest {
-    type Error = IkaError;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Self, IkaError> {
-        Digest::try_from(bytes).map(DWalletCheckpointContentsDigest)
-    }
-}
-
-impl From<DWalletCheckpointContentsDigest> for [u8; 32] {
-    fn from(digest: DWalletCheckpointContentsDigest) -> Self {
-        digest.into_inner()
-    }
-}
-
-impl From<[u8; 32]> for DWalletCheckpointContentsDigest {
-    fn from(digest: [u8; 32]) -> Self {
-        Self::new(digest)
-    }
-}
-
-impl fmt::Display for DWalletCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Debug for DWalletCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("DWalletCheckpointContentsDigest")
-            .field(&self.0)
-            .finish()
-    }
-}
-
-impl std::str::FromStr for DWalletCheckpointContentsDigest {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut result = [0; 32];
-        let buffer = Base58::decode(s).map_err(|e| anyhow::anyhow!(e))?;
-        if buffer.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid digest length. Expected 32 bytes"));
+        impl AsRef<[u8]> for $name {
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
+            }
         }
-        result.copy_from_slice(&buffer);
-        Ok(DWalletCheckpointContentsDigest::new(result))
-    }
+
+        impl AsRef<[u8; 32]> for $name {
+            fn as_ref(&self) -> &[u8; 32] {
+                self.0.as_ref()
+            }
+        }
+
+        impl From<$name> for [u8; 32] {
+            fn from(digest: $name) -> Self {
+                digest.into_inner()
+            }
+        }
+
+        impl From<[u8; 32]> for $name {
+            fn from(digest: [u8; 32]) -> Self {
+                Self::new(digest)
+            }
+        }
+
+        impl TryFrom<Vec<u8>> for $name {
+            type Error = IkaError;
+
+            fn try_from(bytes: Vec<u8>) -> Result<Self, IkaError> {
+                Digest::try_from(bytes).map($name)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Display::fmt(&self.0, f)
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_tuple($debug_name).field(&self.0).finish()
+            }
+        }
+
+        impl fmt::LowerHex for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::LowerHex::fmt(&self.0, f)
+            }
+        }
+
+        impl fmt::UpperHex for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::UpperHex::fmt(&self.0, f)
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = anyhow::Error;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                let mut result = [0; 32];
+                let buffer = Base58::decode(s).map_err(|e| anyhow::anyhow!(e))?;
+                if buffer.len() != 32 {
+                    return Err(anyhow::anyhow!("Invalid digest length. Expected 32 bytes"));
+                }
+                result.copy_from_slice(&buffer);
+                Ok($name::new(result))
+            }
+        }
+    };
 }
 
-impl fmt::LowerHex for DWalletCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
+define_checkpoint_digest!(
+    DWalletCheckpointMessageDigest,
+    "DWalletCheckpointDigest",
+    Default
+);
+define_checkpoint_digest!(
+    DWalletCheckpointContentsDigest,
+    "DWalletCheckpointContentsDigest"
+);
 
-impl fmt::UpperHex for DWalletCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
-    }
-}
 /// A digest of a certificate, which commits to the signatures as well as the tx.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CertificateDigest(Digest);
@@ -730,215 +640,12 @@ impl DWalletMPCOutputDigest {
     }
 }
 
-/// Representation of a SystemCheckpoint's digest
-#[derive(
-    Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
-)]
-pub struct SystemCheckpointMessageDigest(Digest);
-
-impl SystemCheckpointMessageDigest {
-    pub const fn new(digest: [u8; 32]) -> Self {
-        Self(Digest::new(digest))
-    }
-
-    pub fn generate<R: rand::RngCore + rand::CryptoRng>(rng: R) -> Self {
-        Self(Digest::generate(rng))
-    }
-
-    pub fn random() -> Self {
-        Self(Digest::random())
-    }
-
-    pub const fn inner(&self) -> &[u8; 32] {
-        self.0.inner()
-    }
-
-    pub const fn into_inner(self) -> [u8; 32] {
-        self.0.into_inner()
-    }
-
-    pub fn base58_encode(&self) -> String {
-        Base58::encode(self.0)
-    }
-
-    pub fn next_lexicographical(&self) -> Option<Self> {
-        self.0.next_lexicographical().map(Self)
-    }
-}
-
-impl AsRef<[u8]> for SystemCheckpointMessageDigest {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<[u8; 32]> for SystemCheckpointMessageDigest {
-    fn as_ref(&self) -> &[u8; 32] {
-        self.0.as_ref()
-    }
-}
-
-impl From<SystemCheckpointMessageDigest> for [u8; 32] {
-    fn from(digest: SystemCheckpointMessageDigest) -> Self {
-        digest.into_inner()
-    }
-}
-
-impl From<[u8; 32]> for SystemCheckpointMessageDigest {
-    fn from(digest: [u8; 32]) -> Self {
-        Self::new(digest)
-    }
-}
-
-impl TryFrom<Vec<u8>> for SystemCheckpointMessageDigest {
-    type Error = IkaError;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Self, IkaError> {
-        Digest::try_from(bytes).map(SystemCheckpointMessageDigest)
-    }
-}
-
-impl fmt::Display for SystemCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Debug for SystemCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("SystemCheckpointDigest")
-            .field(&self.0)
-            .finish()
-    }
-}
-
-impl fmt::LowerHex for SystemCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl fmt::UpperHex for SystemCheckpointMessageDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
-    }
-}
-
-impl std::str::FromStr for SystemCheckpointMessageDigest {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut result = [0; 32];
-        let buffer = Base58::decode(s).map_err(|e| anyhow::anyhow!(e))?;
-        if buffer.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid digest length. Expected 32 bytes"));
-        }
-        result.copy_from_slice(&buffer);
-        Ok(SystemCheckpointMessageDigest::new(result))
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
-pub struct SystemCheckpointContentsDigest(Digest);
-
-impl SystemCheckpointContentsDigest {
-    pub const fn new(digest: [u8; 32]) -> Self {
-        Self(Digest::new(digest))
-    }
-
-    pub fn generate<R: rand::RngCore + rand::CryptoRng>(rng: R) -> Self {
-        Self(Digest::generate(rng))
-    }
-
-    pub fn random() -> Self {
-        Self(Digest::random())
-    }
-
-    pub const fn inner(&self) -> &[u8; 32] {
-        self.0.inner()
-    }
-
-    pub const fn into_inner(self) -> [u8; 32] {
-        self.0.into_inner()
-    }
-
-    pub fn base58_encode(&self) -> String {
-        Base58::encode(self.0)
-    }
-
-    pub fn next_lexicographical(&self) -> Option<Self> {
-        self.0.next_lexicographical().map(Self)
-    }
-}
-
-impl AsRef<[u8]> for SystemCheckpointContentsDigest {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<[u8; 32]> for SystemCheckpointContentsDigest {
-    fn as_ref(&self) -> &[u8; 32] {
-        self.0.as_ref()
-    }
-}
-
-impl TryFrom<Vec<u8>> for SystemCheckpointContentsDigest {
-    type Error = IkaError;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Self, IkaError> {
-        Digest::try_from(bytes).map(SystemCheckpointContentsDigest)
-    }
-}
-
-impl From<SystemCheckpointContentsDigest> for [u8; 32] {
-    fn from(digest: SystemCheckpointContentsDigest) -> Self {
-        digest.into_inner()
-    }
-}
-
-impl From<[u8; 32]> for SystemCheckpointContentsDigest {
-    fn from(digest: [u8; 32]) -> Self {
-        Self::new(digest)
-    }
-}
-
-impl fmt::Display for SystemCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Debug for SystemCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("SystemCheckpointContentsDigest")
-            .field(&self.0)
-            .finish()
-    }
-}
-
-impl std::str::FromStr for SystemCheckpointContentsDigest {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut result = [0; 32];
-        let buffer = Base58::decode(s).map_err(|e| anyhow::anyhow!(e))?;
-        if buffer.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid digest length. Expected 32 bytes"));
-        }
-        result.copy_from_slice(&buffer);
-        Ok(SystemCheckpointContentsDigest::new(result))
-    }
-}
-
-impl fmt::LowerHex for SystemCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-impl fmt::UpperHex for SystemCheckpointContentsDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
-    }
-}
+define_checkpoint_digest!(
+    SystemCheckpointMessageDigest,
+    "SystemCheckpointDigest",
+    Default
+);
+define_checkpoint_digest!(
+    SystemCheckpointContentsDigest,
+    "SystemCheckpointContentsDigest"
+);

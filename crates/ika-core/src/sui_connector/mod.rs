@@ -1,17 +1,17 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use crate::checkpoints::CheckpointStore;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_executor::{StopReason, SuiExecutor};
 use crate::sui_connector::sui_syncer::SuiSyncer;
-use crate::system_checkpoints::SystemCheckpointStore;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use futures::{StreamExt, future};
 use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
 use ika_sui_client::{SuiClient, SuiClientInner};
+use ika_types::checkpoint::{DWallet, System};
 use ika_types::committee::{Committee, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
@@ -60,8 +60,8 @@ pub struct SuiConnectorService {
 
 impl SuiConnectorService {
     pub async fn new(
-        checkpoint_store: Arc<DWalletCheckpointStore>,
-        system_checkpoint_store: Arc<SystemCheckpointStore>,
+        checkpoint_store: Arc<CheckpointStore<DWallet>>,
+        system_checkpoint_store: Arc<CheckpointStore<System>>,
         sui_client: Arc<SuiClient<SuiSdkClient>>,
         sui_connector_config: SuiConnectorConfig,
         sui_connector_metrics: Arc<SuiConnectorMetrics>,

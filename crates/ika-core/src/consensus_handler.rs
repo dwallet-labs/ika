@@ -8,7 +8,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::system_checkpoints::SystemCheckpointService;
 use crate::{
     authority::{
         AuthorityMetrics, AuthorityState,
@@ -17,15 +16,16 @@ use crate::{
             ExecutionIndicesWithStats,
         },
     },
+    checkpoints::{CheckpointService, CheckpointServiceNotify},
     consensus_throughput_calculator::ConsensusThroughputCalculator,
     consensus_types::consensus_output_api::ConsensusCommitAPI,
-    dwallet_checkpoints::{DWalletCheckpointService, DWalletCheckpointServiceNotify},
     scoring_decision::update_low_scoring_authorities,
 };
 use arc_swap::ArcSwap;
 use consensus_config::Committee as ConsensusCommittee;
 use consensus_core::{CommitConsumerMonitor, CommitIndex};
 use ika_protocol_config::ProtocolConfig;
+use ika_types::checkpoint::{DWallet, System};
 use ika_types::crypto::AuthorityName;
 use ika_types::digests::ConsensusCommitDigest;
 use ika_types::messages_consensus::{
@@ -42,8 +42,8 @@ use tracing::{debug, error, instrument, trace_span, warn};
 
 pub struct ConsensusHandlerInitializer {
     state: Arc<AuthorityState>,
-    checkpoint_service: Arc<DWalletCheckpointService>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Arc<CheckpointService<DWallet>>,
+    system_checkpoint_service: Arc<CheckpointService<System>>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -52,8 +52,8 @@ pub struct ConsensusHandlerInitializer {
 impl ConsensusHandlerInitializer {
     pub fn new(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Arc<CheckpointService<DWallet>>,
+        system_checkpoint_service: Arc<CheckpointService<System>>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -72,8 +72,8 @@ impl ConsensusHandlerInitializer {
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Arc<CheckpointService<DWallet>>,
+        system_checkpoint_service: Arc<CheckpointService<System>>,
     ) -> Self {
         Self {
             state: state.clone(),
@@ -88,7 +88,7 @@ impl ConsensusHandlerInitializer {
         }
     }
 
-    pub(crate) fn new_consensus_handler(self) -> ConsensusHandler<DWalletCheckpointService> {
+    pub(crate) fn new_consensus_handler(self) -> ConsensusHandler<CheckpointService<DWallet>> {
         let new_epoch_start_state = self.epoch_store.epoch_start_state();
         let consensus_committee = new_epoch_start_state.get_consensus_committee();
 
@@ -119,7 +119,7 @@ pub struct ConsensusHandler<C> {
     /// checking chain consistency, and accumulating per-epoch consensus output stats.
     last_consensus_stats: ExecutionIndicesWithStats,
     checkpoint_service: Arc<C>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    system_checkpoint_service: Arc<CheckpointService<System>>,
     /// Reputation scores used by consensus adapter that we update, forwarded from consensus
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     /// The consensus committee used to do stake computations for deciding set of low scoring authorities
@@ -139,7 +139,7 @@ impl<C> ConsensusHandler<C> {
     pub fn new(
         epoch_store: Arc<AuthorityPerEpochStore>,
         checkpoint_service: Arc<C>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        system_checkpoint_service: Arc<CheckpointService<System>>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
@@ -173,7 +173,7 @@ impl<C> ConsensusHandler<C> {
     }
 }
 
-impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
+impl<C: CheckpointServiceNotify<DWallet> + Send + Sync> ConsensusHandler<C> {
     #[instrument(level = "debug", skip_all)]
     async fn handle_consensus_commit(&mut self, consensus_commit: impl ConsensusCommitAPI) {
         let _scope = monitored_scope("ConsensusCommitHandler::handle_consensus_commit");
@@ -382,7 +382,7 @@ pub(crate) struct MysticetiConsensusHandler {
 impl MysticetiConsensusHandler {
     pub(crate) fn new(
         last_processed_commit_at_startup: CommitIndex,
-        mut consensus_handler: ConsensusHandler<DWalletCheckpointService>,
+        mut consensus_handler: ConsensusHandler<CheckpointService<DWallet>>,
         mut commit_receiver: UnboundedReceiver<consensus_core::CommittedSubDag>,
         commit_consumer_monitor: Arc<CommitConsumerMonitor>,
     ) -> Self {

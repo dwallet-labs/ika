@@ -47,7 +47,7 @@ fn build_anemo_services(out_dir: &Path) {
             anemo_build::manual::Method::builder()
                 .name("push_dwallet_checkpoint_message")
                 .route_name("PushCheckpointMessage")
-                .request_type("ika_types::messages_dwallet_checkpoint::CertifiedDWalletCheckpointMessage")
+                .request_type("ika_types::checkpoint::CertifiedCheckpointMessage<ika_types::checkpoint::DWallet>")
                 .response_type("()")
                 .codec_path(codec_path)
                 .build(),
@@ -57,7 +57,7 @@ fn build_anemo_services(out_dir: &Path) {
                 .name("get_dwallet_checkpoint_message")
                 .route_name("GetCheckpointMessage")
                 .request_type("crate::state_sync::GetCheckpointMessageRequest")
-                .response_type("Option<ika_types::messages_dwallet_checkpoint::CertifiedDWalletCheckpointMessage>")
+                .response_type("Option<ika_types::checkpoint::CertifiedCheckpointMessage<ika_types::checkpoint::DWallet>>")
                 .codec_path(codec_path)
                 .build(),
         )
@@ -83,7 +83,7 @@ fn build_anemo_services(out_dir: &Path) {
             anemo_build::manual::Method::builder()
                 .name("push_system_checkpoint")
                 .route_name("PushSystemCheckpoint")
-                .request_type("ika_types::messages_system_checkpoints::CertifiedSystemCheckpointMessage")
+                .request_type("ika_types::checkpoint::CertifiedCheckpointMessage<ika_types::checkpoint::System>")
                 .response_type("()")
                 .codec_path(codec_path)
                 .build(),
@@ -94,7 +94,7 @@ fn build_anemo_services(out_dir: &Path) {
                 .route_name("GetSystemCheckpoint")
                 .request_type("crate::state_sync::server::GetSystemCheckpointRequest")
                 .response_type(
-                    "Option<ika_types::messages_system_checkpoints::CertifiedSystemCheckpointMessage>",
+                    "Option<ika_types::checkpoint::CertifiedCheckpointMessage<ika_types::checkpoint::System>>",
                 )
                 .codec_path(codec_path)
                 .build(),

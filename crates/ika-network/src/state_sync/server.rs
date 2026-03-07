@@ -5,19 +5,14 @@ use super::{PeerHeights, StateSync, StateSyncMessage};
 use anemo::{Request, Response, Result, rpc::Status, types::response::StatusCode};
 use dashmap::DashMap;
 use futures::future::BoxFuture;
-use ika_types::digests::{ChainIdentifier, SystemCheckpointMessageDigest};
-use ika_types::messages_system_checkpoints::{
-    CertifiedSystemCheckpointMessage, SystemCheckpointSequenceNumber,
-    VerifiedSystemCheckpointMessage,
+use ika_types::checkpoint::{
+    CertifiedCheckpointMessage, CheckpointSequenceNumber, DWallet, System,
+    VerifiedCheckpointMessage,
 };
-use ika_types::{
-    digests::DWalletCheckpointMessageDigest,
-    messages_dwallet_checkpoint::{
-        CertifiedDWalletCheckpointMessage, DWalletCheckpointSequenceNumber,
-        VerifiedDWalletCheckpointMessage,
-    },
-    storage::WriteStore,
+use ika_types::digests::{
+    ChainIdentifier, DWalletCheckpointMessageDigest, SystemCheckpointMessageDigest,
 };
+use ika_types::storage::WriteStore;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
@@ -26,23 +21,23 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Copy)]
 pub enum GetCheckpointMessageRequest {
     ByDigest(DWalletCheckpointMessageDigest),
-    BySequenceNumber(DWalletCheckpointSequenceNumber),
+    BySequenceNumber(CheckpointSequenceNumber),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetDWalletCheckpointAvailabilityResponse {
-    pub(crate) highest_synced_checkpoint: Option<CertifiedDWalletCheckpointMessage>,
+    pub(crate) highest_synced_checkpoint: Option<CertifiedCheckpointMessage<DWallet>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash, Copy)]
 pub enum GetSystemCheckpointRequest {
     ByDigest(SystemCheckpointMessageDigest),
-    BySequenceNumber(SystemCheckpointSequenceNumber),
+    BySequenceNumber(CheckpointSequenceNumber),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GetSystemCheckpointAvailabilityResponse {
-    pub(crate) highest_synced_system_checkpoint: Option<CertifiedSystemCheckpointMessage>,
+    pub(crate) highest_synced_system_checkpoint: Option<CertifiedCheckpointMessage<System>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,7 +59,7 @@ where
 {
     async fn push_dwallet_checkpoint_message(
         &self,
-        request: Request<CertifiedDWalletCheckpointMessage>,
+        request: Request<CertifiedCheckpointMessage<DWallet>>,
     ) -> Result<Response<()>, Status> {
         let peer_id = request
             .peer_id()
@@ -102,7 +97,7 @@ where
     async fn get_dwallet_checkpoint_message(
         &self,
         request: Request<GetCheckpointMessageRequest>,
-    ) -> Result<Response<Option<CertifiedDWalletCheckpointMessage>>, Status> {
+    ) -> Result<Response<Option<CertifiedCheckpointMessage<DWallet>>>, Status> {
         let checkpoint = match request.inner() {
             GetCheckpointMessageRequest::ByDigest(digest) => {
                 self.store.get_dwallet_checkpoint_by_digest(digest)
@@ -112,7 +107,7 @@ where
                 .get_dwallet_checkpoint_by_sequence_number(*sequence_number),
         }
         .map_err(|e| Status::internal(e.to_string()))?
-        .map(VerifiedDWalletCheckpointMessage::into_inner);
+        .map(VerifiedCheckpointMessage::<DWallet>::into_inner);
 
         Ok(Response::new(checkpoint))
     }
@@ -125,7 +120,7 @@ where
             .store
             .get_highest_synced_dwallet_checkpoint()
             .map_err(|e| Status::internal(e.to_string()))?
-            .map(VerifiedDWalletCheckpointMessage::into_inner);
+            .map(VerifiedCheckpointMessage::<DWallet>::into_inner);
 
         Ok(Response::new(GetDWalletCheckpointAvailabilityResponse {
             highest_synced_checkpoint,
@@ -134,7 +129,7 @@ where
 
     async fn push_system_checkpoint(
         &self,
-        request: Request<CertifiedSystemCheckpointMessage>,
+        request: Request<CertifiedCheckpointMessage<System>>,
     ) -> Result<Response<()>, Status> {
         let peer_id = request
             .peer_id()
@@ -172,7 +167,7 @@ where
     async fn get_system_checkpoint(
         &self,
         request: Request<GetSystemCheckpointRequest>,
-    ) -> Result<Response<Option<CertifiedSystemCheckpointMessage>>, Status> {
+    ) -> Result<Response<Option<CertifiedCheckpointMessage<System>>>, Status> {
         let system_checkpoint = match request.inner() {
             GetSystemCheckpointRequest::ByDigest(digest) => {
                 self.store.get_system_checkpoint_by_digest(digest)
@@ -182,7 +177,7 @@ where
                 .get_system_checkpoint_by_sequence_number(*sequence_number),
         }
         .map_err(|e| Status::internal(e.to_string()))?
-        .map(VerifiedSystemCheckpointMessage::into_inner);
+        .map(VerifiedCheckpointMessage::<System>::into_inner);
 
         Ok(Response::new(system_checkpoint))
     }
@@ -195,7 +190,7 @@ where
             .store
             .get_highest_synced_system_checkpoint()
             .map_err(|e| Status::internal(e.to_string()))?
-            .map(VerifiedSystemCheckpointMessage::into_inner);
+            .map(VerifiedCheckpointMessage::<System>::into_inner);
 
         Ok(Response::new(GetSystemCheckpointAvailabilityResponse {
             highest_synced_system_checkpoint,
@@ -263,7 +258,7 @@ impl<S> tower::Service<Request<GetCheckpointMessageRequest>> for CheckpointMessa
 where
     S: tower::Service<
             Request<GetCheckpointMessageRequest>,
-            Response = Response<Option<CertifiedDWalletCheckpointMessage>>,
+            Response = Response<Option<CertifiedCheckpointMessage<DWallet>>>,
             Error = Status,
         >
         + 'static
@@ -272,7 +267,7 @@ where
     <S as tower::Service<Request<GetCheckpointMessageRequest>>>::Future: Send,
     Request<GetCheckpointMessageRequest>: 'static + Send + Sync,
 {
-    type Response = Response<Option<CertifiedDWalletCheckpointMessage>>;
+    type Response = Response<Option<CertifiedCheckpointMessage<DWallet>>>;
     type Error = S::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -363,7 +358,7 @@ impl<S> tower::Service<Request<GetSystemCheckpointRequest>> for SystemCheckpoint
 where
     S: tower::Service<
             Request<GetSystemCheckpointRequest>,
-            Response = Response<Option<CertifiedSystemCheckpointMessage>>,
+            Response = Response<Option<CertifiedCheckpointMessage<System>>>,
             Error = Status,
         >
         + 'static
@@ -372,7 +367,7 @@ where
     <S as tower::Service<Request<GetSystemCheckpointRequest>>>::Future: Send,
     Request<GetSystemCheckpointRequest>: 'static + Send + Sync,
 {
-    type Response = Response<Option<CertifiedSystemCheckpointMessage>>;
+    type Response = Response<Option<CertifiedCheckpointMessage<System>>>;
     type Error = S::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 

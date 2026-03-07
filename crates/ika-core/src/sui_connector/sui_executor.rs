@@ -4,22 +4,20 @@
 //! The SuiExecutor module handles executing transactions
 //! on Sui blockchain for `ika_system` package.
 
-use crate::dwallet_checkpoints::DWalletCheckpointStore;
+use crate::checkpoints::CheckpointStore;
 use crate::sui_connector::SuiNotifier;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
-use crate::system_checkpoints::SystemCheckpointStore;
 use fastcrypto::traits::ToFromBytes;
 use ika_config::node::RunWithRange;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
+use ika_types::checkpoint::{CheckpointMessage, DWallet, System as SystemCheckpoint};
 use ika_types::committee::EpochId;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::{IkaError, IkaResult};
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
 use ika_types::messages_dwallet_mpc::{
     DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME, DWalletNetworkEncryptionKeyData,
     DWalletNetworkEncryptionKeyState,
 };
-use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
 use ika_types::sui::epoch_start_system::EpochStartSystem;
 use ika_types::sui::system_inner_v1::BlsCommittee;
 use ika_types::sui::{
@@ -61,8 +59,8 @@ pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
         Sender<Option<(DWalletCoordinator, DWalletCoordinatorInner)>>,
-    dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
-    system_checkpoint_store: Arc<SystemCheckpointStore>,
+    dwallet_checkpoint_store: Arc<CheckpointStore<DWallet>>,
+    system_checkpoint_store: Arc<CheckpointStore<SystemCheckpoint>>,
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
     metrics: Arc<SuiConnectorMetrics>,
@@ -86,8 +84,8 @@ where
         dwallet_coordinator_object_sender: Sender<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
-        dwallet_checkpoint_store: Arc<DWalletCheckpointStore>,
-        system_checkpoint_store: Arc<SystemCheckpointStore>,
+        dwallet_checkpoint_store: Arc<CheckpointStore<DWallet>>,
+        system_checkpoint_store: Arc<CheckpointStore<SystemCheckpoint>>,
         sui_notifier: Option<SuiNotifier>,
         sui_client: Arc<SuiClient<C>>,
         metrics: Arc<SuiConnectorMetrics>,
@@ -415,9 +413,8 @@ where
                 {
                     match self
                         .dwallet_checkpoint_store
-                        .get_dwallet_checkpoint_by_sequence_number(
-                            next_dwallet_checkpoint_sequence_number,
-                        ) {
+                        .get_checkpoint_by_sequence_number(next_dwallet_checkpoint_sequence_number)
+                    {
                         Ok(Some(dwallet_checkpoint_message)) => {
                             info!(
                                 ?next_dwallet_checkpoint_sequence_number,
@@ -437,7 +434,7 @@ where
                                 &active_members,
                             );
                             let signers_len = auth_sig.signers_map.len();
-                            let message = bcs::to_bytes::<DWalletCheckpointMessage>(
+                            let message = bcs::to_bytes::<CheckpointMessage<DWallet>>(
                                 &dwallet_checkpoint_message.into_message(),
                             )
                             .expect("Serializing checkpoint message cannot fail");
@@ -492,9 +489,7 @@ where
                 if Some(next_system_checkpoint_sequence_number) > last_submitted_system_checkpoint
                     && let Ok(Some(system_checkpoint)) = self
                         .system_checkpoint_store
-                        .get_system_checkpoint_by_sequence_number(
-                            next_system_checkpoint_sequence_number,
-                        )
+                        .get_checkpoint_by_sequence_number(next_system_checkpoint_sequence_number)
                 {
                     self.metrics
                         .system_checkpoint_sequence
@@ -506,9 +501,10 @@ where
                     let signature = auth_sig.signature.as_bytes().to_vec();
                     let signers_bitmap =
                         Self::calculate_signers_bitmap(&auth_sig.signers_map, &active_members);
-                    let message =
-                        bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
-                            .expect("Serializing `system_checkpoint` message cannot fail");
+                    let message = bcs::to_bytes::<CheckpointMessage<SystemCheckpoint>>(
+                        &system_checkpoint.into_message(),
+                    )
+                    .expect("Serializing `system_checkpoint` message cannot fail");
 
                     info!("Signers_bitmap: {:?}", signers_bitmap);
                     self.metrics.system_checkpoint_write_requests_total.inc();

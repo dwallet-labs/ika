@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::checkpoint::CheckpointSequenceNumber;
 use crate::committee::StakeUnit;
 use crate::error::IkaError;
-use crate::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use serde::{Deserialize, Serialize};
 use strum::AsRefStr;
 use sui_types::base_types::{AuthorityName, EpochId, ObjectRef, TransactionDigest};
@@ -93,7 +93,7 @@ pub enum EffectsFinalityInfo {
     Certified(AuthorityStrongQuorumSignInfo),
 
     /// Effects are included in a dwallet checkpoint.
-    Checkpointed(EpochId, DWalletCheckpointSequenceNumber),
+    Checkpointed(EpochId, CheckpointSequenceNumber),
 
     /// A quorum of validators have acknowledged effects.
     QuorumExecuted(EpochId),

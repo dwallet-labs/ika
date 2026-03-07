@@ -2,6 +2,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::committee::{EpochId, ProtocolVersion};
 use crate::crypto::default_hash;
 use crate::digests::MessageDigest;
 use serde::{Deserialize, Serialize};
@@ -377,6 +378,54 @@ impl Debug for DWalletCheckpointMessageKind {
         }
         write!(f, "{writer}")
     }
+}
+
+// Note: the order of these fields, and the number must correspond to the Move code in
+// `system_inner.move`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum SystemCheckpointMessageKind {
+    /// Set the next protocol version for the next epoch.
+    SetNextConfigVersion(ProtocolVersion),
+    /// Set a new epoch duration in milliseconds.
+    SetEpochDurationMs(u64),
+    /// Set a new stake subsidy start epoch.
+    SetStakeSubsidyStartEpoch(EpochId),
+    /// Set a new stake subsidy rate in basis points (1/100th of a percent).
+    /// The distribution per period will be recalculated.
+    SetStakeSubsidyRate(u16),
+    /// Set a new length of the stake subsidy period.
+    /// The distribution per period will be recalculated.
+    SetStakeSubsidyPeriodLength(u64),
+    /// Set a new minimum number of validators required to be active in the system.
+    SetMinValidatorCount(u64),
+    /// Set a new maximum number of validators allowed in the system.
+    SetMaxValidatorCount(u64),
+    /// Set a new minimum stake required for a validator to join the system.
+    SetMinValidatorJoiningStake(u64),
+    /// Set a new maximum number of validators that can change in a single epoch.
+    SetMaxValidatorChangeCount(u64),
+    /// Set a new rate at which rewards are slashed in basis points (1/100th of a percent).
+    SetRewardSlashingRate(u64),
+    /// Marks the final checkpoint message for an epoch.
+    /// Once the Sui smart contract processes this message, it recognizes that no further
+    /// system checkpoints will be created in the current epoch, enabling external calls
+    /// to proceed with advancing the epoch.
+    EndOfPublish,
+    /// Set an approved upgrade for a package.
+    SetApprovedUpgrade {
+        /// The ID of the package that is approved for upgrade.
+        package_id: Vec<u8>,
+        /// The version of the package that is approved for upgrade.
+        /// if None, the upgrade approval will be deleted.
+        digest: Option<Vec<u8>>,
+    },
+    /// Set or remove a witness approving advance epoch.
+    SetOrRemoveWitnessApprovingAdvanceEpochMessageType {
+        /// The type of the witness that is being set or removed.
+        witness_type: String,
+        /// If false, the witness is being set, if true, the witness is being removed.
+        remove: bool,
+    },
 }
 
 // #[enum_dispatch(MessageDataAPI)]

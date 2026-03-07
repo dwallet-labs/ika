@@ -9,6 +9,7 @@
 
 #[macro_use]
 pub mod error;
+pub mod checkpoint;
 pub mod committee;
 pub mod crypto;
 pub mod digests;
@@ -18,8 +19,6 @@ pub mod intent;
 pub mod message;
 pub mod message_envelope;
 pub mod messages_consensus;
-pub mod messages_dwallet_checkpoint;
-pub mod messages_system_checkpoints;
 pub mod metrics;
 pub mod storage;
 

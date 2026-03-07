@@ -1,8 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
-use ika_types::messages_system_checkpoints::SystemCheckpointSequenceNumber;
+use ika_types::checkpoint::CheckpointSequenceNumber;
 use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
 use std::sync::Arc;
 use tap::Pipe;
@@ -25,10 +24,7 @@ impl Metrics {
         Metrics(None)
     }
 
-    pub fn set_highest_known_dwallet_checkpoint(
-        &self,
-        sequence_number: DWalletCheckpointSequenceNumber,
-    ) {
+    pub fn set_highest_known_dwallet_checkpoint(&self, sequence_number: CheckpointSequenceNumber) {
         if let Some(inner) = &self.0 {
             inner
                 .highest_known_dwallet_checkpoint
@@ -38,7 +34,7 @@ impl Metrics {
 
     pub fn set_highest_verified_dwallet_checkpoint(
         &self,
-        sequence_number: DWalletCheckpointSequenceNumber,
+        sequence_number: CheckpointSequenceNumber,
     ) {
         if let Some(inner) = &self.0 {
             inner
@@ -47,10 +43,7 @@ impl Metrics {
         }
     }
 
-    pub fn set_highest_synced_dwallet_checkpoint(
-        &self,
-        sequence_number: DWalletCheckpointSequenceNumber,
-    ) {
+    pub fn set_highest_synced_dwallet_checkpoint(&self, sequence_number: CheckpointSequenceNumber) {
         if let Some(inner) = &self.0 {
             inner
                 .highest_synced_dwallet_checkpoint
@@ -58,10 +51,7 @@ impl Metrics {
         }
     }
 
-    pub fn set_highest_known_system_checkpoint(
-        &self,
-        sequence_number: DWalletCheckpointSequenceNumber,
-    ) {
+    pub fn set_highest_known_system_checkpoint(&self, sequence_number: CheckpointSequenceNumber) {
         if let Some(inner) = &self.0 {
             inner
                 .highest_known_system_checkpoint
@@ -71,7 +61,7 @@ impl Metrics {
 
     pub fn set_highest_verified_system_checkpoint(
         &self,
-        sequence_number: SystemCheckpointSequenceNumber,
+        sequence_number: CheckpointSequenceNumber,
     ) {
         if let Some(inner) = &self.0 {
             inner
@@ -80,10 +70,7 @@ impl Metrics {
         }
     }
 
-    pub fn set_highest_synced_system_checkpoint(
-        &self,
-        sequence_number: SystemCheckpointSequenceNumber,
-    ) {
+    pub fn set_highest_synced_system_checkpoint(&self, sequence_number: CheckpointSequenceNumber) {
         if let Some(inner) = &self.0 {
             inner
                 .highest_synced_system_checkpoint

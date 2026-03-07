@@ -1,5 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
+
 use crate::committee::CommitteeTrait;
 use crate::committee::{Committee, EpochId, StakeUnit};
 use crate::error::{IkaError, IkaResult};
@@ -780,8 +781,10 @@ mod bcs_signable {
 
     pub trait BcsSignable: serde::Serialize + serde::de::DeserializeOwned {}
     impl BcsSignable for crate::committee::Committee {}
-    impl BcsSignable for crate::messages_dwallet_checkpoint::DWalletCheckpointMessage {}
-    impl BcsSignable for crate::messages_system_checkpoints::SystemCheckpointMessage {}
+    impl<K: crate::checkpoint::CheckpointKind> BcsSignable for crate::checkpoint::CheckpointMessage<K> where
+        crate::checkpoint::CheckpointMessage<K>: serde::Serialize + serde::de::DeserializeOwned
+    {
+    }
 
     impl BcsSignable for crate::message::DWalletCheckpointMessageKind {}
 }

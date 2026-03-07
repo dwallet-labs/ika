@@ -4,19 +4,17 @@
 use std::sync::Arc;
 
 use crate::{
-    authority::AuthorityState, consensus_adapter::ConsensusOverloadChecker,
-    dwallet_checkpoints::DWalletCheckpointServiceNotify,
-    system_checkpoints::SystemCheckpointServiceNotify,
+    authority::AuthorityState, checkpoints::CheckpointServiceNotify,
+    consensus_adapter::ConsensusOverloadChecker,
 };
 use consensus_core::{TransactionVerifier, ValidationError};
 use consensus_types::block::TransactionIndex;
+use ika_types::checkpoint::{DWallet, SignedCheckpointMessage, System};
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthoritySignInfoTrait;
 use ika_types::crypto::VerificationObligation;
 use ika_types::intent::Intent;
 use ika_types::message_envelope::Message;
-use ika_types::messages_dwallet_checkpoint::SignedDWalletCheckpointMessage;
-use ika_types::messages_system_checkpoints::SignedSystemCheckpointMessage;
 use ika_types::{
     error::{IkaError, IkaResult},
     messages_consensus::{ConsensusTransaction, ConsensusTransactionKind},
@@ -33,8 +31,8 @@ pub struct IkaTxValidator {
     // todo(zeev): why is it not used?
     #[allow(dead_code)]
     consensus_overload_checker: Arc<dyn ConsensusOverloadChecker>,
-    dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
-    system_checkpoint_service: Arc<dyn SystemCheckpointServiceNotify + Send + Sync>,
+    dwallet_checkpoint_service: Arc<dyn CheckpointServiceNotify<DWallet> + Send + Sync>,
+    system_checkpoint_service: Arc<dyn CheckpointServiceNotify<System> + Send + Sync>,
     metrics: Arc<IkaTxValidatorMetrics>,
 }
 
@@ -42,8 +40,8 @@ impl IkaTxValidator {
     pub fn new(
         authority_state: Arc<AuthorityState>,
         consensus_overload_checker: Arc<dyn ConsensusOverloadChecker>,
-        dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
-        system_checkpoint_service: Arc<dyn SystemCheckpointServiceNotify + Send + Sync>,
+        dwallet_checkpoint_service: Arc<dyn CheckpointServiceNotify<DWallet> + Send + Sync>,
+        system_checkpoint_service: Arc<dyn CheckpointServiceNotify<System> + Send + Sync>,
         metrics: Arc<IkaTxValidatorMetrics>,
     ) -> Self {
         let epoch_store = authority_state.load_epoch_store_one_call_per_task().clone();
@@ -128,7 +126,7 @@ impl IkaTxValidator {
     /// Verifies all certificates - if any fail return error.
     fn batch_verify_all_certificates_and_dwallet_checkpoints(
         committee: &Committee,
-        dwallet_checkpoints: &[&SignedDWalletCheckpointMessage],
+        dwallet_checkpoints: &[&SignedCheckpointMessage<DWallet>],
     ) -> IkaResult {
         // certs.data() is assumed to be verified already by the caller.
 
@@ -141,7 +139,7 @@ impl IkaTxValidator {
 
     fn batch_verify(
         committee: &Committee,
-        checkpoints: &[&SignedDWalletCheckpointMessage],
+        checkpoints: &[&SignedCheckpointMessage<DWallet>],
     ) -> IkaResult {
         let mut obligation = VerificationObligation::default();
 
@@ -158,7 +156,7 @@ impl IkaTxValidator {
     /// Verifies all certificates - if any fail return error.
     fn batch_verify_all_certificates_and_system_checkpoints(
         committee: &Committee,
-        checkpoints: &[&SignedSystemCheckpointMessage],
+        checkpoints: &[&SignedCheckpointMessage<System>],
     ) -> IkaResult {
         // certs.data() is assumed to be verified already by the caller.
 
@@ -171,7 +169,7 @@ impl IkaTxValidator {
 
     fn batch_verify_system_checkpoints(
         committee: &Committee,
-        checkpoints: &[&SignedSystemCheckpointMessage],
+        checkpoints: &[&SignedCheckpointMessage<System>],
     ) -> IkaResult {
         let mut obligation = VerificationObligation::default();
 

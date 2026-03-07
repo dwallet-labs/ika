@@ -1,15 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+use crate::checkpoint::{CheckpointSequenceNumber, CheckpointSignatureMessage, DWallet, System};
 use crate::crypto::AuthorityName;
 use crate::message::DWalletCheckpointMessageKind;
-use crate::messages_dwallet_checkpoint::{
-    DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
-};
 use crate::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
-use crate::messages_system_checkpoints::{
-    SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
-};
 use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
@@ -44,7 +39,7 @@ pub struct ConsensusTransaction {
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 pub enum ConsensusTransactionKey {
-    DWalletCheckpointSignature(AuthorityName, DWalletCheckpointSequenceNumber),
+    DWalletCheckpointSignature(AuthorityName, CheckpointSequenceNumber),
     CapabilityNotification(AuthorityName, u64 /* generation */),
     EndOfPublish(AuthorityName),
     /// Authority that sent the message, the session identifier, and the message itself.
@@ -56,7 +51,7 @@ pub enum ConsensusTransactionKey {
         Vec<DWalletCheckpointMessageKind>,
         Vec<AuthorityName>, // malicious authorities
     ),
-    SystemCheckpointSignature(AuthorityName, SystemCheckpointSequenceNumber),
+    SystemCheckpointSignature(AuthorityName, CheckpointSequenceNumber),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -171,8 +166,8 @@ impl Debug for AuthorityCapabilitiesV1 {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConsensusTransactionKind {
-    DWalletCheckpointSignature(Box<DWalletCheckpointSignatureMessage>),
-    SystemCheckpointSignature(Box<SystemCheckpointSignatureMessage>),
+    DWalletCheckpointSignature(Box<CheckpointSignatureMessage<DWallet>>),
+    SystemCheckpointSignature(Box<CheckpointSignatureMessage<System>>),
     CapabilityNotificationV1(AuthorityCapabilitiesV1),
     EndOfPublish(AuthorityName),
     DWalletMPCMessage(DWalletMPCMessage),
@@ -236,7 +231,7 @@ impl ConsensusTransaction {
     }
 
     pub fn new_dwallet_checkpoint_signature_message(
-        data: DWalletCheckpointSignatureMessage,
+        data: CheckpointSignatureMessage<DWallet>,
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         data.checkpoint_message
@@ -250,7 +245,9 @@ impl ConsensusTransaction {
         }
     }
 
-    pub fn new_system_checkpoint_signature_message(data: SystemCheckpointSignatureMessage) -> Self {
+    pub fn new_system_checkpoint_signature_message(
+        data: CheckpointSignatureMessage<System>,
+    ) -> Self {
         let mut hasher = DefaultHasher::new();
         data.checkpoint_message
             .auth_sig()

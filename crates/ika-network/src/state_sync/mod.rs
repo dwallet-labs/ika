@@ -51,11 +51,11 @@ use anemo::{PeerId, Request, Response, Result, types::PeerEvent};
 use futures::{FutureExt, StreamExt};
 use ika_config::p2p::StateSyncConfig;
 use ika_types::{
-    digests::DWalletCheckpointMessageDigest,
-    messages_dwallet_checkpoint::{
-        CertifiedDWalletCheckpointMessage, DWalletCheckpointSequenceNumber,
-        VerifiedDWalletCheckpointMessage,
+    checkpoint::{
+        CertifiedCheckpointMessage, CheckpointSequenceNumber, DWallet, System,
+        VerifiedCheckpointMessage,
     },
+    digests::DWalletCheckpointMessageDigest,
     storage::WriteStore,
 };
 use rand::Rng;
@@ -93,10 +93,6 @@ pub use generated::{
 };
 use ika_archival::reader::ArchiveReaderBalancer;
 use ika_types::digests::{ChainIdentifier, SystemCheckpointMessageDigest};
-use ika_types::messages_system_checkpoints::{
-    CertifiedSystemCheckpointMessage, SystemCheckpointSequenceNumber,
-    VerifiedSystemCheckpointMessage,
-};
 pub use server::GetCheckpointMessageRequest;
 pub use server::GetDWalletCheckpointAvailabilityResponse;
 
@@ -107,8 +103,8 @@ pub use server::GetDWalletCheckpointAvailabilityResponse;
 #[derive(Clone, Debug)]
 pub struct Handle {
     sender: mpsc::Sender<StateSyncMessage>,
-    dwallet_checkpoint_event_sender: broadcast::Sender<VerifiedDWalletCheckpointMessage>,
-    system_checkpoint_event_sender: broadcast::Sender<VerifiedSystemCheckpointMessage>,
+    dwallet_checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<DWallet>>,
+    system_checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<System>>,
 }
 
 impl Handle {
@@ -120,11 +116,11 @@ impl Handle {
     /// Consensus must only notify StateSync of new checkpoints that have been fully committed to
     /// persistent storage. This includes CheckpointContents and all Transactions and
     /// TransactionEffects included therein.
-    pub async fn send_dwallet_checkpoint(&self, checkpoint: VerifiedDWalletCheckpointMessage) {
+    pub async fn send_dwallet_checkpoint(&self, checkpoint: VerifiedCheckpointMessage<DWallet>) {
         self.sender
-            .send(StateSyncMessage::VerifiedDWalletCheckpointMessage(
-                Box::new(checkpoint),
-            ))
+            .send(StateSyncMessage::VerifiedDWalletCheckpoint(Box::new(
+                checkpoint,
+            )))
             .await
             .unwrap()
     }
@@ -132,13 +128,16 @@ impl Handle {
     /// Subscribe to the stream of checkpoints that have been fully synchronized and downloaded.
     pub fn subscribe_to_synced_checkpoints(
         &self,
-    ) -> broadcast::Receiver<VerifiedDWalletCheckpointMessage> {
+    ) -> broadcast::Receiver<VerifiedCheckpointMessage<DWallet>> {
         self.dwallet_checkpoint_event_sender.subscribe()
     }
 
-    pub async fn send_system_checkpoint(&self, system_checkpoint: VerifiedSystemCheckpointMessage) {
+    pub async fn send_system_checkpoint(
+        &self,
+        system_checkpoint: VerifiedCheckpointMessage<System>,
+    ) {
         self.sender
-            .send(StateSyncMessage::VerifiedSystemCheckpointMessage(Box::new(
+            .send(StateSyncMessage::VerifiedSystemCheckpoint(Box::new(
                 system_checkpoint,
             )))
             .await
@@ -147,7 +146,7 @@ impl Handle {
 
     pub fn subscribe_to_synced_system_checkpoints(
         &self,
-    ) -> broadcast::Receiver<VerifiedSystemCheckpointMessage> {
+    ) -> broadcast::Receiver<VerifiedCheckpointMessage<System>> {
         self.system_checkpoint_event_sender.subscribe()
     }
 }
@@ -156,14 +155,13 @@ struct PeerHeights {
     /// Table used to track the highest checkpoint for each of our peers.
     peers: HashMap<PeerId, PeerStateSyncInfo>,
     unprocessed_checkpoints:
-        HashMap<DWalletCheckpointMessageDigest, CertifiedDWalletCheckpointMessage>,
-    sequence_number_to_digest:
-        HashMap<DWalletCheckpointSequenceNumber, DWalletCheckpointMessageDigest>,
+        HashMap<DWalletCheckpointMessageDigest, CertifiedCheckpointMessage<DWallet>>,
+    sequence_number_to_digest: HashMap<CheckpointSequenceNumber, DWalletCheckpointMessageDigest>,
 
     unprocessed_system_checkpoint:
-        HashMap<SystemCheckpointMessageDigest, CertifiedSystemCheckpointMessage>,
+        HashMap<SystemCheckpointMessageDigest, CertifiedCheckpointMessage<System>>,
     sequence_number_to_digest_system_checkpoint:
-        HashMap<SystemCheckpointSequenceNumber, SystemCheckpointMessageDigest>,
+        HashMap<CheckpointSequenceNumber, SystemCheckpointMessageDigest>,
 
     #[allow(unused)]
     // The amount of time to wait before retry if there are no peers to sync content from.
@@ -177,21 +175,19 @@ struct PeerStateSyncInfo {
     /// Indicates if this Peer is on the same chain as us.
     on_same_chain_as_us: bool,
     /// Highest dwallet checkpoint sequence number we know of for this Peer.
-    dwallet_checkpoint_height: Option<DWalletCheckpointSequenceNumber>,
+    dwallet_checkpoint_height: Option<CheckpointSequenceNumber>,
     /// Highest system checkpoint sequence number we know of for this Peer.
-    system_checkpoint_height: Option<SystemCheckpointSequenceNumber>,
+    system_checkpoint_height: Option<CheckpointSequenceNumber>,
 }
 
 impl PeerHeights {
-    pub fn highest_known_checkpoint(&self) -> Option<&CertifiedDWalletCheckpointMessage> {
+    pub fn highest_known_checkpoint(&self) -> Option<&CertifiedCheckpointMessage<DWallet>> {
         self.highest_known_checkpoint_sequence_number()
             .and_then(|s| self.sequence_number_to_digest.get(&s))
             .and_then(|digest| self.unprocessed_checkpoints.get(digest))
     }
 
-    pub fn highest_known_checkpoint_sequence_number(
-        &self,
-    ) -> Option<DWalletCheckpointSequenceNumber> {
+    pub fn highest_known_checkpoint_sequence_number(&self) -> Option<CheckpointSequenceNumber> {
         self.peers
             .values()
             .filter_map(|info| {
@@ -201,7 +197,7 @@ impl PeerHeights {
             .max()?
     }
 
-    pub fn highest_known_system_checkpoint(&self) -> Option<&CertifiedSystemCheckpointMessage> {
+    pub fn highest_known_system_checkpoint(&self) -> Option<&CertifiedCheckpointMessage<System>> {
         self.highest_known_system_checkpoint_sequence_number()
             .and_then(|s| self.sequence_number_to_digest_system_checkpoint.get(&s))
             .and_then(|digest| self.unprocessed_system_checkpoint.get(digest))
@@ -209,7 +205,7 @@ impl PeerHeights {
 
     pub fn highest_known_system_checkpoint_sequence_number(
         &self,
-    ) -> Option<DWalletCheckpointSequenceNumber> {
+    ) -> Option<CheckpointSequenceNumber> {
         self.peers
             .values()
             .filter_map(|info| {
@@ -233,7 +229,7 @@ impl PeerHeights {
     pub fn update_peer_info(
         &mut self,
         peer_id: PeerId,
-        checkpoint: CertifiedDWalletCheckpointMessage,
+        checkpoint: CertifiedCheckpointMessage<DWallet>,
     ) -> bool {
         debug!("Update peer info");
 
@@ -254,7 +250,7 @@ impl PeerHeights {
     pub fn update_peer_info_with_system_checkpoint(
         &mut self,
         peer_id: PeerId,
-        system_checkpoint: CertifiedSystemCheckpointMessage,
+        system_checkpoint: CertifiedCheckpointMessage<System>,
     ) -> bool {
         debug!("Update peer info with params message");
 
@@ -311,7 +307,7 @@ impl PeerHeights {
         }
     }
 
-    pub fn cleanup_old_checkpoints(&mut self, sequence_number: DWalletCheckpointSequenceNumber) {
+    pub fn cleanup_old_checkpoints(&mut self, sequence_number: CheckpointSequenceNumber) {
         self.unprocessed_checkpoints
             .retain(|_digest, checkpoint| *checkpoint.sequence_number() > sequence_number);
         self.sequence_number_to_digest
@@ -319,7 +315,7 @@ impl PeerHeights {
     }
 
     // TODO: also record who gives this checkpoint info for peer quality measurement?
-    pub fn insert_checkpoint(&mut self, checkpoint: CertifiedDWalletCheckpointMessage) {
+    pub fn insert_checkpoint(&mut self, checkpoint: CertifiedCheckpointMessage<DWallet>) {
         let digest = *checkpoint.digest();
         let sequence_number = *checkpoint.sequence_number();
         self.unprocessed_checkpoints.insert(digest, checkpoint);
@@ -337,8 +333,8 @@ impl PeerHeights {
 
     pub fn get_dwallet_checkpoint_by_sequence_number(
         &self,
-        sequence_number: DWalletCheckpointSequenceNumber,
-    ) -> Option<&CertifiedDWalletCheckpointMessage> {
+        sequence_number: CheckpointSequenceNumber,
+    ) -> Option<&CertifiedCheckpointMessage<DWallet>> {
         self.sequence_number_to_digest
             .get(&sequence_number)
             .and_then(|digest| self.get_dwallet_checkpoint_by_digest(digest))
@@ -347,14 +343,11 @@ impl PeerHeights {
     pub fn get_dwallet_checkpoint_by_digest(
         &self,
         digest: &DWalletCheckpointMessageDigest,
-    ) -> Option<&CertifiedDWalletCheckpointMessage> {
+    ) -> Option<&CertifiedCheckpointMessage<DWallet>> {
         self.unprocessed_checkpoints.get(digest)
     }
 
-    pub fn cleanup_old_system_checkpoints(
-        &mut self,
-        sequence_number: SystemCheckpointSequenceNumber,
-    ) {
+    pub fn cleanup_old_system_checkpoints(&mut self, sequence_number: CheckpointSequenceNumber) {
         self.unprocessed_system_checkpoint
             .retain(|_digest, system_checkpoint| {
                 *system_checkpoint.sequence_number() > sequence_number
@@ -366,7 +359,7 @@ impl PeerHeights {
     // TODO: also record who gives this system_checkpoint info for peer quality measurement?
     pub fn insert_system_checkpoint(
         &mut self,
-        system_checkpoint: CertifiedSystemCheckpointMessage,
+        system_checkpoint: CertifiedCheckpointMessage<System>,
     ) {
         let digest = *system_checkpoint.digest();
         let sequence_number = *system_checkpoint.sequence_number();
@@ -386,8 +379,8 @@ impl PeerHeights {
 
     pub fn get_system_checkpoint_by_sequence_number(
         &self,
-        sequence_number: SystemCheckpointSequenceNumber,
-    ) -> Option<&CertifiedSystemCheckpointMessage> {
+        sequence_number: CheckpointSequenceNumber,
+    ) -> Option<&CertifiedCheckpointMessage<System>> {
         self.sequence_number_to_digest_system_checkpoint
             .get(&sequence_number)
             .and_then(|digest| self.get_system_checkpoint_by_digest(digest))
@@ -396,7 +389,7 @@ impl PeerHeights {
     pub fn get_system_checkpoint_by_digest(
         &self,
         digest: &SystemCheckpointMessageDigest,
-    ) -> Option<&CertifiedSystemCheckpointMessage> {
+    ) -> Option<&CertifiedCheckpointMessage<System>> {
         self.unprocessed_system_checkpoint.get(digest)
     }
 
@@ -410,8 +403,8 @@ impl PeerHeights {
 #[derive(Clone)]
 struct PeerBalancer {
     peers: VecDeque<(anemo::Peer, PeerStateSyncInfo)>,
-    requested_dwallet_checkpoint: Option<DWalletCheckpointSequenceNumber>,
-    requested_system_checkpoint: Option<SystemCheckpointSequenceNumber>,
+    requested_dwallet_checkpoint: Option<CheckpointSequenceNumber>,
+    requested_system_checkpoint: Option<CheckpointSequenceNumber>,
 }
 
 impl PeerBalancer {
@@ -438,15 +431,12 @@ impl PeerBalancer {
         }
     }
 
-    pub fn with_checkpoint(mut self, checkpoint: DWalletCheckpointSequenceNumber) -> Self {
+    pub fn with_checkpoint(mut self, checkpoint: CheckpointSequenceNumber) -> Self {
         self.requested_dwallet_checkpoint = Some(checkpoint);
         self
     }
 
-    pub fn with_system_checkpoint(
-        mut self,
-        system_checkpoint: SystemCheckpointSequenceNumber,
-    ) -> Self {
+    pub fn with_system_checkpoint(mut self, system_checkpoint: CheckpointSequenceNumber) -> Self {
         self.requested_system_checkpoint = Some(system_checkpoint);
         self
     }
@@ -479,15 +469,15 @@ enum StateSyncMessage {
     StartSyncJob,
     // Validators will send this to the StateSyncEventLoop in order to kick off notifying our peers
     // of the new checkpoint.
-    VerifiedDWalletCheckpointMessage(Box<VerifiedDWalletCheckpointMessage>),
+    VerifiedDWalletCheckpoint(Box<VerifiedCheckpointMessage<DWallet>>),
     // Notification that the checkpoint content sync task will send to the event loop in the event
     // it was able to successfully sync a checkpoint's contents. If multiple checkpoints were
     // synced at the same time, only the highest checkpoint is sent.
-    SyncedDWalletCheckpoint(Box<VerifiedDWalletCheckpointMessage>),
+    SyncedDWalletCheckpoint(Box<VerifiedCheckpointMessage<DWallet>>),
 
-    VerifiedSystemCheckpointMessage(Box<VerifiedSystemCheckpointMessage>),
+    VerifiedSystemCheckpoint(Box<VerifiedCheckpointMessage<System>>),
 
-    SyncedSystemCheckpoint(Box<VerifiedSystemCheckpointMessage>),
+    SyncedSystemCheckpoint(Box<VerifiedCheckpointMessage<System>>),
 }
 
 struct StateSyncEventLoop<S> {
@@ -504,7 +494,7 @@ struct StateSyncEventLoop<S> {
 
     store: S,
     peer_heights: Arc<RwLock<PeerHeights>>,
-    checkpoint_event_sender: broadcast::Sender<VerifiedDWalletCheckpointMessage>,
+    checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<DWallet>>,
     network: anemo::Network,
     metrics: Metrics,
 
@@ -512,7 +502,7 @@ struct StateSyncEventLoop<S> {
     sync_checkpoint_from_archive_task: Option<AbortHandle>,
     chain_identifier: ChainIdentifier,
 
-    system_checkpoint_event_sender: broadcast::Sender<VerifiedSystemCheckpointMessage>,
+    system_checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<System>>,
     sync_system_checkpoints_task: Option<AbortHandle>,
     system_checkpoint_download_limit_layer: Option<SystemCheckpointDownloadLimitLayer>,
     sync_system_checkpoint_from_archive_task: Option<AbortHandle>,
@@ -644,14 +634,14 @@ where
                     self.maybe_start_system_checkpoint_summary_sync_task();
                 }
             }
-            StateSyncMessage::VerifiedDWalletCheckpointMessage(checkpoint) => {
+            StateSyncMessage::VerifiedDWalletCheckpoint(checkpoint) => {
                 self.handle_dwallet_checkpoint_from_consensus(checkpoint)
             }
             // After we've successfully synced a checkpoint we can notify our peers
             StateSyncMessage::SyncedDWalletCheckpoint(checkpoint) => {
                 self.spawn_notify_peers_of_checkpoint(*checkpoint)
             }
-            StateSyncMessage::VerifiedSystemCheckpointMessage(msg) => {
+            StateSyncMessage::VerifiedSystemCheckpoint(msg) => {
                 self.handle_system_checkpoint_from_consensus(msg)
             }
             StateSyncMessage::SyncedSystemCheckpoint(msg) => {
@@ -664,7 +654,7 @@ where
     #[instrument(level = "debug", skip_all)]
     fn handle_dwallet_checkpoint_from_consensus(
         &mut self,
-        checkpoint: Box<VerifiedDWalletCheckpointMessage>,
+        checkpoint: Box<VerifiedCheckpointMessage<DWallet>>,
     ) {
         let latest_checkpoint_sequence_number = self
             .store
@@ -705,7 +695,7 @@ where
     #[instrument(level = "debug", skip_all)]
     fn handle_system_checkpoint_from_consensus(
         &mut self,
-        system_checkpoint: Box<VerifiedSystemCheckpointMessage>,
+        system_checkpoint: Box<VerifiedCheckpointMessage<System>>,
     ) {
         let latest_system_checkpoint_sequence_number = self
             .store
@@ -910,7 +900,7 @@ where
         }
     }
 
-    fn spawn_notify_peers_of_checkpoint(&mut self, checkpoint: VerifiedDWalletCheckpointMessage) {
+    fn spawn_notify_peers_of_checkpoint(&mut self, checkpoint: VerifiedCheckpointMessage<DWallet>) {
         let task = notify_peers_of_checkpoint(
             self.network.clone(),
             self.peer_heights.clone(),
@@ -922,7 +912,7 @@ where
 
     fn spawn_notify_peers_of_system_checkpoint(
         &mut self,
-        system_checkpoint: VerifiedSystemCheckpointMessage,
+        system_checkpoint: VerifiedCheckpointMessage<System>,
     ) {
         let task = notify_peers_of_system_checkpoint(
             self.network.clone(),
@@ -937,7 +927,7 @@ where
 async fn notify_peers_of_checkpoint(
     network: anemo::Network,
     peer_heights: Arc<RwLock<PeerHeights>>,
-    checkpoint: VerifiedDWalletCheckpointMessage,
+    checkpoint: VerifiedCheckpointMessage<DWallet>,
     timeout: Duration,
 ) {
     let futs = peer_heights
@@ -958,7 +948,7 @@ async fn notify_peers_of_checkpoint(
 async fn notify_peers_of_system_checkpoint(
     network: anemo::Network,
     peer_heights: Arc<RwLock<PeerHeights>>,
-    system_checkpoint: VerifiedSystemCheckpointMessage,
+    system_checkpoint: VerifiedCheckpointMessage<System>,
     timeout: Duration,
 ) {
     let futs = peer_heights
@@ -1035,7 +1025,7 @@ async fn get_latest_from_peer(
 async fn query_peer_for_latest_info(
     client: &mut StateSyncClient<anemo::Peer>,
     timeout: Duration,
-) -> Option<CertifiedDWalletCheckpointMessage> {
+) -> Option<CertifiedCheckpointMessage<DWallet>> {
     let request = Request::new(()).with_timeout(timeout);
     let response = client
         .get_dwallet_checkpoint_availability(request)
@@ -1118,13 +1108,10 @@ async fn sync_to_checkpoint<S>(
     store: S,
     peer_heights: Arc<RwLock<PeerHeights>>,
     metrics: Metrics,
-    pinned_checkpoints: Vec<(
-        DWalletCheckpointSequenceNumber,
-        DWalletCheckpointMessageDigest,
-    )>,
+    pinned_checkpoints: Vec<(CheckpointSequenceNumber, DWalletCheckpointMessageDigest)>,
     checkpoint_header_download_concurrency: usize,
     timeout: Duration,
-    checkpoint: CertifiedDWalletCheckpointMessage,
+    checkpoint: CertifiedCheckpointMessage<DWallet>,
 ) -> Result<()>
 where
     S: WriteStore,
@@ -1221,7 +1208,7 @@ where
 
         // We can't verify the checkpoint
         let checkpoint = maybe_checkpoint
-            .map(VerifiedDWalletCheckpointMessage::new_unchecked)
+            .map(VerifiedCheckpointMessage::<DWallet>::new_unchecked)
             .ok_or_else(|| anyhow::anyhow!("no peers were able to help sync checkpoint {next}"))?;
 
         debug!(checkpoint_seq = ?checkpoint.sequence_number(), "verified checkpoint summary");
@@ -1378,7 +1365,7 @@ async fn get_latest_from_peer_system_checkpoint(
 async fn query_peer_for_latest_info_system_checkpoint(
     client: &mut StateSyncClient<anemo::Peer>,
     timeout: Duration,
-) -> Option<CertifiedSystemCheckpointMessage> {
+) -> Option<CertifiedCheckpointMessage<System>> {
     let request = Request::new(()).with_timeout(timeout);
     let response = client
         .get_system_checkpoint_availability(request)
@@ -1470,13 +1457,10 @@ async fn sync_to_system_checkpoint<S>(
     store: S,
     peer_heights: Arc<RwLock<PeerHeights>>,
     metrics: Metrics,
-    pinned_system_checkpoints: Vec<(
-        SystemCheckpointSequenceNumber,
-        SystemCheckpointMessageDigest,
-    )>,
+    pinned_system_checkpoints: Vec<(CheckpointSequenceNumber, SystemCheckpointMessageDigest)>,
     system_checkpoint_header_download_concurrency: usize,
     timeout: Duration,
-    system_checkpoint: CertifiedSystemCheckpointMessage,
+    system_checkpoint: CertifiedCheckpointMessage<System>,
 ) -> Result<()>
 where
     S: WriteStore,
@@ -1573,7 +1557,7 @@ where
 
         // We can't verify the system_checkpoint
         let system_checkpoint = maybe_system_checkpoint
-            .map(VerifiedSystemCheckpointMessage::new_unchecked)
+            .map(VerifiedCheckpointMessage::<System>::new_unchecked)
             .ok_or_else(|| {
                 anyhow::anyhow!("no peers were able to help sync system_checkpoint {next}")
             })?;

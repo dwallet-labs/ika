@@ -12,7 +12,7 @@ Act as a critical intellectual sparring partner, not a yes-man. Evaluate every i
 # Rust - always use release mode for crypto code (debug is far too slow)
 cargo build --release
 cargo test --release
-cargo clippy --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
 
 # TypeScript SDK
 cd sdk/typescript && pnpm install && pnpm build
@@ -21,6 +21,7 @@ pnpm lint                    # Lint check
 
 # Move contracts (requires sui CLI)
 cd contracts/ika && sui move build
+cd contracts/ika_common && sui move build
 cd contracts/ika_system && sui move build
 cd contracts/ika_dwallet_2pc_mpc && sui move build
 

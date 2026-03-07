@@ -2,19 +2,20 @@ use crate::authority::AuthorityStateTrait;
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
-use crate::dwallet_checkpoints::{DWalletCheckpointServiceNotify, PendingDWalletCheckpoint};
+use crate::checkpoints::CheckpointServiceNotify;
+use crate::checkpoints::PendingCheckpoint;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_rng::RootSeed;
+use ika_types::checkpoint::{CheckpointSignatureMessage, DWallet};
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
     UserSecretKeyShareEventType,
@@ -29,7 +30,7 @@ use tracing::info;
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
 pub(crate) struct TestingAuthorityPerEpochStore {
-    pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingDWalletCheckpoint>>>,
+    pub(crate) pending_checkpoints: Arc<Mutex<Vec<PendingCheckpoint<DWallet>>>>,
     pub(crate) round_to_messages: Arc<Mutex<HashMap<Round, Vec<DWalletMPCMessage>>>>,
     pub(crate) round_to_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
@@ -88,7 +89,7 @@ impl TestingAuthorityPerEpochStore {
 impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     fn insert_pending_dwallet_checkpoint(
         &self,
-        checkpoint: PendingDWalletCheckpoint,
+        checkpoint: PendingCheckpoint<DWallet>,
     ) -> IkaResult<()> {
         self.pending_checkpoints.lock().unwrap().push(checkpoint);
         Ok(())
@@ -202,11 +203,11 @@ impl AuthorityStateTrait for TestingAuthorityState {
     }
 }
 
-impl DWalletCheckpointServiceNotify for TestingDWalletCheckpointNotify {
+impl CheckpointServiceNotify<ika_types::checkpoint::DWallet> for TestingDWalletCheckpointNotify {
     fn notify_checkpoint_signature(
         &self,
         _epoch_store: &AuthorityPerEpochStore,
-        _info: &DWalletCheckpointSignatureMessage,
+        _info: &CheckpointSignatureMessage<DWallet>,
     ) -> IkaResult {
         todo!()
     }
@@ -377,7 +378,7 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
     sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
     testing_epoch_stores: &[Arc<TestingAuthorityPerEpochStore>],
     notify_services: &[Arc<TestingDWalletCheckpointNotify>],
-) -> Option<PendingDWalletCheckpoint> {
+) -> Option<PendingCheckpoint<DWallet>> {
     advance_some_parties_and_wait_for_completions(
         committee,
         dwallet_mpc_services,
@@ -396,7 +397,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     testing_epoch_stores: &[Arc<TestingAuthorityPerEpochStore>],
     notify_services: &[Arc<TestingDWalletCheckpointNotify>],
     parties_to_advance: &[usize],
-) -> Option<PendingDWalletCheckpoint> {
+) -> Option<PendingCheckpoint<DWallet>> {
     let mut pending_checkpoints = vec![];
     let mut completed_parties = vec![];
     while completed_parties.len() < parties_to_advance.len() {
@@ -693,7 +694,7 @@ pub(crate) fn send_start_dwallet_dkg_event(
 pub(crate) async fn advance_mpc_flow_until_completion(
     test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
-) -> (Round, PendingDWalletCheckpoint) {
+) -> (Round, PendingCheckpoint<DWallet>) {
     let mut consensus_round = start_consensus_round;
     loop {
         if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(

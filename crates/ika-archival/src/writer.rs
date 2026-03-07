@@ -12,11 +12,8 @@ use anyhow::Result;
 use anyhow::{Context, anyhow};
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use ika_config::object_storage_config::ObjectStoreConfig;
-use ika_types::messages_dwallet_checkpoint::{
-    CertifiedDWalletCheckpointMessage, DWalletCheckpointSequenceNumber,
-};
-use ika_types::messages_system_checkpoints::{
-    CertifiedSystemCheckpointMessage, SystemCheckpointSequenceNumber,
+use ika_types::checkpoint::{
+    CertifiedCheckpointMessage, CheckpointSequenceNumber, DWallet, System,
 };
 use ika_types::storage::WriteStore;
 use object_store::DynObjectStore;
@@ -119,7 +116,7 @@ impl DWalletCheckpointWriter {
         })
     }
 
-    pub fn write(&mut self, checkpoint_message: CertifiedDWalletCheckpointMessage) -> Result<()> {
+    pub fn write(&mut self, checkpoint_message: CertifiedCheckpointMessage<DWallet>) -> Result<()> {
         match self.storage_format {
             StorageFormat::Blob => self.write_as_blob(checkpoint_message),
         }
@@ -127,7 +124,7 @@ impl DWalletCheckpointWriter {
 
     pub fn write_as_blob(
         &mut self,
-        checkpoint_message: CertifiedDWalletCheckpointMessage,
+        checkpoint_message: CertifiedCheckpointMessage<DWallet>,
     ) -> Result<()> {
         assert_eq!(
             checkpoint_message.sequence_number,
@@ -331,7 +328,7 @@ impl SystemCheckpointWriter {
 
     pub fn write(
         &mut self,
-        system_checkpoint_message: CertifiedSystemCheckpointMessage,
+        system_checkpoint_message: CertifiedCheckpointMessage<System>,
     ) -> Result<()> {
         match self.storage_format {
             StorageFormat::Blob => self.write_as_blob(system_checkpoint_message),
@@ -340,7 +337,7 @@ impl SystemCheckpointWriter {
 
     pub fn write_as_blob(
         &mut self,
-        system_checkpoint_message: CertifiedSystemCheckpointMessage,
+        system_checkpoint_message: CertifiedCheckpointMessage<System>,
     ) -> Result<()> {
         assert_eq!(
             system_checkpoint_message.sequence_number,
@@ -604,7 +601,7 @@ impl ArchiveWriter {
     }
 
     async fn start_tailing_checkpoints<S>(
-        start_checkpoint_sequence_number: DWalletCheckpointSequenceNumber,
+        start_checkpoint_sequence_number: CheckpointSequenceNumber,
         mut checkpoint_writer: DWalletCheckpointWriter,
         store: S,
         mut kill: tokio::sync::broadcast::Receiver<()>,
@@ -635,7 +632,7 @@ impl ArchiveWriter {
     }
 
     async fn start_tailing_system_checkpoints<S>(
-        start_system_checkpoint_sequence_number: SystemCheckpointSequenceNumber,
+        start_system_checkpoint_sequence_number: CheckpointSequenceNumber,
         mut system_checkpoint_writer: SystemCheckpointWriter,
         store: S,
         mut kill: tokio::sync::broadcast::Receiver<()>,

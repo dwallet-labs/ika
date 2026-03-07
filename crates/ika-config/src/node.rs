@@ -20,10 +20,10 @@ use std::time::Duration;
 use sui_types::base_types::{ObjectID, SuiAddress};
 
 use dwallet_rng::RootSeed;
+use ika_types::checkpoint::CheckpointSequenceNumber;
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::KeypairTraits;
 use ika_types::crypto::NetworkKeyPair;
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSequenceNumber;
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 pub use sui_config::node::KeyPairWithPath;
 use sui_types::crypto::SuiKeyPair;
@@ -611,7 +611,7 @@ fn default_authority_overload_config() -> AuthorityOverloadConfig {
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RunWithRange {
     Epoch(EpochId),
-    Checkpoint(DWalletCheckpointSequenceNumber),
+    Checkpoint(CheckpointSequenceNumber),
 }
 
 impl RunWithRange {
@@ -620,7 +620,7 @@ impl RunWithRange {
         matches!(self, RunWithRange::Epoch(e) if epoch_id > *e)
     }
 
-    pub fn matches_checkpoint(&self, seq_num: DWalletCheckpointSequenceNumber) -> bool {
+    pub fn matches_checkpoint(&self, seq_num: CheckpointSequenceNumber) -> bool {
         matches!(self, RunWithRange::Checkpoint(seq) if *seq == seq_num)
     }
 }

@@ -11,9 +11,8 @@ use anemo::codegen::InboundRequestLayer;
 use anemo_tower::{inflight_limit, rate_limit};
 use ika_archival::reader::ArchiveReaderBalancer;
 use ika_config::p2p::StateSyncConfig;
+use ika_types::checkpoint::{DWallet, System, VerifiedCheckpointMessage};
 use ika_types::digests::ChainIdentifier;
-use ika_types::messages_dwallet_checkpoint::VerifiedDWalletCheckpointMessage;
-use ika_types::messages_system_checkpoints::VerifiedSystemCheckpointMessage;
 use ika_types::storage::WriteStore;
 use std::{
     collections::HashMap,
@@ -189,8 +188,8 @@ pub struct UnstartedStateSync<S> {
     pub(super) system_checkpoint_download_limit_layer: Option<SystemCheckpointDownloadLimitLayer>,
     pub(super) store: S,
     pub(super) peer_heights: Arc<RwLock<PeerHeights>>,
-    pub(super) checkpoint_event_sender: broadcast::Sender<VerifiedDWalletCheckpointMessage>,
-    pub(super) system_checkpoint_event_sender: broadcast::Sender<VerifiedSystemCheckpointMessage>,
+    pub(super) checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<DWallet>>,
+    pub(super) system_checkpoint_event_sender: broadcast::Sender<VerifiedCheckpointMessage<System>>,
     pub(super) metrics: Metrics,
     pub(super) archive_readers: ArchiveReaderBalancer,
     pub(crate) chain_identifier: ChainIdentifier,
