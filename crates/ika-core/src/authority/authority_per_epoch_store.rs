@@ -1894,10 +1894,14 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::DWalletCheckpointSignature(info),
                 ..
             }) => {
-                // We usually call notify_checkpoint_signature in IkaTxValidator, but that step can
-                // be skipped when a batch is already part of a certificate, so we must also
-                // notify here.
-                checkpoint_service.notify_checkpoint_signature(self, info)?;
+                // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
+                // When only NOA checkpoints are active, BLS signature aggregation is skipped.
+                if self.protocol_config().bls_checkpoints() {
+                    // We usually call notify_checkpoint_signature in IkaTxValidator, but that
+                    // step can be skipped when a batch is already part of a certificate, so we
+                    // must also notify here.
+                    checkpoint_service.notify_checkpoint_signature(self, info)?;
+                }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -1917,7 +1921,10 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::SystemCheckpointSignature(data),
                 ..
             }) => {
-                system_checkpoint_service.notify_checkpoint_signature(self, data)?;
+                // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
+                if self.protocol_config().bls_checkpoints() {
+                    system_checkpoint_service.notify_checkpoint_signature(self, data)?;
+                }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {

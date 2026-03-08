@@ -56,6 +56,7 @@ use ika_types::{
         CertifiedDWalletCheckpointMessage, DWalletCheckpointSequenceNumber,
         VerifiedDWalletCheckpointMessage,
     },
+    noa_checkpoint::CertifiedNOACheckpointMessage,
     storage::WriteStore,
 };
 use rand::Rng;
@@ -149,6 +150,30 @@ impl Handle {
         &self,
     ) -> broadcast::Receiver<VerifiedSystemCheckpointMessage> {
         self.system_checkpoint_event_sender.subscribe()
+    }
+
+    pub async fn send_noa_dwallet_checkpoint(
+        &self,
+        checkpoint: CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::DWallet>,
+    ) {
+        self.sender
+            .send(StateSyncMessage::CertifiedNOADWalletCheckpoint(Box::new(
+                checkpoint,
+            )))
+            .await
+            .unwrap()
+    }
+
+    pub async fn send_noa_system_checkpoint(
+        &self,
+        checkpoint: CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::System>,
+    ) {
+        self.sender
+            .send(StateSyncMessage::CertifiedNOASystemCheckpoint(Box::new(
+                checkpoint,
+            )))
+            .await
+            .unwrap()
     }
 }
 
@@ -488,6 +513,15 @@ enum StateSyncMessage {
     VerifiedSystemCheckpointMessage(Box<VerifiedSystemCheckpointMessage>),
 
     SyncedSystemCheckpoint(Box<VerifiedSystemCheckpointMessage>),
+
+    // NOA-signed certified checkpoint from the NOA checkpoint certifier.
+    CertifiedNOADWalletCheckpoint(
+        Box<CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::DWallet>>,
+    ),
+
+    CertifiedNOASystemCheckpoint(
+        Box<CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::System>>,
+    ),
 }
 
 struct StateSyncEventLoop<S> {
@@ -657,6 +691,12 @@ where
             StateSyncMessage::SyncedSystemCheckpoint(msg) => {
                 self.spawn_notify_peers_of_system_checkpoint(*msg)
             }
+            StateSyncMessage::CertifiedNOADWalletCheckpoint(checkpoint) => {
+                self.handle_noa_dwallet_checkpoint_from_certification(checkpoint)
+            }
+            StateSyncMessage::CertifiedNOASystemCheckpoint(checkpoint) => {
+                self.handle_noa_system_checkpoint_from_certification(checkpoint)
+            }
         }
     }
 
@@ -743,6 +783,32 @@ where
             .send(system_checkpoint.clone());
 
         self.spawn_notify_peers_of_system_checkpoint(system_checkpoint);
+    }
+
+    fn handle_noa_dwallet_checkpoint_from_certification(
+        &mut self,
+        checkpoint: Box<CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::DWallet>>,
+    ) {
+        // TODO: Store and broadcast NOA-certified DWallet checkpoint to peers.
+        // For now, just log it. Full peer sync is a follow-up.
+        info!(
+            sequence_number = checkpoint.checkpoint.sequence_number,
+            epoch = checkpoint.checkpoint.epoch,
+            "Received NOA-certified DWallet checkpoint from certification",
+        );
+    }
+
+    fn handle_noa_system_checkpoint_from_certification(
+        &mut self,
+        checkpoint: Box<CertifiedNOACheckpointMessage<ika_types::noa_checkpoint::System>>,
+    ) {
+        // TODO: Store and broadcast NOA-certified System checkpoint to peers.
+        // For now, just log it. Full peer sync is a follow-up.
+        info!(
+            sequence_number = checkpoint.checkpoint.sequence_number,
+            epoch = checkpoint.checkpoint.epoch,
+            "Received NOA-certified System checkpoint from certification",
+        );
     }
 
     fn handle_peer_event(&mut self, peer_event: Result<PeerEvent, broadcast::error::RecvError>) {

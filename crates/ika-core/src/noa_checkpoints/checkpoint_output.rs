@@ -120,12 +120,14 @@ impl<K: NOACheckpointKind> CertifiedNOACheckpointOutput<K> for LogNOACheckpointO
 }
 
 /// Sends certified NOA checkpoints to state sync.
+/// TODO: Implement CertifiedNOACheckpointOutput for DWallet/System kinds
+/// once the full state sync NOA checkpoint flow is wired.
 pub struct SendNOACheckpointToStateSync {
-    handle: Arc<ika_network::state_sync::Handle>,
+    _handle: Arc<ika_network::state_sync::Handle>,
 }
 
 impl SendNOACheckpointToStateSync {
     pub fn new(handle: Arc<ika_network::state_sync::Handle>) -> Self {
-        Self { handle }
+        Self { _handle: handle }
     }
 }
