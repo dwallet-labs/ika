@@ -392,12 +392,11 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
     // creates an Active NetworkOwnedAddressSign session, which counts toward the idle threshold.
     // These only consume presigns from the EdDSA pool (excluded from assertions).
     let num_sign_requests = 20u64;
-    for sequence_number in 0..num_sign_requests {
+    for idx in 0..num_sign_requests {
         for sender in &test_state.network_owned_address_sign_request_senders {
             sender
                 .send(NetworkOwnedAddressSignRequest {
-                    sequence_number,
-                    message: format!("idle-breaker-{}", sequence_number).into_bytes(),
+                    message: format!("idle-breaker-{}", idx).into_bytes(),
                     curve: DWalletCurve::Curve25519,
                     signature_algorithm: noa_sign_algorithm,
                     hash_scheme: noa_sign_hash_scheme,

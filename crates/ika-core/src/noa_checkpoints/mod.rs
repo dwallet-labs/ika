@@ -9,17 +9,17 @@ use std::sync::Arc;
 use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, NOACheckpointKind, NOACheckpointMessage,
 };
-use tokio::sync::mpsc::UnboundedReceiver;
-use tracing::{error, info, warn};
+use tokio::sync::mpsc::Receiver;
+use tracing::{error, info};
 
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
 use checkpoint_output::CertifiedNOACheckpointOutput;
 
 /// In-memory store for locally computed NOA checkpoints awaiting certification.
-/// Keyed by sequence number so the certifier can match sign outputs back to checkpoints.
+/// Keyed by message bytes so the certifier can match sign outputs back to checkpoints.
 pub struct NOACheckpointLocalStore<K: NOACheckpointKind> {
-    pending: parking_lot::Mutex<HashMap<u64, NOACheckpointMessage<K>>>,
-    certified: parking_lot::Mutex<HashMap<u64, CertifiedNOACheckpointMessage<K>>>,
+    pending: parking_lot::Mutex<HashMap<Vec<u8>, NOACheckpointMessage<K>>>,
+    certified: parking_lot::Mutex<HashMap<Vec<u8>, CertifiedNOACheckpointMessage<K>>>,
 }
 
 impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
@@ -30,38 +30,38 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         }
     }
 
-    pub fn insert_pending(&self, checkpoint: NOACheckpointMessage<K>) {
-        self.pending
-            .lock()
-            .insert(checkpoint.sequence_number, checkpoint);
+    pub fn insert_pending(&self, message_bytes: Vec<u8>, checkpoint: NOACheckpointMessage<K>) {
+        self.pending.lock().insert(message_bytes, checkpoint);
     }
 
-    pub fn take_pending(&self, sequence_number: u64) -> Option<NOACheckpointMessage<K>> {
-        self.pending.lock().remove(&sequence_number)
+    pub fn take_pending(&self, message_bytes: &[u8]) -> Option<NOACheckpointMessage<K>> {
+        self.pending.lock().remove(message_bytes)
     }
 
-    pub fn insert_certified(&self, checkpoint: CertifiedNOACheckpointMessage<K>) {
-        self.certified
-            .lock()
-            .insert(checkpoint.checkpoint.sequence_number, checkpoint);
+    pub fn insert_certified(
+        &self,
+        message_bytes: Vec<u8>,
+        checkpoint: CertifiedNOACheckpointMessage<K>,
+    ) {
+        self.certified.lock().insert(message_bytes, checkpoint);
     }
 
-    pub fn get_certified(&self, sequence_number: u64) -> Option<CertifiedNOACheckpointMessage<K>> {
-        self.certified.lock().get(&sequence_number).cloned()
+    pub fn get_certified(&self, message_bytes: &[u8]) -> Option<CertifiedNOACheckpointMessage<K>> {
+        self.certified.lock().get(message_bytes).cloned()
     }
 }
 
 /// Listens for completed NOA sign outputs and matches them back to locally computed checkpoints.
 pub struct NOACheckpointCertifier<K: NOACheckpointKind> {
     store: Arc<NOACheckpointLocalStore<K>>,
-    sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+    sign_output_receiver: Receiver<NetworkOwnedAddressSignOutput>,
     certified_output: Box<dyn CertifiedNOACheckpointOutput<K>>,
 }
 
 impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
     pub fn new(
         store: Arc<NOACheckpointLocalStore<K>>,
-        sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+        sign_output_receiver: Receiver<NetworkOwnedAddressSignOutput>,
         certified_output: Box<dyn CertifiedNOACheckpointOutput<K>>,
     ) -> Self {
         Self {
@@ -75,26 +75,21 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
         info!(kind = K::NAME, "Starting NOACheckpointCertifier");
 
         while let Some(sign_output) = self.sign_output_receiver.recv().await {
-            let sequence_number = sign_output.sequence_number;
-
-            let checkpoint = match self.store.take_pending(sequence_number) {
+            let checkpoint = match self.store.take_pending(&sign_output.message) {
                 Some(cp) => cp,
                 None => {
-                    warn!(
-                        kind = K::NAME,
-                        sequence_number,
-                        "Received NOA sign output for unknown checkpoint sequence number, skipping",
-                    );
+                    // This certifier doesn't own this message — another kind's certifier will.
                     continue;
                 }
             };
 
-            let signed_bytes = bcs::to_bytes(&checkpoint).unwrap_or_default();
+            let sequence_number = checkpoint.sequence_number;
+            let signed_bytes = sign_output.message.clone();
 
             let certified = CertifiedNOACheckpointMessage {
                 checkpoint,
                 signature: sign_output.signature,
-                signed_bytes,
+                signed_bytes: signed_bytes.clone(),
                 curve: sign_output.curve,
                 signature_algorithm: sign_output.signature_algorithm,
             };
@@ -104,7 +99,7 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
                 sequence_number, "NOA checkpoint certified via MPC signature",
             );
 
-            self.store.insert_certified(certified.clone());
+            self.store.insert_certified(signed_bytes, certified.clone());
 
             if let Err(e) = self
                 .certified_output

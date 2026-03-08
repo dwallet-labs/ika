@@ -102,6 +102,9 @@ pub struct DWalletMPCService {
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
+    /// Set of message bytes that have already been submitted for signing.
+    /// Used to deduplicate sign requests and prevent signing the same message twice.
+    submitted_noa_sign_messages: HashSet<Vec<u8>>,
 }
 
 impl DWalletMPCService {
@@ -177,6 +180,7 @@ impl DWalletMPCService {
             sent_network_key_ids: HashSet::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            submitted_noa_sign_messages: HashSet::new(),
         }
     }
 
@@ -242,6 +246,7 @@ impl DWalletMPCService {
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            submitted_noa_sign_messages: HashSet::new(),
         };
 
         (
@@ -393,10 +398,18 @@ impl DWalletMPCService {
     /// Drains the channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
     fn process_network_owned_address_sign_requests(&mut self) {
-        // Drain the receiver into the shared pending buffer.
+        // Drain the receiver into the shared pending buffer, deduplicating by message.
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
+            if self.submitted_noa_sign_messages.contains(&request.message) {
+                info!(
+                    message_len = request.message.len(),
+                    curve = ?request.curve,
+                    algorithm = ?request.signature_algorithm,
+                    "Skipping duplicate network-owned-address sign request"
+                );
+                continue;
+            }
             info!(
-                sequence_number = request.sequence_number,
                 message_len = request.message.len(),
                 curve = ?request.curve,
                 algorithm = ?request.signature_algorithm,
@@ -410,6 +423,7 @@ impl DWalletMPCService {
             return;
         }
 
+        let mut newly_submitted = Vec::new();
         self.pending_network_owned_address_sign_requests
             .retain(|request| {
                 if !self
@@ -430,14 +444,17 @@ impl DWalletMPCService {
                 let instantiated = self
                     .dwallet_mpc_manager
                     .instantiate_network_owned_address_sign_session(
-                        request.sequence_number,
                         request.message.clone(),
                         request.curve,
                         request.signature_algorithm,
                         request.hash_scheme,
                     );
+                if instantiated {
+                    newly_submitted.push(request.message.clone());
+                }
                 !instantiated // keep in buffer if instantiation failed
             });
+        self.submitted_noa_sign_messages.extend(newly_submitted);
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -1294,7 +1311,7 @@ impl DWalletMPCService {
                         session_identifier,
                         DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                             output,
-                            sequence_number: session_request.session_sequence_number,
+                            session_identifier,
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
                         },

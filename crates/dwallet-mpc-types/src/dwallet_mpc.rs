@@ -251,6 +251,18 @@ impl From<DWalletHashScheme> for group::HashScheme {
     }
 }
 
+impl From<group::HashScheme> for DWalletHashScheme {
+    fn from(scheme: group::HashScheme) -> Self {
+        match scheme {
+            group::HashScheme::Keccak256 => DWalletHashScheme::Keccak256,
+            group::HashScheme::SHA256 => DWalletHashScheme::SHA256,
+            group::HashScheme::DoubleSHA256 => DWalletHashScheme::DoubleSHA256,
+            group::HashScheme::SHA512 => DWalletHashScheme::SHA512,
+            group::HashScheme::Merlin => DWalletHashScheme::Merlin,
+        }
+    }
+}
+
 impl DWalletCurve {
     /// Returns the u32 representation of this curve.
     /// This is the inverse of [`try_into_curve`].

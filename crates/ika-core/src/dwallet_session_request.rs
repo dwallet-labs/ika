@@ -92,7 +92,6 @@ impl DWalletSessionRequest {
     /// sequence number, ensuring all validators create the same session.
     pub fn new_network_owned_address_sign(
         epoch: u64,
-        sequence_number: u64,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
@@ -104,15 +103,13 @@ impl DWalletSessionRequest {
         let mut transcript =
             Transcript::new(b"NetworkOwnedAddressSign session identifier preimage");
         transcript.append_message(b"epoch", &epoch.to_be_bytes());
-        transcript.append_message(
-            b"checkpoint sequence number",
-            &sequence_number.to_be_bytes(),
-        );
+        transcript.append_message(b"message", &message);
         transcript.append_message(b"curve", curve.to_string().as_bytes());
         transcript.append_message(
             b"signature algorithm",
             signature_algorithm.to_string().as_bytes(),
         );
+        transcript.append_message(b"hash scheme", hash_scheme.to_string().as_bytes());
         transcript.append_message(
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
@@ -142,7 +139,7 @@ impl DWalletSessionRequest {
         Self {
             session_type,
             session_identifier,
-            session_sequence_number: sequence_number,
+            session_sequence_number: 0,
             protocol_data,
             epoch,
             requires_network_key_data: true,

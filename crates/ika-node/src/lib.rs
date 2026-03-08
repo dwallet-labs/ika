@@ -141,20 +141,32 @@ mod simulator {
 use ika_core::SuiDataReceivers;
 use ika_core::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use ika_core::consensus_handler::ConsensusHandlerInitializer;
+use ika_core::dwallet_checkpoints::dwallet_checkpoint_output::{
+    CertifiedDWalletCheckpointMessageOutput,
+    DWalletCheckpointOutput as DWalletCheckpointOutputTrait,
+};
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::noa_checkpoints::checkpoint_output::LogNOACheckpointOutput;
+use ika_core::noa_checkpoints::checkpoint_output::{
+    CompositeDWalletCheckpointOutput, CompositeSystemCheckpointOutput,
+    SendNOACheckpointToStateSync, SubmitDWalletCheckpointToNOASign,
+    SubmitSystemCheckpointToNOASign,
+};
 use ika_core::noa_checkpoints::{NOACheckpointCertifier, NOACheckpointLocalStore};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
 use ika_core::sui_connector::sui_executor::StopReason;
+use ika_core::system_checkpoints::system_checkpoint_output::{
+    CertifiedSystemCheckpointOutput, SystemCheckpointOutput as SystemCheckpointOutputTrait,
+};
 use ika_core::system_checkpoints::{
     SendSystemCheckpointToStateSync, SubmitSystemCheckpointToConsensus, SystemCheckpointMetrics,
     SystemCheckpointService, SystemCheckpointStore,
 };
+use ika_network::state_sync::noa_sync::NOACheckpointSync;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
@@ -203,6 +215,14 @@ impl fmt::Debug for IkaNode {
 }
 
 const EVENTS_CHANNEL_BUFFER_SIZE: usize = 10_000;
+
+/// NOA checkpoint components returned for wiring into V1 builders.
+struct NOACheckpointComponents {
+    tasks: JoinSet<()>,
+    dwallet_noa_store: Arc<NOACheckpointLocalStore<ika_types::noa_checkpoint::DWallet>>,
+    system_noa_store: Arc<NOACheckpointLocalStore<ika_types::noa_checkpoint::System>>,
+    noa_sign_request_sender: tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
+}
 
 impl IkaNode {
     pub async fn start(
@@ -947,12 +967,13 @@ impl IkaNode {
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
-        // Start NOA checkpoint certifier tasks if enabled.
-        let noa_checkpoint_tasks = Self::start_noa_checkpoint_tasks(
+        // Start NOA checkpoint certifier tasks and get stores/sender for builder wiring.
+        let noa_components = Self::start_noa_checkpoint_tasks(
             &epoch_store,
             network_owned_address_sign_request_sender,
             network_owned_address_sign_output_receiver,
         );
+        let noa_checkpoint_tasks = noa_components.tasks;
 
         let (checkpoint_service, checkpoint_service_tasks) = Self::start_dwallet_checkpoint_service(
             config,
@@ -963,6 +984,8 @@ impl IkaNode {
             state_sync_handle.clone(),
             dwallet_checkpoint_metrics.clone(),
             previous_epoch_last_dwallet_checkpoint_sequence_number,
+            &noa_components.noa_sign_request_sender,
+            &noa_components.dwallet_noa_store,
         );
 
         let (system_checkpoint_service, system_checkpoint_service_tasks) =
@@ -975,6 +998,8 @@ impl IkaNode {
                 state_sync_handle.clone(),
                 system_checkpoint_metrics.clone(),
                 previous_epoch_last_system_checkpoint_sequence_number,
+                &noa_components.noa_sign_request_sender,
+                &noa_components.system_noa_store,
             );
 
         let (dwallet_mpc_service_exit_sender, dwallet_mpc_service_exit_receiver) =
@@ -1089,6 +1114,8 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
+        noa_sign_sender: &tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
+        dwallet_noa_store: &Arc<NOACheckpointLocalStore<ika_types::noa_checkpoint::DWallet>>,
     ) -> (Arc<DWalletCheckpointService>, JoinSet<()>) {
         let epoch_start_timestamp_ms = epoch_store.epoch_start_state().epoch_start_timestamp_ms();
         let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
@@ -1099,14 +1126,43 @@ impl IkaNode {
             epoch_start_timestamp_ms, epoch_duration_ms
         );
 
-        let checkpoint_output = Box::new(SubmitDWalletCheckpointToConsensus {
-            sender: consensus_adapter,
-            signer: state.secret.clone(),
-            authority: config.protocol_public_key(),
-            metrics: checkpoint_metrics.clone(),
-        });
+        let use_bls = epoch_store.protocol_config().bls_checkpoints();
+        let use_noa = epoch_store.protocol_config().noa_checkpoints();
 
-        let certified_checkpoint_output = SendDWalletCheckpointToStateSync::new(state_sync_handle);
+        let checkpoint_output: Box<dyn DWalletCheckpointOutputTrait> = {
+            let mut outputs: Vec<Box<dyn DWalletCheckpointOutputTrait>> = Vec::new();
+
+            if use_bls {
+                outputs.push(Box::new(SubmitDWalletCheckpointToConsensus {
+                    sender: consensus_adapter,
+                    signer: state.secret.clone(),
+                    authority: config.protocol_public_key(),
+                    metrics: checkpoint_metrics.clone(),
+                }));
+            }
+
+            if use_noa {
+                outputs.push(Box::new(SubmitDWalletCheckpointToNOASign::new(
+                    noa_sign_sender.clone(),
+                    dwallet_noa_store.clone(),
+                )));
+            }
+
+            if outputs.len() == 1 {
+                outputs.pop().unwrap()
+            } else {
+                Box::new(CompositeDWalletCheckpointOutput { outputs })
+            }
+        };
+
+        let certified_checkpoint_output: Option<Box<dyn CertifiedDWalletCheckpointMessageOutput>> =
+            if use_bls {
+                Some(Box::new(SendDWalletCheckpointToStateSync::new(
+                    state_sync_handle,
+                )))
+            } else {
+                None
+            };
         let max_tx_per_checkpoint = max_tx_per_checkpoint(epoch_store.protocol_config());
         let max_dwallet_checkpoint_size_bytes = epoch_store
             .protocol_config()
@@ -1118,7 +1174,7 @@ impl IkaNode {
             dwallet_checkpoint_store,
             epoch_store,
             checkpoint_output,
-            Box::new(certified_checkpoint_output),
+            certified_checkpoint_output,
             checkpoint_metrics,
             max_tx_per_checkpoint,
             max_dwallet_checkpoint_size_bytes,
@@ -1135,6 +1191,8 @@ impl IkaNode {
         state_sync_handle: state_sync::Handle,
         system_checkpoint_metrics: Arc<SystemCheckpointMetrics>,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
+        noa_sign_sender: &tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
+        system_noa_store: &Arc<NOACheckpointLocalStore<ika_types::noa_checkpoint::System>>,
     ) -> (Arc<SystemCheckpointService>, JoinSet<()>) {
         let epoch_start_timestamp_ms = epoch_store.epoch_start_state().epoch_start_timestamp_ms();
         let epoch_duration_ms = epoch_store.epoch_start_state().epoch_duration_ms();
@@ -1145,15 +1203,43 @@ impl IkaNode {
             epoch_start_timestamp_ms, epoch_duration_ms
         );
 
-        let system_checkpoint_output = Box::new(SubmitSystemCheckpointToConsensus {
-            sender: consensus_adapter,
-            signer: state.secret.clone(),
-            authority: config.protocol_public_key(),
-            metrics: system_checkpoint_metrics.clone(),
-        });
+        let use_bls = epoch_store.protocol_config().bls_checkpoints();
+        let use_noa = epoch_store.protocol_config().noa_checkpoints();
 
-        let certified_system_checkpoint_output =
-            SendSystemCheckpointToStateSync::new(state_sync_handle);
+        let system_checkpoint_output: Box<dyn SystemCheckpointOutputTrait> = {
+            let mut outputs: Vec<Box<dyn SystemCheckpointOutputTrait>> = Vec::new();
+
+            if use_bls {
+                outputs.push(Box::new(SubmitSystemCheckpointToConsensus {
+                    sender: consensus_adapter,
+                    signer: state.secret.clone(),
+                    authority: config.protocol_public_key(),
+                    metrics: system_checkpoint_metrics.clone(),
+                }));
+            }
+
+            if use_noa {
+                outputs.push(Box::new(SubmitSystemCheckpointToNOASign::new(
+                    noa_sign_sender.clone(),
+                    system_noa_store.clone(),
+                )));
+            }
+
+            if outputs.len() == 1 {
+                outputs.pop().unwrap()
+            } else {
+                Box::new(CompositeSystemCheckpointOutput { outputs })
+            }
+        };
+
+        let certified_system_checkpoint_output: Option<Box<dyn CertifiedSystemCheckpointOutput>> =
+            if use_bls {
+                Some(Box::new(SendSystemCheckpointToStateSync::new(
+                    state_sync_handle,
+                )))
+            } else {
+                None
+            };
         let max_tx_per_system_checkpoint = epoch_store
             .protocol_config()
             .max_messages_per_system_checkpoint();
@@ -1167,7 +1253,7 @@ impl IkaNode {
             system_checkpoint_store,
             epoch_store,
             system_checkpoint_output,
-            Box::new(certified_system_checkpoint_output),
+            certified_system_checkpoint_output,
             system_checkpoint_metrics,
             max_tx_per_system_checkpoint as usize,
             max_system_checkpoint_size_bytes,
@@ -1178,42 +1264,79 @@ impl IkaNode {
     fn start_noa_checkpoint_tasks(
         epoch_store: &Arc<AuthorityPerEpochStore>,
         noa_sign_request_sender: tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
-        noa_sign_output_receiver: tokio::sync::mpsc::UnboundedReceiver<
+        mut noa_sign_output_receiver: tokio::sync::mpsc::UnboundedReceiver<
             NetworkOwnedAddressSignOutput,
         >,
-    ) -> JoinSet<()> {
+    ) -> NOACheckpointComponents {
         use ika_types::noa_checkpoint;
 
         let mut tasks = JoinSet::new();
+        let dwallet_noa_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
+        let system_noa_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
 
         if !epoch_store.protocol_config().noa_checkpoints() {
             info!("NOA checkpoints disabled, skipping NOA checkpoint tasks");
-            // Drop the sender/receiver since they won't be used.
-            drop(noa_sign_request_sender);
             drop(noa_sign_output_receiver);
-            return tasks;
+            return NOACheckpointComponents {
+                tasks,
+                dwallet_noa_store,
+                system_noa_store,
+                noa_sign_request_sender,
+            };
         }
 
         info!("Starting NOA checkpoint certifier tasks");
 
-        // For now, we use a single certifier that handles DWallet NOA checkpoints.
-        // The SubmitCheckpointToNOASign output handler will be wired into the builder
-        // when the full builder is implemented.
-        // For now, create the local store and certifier for DWallet checkpoints.
-        let dwallet_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            dwallet_store,
-            noa_sign_output_receiver,
-            Box::new(LogNOACheckpointOutput),
+        // Create state sync components for both DWallet and System NOA checkpoints.
+        let (dwallet_sync_handle, dwallet_sync) =
+            NOACheckpointSync::<noa_checkpoint::DWallet>::new();
+        tasks.spawn(dwallet_sync.run());
+
+        let (system_sync_handle, system_sync) = NOACheckpointSync::<noa_checkpoint::System>::new();
+        tasks.spawn(system_sync.run());
+
+        // Bounded channels for broadcasting sign outputs to per-kind certifiers.
+        let (dwallet_output_tx, dwallet_output_rx) =
+            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
+        let (system_output_tx, system_output_rx) =
+            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
+
+        // Broadcast task: sends each sign output to both certifiers.
+        tasks.spawn(async move {
+            while let Some(output) = noa_sign_output_receiver.recv().await {
+                let _ = dwallet_output_tx.send(output.clone()).await;
+                let _ = system_output_tx.send(output).await;
+            }
+        });
+
+        // DWallet certifier with state sync output.
+        let dwallet_certified_output = Box::new(SendNOACheckpointToStateSync::<
+            noa_checkpoint::DWallet,
+        >::new(dwallet_sync_handle));
+        let dwallet_certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
+            dwallet_noa_store.clone(),
+            dwallet_output_rx,
+            dwallet_certified_output,
         );
-        tasks.spawn(certifier.run());
+        tasks.spawn(dwallet_certifier.run());
 
-        // Store the sender for future use by the NOA checkpoint builder.
-        // Currently the builder is not yet wired to produce checkpoints,
-        // so we keep the sender alive for when it gets connected.
-        let _noa_sign_sender = noa_sign_request_sender;
+        // System certifier with state sync output.
+        let system_certified_output = Box::new(SendNOACheckpointToStateSync::<
+            noa_checkpoint::System,
+        >::new(system_sync_handle));
+        let system_certifier = NOACheckpointCertifier::<noa_checkpoint::System>::new(
+            system_noa_store.clone(),
+            system_output_rx,
+            system_certified_output,
+        );
+        tasks.spawn(system_certifier.run());
 
-        tasks
+        NOACheckpointComponents {
+            tasks,
+            dwallet_noa_store,
+            system_noa_store,
+            noa_sign_request_sender,
+        }
     }
 
     fn construct_consensus_adapter(

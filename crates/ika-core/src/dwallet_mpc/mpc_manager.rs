@@ -18,6 +18,7 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
@@ -165,6 +166,10 @@ pub(crate) struct DWalletMPCManager {
 
     /// Channel sender for completed network-owned-address sign session outputs.
     network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+
+    /// Maps session identifiers to the original message bytes for NOA sign sessions.
+    /// Populated when instantiating a session, consumed when handling the output.
+    noa_sign_session_messages: HashMap<SessionIdentifier, Vec<u8>>,
 }
 
 impl DWalletMPCManager {
@@ -269,6 +274,7 @@ impl DWalletMPCManager {
             completed_internal_presign_sessions: HashMap::new(),
             epoch_store,
             network_owned_address_sign_output_sender,
+            noa_sign_session_messages: HashMap::new(),
         })
     }
 
@@ -775,7 +781,6 @@ impl DWalletMPCManager {
     /// Returns `true` if the session was successfully instantiated, `false` on error.
     pub(super) fn instantiate_network_owned_address_sign_session(
         &mut self,
-        sequence_number: u64,
         message: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -786,14 +791,13 @@ impl DWalletMPCManager {
             self.network_owned_address_signing_network_encryption_key_id()
         else {
             error!(
-                sequence_number,
                 should_never_happen = true,
                 "No network-owned-address signing network key available — caller should check \
                  has_network_owned_address_signing_network_key() first"
             );
             return false;
         };
-        let hash_scheme: group::HashScheme = hash_scheme.into();
+        let hash_scheme_group: group::HashScheme = hash_scheme.into();
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -802,7 +806,6 @@ impl DWalletMPCManager {
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
-                    sequence_number,
                     error = ?e,
                     should_never_happen = true,
                     "Failed to get network encryption key data for network-owned-address sign session"
@@ -819,7 +822,6 @@ impl DWalletMPCManager {
             Ok(Some(pair)) => pair,
             Ok(None) => {
                 error!(
-                    sequence_number,
                     ?signature_algorithm,
                     should_never_happen = true,
                     "No presign available in pool — caller should check \
@@ -829,7 +831,6 @@ impl DWalletMPCManager {
             }
             Err(e) => {
                 error!(
-                    sequence_number,
                     ?signature_algorithm,
                     error = ?e,
                     should_never_happen = true,
@@ -846,7 +847,6 @@ impl DWalletMPCManager {
             .unwrap_or(false)
         {
             error!(
-                sequence_number,
                 ?presign_session_id,
                 should_never_happen = true,
                 "Presign has already been used — this should not happen"
@@ -857,7 +857,6 @@ impl DWalletMPCManager {
         // Mark the presign as used to prevent double-spending
         if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
             error!(
-                sequence_number,
                 ?presign_session_id,
                 error = ?e,
                 should_never_happen = true,
@@ -872,7 +871,6 @@ impl DWalletMPCManager {
             Ok(bytes) => bytes,
             Err(e) => {
                 error!(
-                    sequence_number,
                     error = ?e,
                     should_never_happen = true,
                     "Failed to wrap presign in VersionedPresignOutput for network-owned-address sign"
@@ -883,10 +881,9 @@ impl DWalletMPCManager {
 
         let request = DWalletSessionRequest::new_network_owned_address_sign(
             self.epoch_id,
-            sequence_number,
             curve,
             signature_algorithm,
-            hash_scheme,
+            hash_scheme_group,
             dwallet_network_encryption_key_id,
             &network_dkg_output_bytes,
             message.clone(),
@@ -894,6 +891,9 @@ impl DWalletMPCManager {
         );
 
         let session_identifier = request.session_identifier;
+        self.noa_sign_session_messages
+            .insert(session_identifier, message.clone());
+
         let status = self.session_status_from_request(request, true);
 
         let session_computation_type = SessionComputationType::MPC {
@@ -901,7 +901,6 @@ impl DWalletMPCManager {
         };
 
         info!(
-            sequence_number,
             ?curve,
             ?signature_algorithm,
             ?session_identifier,
@@ -1413,12 +1412,59 @@ impl DWalletMPCManager {
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,
-                sequence_number,
+                session_identifier: noa_session_identifier,
                 curve,
                 signature_algorithm,
             } => {
+                let message = match self
+                    .noa_sign_session_messages
+                    .remove(&noa_session_identifier)
+                {
+                    Some(msg) => msg,
+                    None => {
+                        error!(
+                            ?noa_session_identifier,
+                            should_never_happen = true,
+                            "No message mapping found for completed NOA sign session"
+                        );
+                        return;
+                    }
+                };
+                let hash_scheme = match self.sessions.get(&noa_session_identifier) {
+                    Some(session) => match &session.status {
+                        SessionStatus::Active { request, .. } => match &request.protocol_data {
+                            ProtocolData::NetworkOwnedAddressSign { data, .. } => {
+                                data.hash_scheme.into()
+                            }
+                            _ => {
+                                error!(
+                                    ?noa_session_identifier,
+                                    should_never_happen = true,
+                                    "Session protocol data mismatch for NOA sign session"
+                                );
+                                return;
+                            }
+                        },
+                        _ => {
+                            error!(
+                                ?noa_session_identifier,
+                                should_never_happen = true,
+                                "NOA sign session not in Active status at output time"
+                            );
+                            return;
+                        }
+                    },
+                    None => {
+                        error!(
+                            ?noa_session_identifier,
+                            should_never_happen = true,
+                            "No session found for completed NOA sign session"
+                        );
+                        return;
+                    }
+                };
                 info!(
-                    sequence_number,
+                    ?noa_session_identifier,
                     ?curve,
                     ?signature_algorithm,
                     signature_length = output.len(),
@@ -1426,17 +1472,19 @@ impl DWalletMPCManager {
                     "Network-owned-address sign completed"
                 );
                 let sign_output = NetworkOwnedAddressSignOutput {
-                    sequence_number,
+                    session_identifier: noa_session_identifier,
+                    message,
                     signature: output,
                     curve,
                     signature_algorithm,
+                    hash_scheme,
                 };
                 if let Err(e) = self
                     .network_owned_address_sign_output_sender
                     .send(sign_output)
                 {
                     error!(
-                        sequence_number,
+                        ?noa_session_identifier,
                         error = ?e,
                         should_never_happen = true,
                         "Failed to send network-owned-address sign output to channel"
