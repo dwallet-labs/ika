@@ -152,6 +152,14 @@ struct FeatureFlags {
     // If true, enables internal presign session instantiation.
     #[serde(skip_serializing_if = "is_false")]
     internal_presign_sessions: bool,
+
+    // If true, enables V1 BLS-signed checkpoints (default on).
+    #[serde(skip_serializing_if = "is_false")]
+    bls_checkpoints: bool,
+
+    // If true, enables NOA (Network Owned Address) MPC-signed checkpoints.
+    #[serde(skip_serializing_if = "is_false")]
+    noa_checkpoints: bool,
 }
 
 #[allow(unused)]
@@ -347,6 +355,14 @@ impl ProtocolConfig {
 
     pub fn internal_presign_sessions_enabled(&self) -> bool {
         self.feature_flags.internal_presign_sessions
+    }
+
+    pub fn bls_checkpoints(&self) -> bool {
+        self.feature_flags.bls_checkpoints
+    }
+
+    pub fn noa_checkpoints(&self) -> bool {
+        self.feature_flags.noa_checkpoints
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -641,6 +657,8 @@ impl ProtocolConfig {
                     cfg.sui_protocol_version = Some(108);
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
+                    cfg.feature_flags.bls_checkpoints = true;
+                    cfg.feature_flags.noa_checkpoints = true;
                 }
                 // Use this template when making changes:
                 //

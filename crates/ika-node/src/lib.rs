@@ -100,6 +100,7 @@ pub struct ValidatorComponents {
     // Keeping the handle to the checkpoint service tasks to shut them down during reconfiguration.
     checkpoint_service_tasks: JoinSet<()>,
     system_checkpoint_service_tasks: JoinSet<()>,
+    noa_checkpoint_tasks: JoinSet<()>,
     checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
     system_checkpoint_metrics: Arc<SystemCheckpointMetrics>,
     ika_tx_validator_metrics: Arc<IkaTxValidatorMetrics>,
@@ -144,6 +145,8 @@ use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
+use ika_core::noa_checkpoints::checkpoint_output::LogNOACheckpointOutput;
+use ika_core::noa_checkpoints::{NOACheckpointCertifier, NOACheckpointLocalStore};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -937,12 +940,19 @@ impl IkaNode {
     ) -> Result<ValidatorComponents> {
         // Single channel for network-owned-address sign requests.
         let (
-            _network_owned_address_sign_request_sender,
+            network_owned_address_sign_request_sender,
             network_owned_address_sign_request_receiver,
         ) = tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
         // Output channel: MPC service sends completed signatures here.
-        let (network_owned_address_sign_output_sender, _network_owned_address_sign_output_receiver) =
+        let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+
+        // Start NOA checkpoint certifier tasks if enabled.
+        let noa_checkpoint_tasks = Self::start_noa_checkpoint_tasks(
+            &epoch_store,
+            network_owned_address_sign_request_sender,
+            network_owned_address_sign_output_receiver,
+        );
 
         let (checkpoint_service, checkpoint_service_tasks) = Self::start_dwallet_checkpoint_service(
             config,
@@ -1061,6 +1071,7 @@ impl IkaNode {
             consensus_adapter,
             checkpoint_service_tasks,
             system_checkpoint_service_tasks,
+            noa_checkpoint_tasks,
             checkpoint_metrics: dwallet_checkpoint_metrics,
             system_checkpoint_metrics,
             ika_tx_validator_metrics,
@@ -1162,6 +1173,47 @@ impl IkaNode {
             max_system_checkpoint_size_bytes,
             previous_epoch_last_system_checkpoint_sequence_number,
         )
+    }
+
+    fn start_noa_checkpoint_tasks(
+        epoch_store: &Arc<AuthorityPerEpochStore>,
+        noa_sign_request_sender: tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
+        noa_sign_output_receiver: tokio::sync::mpsc::UnboundedReceiver<
+            NetworkOwnedAddressSignOutput,
+        >,
+    ) -> JoinSet<()> {
+        use ika_types::noa_checkpoint;
+
+        let mut tasks = JoinSet::new();
+
+        if !epoch_store.protocol_config().noa_checkpoints() {
+            info!("NOA checkpoints disabled, skipping NOA checkpoint tasks");
+            // Drop the sender/receiver since they won't be used.
+            drop(noa_sign_request_sender);
+            drop(noa_sign_output_receiver);
+            return tasks;
+        }
+
+        info!("Starting NOA checkpoint certifier tasks");
+
+        // For now, we use a single certifier that handles DWallet NOA checkpoints.
+        // The SubmitCheckpointToNOASign output handler will be wired into the builder
+        // when the full builder is implemented.
+        // For now, create the local store and certifier for DWallet checkpoints.
+        let dwallet_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
+        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
+            dwallet_store,
+            noa_sign_output_receiver,
+            Box::new(LogNOACheckpointOutput),
+        );
+        tasks.spawn(certifier.run());
+
+        // Store the sender for future use by the NOA checkpoint builder.
+        // Currently the builder is not yet wired to produce checkpoints,
+        // so we keep the sender alive for when it gets connected.
+        let _noa_sign_sender = noa_sign_request_sender;
+
+        tasks
     }
 
     fn construct_consensus_adapter(
@@ -1362,6 +1414,7 @@ impl IkaNode {
                 consensus_adapter,
                 mut checkpoint_service_tasks,
                 mut system_checkpoint_service_tasks,
+                mut noa_checkpoint_tasks,
                 checkpoint_metrics,
                 system_checkpoint_metrics,
                 ika_tx_validator_metrics,
@@ -1375,6 +1428,7 @@ impl IkaNode {
                 // may wait on transactions while consensus on peers have already shut down.
                 checkpoint_service_tasks.abort_all();
                 system_checkpoint_service_tasks.abort_all();
+                noa_checkpoint_tasks.abort_all();
 
                 if let Err(err) = dwallet_mpc_service_exit.send(()) {
                     warn!(error=?err, "failed to send exit signal to dwallet mpc service");
