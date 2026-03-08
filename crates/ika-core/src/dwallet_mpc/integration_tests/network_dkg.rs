@@ -239,7 +239,7 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
                     SessionType::System,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::NetworkEncryptionKeyReconfiguration {
                     data: NetworkEncryptionKeyReconfigurationData {},
                     dwallet_network_encryption_key_id,

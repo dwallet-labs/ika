@@ -56,7 +56,7 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
         let request = DWalletSessionRequest {
             session_type: SessionType::User,
             session_identifier: SessionIdentifier::new(SessionType::User, [3u8; 32]),
-            session_sequence_number: 3,
+            session_sequence_number: Some(3),
             protocol_data: ProtocolData::ImportedKeyVerification {
                 data: crate::request_protocol_data::ImportedKeyVerificationData {
                     curve: DWalletCurve::Secp256k1,

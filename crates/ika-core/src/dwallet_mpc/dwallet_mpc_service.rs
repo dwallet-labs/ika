@@ -1289,7 +1289,9 @@ impl DWalletMPCService {
                         output,
                         curve: data.curve,
                         signature_algorithm: data.signature_algorithm,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                         dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
                     },
                     malicious_authorities,
@@ -1373,7 +1375,7 @@ impl DWalletMPCService {
                     sign_id: None,
                     signature: vec![],
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
                 vec![tx]
             }
@@ -1394,7 +1396,9 @@ impl DWalletMPCService {
                         sign_id: None,
                         signature: vec![],
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     })
                 } else {
                     let (dwallet_dkg_output, signature): (Vec<u8>, Vec<u8>) =
@@ -1412,7 +1416,9 @@ impl DWalletMPCService {
                         sign_id: Some(data.sign_id.to_vec()),
                         signature,
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     })
                 };
                 vec![tx]
@@ -1434,7 +1440,7 @@ impl DWalletMPCService {
                     dwallet_id: dwallet_id.map(|id| id.to_vec()),
                     presign_id: presign_id.to_vec(),
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
 
                 vec![tx]
@@ -1458,7 +1464,7 @@ impl DWalletMPCService {
                     is_future_sign: *is_future_sign,
                     sign_id: sign_id.to_vec(),
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
 
                 vec![tx]
@@ -1474,7 +1480,9 @@ impl DWalletMPCService {
                         encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]
@@ -1491,7 +1499,9 @@ impl DWalletMPCService {
                             partial_centralized_signed_message_id:
                                 partial_centralized_signed_message_id.to_vec(),
                             rejected,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     );
                 vec![tx]
@@ -1539,7 +1549,9 @@ impl DWalletMPCService {
                         supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
@@ -1551,7 +1563,9 @@ impl DWalletMPCService {
                             supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     )
                 };
@@ -1603,7 +1617,9 @@ impl DWalletMPCService {
                         supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
@@ -1616,7 +1632,9 @@ impl DWalletMPCService {
                             supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     )
                 };
@@ -1637,7 +1655,9 @@ impl DWalletMPCService {
                         dwallet_id: dwallet_id.to_vec(),
                         public_user_secret_key_shares: data.public_user_secret_key_shares.clone(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]
@@ -1654,7 +1674,9 @@ impl DWalletMPCService {
                         encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]

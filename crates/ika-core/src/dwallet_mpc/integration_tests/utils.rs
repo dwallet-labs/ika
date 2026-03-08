@@ -1322,7 +1322,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
                         SessionType::System,
                         session_identifier_preimage,
                     ),
-                    session_sequence_number,
+                    session_sequence_number: Some(session_sequence_number),
                     protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                         data: NetworkEncryptionKeyDkgData {},
                         dwallet_network_encryption_key_id: key_id,
@@ -1353,7 +1353,7 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::DWalletDKG {
                     data: DWalletDKGData {
                         curve: DWalletCurve::Secp256k1,
@@ -1394,7 +1394,7 @@ pub(crate) fn send_start_dwallet_dkg_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::DWalletDKG {
                     data: DWalletDKGData {
                         curve,

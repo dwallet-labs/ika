@@ -528,7 +528,7 @@ impl DWalletMPCManager {
         {
             let global_presign_request = GlobalPresignRequest {
                 session_identifier: request.session_identifier,
-                session_sequence_number: request.session_sequence_number,
+                session_sequence_number: request.session_sequence_number.unwrap_or(0),
                 presign_id,
                 curve,
                 signature_algorithm,

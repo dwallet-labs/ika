@@ -117,7 +117,7 @@ pub(crate) fn send_start_encrypt_secret_share_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
                         curve: DWalletCurve::Secp256k1,

@@ -17,7 +17,7 @@ pub struct DWalletSessionRequest {
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
-    pub session_sequence_number: u64,
+    pub session_sequence_number: Option<u64>,
     pub(crate) protocol_data: ProtocolData,
     pub epoch: u64,
     pub requires_network_key_data: bool,
@@ -77,7 +77,7 @@ impl DWalletSessionRequest {
         Self {
             session_type,
             session_identifier,
-            session_sequence_number,
+            session_sequence_number: Some(session_sequence_number),
             protocol_data,
             epoch,
             requires_network_key_data: true,
@@ -139,7 +139,7 @@ impl DWalletSessionRequest {
         Self {
             session_type,
             session_identifier,
-            session_sequence_number: 0,
+            session_sequence_number: None,
             protocol_data,
             epoch,
             requires_network_key_data: true,

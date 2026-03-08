@@ -44,7 +44,7 @@ async fn test_some_malicious_validators_flows_succeed() {
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
-                session_sequence_number: 1,
+                session_sequence_number: Some(1),
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
@@ -186,7 +186,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
             vec![DWalletSessionRequest {
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
-                session_sequence_number: 1,
+                session_sequence_number: Some(1),
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,

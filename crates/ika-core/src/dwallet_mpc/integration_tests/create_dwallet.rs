@@ -432,7 +432,7 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::ImportedKeyVerification {
                     data: ImportedKeyVerificationData {
                         curve: DWalletCurve::Secp256k1,
@@ -473,7 +473,7 @@ pub(crate) fn send_make_dwallet_public_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::MakeDWalletUserSecretKeySharesPublic {
                     data: MakeDWalletUserSecretKeySharesPublicData {
                         curve: DWalletCurve::Secp256k1,

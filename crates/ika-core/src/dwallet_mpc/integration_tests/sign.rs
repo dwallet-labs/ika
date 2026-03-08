@@ -300,7 +300,7 @@ pub(crate) fn send_start_sign_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::Sign {
                     data: SignData {
                         curve,
@@ -350,7 +350,7 @@ pub(crate) fn send_start_future_sign_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::Sign {
                     data: SignData {
                         curve,
@@ -400,7 +400,7 @@ pub(crate) fn send_start_partial_signature_verification_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::PartialSignatureVerification {
                     data: PartialSignatureVerificationData {
                         curve,
@@ -441,7 +441,7 @@ pub(crate) fn send_start_presign_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::Presign {
                     data: PresignData {
                         curve: DWalletCurve::Secp256k1,
@@ -480,7 +480,7 @@ pub(crate) fn send_start_direct_presign_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::Presign {
                     data: PresignData {
                         curve: DWalletCurve::Secp256k1,
@@ -520,7 +520,7 @@ pub(crate) fn send_global_presign_request_event(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::Presign {
                     data: PresignData {
                         curve,

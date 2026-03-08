@@ -1063,7 +1063,7 @@ impl DWalletMPCManager {
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
-                        request.session_sequence_number
+                        request.session_sequence_number.unwrap_or(0)
                             <= self.last_session_to_complete_in_current_epoch
                     }
                     SessionType::System => true,

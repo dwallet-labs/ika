@@ -294,7 +294,7 @@ fn send_global_presign_request_events_batch(
                         SessionType::User,
                         *session_identifier_preimage,
                     ),
-                    session_sequence_number: *session_sequence_number,
+                    session_sequence_number: Some(*session_sequence_number),
                     protocol_data: ProtocolData::Presign {
                         data: PresignData {
                             curve,
@@ -340,7 +340,7 @@ fn send_global_presign_request_to_some(
                         SessionType::User,
                         session_identifier_preimage,
                     ),
-                    session_sequence_number,
+                    session_sequence_number: Some(session_sequence_number),
                     protocol_data: ProtocolData::Presign {
                         data: PresignData {
                             curve: DWalletCurve::Secp256k1,
