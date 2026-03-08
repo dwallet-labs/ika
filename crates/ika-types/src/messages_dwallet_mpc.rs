@@ -1,7 +1,7 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
 use anyhow::anyhow;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -91,6 +91,7 @@ pub enum DWalletInternalMPCOutputKind {
         session_identifier: SessionIdentifier,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: DWalletHashScheme,
     },
 }
 

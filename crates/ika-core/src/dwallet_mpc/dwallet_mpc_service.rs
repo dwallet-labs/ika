@@ -1316,6 +1316,7 @@ impl DWalletMPCService {
                             session_identifier,
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
+                            hash_scheme: data.hash_scheme.into(),
                         },
                         malicious_authorities,
                     ))

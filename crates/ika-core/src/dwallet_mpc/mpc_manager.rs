@@ -18,7 +18,6 @@ use crate::dwallet_mpc::{
     get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
-use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
@@ -1415,6 +1414,7 @@ impl DWalletMPCManager {
                 session_identifier: noa_session_identifier,
                 curve,
                 signature_algorithm,
+                hash_scheme,
             } => {
                 let message = match self
                     .noa_sign_session_messages
@@ -1426,39 +1426,6 @@ impl DWalletMPCManager {
                             ?noa_session_identifier,
                             should_never_happen = true,
                             "No message mapping found for completed NOA sign session"
-                        );
-                        return;
-                    }
-                };
-                let hash_scheme = match self.sessions.get(&noa_session_identifier) {
-                    Some(session) => match &session.status {
-                        SessionStatus::Active { request, .. } => match &request.protocol_data {
-                            ProtocolData::NetworkOwnedAddressSign { data, .. } => {
-                                data.hash_scheme.into()
-                            }
-                            _ => {
-                                error!(
-                                    ?noa_session_identifier,
-                                    should_never_happen = true,
-                                    "Session protocol data mismatch for NOA sign session"
-                                );
-                                return;
-                            }
-                        },
-                        _ => {
-                            error!(
-                                ?noa_session_identifier,
-                                should_never_happen = true,
-                                "NOA sign session not in Active status at output time"
-                            );
-                            return;
-                        }
-                    },
-                    None => {
-                        error!(
-                            ?noa_session_identifier,
-                            should_never_happen = true,
-                            "No session found for completed NOA sign session"
                         );
                         return;
                     }
