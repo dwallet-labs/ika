@@ -1,0 +1,119 @@
+---
+id: skills
+title: AI Skills
+description: Install Ika skills for Claude Code and other AI coding agents to get expert-level assistance with dWallet development, Move integration, and node operations.
+sidebar_position: 1
+sidebar_label: AI Skills
+---
+
+import { Info, Note } from '@/components/InfoBox';
+
+# AI Skills
+
+Ika provides a set of [agent skills](https://github.com/vercel-labs/skills) — reusable instruction sets that give AI coding agents expert knowledge about the Ika network. When installed, your AI agent automatically loads the right context when you work with Ika.
+
+Skills work with 40+ AI coding agents including **Claude Code**, **Cursor**, **Cline**, **GitHub Copilot**, **Windsurf**, and more.
+
+## Available Skills
+
+| Skill | Description |
+|---|---|
+| **ika-sdk** | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle |
+| **ika-move** | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns |
+| **ika-operator** | Operating Ika network nodes — validator setup, fullnode/notifier configuration, monitoring, recovery |
+
+## Install
+
+Install skills using the [skills CLI](https://github.com/vercel-labs/skills):
+
+### All Skills
+
+```bash
+npx skills add dwallet-labs/ika
+```
+
+### Specific Skill
+
+```bash
+npx skills add dwallet-labs/ika -s ika-sdk
+npx skills add dwallet-labs/ika -s ika-move
+npx skills add dwallet-labs/ika -s ika-operator
+```
+
+### Global Install
+
+By default, skills are installed into your current project. To install globally (available across all projects):
+
+```bash
+npx skills add dwallet-labs/ika -g
+```
+
+<Info title="Agent Auto-Detection">
+The skills CLI automatically detects which AI agents you have installed and prompts you to choose where to install. You can also target a specific agent with the `-a` flag, e.g. `-a claude`.
+</Info>
+
+## What Each Skill Provides
+
+### ika-sdk
+
+Everything needed to build with the Ika TypeScript SDK:
+
+- **IkaClient** — Setup, querying dWallets/presigns/signs, polling, caching, encryption keys
+- **IkaTransaction** — DKG, presign, sign, future sign, key import, transfer, session management
+- **Cryptography** — prepareDKG, signing functions, key derivation, signature verification
+- **UserShareEncryptionKeys** — Key creation, serialization, decryption, proof of ownership
+- **Type system** — Curve/SignatureAlgorithm/Hash enums, validation, state narrowing generics
+- **End-to-end flows** — Shared dWallet, zero-trust, imported key, transfer, future sign, KeySpring
+
+### ika-move
+
+Everything needed to integrate Ika dWallet into Sui Move contracts:
+
+- **Contract patterns** — Treasury with ACL, DAO governance, presign pool management
+- **All protocols** — DKG, presign, message approval, signing, future signing, key import
+- **Coordinator API** — Complete function signatures with parameters and return types
+- **TypeScript integration** — Calling Move contracts from the SDK
+- **Working examples** — Multisig Bitcoin Taproot treasury with full code
+
+### ika-operator
+
+Everything needed to deploy and operate Ika network nodes:
+
+- **Validator setup** — Step-by-step mainnet validator registration and launch
+- **Node types** — Validator, fullnode, and notifier configuration
+- **Complete config reference** — All NodeConfig YAML fields with defaults
+- **Monitoring** — Prometheus metrics, admin API, health checks
+- **Operations** — Recovery procedures, checkpoint pinning, key management
+
+## How Skills Work
+
+Each skill consists of a `SKILL.md` file with optional `references/` for detailed documentation. When your AI agent encounters a relevant task (e.g., writing code that imports `@ika.xyz/sdk`), the skill is automatically loaded into context.
+
+```
+skills/ika-sdk/
+├── SKILL.md              # Quick reference (loaded on trigger)
+└── references/           # Detailed docs (loaded on demand)
+    ├── api-reference.md
+    ├── flows.md
+    └── types-and-validation.md
+```
+
+<Note title="Open Source">
+Skills are maintained in the [Ika repository](https://github.com/dwallet-labs/ika/tree/main/skills) and follow the [Agent Skills specification](https://github.com/vercel-labs/skills). Contributions welcome!
+</Note>
+
+## Managing Skills
+
+```bash
+# List installed skills
+npx skills list
+
+# Check for updates
+npx skills check
+
+# Update all skills
+npx skills update
+
+# Remove a skill
+npx skills remove ika-sdk
+```

@@ -1,5 +1,5 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
-import { Blocks, BookOpen, Code2, FileCode, Server } from 'lucide-react';
+import { Blocks, BookOpen, Bot, Code2, FileCode, Server } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { source } from '@/lib/source';
@@ -37,6 +37,12 @@ const tabConfig: Record<string, TabConfig> = {
 		description: 'Run and operate Ika nodes',
 		color: 'text-purple-500 dark:text-purple-400',
 		bgColor: 'bg-purple-500/10 dark:bg-purple-500/20',
+	},
+	skills: {
+		icon: <Bot className="size-4" />,
+		description: 'AI skills for coding agents',
+		color: 'text-amber-500 dark:text-amber-400',
+		bgColor: 'bg-amber-500/10 dark:bg-amber-500/20',
 	},
 	'code-examples': {
 		icon: <FileCode className="size-4" />,
