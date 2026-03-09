@@ -64,13 +64,15 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     fn hash_scheme() -> DWalletHashScheme;
 
     /// Convert checkpoint data + chain context into transaction bytes for NOA signing.
+    /// Returns one `Vec<u8>` per transaction — a single checkpoint may need multiple
+    /// transactions when the message set exceeds Sui's 128 KB tx size limit.
     /// Crypto params (curve, sig algo, hash) come from Self::curve() etc.
     /// `noa_public_key` is runtime data from the current network key.
-    fn to_signable_bytes(
+    fn signable_bytes(
         checkpoint: &NOACheckpointMessage<Self>,
         context: &<Self::Destination as ChainDestination>::Context,
         noa_public_key: &[u8],
-    ) -> Vec<u8>;
+    ) -> Vec<Vec<u8>>;
 }
 
 // === Marker types implementing NOACheckpointKind ===
@@ -100,11 +102,11 @@ impl NOACheckpointKind for DWallet {
         DWalletHashScheme::SHA512
     }
 
-    fn to_signable_bytes(
+    fn signable_bytes(
         _checkpoint: &NOACheckpointMessage<Self>,
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
-    ) -> Vec<u8> {
+    ) -> Vec<Vec<u8>> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
         todo!("Sui TransactionData construction for DWallet checkpoints")
     }
@@ -127,11 +129,11 @@ impl NOACheckpointKind for System {
         DWalletHashScheme::SHA512
     }
 
-    fn to_signable_bytes(
+    fn signable_bytes(
         _checkpoint: &NOACheckpointMessage<Self>,
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
-    ) -> Vec<u8> {
+    ) -> Vec<Vec<u8>> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
         todo!("Sui TransactionData construction for System checkpoints")
     }
@@ -149,13 +151,15 @@ pub struct NOACheckpointMessage<K: NOACheckpointKind> {
 // === Certified NOA Checkpoint (NOA-signed) ===
 
 /// A checkpoint certified by NOA MPC signature (not BLS).
+/// A single checkpoint may span multiple Sui transactions, so we store
+/// one signature and one signed-bytes entry per transaction, in order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CertifiedNOACheckpointMessage<K: NOACheckpointKind> {
     pub checkpoint: NOACheckpointMessage<K>,
-    /// The raw NOA signature bytes.
-    pub signature: Vec<u8>,
-    /// The bytes that were signed (the output of to_signable_bytes).
-    pub signed_bytes: Vec<u8>,
+    /// One signature per transaction (ordered, matching `signed_bytes`).
+    pub signatures: Vec<Vec<u8>>,
+    /// The transaction bytes that were signed (ordered, output of `signable_bytes`).
+    pub signed_bytes: Vec<Vec<u8>>,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
 }

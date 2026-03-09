@@ -15,39 +15,110 @@ use tracing::{error, info};
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
 use checkpoint_output::CertifiedNOACheckpointOutput;
 
+/// Tracks a checkpoint whose transactions are being signed individually.
+struct PendingCheckpoint<K: NOACheckpointKind> {
+    checkpoint: NOACheckpointMessage<K>,
+    /// All tx byte vectors from `signable_bytes()`, in order.
+    expected_tx_bytes: Vec<Vec<u8>>,
+    /// Collected signatures: tx_bytes → signature. Populated as sign outputs arrive.
+    collected: HashMap<Vec<u8>, Vec<u8>>,
+}
+
 /// In-memory store for locally computed NOA checkpoints awaiting certification.
-/// Keyed by message bytes so the certifier can match sign outputs back to checkpoints.
+/// A single checkpoint may produce multiple sign requests (one per transaction).
+/// The store tracks individual tx bytes → sequence number mappings so that
+/// incoming sign outputs can be routed back to the correct checkpoint.
 pub struct NOACheckpointLocalStore<K: NOACheckpointKind> {
-    pending: parking_lot::Mutex<HashMap<Vec<u8>, NOACheckpointMessage<K>>>,
-    certified: parking_lot::Mutex<HashMap<Vec<u8>, CertifiedNOACheckpointMessage<K>>>,
+    /// Maps individual tx bytes → checkpoint sequence number.
+    tx_to_seq: parking_lot::Mutex<HashMap<Vec<u8>, u64>>,
+    /// Maps sequence number → pending multi-tx checkpoint state.
+    pending: parking_lot::Mutex<HashMap<u64, PendingCheckpoint<K>>>,
+    certified: parking_lot::Mutex<HashMap<u64, CertifiedNOACheckpointMessage<K>>>,
 }
 
 impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     pub fn new() -> Self {
         Self {
+            tx_to_seq: parking_lot::Mutex::new(HashMap::new()),
             pending: parking_lot::Mutex::new(HashMap::new()),
             certified: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn insert_pending(&self, message_bytes: Vec<u8>, checkpoint: NOACheckpointMessage<K>) {
-        self.pending.lock().insert(message_bytes, checkpoint);
-    }
-
-    pub fn take_pending(&self, message_bytes: &[u8]) -> Option<NOACheckpointMessage<K>> {
-        self.pending.lock().remove(message_bytes)
-    }
-
-    pub fn insert_certified(
+    /// Register a pending checkpoint with all its transaction byte vectors.
+    pub fn insert_pending(
         &self,
-        message_bytes: Vec<u8>,
-        checkpoint: CertifiedNOACheckpointMessage<K>,
+        seq: u64,
+        checkpoint: NOACheckpointMessage<K>,
+        tx_bytes: Vec<Vec<u8>>,
     ) {
-        self.certified.lock().insert(message_bytes, checkpoint);
+        let mut tx_to_seq = self.tx_to_seq.lock();
+        for bytes in &tx_bytes {
+            tx_to_seq.insert(bytes.clone(), seq);
+        }
+
+        self.pending.lock().insert(
+            seq,
+            PendingCheckpoint {
+                checkpoint,
+                expected_tx_bytes: tx_bytes,
+                collected: HashMap::new(),
+            },
+        );
     }
 
-    pub fn get_certified(&self, message_bytes: &[u8]) -> Option<CertifiedNOACheckpointMessage<K>> {
-        self.certified.lock().get(message_bytes).cloned()
+    /// Record a signature for a single transaction.
+    /// Returns `Some(certified)` when all transactions for that checkpoint are signed.
+    pub fn add_signature(
+        &self,
+        tx_bytes: &[u8],
+        signature: Vec<u8>,
+        curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
+        signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
+    ) -> Option<CertifiedNOACheckpointMessage<K>> {
+        let seq = {
+            let tx_to_seq = self.tx_to_seq.lock();
+            *tx_to_seq.get(tx_bytes)?
+        };
+
+        let mut pending = self.pending.lock();
+        let entry = pending.get_mut(&seq)?;
+        entry.collected.insert(tx_bytes.to_vec(), signature);
+
+        if entry.collected.len() < entry.expected_tx_bytes.len() {
+            return None;
+        }
+
+        // All signatures collected — build ordered vectors and remove pending state.
+        let entry = pending.remove(&seq).unwrap();
+        let signatures = entry
+            .expected_tx_bytes
+            .iter()
+            .map(|tx| entry.collected[tx].clone())
+            .collect();
+        let signed_bytes = entry.expected_tx_bytes;
+
+        // Clean up tx_to_seq entries.
+        let mut tx_to_seq = self.tx_to_seq.lock();
+        for bytes in &signed_bytes {
+            tx_to_seq.remove(bytes);
+        }
+
+        Some(CertifiedNOACheckpointMessage {
+            checkpoint: entry.checkpoint,
+            signatures,
+            signed_bytes,
+            curve,
+            signature_algorithm,
+        })
+    }
+
+    pub fn insert_certified(&self, seq: u64, checkpoint: CertifiedNOACheckpointMessage<K>) {
+        self.certified.lock().insert(seq, checkpoint);
+    }
+
+    pub fn get_certified(&self, seq: u64) -> Option<CertifiedNOACheckpointMessage<K>> {
+        self.certified.lock().get(&seq).cloned()
     }
 }
 
@@ -75,31 +146,26 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
         info!(kind = K::NAME, "Starting NOACheckpointCertifier");
 
         while let Some(sign_output) = self.sign_output_receiver.recv().await {
-            let checkpoint = match self.store.take_pending(&sign_output.message) {
-                Some(cp) => cp,
-                None => {
-                    // This certifier doesn't own this message — another kind's certifier will.
-                    continue;
-                }
+            let certified = match self.store.add_signature(
+                &sign_output.message,
+                sign_output.signature,
+                sign_output.curve,
+                sign_output.signature_algorithm,
+            ) {
+                Some(c) => c,
+                None => continue,
             };
 
-            let sequence_number = checkpoint.sequence_number;
-            let signed_bytes = sign_output.message.clone();
-
-            let certified = CertifiedNOACheckpointMessage {
-                checkpoint,
-                signature: sign_output.signature,
-                signed_bytes: signed_bytes.clone(),
-                curve: sign_output.curve,
-                signature_algorithm: sign_output.signature_algorithm,
-            };
+            let seq = certified.checkpoint.sequence_number;
 
             info!(
                 kind = K::NAME,
-                sequence_number, "NOA checkpoint certified via MPC signature",
+                sequence_number = seq,
+                tx_count = certified.signatures.len(),
+                "NOA checkpoint certified via MPC signature",
             );
 
-            self.store.insert_certified(signed_bytes, certified.clone());
+            self.store.insert_certified(seq, certified.clone());
 
             if let Err(e) = self
                 .certified_output
@@ -107,7 +173,7 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
             {
                 error!(
                     kind = K::NAME,
-                    sequence_number,
+                    sequence_number = seq,
                     error = %e,
                     "Failed to process certified NOA checkpoint",
                 );

@@ -54,30 +54,33 @@ impl<K: NOACheckpointKind> NOACheckpointOutput<K> for SubmitCheckpointToNOASign<
         chain_context: &<K::Destination as ChainDestination>::Context,
         noa_public_key: &[u8],
     ) -> IkaResult {
-        let signable_bytes = K::to_signable_bytes(checkpoint, chain_context, noa_public_key);
-
-        let request = NetworkOwnedAddressSignRequest {
-            message: signable_bytes,
-            curve: K::curve(),
-            signature_algorithm: K::signature_algorithm(),
-            hash_scheme: K::hash_scheme(),
-        };
+        let all_tx_bytes = K::signable_bytes(checkpoint, chain_context, noa_public_key);
 
         info!(
             kind = K::NAME,
             sequence_number = checkpoint.sequence_number,
             epoch = checkpoint.epoch,
             messages_count = checkpoint.messages.len(),
+            tx_count = all_tx_bytes.len(),
             "Submitting NOA checkpoint to MPC signing pipeline",
         );
 
-        if let Err(e) = self.sender.send(request) {
-            error!(
-                kind = K::NAME,
-                sequence_number = checkpoint.sequence_number,
-                error = %e,
-                "Failed to send NOA checkpoint sign request",
-            );
+        for tx_bytes in &all_tx_bytes {
+            let request = NetworkOwnedAddressSignRequest {
+                message: tx_bytes.clone(),
+                curve: K::curve(),
+                signature_algorithm: K::signature_algorithm(),
+                hash_scheme: K::hash_scheme(),
+            };
+
+            if let Err(e) = self.sender.send(request) {
+                error!(
+                    kind = K::NAME,
+                    sequence_number = checkpoint.sequence_number,
+                    error = %e,
+                    "Failed to send NOA checkpoint sign request",
+                );
+            }
         }
 
         Ok(())
@@ -122,7 +125,7 @@ impl<K: NOACheckpointKind> CertifiedNOACheckpointOutput<K> for LogNOACheckpointO
             kind = K::NAME,
             epoch = checkpoint.checkpoint.epoch,
             sequence_number = checkpoint.checkpoint.sequence_number,
-            signature_len = checkpoint.signature.len(),
+            signatures_count = checkpoint.signatures.len(),
             "Certified NOA checkpoint created",
         );
         Ok(())
@@ -188,16 +191,13 @@ impl DWalletCheckpointOutput for SubmitDWalletCheckpointToNOASign {
 
         // Use BCS serialization as placeholder until real Sui tx construction is implemented.
         let signable_bytes = bcs::to_bytes(&noa_checkpoint_msg).unwrap_or_default();
+        let all_tx_bytes = vec![signable_bytes];
 
-        self.noa_store
-            .insert_pending(signable_bytes.clone(), noa_checkpoint_msg);
-
-        let request = NetworkOwnedAddressSignRequest {
-            message: signable_bytes,
-            curve: noa_checkpoint::DWallet::curve(),
-            signature_algorithm: noa_checkpoint::DWallet::signature_algorithm(),
-            hash_scheme: noa_checkpoint::DWallet::hash_scheme(),
-        };
+        self.noa_store.insert_pending(
+            noa_checkpoint_msg.sequence_number,
+            noa_checkpoint_msg,
+            all_tx_bytes.clone(),
+        );
 
         info!(
             sequence_number = checkpoint_message.sequence_number,
@@ -206,8 +206,17 @@ impl DWalletCheckpointOutput for SubmitDWalletCheckpointToNOASign {
             "Submitting DWallet NOA checkpoint to MPC signing pipeline",
         );
 
-        if let Err(e) = self.noa_sign_sender.send(request) {
-            error!(error = %e, "Failed to send DWallet NOA checkpoint sign request");
+        for tx_bytes in all_tx_bytes {
+            let request = NetworkOwnedAddressSignRequest {
+                message: tx_bytes,
+                curve: noa_checkpoint::DWallet::curve(),
+                signature_algorithm: noa_checkpoint::DWallet::signature_algorithm(),
+                hash_scheme: noa_checkpoint::DWallet::hash_scheme(),
+            };
+
+            if let Err(e) = self.noa_sign_sender.send(request) {
+                error!(error = %e, "Failed to send DWallet NOA checkpoint sign request");
+            }
         }
 
         Ok(())
@@ -248,16 +257,13 @@ impl SystemCheckpointOutput for SubmitSystemCheckpointToNOASign {
 
         // Use BCS serialization as placeholder until real Sui tx construction is implemented.
         let signable_bytes = bcs::to_bytes(&noa_checkpoint_msg).unwrap_or_default();
+        let all_tx_bytes = vec![signable_bytes];
 
-        self.noa_store
-            .insert_pending(signable_bytes.clone(), noa_checkpoint_msg);
-
-        let request = NetworkOwnedAddressSignRequest {
-            message: signable_bytes,
-            curve: noa_checkpoint::System::curve(),
-            signature_algorithm: noa_checkpoint::System::signature_algorithm(),
-            hash_scheme: noa_checkpoint::System::hash_scheme(),
-        };
+        self.noa_store.insert_pending(
+            noa_checkpoint_msg.sequence_number,
+            noa_checkpoint_msg,
+            all_tx_bytes.clone(),
+        );
 
         info!(
             sequence_number = checkpoint_message.sequence_number,
@@ -266,8 +272,17 @@ impl SystemCheckpointOutput for SubmitSystemCheckpointToNOASign {
             "Submitting System NOA checkpoint to MPC signing pipeline",
         );
 
-        if let Err(e) = self.noa_sign_sender.send(request) {
-            error!(error = %e, "Failed to send System NOA checkpoint sign request");
+        for tx_bytes in all_tx_bytes {
+            let request = NetworkOwnedAddressSignRequest {
+                message: tx_bytes,
+                curve: noa_checkpoint::System::curve(),
+                signature_algorithm: noa_checkpoint::System::signature_algorithm(),
+                hash_scheme: noa_checkpoint::System::hash_scheme(),
+            };
+
+            if let Err(e) = self.noa_sign_sender.send(request) {
+                error!(error = %e, "Failed to send System NOA checkpoint sign request");
+            }
         }
 
         Ok(())
