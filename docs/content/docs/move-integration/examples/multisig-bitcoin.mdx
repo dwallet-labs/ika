@@ -448,7 +448,7 @@ tx.moveCall({
 });
 
 // 3. Execute
-await suiClient.signAndExecuteTransaction({ transaction: tx, signer: keypair });
+await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
 
 ## Security Considerations
