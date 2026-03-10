@@ -658,7 +658,7 @@ impl ProtocolConfig {
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
-                    cfg.feature_flags.noa_checkpoints = true;
+                    cfg.feature_flags.noa_checkpoints = false;
                 }
                 // Use this template when making changes:
                 //

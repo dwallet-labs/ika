@@ -12,7 +12,7 @@ feature_flags:
   enforce_checkpoint_timestamp_monotonicity: true
   internal_presign_sessions: true
   bls_checkpoints: true
-  noa_checkpoints: true
+  noa_checkpoints: false
 sui_protocol_version: 108
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
