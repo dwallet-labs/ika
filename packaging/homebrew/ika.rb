@@ -7,41 +7,31 @@ class Ika < Formula
   on_macos do
     on_arm do
       url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-macos-arm64.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_MACOS_ARM64"
+      sha256 "PLACEHOLDER_SHA256_MACOS_ARM64" # macos-arm64
     end
 
     on_intel do
       url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-macos-x64.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_MACOS_X64"
+      sha256 "PLACEHOLDER_SHA256_MACOS_X64" # macos-x64
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-linux-arm64.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_LINUX_ARM64"
+      sha256 "PLACEHOLDER_SHA256_LINUX_ARM64" # linux-arm64
     end
 
     on_intel do
       url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-linux-x64.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_LINUX_X64"
+      sha256 "PLACEHOLDER_SHA256_LINUX_X64" # linux-x64
     end
   end
 
+  depends_on "sui"
+
   def install
     bin.install "ika"
-  end
-
-  def caveats
-    <<~EOS
-      Ika CLI requires the Sui CLI for key management and on-chain operations.
-
-      Install Sui CLI:
-        cargo install --locked --git https://github.com/MystenLabs/sui.git sui
-
-      Or via Homebrew (if a tap is available):
-        brew install sui
-    EOS
   end
 
   test do

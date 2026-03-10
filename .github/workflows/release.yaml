@@ -180,3 +180,29 @@ jobs:
             --generate-notes \
             $PRERELEASE_FLAG \
             release-artifacts/*
+
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          FORMULA="packaging/homebrew/ika.rb"
+
+          # Extract sha256 from the .sha256 files
+          SHA_MACOS_ARM64=$(awk '{print $1}' release-artifacts/ika-v${VERSION}-macos-arm64.tar.gz.sha256)
+          SHA_MACOS_X64=$(awk '{print $1}' release-artifacts/ika-v${VERSION}-macos-x64.tar.gz.sha256)
+          SHA_LINUX_ARM64=$(awk '{print $1}' release-artifacts/ika-v${VERSION}-linux-arm64.tar.gz.sha256)
+          SHA_LINUX_X64=$(awk '{print $1}' release-artifacts/ika-v${VERSION}-linux-x64.tar.gz.sha256)
+
+          # Update formula in-place
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # macos-arm64/sha256 \"${SHA_MACOS_ARM64}\" # macos-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # macos-x64/sha256 \"${SHA_MACOS_X64}\" # macos-x64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-arm64/sha256 \"${SHA_LINUX_ARM64}\" # linux-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-x64/sha256 \"${SHA_LINUX_X64}\" # linux-x64/" "$FORMULA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FORMULA"
+          git commit -m "chore: update Homebrew formula to v${VERSION}"
+          git push origin HEAD:${{ github.ref_name }}
