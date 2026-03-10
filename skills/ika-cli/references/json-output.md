@@ -16,11 +16,24 @@ All commands support `--json` for structured JSON output. This document describe
 
 ## `ika dwallet sign --json` / `ika dwallet future-sign --json`
 
+Without `--wait`:
 ```json
 {
   "type": "sign",
   "digest": "base58...",
-  "status": "Success"
+  "status": "Success",
+  "sign_session_id": "0x..."
+}
+```
+
+With `--wait` (polls until sign session completes):
+```json
+{
+  "type": "sign",
+  "digest": "base58...",
+  "status": "Success",
+  "sign_session_id": "0x...",
+  "signature": "hex..."
 }
 ```
 

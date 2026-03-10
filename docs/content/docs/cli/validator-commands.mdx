@@ -1,0 +1,127 @@
+---
+id: validator-commands
+title: Validator Commands
+description: CLI commands for validator registration, staking, committee management, and metadata operations.
+sidebar_position: 3
+sidebar_label: Validator Commands
+---
+
+# Validator Commands
+
+All validator operations are under the `ika validator` subcommand. Use `ika validator --help` for the full list.
+
+```bash
+ika validator [--client.config <PATH>] [--json] [-y] <SUBCOMMAND>
+```
+
+## Registration
+
+### `make-validator-info`
+
+Generate a validator info file with the required metadata.
+
+```bash
+ika validator make-validator-info \
+  <NAME> <DESCRIPTION> <IMAGE_URL> <PROJECT_URL> <HOST> <GAS_PRICE> <ADDRESS>
+```
+
+### `become-candidate`
+
+Register as a validator candidate using a validator info file.
+
+```bash
+ika validator become-candidate <VALIDATOR_INFO_PATH>
+```
+
+### `join-committee`
+
+Join the active validator committee.
+
+```bash
+ika validator join-committee --validator-cap-id <CAP_ID>
+```
+
+### `leave-committee`
+
+Leave the active validator committee.
+
+```bash
+ika validator leave-committee
+```
+
+## Staking
+
+### `stake-validator`
+
+Stake IKA tokens with a validator.
+
+```bash
+ika validator stake-validator --amount <AMOUNT>
+```
+
+### `unstake-validator`
+
+Unstake IKA tokens from a validator.
+
+```bash
+ika validator unstake-validator --staked-ika-id <ID>
+```
+
+## Configuration
+
+### `set-commission`
+
+Set the validator commission rate.
+
+```bash
+ika validator set-commission --commission-rate <RATE>
+```
+
+### `set-pricing-vote`
+
+Set the validator's pricing vote for network operations.
+
+```bash
+ika validator set-pricing-vote
+```
+
+### `set-gas-price`
+
+Update the validator's gas price.
+
+```bash
+ika validator set-gas-price --gas-price <PRICE>
+```
+
+## Metadata
+
+### `get-validator-metadata`
+
+Query validator information.
+
+```bash
+ika validator get-validator-metadata [--json]
+```
+
+### `update-validator-name` / `description` / `image-url` / `project-url`
+
+Update validator metadata fields.
+
+```bash
+ika validator update-validator-name --name <NAME>
+ika validator update-validator-description --description <DESC>
+ika validator update-validator-image-url --image-url <URL>
+ika validator update-validator-project-url --project-url <URL>
+```
+
+## Other Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `display-metadata` | Display validator metadata |
+| `report-validator` | Report a misbehaving validator |
+| `undo-report-validator` | Undo a previous validator report |
+| `set-candidate-commission` | Set commission rate for a candidate |
+| `withdraw-stake` | Withdraw staked tokens |
+
+Run `ika validator --help` for the full list of 30+ subcommands.

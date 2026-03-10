@@ -1,0 +1,125 @@
+name: CLI Integration Tests CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Space-separated suite names to run (empty = all). Options: creation queries presign combinations imported public-share'
+        required: false
+        type: string
+        default: ''
+      poll_timeout:
+        description: 'Max seconds to wait for async operations (default: 300)'
+        required: false
+        type: string
+        default: '300'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  rust_stable: 1.94
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+
+jobs:
+  cli-integration-tests:
+    name: Run CLI Integration Tests
+    runs-on: linux-32-runner
+    timeout-minutes: 120
+    steps:
+      - name: Clean up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup SSH for private dependencies
+        if: env.GH_DEPLOY_KEY
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Rewrite GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build ika binary (release)
+        run: cargo build --release -p ika
+
+      - name: Start local Ika network
+        run: |
+          nohup ./target/release/ika start --force-reinitiation > /tmp/ika-network.log 2>&1 &
+          echo "IKA_PID=$!" >> $GITHUB_ENV
+          echo "Ika network starting (PID: $!)"
+
+      - name: Wait for network readiness
+        run: |
+          echo "Waiting for Sui RPC to become available..."
+          for i in $(seq 1 120); do
+            if curl -sf http://127.0.0.1:9000 -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"sui_getLatestCheckpointSequenceNumber","params":[]}' \
+              | grep -q '"result"'; then
+              echo "Sui RPC is ready (waited ~${i}s)"
+              break
+            fi
+            if [ "$i" -eq 120 ]; then
+              echo "ERROR: Sui RPC not ready after 120s"
+              cat /tmp/ika-network.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "Waiting for ika_sui_config.yaml..."
+          for i in $(seq 1 60); do
+            if [ -f ./ika_sui_config.yaml ]; then
+              echo "Config found (waited ~${i}s)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: ika_sui_config.yaml not found after 60s"
+              cat /tmp/ika-network.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run CLI integration tests
+        env:
+          IKA_BIN: ./target/release/ika
+          SUI_RPC_URL: http://127.0.0.1:9000
+          IKA_SUI_CONFIG: ./ika_sui_config.yaml
+          POLL_TIMEOUT: ${{ github.event.inputs.poll_timeout }}
+        run: |
+          bash ./crates/ika/tests/integration/run_all.sh ${{ github.event.inputs.suites }}
+
+      - name: Upload network logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ika-network-logs
+          path: /tmp/ika-network.log
+          retention-days: 7
+
+      - name: Stop Ika network
+        if: always()
+        run: |
+          if [ -n "${IKA_PID:-}" ]; then
+            kill "$IKA_PID" 2>/dev/null || true
+            wait "$IKA_PID" 2>/dev/null || true
+          fi

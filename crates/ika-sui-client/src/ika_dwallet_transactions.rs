@@ -78,8 +78,8 @@ pub async fn register_encryption_key(
     )?;
 
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
-    let enc_key_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key)?))?;
-    let enc_key_sig_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_signature)?))?;
+    let encryption_key_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key)?))?;
+    let encryption_key_sig_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_signature)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
     ptb.programmable_move_call(
@@ -90,8 +90,8 @@ pub async fn register_encryption_key(
         vec![
             coordinator,
             curve_arg,
-            enc_key_arg,
-            enc_key_sig_arg,
+            encryption_key_arg,
+            encryption_key_sig_arg,
             signer_pk_arg,
         ],
     );
@@ -179,7 +179,7 @@ pub async fn request_dwallet_dkg(
         None => build_option_none(&mut ptb, ika_dwallet_2pc_mpc_package_id)?,
     };
 
-    let enc_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
+    let encryption_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &dwallet_network_encryption_key_id,
     )?))?;
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
@@ -189,7 +189,7 @@ pub async fn request_dwallet_dkg(
     let enc_secret_share_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &encrypted_centralized_secret_share_and_proof,
     )?))?;
-    let enc_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
+    let encryption_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
@@ -212,11 +212,11 @@ pub async fn request_dwallet_dkg(
         vec![],
         vec![
             coordinator,
-            enc_key_id_arg,
+            encryption_key_id_arg,
             curve_arg,
             pub_key_share_arg,
             enc_secret_share_arg,
-            enc_key_addr_arg,
+            encryption_key_addr_arg,
             user_public_output_arg,
             signer_pk_arg,
             sign_during_dkg_arg,
@@ -304,7 +304,7 @@ pub async fn request_dwallet_dkg_with_public_share(
         None => build_option_none(&mut ptb, ika_dwallet_2pc_mpc_package_id)?,
     };
 
-    let enc_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
+    let encryption_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &dwallet_network_encryption_key_id,
     )?))?;
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
@@ -334,7 +334,7 @@ pub async fn request_dwallet_dkg_with_public_share(
         vec![],
         vec![
             coordinator,
-            enc_key_id_arg,
+            encryption_key_id_arg,
             curve_arg,
             pub_key_share_arg,
             user_public_output_arg,
@@ -511,7 +511,7 @@ pub async fn request_global_presign_tx(
         ika_dwallet_2pc_mpc_package_id,
     )?;
 
-    let enc_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
+    let encryption_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &dwallet_network_encryption_key_id,
     )?))?;
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
@@ -536,7 +536,7 @@ pub async fn request_global_presign_tx(
         vec![],
         vec![
             coordinator,
-            enc_key_id_arg,
+            encryption_key_id_arg,
             curve_arg,
             sig_algo_arg,
             session_id,
@@ -593,9 +593,10 @@ pub async fn verify_presign_cap(
     execute_transaction(context, tx_data).await
 }
 
-/// Request a sign operation (approve + presign + sign in one PTB).
+/// Request a sign operation (approve + optional verify + sign in one PTB).
 ///
-/// This is the full sign flow that composes multiple coordinator calls.
+/// When `verify_presign` is true, the presign cap is treated as unverified and
+/// `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_sign_tx(
     context: &mut WalletContext,
@@ -611,6 +612,7 @@ pub async fn request_sign_tx(
     ika_coin_id: ObjectID,
     sui_coin_id: ObjectID,
     gas_budget: u64,
+    verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
@@ -651,14 +653,25 @@ pub async fn request_sign_tx(
         ika_dwallet_2pc_mpc_package_id,
     )?;
 
-    // Get verified presign cap
+    // Get presign cap and optionally verify it in the PTB
     let presign_cap_ref = client
         .transaction_builder()
         .get_object_ref(verified_presign_cap_id)
         .await?;
-    let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+    let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
+    let presign_cap_arg = if verify_presign {
+        ptb.programmable_move_call(
+            ika_dwallet_2pc_mpc_package_id,
+            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+            VERIFY_PRESIGN_CAP_FUNCTION_NAME.to_owned(),
+            vec![],
+            vec![coordinator, presign_cap_input],
+        )
+    } else {
+        presign_cap_input
+    };
 
     let centralized_sig_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &message_centralized_signature,
@@ -731,6 +744,7 @@ pub fn approve_imported_key_message(
 /// Request a sign operation for an imported key dWallet.
 ///
 /// Uses `approve_imported_key_message` + `request_imported_key_sign_and_return_id` in one PTB.
+/// When `verify_presign` is true, `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_imported_key_sign_tx(
     context: &mut WalletContext,
@@ -746,6 +760,7 @@ pub async fn request_imported_key_sign_tx(
     ika_coin_id: ObjectID,
     sui_coin_id: ObjectID,
     gas_budget: u64,
+    verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
@@ -784,14 +799,25 @@ pub async fn request_imported_key_sign_tx(
         ika_dwallet_2pc_mpc_package_id,
     )?;
 
-    // Get verified presign cap
+    // Get presign cap and optionally verify it in the PTB
     let presign_cap_ref = client
         .transaction_builder()
         .get_object_ref(verified_presign_cap_id)
         .await?;
-    let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+    let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
+    let presign_cap_arg = if verify_presign {
+        ptb.programmable_move_call(
+            ika_dwallet_2pc_mpc_package_id,
+            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+            VERIFY_PRESIGN_CAP_FUNCTION_NAME.to_owned(),
+            vec![],
+            vec![coordinator, presign_cap_input],
+        )
+    } else {
+        presign_cap_input
+    };
 
     let centralized_sig_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &message_centralized_signature,
@@ -830,6 +856,8 @@ pub async fn request_imported_key_sign_tx(
 }
 
 /// Request a future sign (partial user signature flow).
+///
+/// When `verify_presign` is true, `verify_presign_cap` is called in the PTB before signing.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_future_sign_tx(
     context: &mut WalletContext,
@@ -844,6 +872,7 @@ pub async fn request_future_sign_tx(
     ika_coin_id: ObjectID,
     sui_coin_id: ObjectID,
     gas_budget: u64,
+    verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let sender = context.active_address()?;
@@ -870,9 +899,20 @@ pub async fn request_future_sign_tx(
         .transaction_builder()
         .get_object_ref(verified_presign_cap_id)
         .await?;
-    let presign_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+    let presign_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
         presign_cap_ref,
     )))?;
+    let presign_cap_arg = if verify_presign {
+        ptb.programmable_move_call(
+            ika_dwallet_2pc_mpc_package_id,
+            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+            VERIFY_PRESIGN_CAP_FUNCTION_NAME.to_owned(),
+            vec![],
+            vec![coordinator, presign_cap_input],
+        )
+    } else {
+        presign_cap_input
+    };
 
     let message_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&message)?))?;
     let hash_scheme_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&hash_scheme)?))?;
@@ -951,7 +991,7 @@ pub async fn request_imported_key_dwallet_verification(
         ika_dwallet_2pc_mpc_package_id,
     )?;
 
-    let enc_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
+    let encryption_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &dwallet_network_encryption_key_id,
     )?))?;
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
@@ -960,7 +1000,7 @@ pub async fn request_imported_key_dwallet_verification(
     let enc_secret_share_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &encrypted_centralized_secret_share_and_proof,
     )?))?;
-    let enc_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
+    let encryption_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
@@ -983,11 +1023,11 @@ pub async fn request_imported_key_dwallet_verification(
         vec![],
         vec![
             coordinator,
-            enc_key_id_arg,
+            encryption_key_id_arg,
             curve_arg,
             centralized_msg_arg,
             enc_secret_share_arg,
-            enc_key_addr_arg,
+            encryption_key_addr_arg,
             user_public_output_arg,
             signer_pk_arg,
             session_id,

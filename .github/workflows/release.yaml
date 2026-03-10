@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (semver, e.g. 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  RUST_BACKTRACE: 1
+  rust_stable: 1.94
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate semver
+        run: |
+          SEMVER_REGEX='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?$'
+          if [[ ! "${{ inputs.version }}" =~ $SEMVER_REGEX ]]; then
+            echo "Error: Version must be valid SemVer (e.g., 1.0.0, 1.2.3-beta.1)"
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: linux-32-runner
+            target: x86_64-unknown-linux-gnu
+            bins: ika ika-node
+          - name: linux-arm64
+            runner: linux-32-runner
+            target: aarch64-unknown-linux-gnu
+            bins: ika ika-node
+            cross: true
+          - name: macos-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            bins: ika
+          - name: macos-x64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            bins: ika
+
+    steps:
+      - name: Clean up disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup SSH for private dependencies
+        if: env.GH_DEPLOY_KEY
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Rewrite GitHub HTTPS to SSH
+        if: env.GH_DEPLOY_KEY
+        run: |
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux ARM64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << 'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build binaries
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          set -euxo pipefail
+          for bin in ${{ matrix.bins }}; do
+            cargo build --release --bin "$bin" --target "${{ matrix.target }}"
+          done
+
+      - name: Package binaries
+        run: |
+          set -euxo pipefail
+          staging="ika-v${{ inputs.version }}-${{ matrix.name }}"
+          mkdir -p "$staging"
+          for bin in ${{ matrix.bins }}; do
+            cp "target/${{ matrix.target }}/release/$bin" "$staging/"
+            chmod +x "$staging/$bin"
+          done
+          tar -czvf "${staging}.tar.gz" "$staging"
+          shasum -a 256 "${staging}.tar.gz" > "${staging}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ika-v${{ inputs.version }}-${{ matrix.name }}.tar.gz
+            ika-v${{ inputs.version }}-${{ matrix.name }}.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+          merge-multiple: true
+
+      - name: List release artifacts
+        run: ls -lah release-artifacts/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          PRERELEASE_FLAG=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          # Create tag if it doesn't exist
+          git tag "$TAG" 2>/dev/null || true
+          git push origin "$TAG" 2>/dev/null || true
+
+          gh release create "$TAG" \
+            --title "Ika CLI $TAG" \
+            --generate-notes \
+            $PRERELEASE_FLAG \
+            release-artifacts/*

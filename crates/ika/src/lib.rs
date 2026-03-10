@@ -16,11 +16,13 @@ pub mod ika_commands;
 pub mod dwallet_commands;
 #[cfg(feature = "protocol-commands")]
 pub(crate) mod protocol_commands;
+pub mod config_commands;
+#[cfg(feature = "protocol-commands")]
 pub mod system_commands;
 pub(crate) mod validator_commands;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct IkaPackagesConfigFile {
+pub struct IkaPackagesConfigFile {
     pub envs: HashMap<String, IkaNetworkConfig>,
 }
 

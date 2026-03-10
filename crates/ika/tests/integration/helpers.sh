@@ -258,15 +258,15 @@ register_encryption_key() {
 # Register encryption key only if not already cached in $TEST_TMPDIR.
 ensure_encryption_key() {
     local curve_name="$1"
-    local cache_file="${TEST_TMPDIR}/enc_key_${curve_name}"
+    local cache_file="${TEST_TMPDIR}/encryption_key_${curve_name}"
     if [[ -f "$cache_file" ]]; then
         cat "$cache_file"
         return 0
     fi
-    local enc_key_id
-    enc_key_id=$(register_encryption_key "$curve_name")
-    echo "$enc_key_id" > "$cache_file"
-    echo "$enc_key_id"
+    local encryption_key_id
+    encryption_key_id=$(register_encryption_key "$curve_name")
+    echo "$encryption_key_id" > "$cache_file"
+    echo "$encryption_key_id"
 }
 
 # ---------------------------------------------------------------------------
@@ -276,11 +276,11 @@ ensure_encryption_key() {
 # Create a dWallet via DKG. Outputs JSON with dwallet_id, dwallet_cap_id, secret_share_path.
 create_dwallet() {
     local curve_name="$1"
-    local enc_key_id="$2"
+    local encryption_key_id="$2"
     local output_path="${3:-${TEST_TMPDIR}/secret_${curve_name}_$RANDOM.bin}"
     ika_json dwallet create \
         --curve "$curve_name" \
-        --encryption-key-id "$enc_key_id" \
+        --encryption-key-id "$encryption_key_id" \
         --output-secret "$output_path"
 }
 
@@ -393,7 +393,7 @@ sign_message() {
 import_dwallet() {
     local curve_name="$1"
     local secret_key_hex="$2"
-    local enc_key_id="$3"
+    local encryption_key_id="$3"
     local output_path="${4:-${TEST_TMPDIR}/imported_${curve_name}_$RANDOM.bin}"
 
     # Write the secret key bytes to a temp file
@@ -403,7 +403,7 @@ import_dwallet() {
     ika_json dwallet import \
         --curve "$curve_name" \
         --centralized-message "$key_file" \
-        --encryption-key-id "$enc_key_id" \
+        --encryption-key-id "$encryption_key_id" \
         --output-secret "$output_path"
 }
 
@@ -419,12 +419,12 @@ full_create_and_sign() {
     local hash_scheme="$3"
     local message_hex="${4:-48656c6c6f}"  # "Hello" in hex
 
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "$curve_name")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "$curve_name")
 
     # Create
     local create_result
-    create_result=$(create_dwallet "$curve_name" "$enc_key_id")
+    create_result=$(create_dwallet "$curve_name" "$encryption_key_id")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")
@@ -458,14 +458,14 @@ full_import_and_sign() {
     local secret_key_hex="$4"
     local message_hex="${5:-48656c6c6f}"
 
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "$curve_name")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "$curve_name")
 
     local output_path="${TEST_TMPDIR}/imported_${curve_name}_$RANDOM.bin"
 
     # Import
     local import_result
-    import_result=$(import_dwallet "$curve_name" "$secret_key_hex" "$enc_key_id" "$output_path")
+    import_result=$(import_dwallet "$curve_name" "$secret_key_hex" "$encryption_key_id" "$output_path")
     local dwallet_id dwallet_cap_id
     dwallet_id=$(json_field "$import_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$import_result" "dwallet_cap_id")
@@ -498,12 +498,12 @@ full_create_and_sign_global_presign() {
     local hash_scheme="$4"
     local message_hex="${5:-48656c6c6f}"
 
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "$curve_name")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "$curve_name")
 
     # Create
     local create_result
-    create_result=$(create_dwallet "$curve_name" "$enc_key_id")
+    create_result=$(create_dwallet "$curve_name" "$encryption_key_id")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")
@@ -538,14 +538,14 @@ full_import_and_sign_global_presign() {
     local secret_key_hex="$5"
     local message_hex="${6:-48656c6c6f}"
 
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "$curve_name")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "$curve_name")
 
     local output_path="${TEST_TMPDIR}/imported_${curve_name}_$RANDOM.bin"
 
     # Import
     local import_result
-    import_result=$(import_dwallet "$curve_name" "$secret_key_hex" "$enc_key_id" "$output_path")
+    import_result=$(import_dwallet "$curve_name" "$secret_key_hex" "$encryption_key_id" "$output_path")
     local dwallet_id dwallet_cap_id
     dwallet_id=$(json_field "$import_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$import_result" "dwallet_cap_id")
@@ -577,12 +577,12 @@ full_create_make_public_and_sign() {
     local hash_scheme="$3"
     local message_hex="${4:-48656c6c6f}"
 
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "$curve_name")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "$curve_name")
 
     # Create
     local create_result
-    create_result=$(create_dwallet "$curve_name" "$enc_key_id")
+    create_result=$(create_dwallet "$curve_name" "$encryption_key_id")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")

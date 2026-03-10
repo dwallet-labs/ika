@@ -17,10 +17,10 @@ echo "=========================================="
 # --- Zero-trust creation for each curve ---
 
 test_create_secp256k1() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "secp256k1")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "secp256k1")
     local result
-    result=$(create_dwallet "secp256k1" "$enc_key_id")
+    result=$(create_dwallet "secp256k1" "$encryption_key_id")
     local dwallet_id
     dwallet_id=$(json_field "$result" "dwallet_id")
     [[ -n "$dwallet_id" && "$dwallet_id" != "null" ]]
@@ -32,10 +32,10 @@ test_create_secp256k1() {
 }
 
 test_create_secp256r1() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "secp256r1")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "secp256r1")
     local result
-    result=$(create_dwallet "secp256r1" "$enc_key_id")
+    result=$(create_dwallet "secp256r1" "$encryption_key_id")
     local dwallet_id
     dwallet_id=$(json_field "$result" "dwallet_id")
     [[ -n "$dwallet_id" && "$dwallet_id" != "null" ]]
@@ -47,10 +47,10 @@ test_create_secp256r1() {
 }
 
 test_create_ed25519() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "ed25519")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "ed25519")
     local result
-    result=$(create_dwallet "ed25519" "$enc_key_id")
+    result=$(create_dwallet "ed25519" "$encryption_key_id")
     local dwallet_id
     dwallet_id=$(json_field "$result" "dwallet_id")
     [[ -n "$dwallet_id" && "$dwallet_id" != "null" ]]
@@ -62,10 +62,10 @@ test_create_ed25519() {
 }
 
 test_create_ristretto() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "ristretto")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "ristretto")
     local result
-    result=$(create_dwallet "ristretto" "$enc_key_id")
+    result=$(create_dwallet "ristretto" "$encryption_key_id")
     local dwallet_id
     dwallet_id=$(json_field "$result" "dwallet_id")
     [[ -n "$dwallet_id" && "$dwallet_id" != "null" ]]

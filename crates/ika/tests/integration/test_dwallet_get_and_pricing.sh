@@ -15,10 +15,10 @@ echo " Query Command Tests"
 echo "=========================================="
 
 test_dwallet_get() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "secp256k1")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "secp256k1")
     local create_result
-    create_result=$(create_dwallet "secp256k1" "$enc_key_id")
+    create_result=$(create_dwallet "secp256k1" "$encryption_key_id")
     local dwallet_id
     dwallet_id=$(json_field "$create_result" "dwallet_id")
 
@@ -37,10 +37,10 @@ test_dwallet_pricing() {
 }
 
 test_get_encryption_key() {
-    local enc_key_id
-    enc_key_id=$(ensure_encryption_key "secp256k1")
+    local encryption_key_id
+    encryption_key_id=$(ensure_encryption_key "secp256k1")
     local result
-    result=$(ika_json dwallet get-encryption-key --encryption-key-id "$enc_key_id")
+    result=$(ika_json dwallet get-encryption-key --encryption-key-id "$encryption_key_id")
     json_has_field "$result" "dwallet"
 }
 

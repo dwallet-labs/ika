@@ -1,0 +1,70 @@
+---
+id: config-commands
+title: Config Commands
+description: CLI commands for managing Ika configuration — fetching deployed contract addresses and viewing config.
+sidebar_position: 5
+sidebar_label: Config Commands
+---
+
+# Config Commands
+
+Configuration commands manage the Ika CLI config file (`ika_sui_config.yaml`), which maps Sui network environments to Ika contract addresses.
+
+## `ika config init`
+
+Fetch deployed contract addresses from GitHub and generate the config file.
+
+```bash
+ika config init
+```
+
+This connects to the Ika GitHub repository and downloads the current contract addresses for each network, then writes them to `~/.ika/ika_sui_config.yaml`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--network <NET>` | No | Networks to configure (comma-separated). Default: `testnet,mainnet` |
+| `--output <PATH>` | No | Output path for config file. Default: `~/.ika/ika_sui_config.yaml` |
+
+**Example: initialize only testnet:**
+
+```bash
+ika config init --network testnet
+```
+
+**Example: custom output path:**
+
+```bash
+ika config init --output ./my_ika_config.yaml
+```
+
+After initialization, the command prints Sui CLI environment setup instructions:
+
+```
+Fetching testnet config from https://raw.githubusercontent.com/.../address.yaml
+Fetching mainnet config from https://raw.githubusercontent.com/.../address.yaml
+
+Config written to: /Users/you/.ika/ika_sui_config.yaml
+
+Next steps:
+1. Configure Sui CLI environments:
+   sui client new-env --alias testnet --rpc https://fullnode.testnet.sui.io:443
+   sui client new-env --alias mainnet --rpc https://fullnode.mainnet.sui.io:443
+2. Set active environment: sui client switch --env <network>
+3. Ensure you have SUI tokens for gas and IKA tokens for operations
+```
+
+---
+
+## `ika config show`
+
+Display the current Ika CLI config file contents.
+
+```bash
+ika config show
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--config <PATH>` | No | Path to config file. Default: `~/.ika/ika_sui_config.yaml` |
+
+If the config file doesn't exist, the command will suggest running `ika config init` first.

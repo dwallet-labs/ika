@@ -60,13 +60,11 @@ ika
 │       ├── make-public
 │       ├── re-encrypt
 │       └── accept
+├── config                     # Configuration management
+│   ├── init                   # Fetch deployed contract addresses
+│   └── show                   # Show current config
 ├── validator                  # Validator operations (30+ subcommands)
 ├── protocol                   # Protocol governance (feature-gated)
-├── system                     # Deployment & initialization
-│   ├── publish-modules        # Publish Move contracts
-│   ├── mint-tokens            # Mint IKA tokens
-│   ├── init-env               # Initialize environment
-│   └── initialize             # Full system init + DKG
 └── completion                 # Shell completions (bash/zsh/fish)
 ```
 
@@ -107,16 +105,6 @@ ika validator become-candidate <VALIDATOR_INFO_PATH>
 
 # Join the committee
 ika validator join-committee --validator-cap-id <CAP_ID>
-```
-
-### System Deployment
-```bash
-# Publish contracts
-ika system publish-modules --sui-rpc-addr https://fullnode.testnet.sui.io:443 --chain testnet
-
-# Initialize
-ika system init-env --ika-config-path ./ika_publish_config.json --sui-rpc-addr <RPC>
-ika system initialize --ika-config-path ./ika_publish_config.json --sui-rpc-addr <RPC>
 ```
 
 ## Key Management

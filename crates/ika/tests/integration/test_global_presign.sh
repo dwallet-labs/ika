@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+ #!/usr/bin/env bash
 # test_global_presign.sh — Global presign completion for all curve/algo combos
 # (mirrors global-presign.test.ts).
 #

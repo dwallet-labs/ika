@@ -14,9 +14,11 @@ use std::path::PathBuf;
 use std::thread;
 use sui_config::{SUI_CLIENT_CONFIG, sui_config_dir};
 
+use crate::config_commands::IkaConfigCommand;
 use crate::dwallet_commands::IkaDWalletCommand;
 #[cfg(feature = "protocol-commands")]
 use crate::protocol_commands::IkaProtocolCommand;
+#[cfg(feature = "protocol-commands")]
 use crate::system_commands::IkaSystemCommand;
 use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
@@ -145,11 +147,19 @@ pub enum IkaCommand {
         cmd: IkaDWalletCommand,
     },
 
+    #[cfg(feature = "protocol-commands")]
     /// System deployment and initialization operations (publish contracts, mint tokens, init env).
     #[clap(name = "system")]
     System {
         #[clap(subcommand)]
         cmd: IkaSystemCommand,
+    },
+
+    /// Manage Ika CLI configuration (fetch deployed contract addresses, show config).
+    #[clap(name = "config")]
+    Config {
+        #[clap(subcommand)]
+        cmd: IkaConfigCommand,
     },
 
     /// Generate shell completions for the given shell.
@@ -290,7 +300,9 @@ impl IkaCommand {
                 cmd.execute(&mut context, json, quiet, _ika_config, _gas_budget)
                     .await
             }
+            #[cfg(feature = "protocol-commands")]
             IkaCommand::System { cmd } => cmd.execute().await,
+            IkaCommand::Config { cmd } => cmd.execute().await,
             IkaCommand::Completion { shell } => {
                 let mut app =
                     crate::ika_commands::IkaCommand::augment_subcommands(clap::Command::new("ika"));

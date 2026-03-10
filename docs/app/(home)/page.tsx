@@ -10,6 +10,13 @@ const features = [
 		gradient: 'from-pink-500 to-rose-500',
 	},
 	{
+		title: 'CLI',
+		description: 'Create dWallets, sign messages, and manage the network from the terminal',
+		href: '/docs/cli',
+		icon: Terminal,
+		gradient: 'from-violet-500 to-purple-500',
+	},
+	{
 		title: 'Move Integration',
 		description: 'Integrate dWallets into your Move smart contracts',
 		href: '/docs/move-integration',
@@ -27,7 +34,7 @@ const features = [
 		title: 'Operator Guides',
 		description: 'Run and operate Ika network nodes',
 		href: '/docs/operators',
-		icon: Terminal,
+		icon: Layers,
 		gradient: 'from-emerald-500 to-teal-500',
 	},
 	{

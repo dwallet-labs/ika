@@ -6,25 +6,25 @@ class Ika < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/AftermathFinance/ika/releases/download/v#{version}/ika-#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_ARM64"
+      url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-macos-arm64.tar.gz"
+      sha256 "PLACEHOLDER_SHA256_MACOS_ARM64"
     end
 
     on_intel do
-      url "https://github.com/AftermathFinance/ika/releases/download/v#{version}/ika-#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_X86_64"
+      url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-macos-x64.tar.gz"
+      sha256 "PLACEHOLDER_SHA256_MACOS_X64"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/AftermathFinance/ika/releases/download/v#{version}/ika-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-linux-arm64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_ARM64"
     end
 
     on_intel do
-      url "https://github.com/AftermathFinance/ika/releases/download/v#{version}/ika-#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "PLACEHOLDER_SHA256_LINUX_X86_64"
+      url "https://github.com/dwallet-labs/ika/releases/download/v#{version}/ika-v#{version}-linux-x64.tar.gz"
+      sha256 "PLACEHOLDER_SHA256_LINUX_X64"
     end
   end
 

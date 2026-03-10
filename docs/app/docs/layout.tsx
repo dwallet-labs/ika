@@ -1,5 +1,5 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
-import { Blocks, BookOpen, Bot, Code2, FileCode, Server } from 'lucide-react';
+import { Blocks, BookOpen, Bot, Code2, FileCode, Server, Terminal } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { source } from '@/lib/source';
@@ -19,6 +19,12 @@ const tabConfig: Record<string, TabConfig> = {
 		description: 'TypeScript SDK for building with Ika',
 		color: 'text-pink-500 dark:text-pink-400',
 		bgColor: 'bg-pink-500/10 dark:bg-pink-500/20',
+	},
+	cli: {
+		icon: <Terminal className="size-4" />,
+		description: 'dWallet operations from the terminal',
+		color: 'text-emerald-500 dark:text-emerald-400',
+		bgColor: 'bg-emerald-500/10 dark:bg-emerald-500/20',
 	},
 	'move-integration': {
 		icon: <Blocks className="size-4" />,

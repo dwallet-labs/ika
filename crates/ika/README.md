@@ -1,103 +1,110 @@
-# Ika Validator CLI
+# Ika CLI
 
-## Overview
+Command-line interface for the Ika decentralized MPC signing network on Sui.
 
-The `ika validator` CLI tool is designed for validators and validator candidates to manage their participation in the
-Ika network. It provides commands to create validator information, become a candidate, join the committee, stake tokens,
-and leave the committee.
+## Install
 
-## Usage
+```bash
+# Homebrew
+brew install ika
 
-The CLI follows the structure:
-
-```sh
-ika validator <COMMAND> [OPTIONS]
+# From source
+cargo build --release --bin ika
 ```
 
-### Available Commands
+Requires the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) for key management.
 
-#### `make-validator-info`
+## Setup
 
-Create a validator information file containing the necessary details to become a validator.
+```bash
+# Fetch deployed contract addresses
+ika config init
 
-##### Arguments:
-
-- `name` (String) - Validator name
-- `description` (String) - Description of the validator
-- `image_url` (String) - URL to the validator's image
-- `project_url` (String) - Project website URL
-- `host_name` (String) - Validator's host name
-- `gas_price` (u64) - Gas price for transactions
-- `sender_sui_address` (SuiAddress) - Address of the sender
-
-##### Example:
-
-```sh
-ika validator make-validator-info --name "My Validator" --description "Secure and fast" --image_url "https://example.com/image.png" --project_url "https://example.com" --host_name "x.x.x.x" --gas_price 1000000 --sender_sui_address 0x1234...
+# Configure Sui environments
+sui client new-env --alias testnet --rpc https://fullnode.testnet.sui.io:443
+sui client switch --env testnet
 ```
 
-#### `become-candidate`
+## Commands
 
-Register a validator candidate using a validator info file.
-
-##### Arguments:
-
-- `--validator-info-path` (PathBuf) - Path to the validator information file
-- `--gas-budget` (Optional) - Gas budget for the transaction
-- `--ika-sui-config` (Optional) - Path to the Ika system package network file
-
-##### Example:
-
-```sh
-ika validator become-candidate --validator-info-path validator.info --gas-budget 200000000
+```
+ika
+├── dwallet                    # dWallet operations
+│   ├── create                 # Create dWallet via DKG
+│   ├── sign                   # Request signature (--wait for result)
+│   ├── future-sign            # Conditional/future signing
+│   ├── presign                # Request presign
+│   ├── global-presign         # Global presign with network key
+│   ├── import                 # Import external key as dWallet
+│   ├── register-encryption-key
+│   ├── get-encryption-key
+│   ├── verify-presign
+│   ├── get                    # Query dWallet info
+│   ├── pricing                # Current pricing
+│   ├── generate-keypair       # Offline keypair generation
+│   └── share                  # User share management
+│       ├── make-public
+│       ├── re-encrypt
+│       └── accept
+├── validator                  # Validator operations (30+ subcommands)
+├── protocol                   # Protocol governance (feature-gated: --features protocol-commands)
+│   ├── set-approved-upgrade-by-cap
+│   ├── perform-approved-upgrade
+│   ├── try-migrate-system
+│   ├── try-migrate-coordinator
+│   └── set-supported-and-pricing
+├── system                     # System deployment (internal, feature-gated)
+│   ├── publish-modules        # Publish Move contracts to Sui
+│   ├── mint-tokens            # Mint IKA tokens
+│   ├── init-env               # Initialize environment
+│   └── initialize             # Full system init + encryption key DKG
+├── config                     # Configuration management
+│   ├── init                   # Fetch contract addresses from GitHub
+│   └── show                   # Show current config
+├── start                      # Start local network
+├── network                    # Display network info
+└── completion                 # Shell completions (bash/zsh/fish)
 ```
 
-#### `join-committee`
+## Quick Start
 
-Requests to join the validator committee.
+```bash
+# Register encryption key
+ika dwallet register-encryption-key --curve secp256k1
 
-##### Arguments:
+# Create a dWallet
+ika dwallet create \
+  --curve secp256k1 \
+  --encryption-key-id <ENCRYPTION_KEY_ID> \
+  --output-secret ./my_secret.bin
 
-- `--gas-budget` (Optional) - Gas budget for the transaction
-- `--ika-sui-config` (Optional) - Path to the Ika system network configuration file
-- `--validator-cap-id` (ObjectID) - ID of the validator capability
+# Request a presign
+ika dwallet presign --dwallet-id <DWALLET_ID> --signature-algorithm 0
 
-##### Example:
-
-```sh
-ika validator join-committee --validator-cap-id 0x5678
+# Sign a message (waits for completion)
+ika dwallet sign \
+  --dwallet-cap-id <CAP_ID> \
+  --dwallet-id <DWALLET_ID> \
+  --message <HEX_MESSAGE> \
+  --signature-algorithm 0 \
+  --hash-scheme 0 \
+  --secret-share ./my_secret.bin \
+  --presign-cap-id <PRESIGN_CAP_ID> \
+  --wait
 ```
 
-#### `stake-validator`
+IKA/SUI coins are auto-detected from the active wallet. Curve, DKG output, and presign output are auto-fetched from chain. Unverified presign caps are auto-verified.
 
-Stake IKA tokens to a validator.
+## Global Flags
 
-##### Arguments:
+| Flag | Description |
+|------|-------------|
+| `--json` | Structured JSON output |
+| `--client.config <PATH>` | Sui client config path |
+| `--ika-config <PATH>` | Ika network config path |
+| `--gas-budget <MIST>` | Override gas budget |
+| `-q, --quiet` | Suppress human-readable output |
 
-- `--gas-budget` (Optional) - Gas budget for the transaction
-- `--ika-sui-config` (Optional) - Path to the Ika system network configuration file
-- `--validator-id` (ObjectID) - Validator ID to stake to
-- `--ika-coin-id` (ObjectID) - ID of the IKA coin being staked
-- `--stake-amount` (u64)—Number of IKA tokens to stake
+## Documentation
 
-##### Example:
-
-```sh
-ika validator stake-validator --validator-id 0x1234 --ika-coin-id 0x5678 --stake-amount 1000000
-```
-
-#### `leave-committee`
-
-Requests to leave the validator committee.
-
-##### Arguments:
-
-- `--gas-budget` (Optional) - Gas budget for the transaction
-- `--validator-cap-id` (ObjectID) - ID of the validator capability
-- `--ika-sui-config` (Optional) - Path to the Ika system network configuration file
-
-##### Example:
-
-```sh
-ika validator leave-committee --validator-cap-id 0x5678
-```
+Full documentation at [docs.ika.xyz](https://docs.ika.xyz/docs/cli).
