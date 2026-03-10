@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ika_types::noa_checkpoint::{
-    CertifiedNOACheckpointMessage, NOACheckpointKind, NOACheckpointMessage,
+    CertifiedNOACheckpointMessage, ChainDestination, NOACheckpointKind, NOACheckpointMessage,
 };
 use sui_types::base_types::EpochId;
 use tokio::sync::mpsc::{Receiver, UnboundedSender};
@@ -126,14 +126,16 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 }
 
 /// Receives raw checkpoint messages from a channel and submits them to the NOA MPC signing
-/// pipeline. This replaces the V1 bridge structs (`SubmitDWalletCheckpointToNOASign` /
-/// `SubmitSystemCheckpointToNOASign`) with a channel-based, independently gated path.
+/// pipeline via `K::signable_bytes()`, which converts checkpoint data into chain-specific
+/// transaction bytes for NOA signing.
 pub struct NOACheckpointSubmitter<K: NOACheckpointKind> {
     receiver: tokio::sync::mpsc::Receiver<Vec<K::MessageKind>>,
     noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
     store: Arc<NOACheckpointLocalStore<K>>,
     epoch: EpochId,
     next_sequence_number: u64,
+    chain_context: <K::Destination as ChainDestination>::Context,
+    noa_public_key: Vec<u8>,
 }
 
 impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
@@ -142,6 +144,8 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
         noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
         store: Arc<NOACheckpointLocalStore<K>>,
         epoch: EpochId,
+        chain_context: <K::Destination as ChainDestination>::Context,
+        noa_public_key: Vec<u8>,
     ) -> Self {
         Self {
             receiver,
@@ -149,6 +153,8 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
             store,
             epoch,
             next_sequence_number: 0,
+            chain_context,
+            noa_public_key,
         }
     }
 
@@ -169,9 +175,8 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
                 messages,
             };
 
-            // BCS-serialize as placeholder signable bytes.
-            let signable_bytes = bcs::to_bytes(&checkpoint).unwrap_or_default();
-            let all_tx_bytes = vec![signable_bytes];
+            let all_tx_bytes =
+                K::signable_bytes(&checkpoint, &self.chain_context, &self.noa_public_key);
 
             self.store
                 .insert_pending(seq, checkpoint, all_tx_bytes.clone());
@@ -249,7 +254,12 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
             info!(
                 kind = K::NAME,
                 sequence_number = seq,
+                epoch = certified.checkpoint.epoch,
+                messages_count = certified.checkpoint.messages.len(),
                 tx_count = certified.signatures.len(),
+                curve = ?certified.curve,
+                signature_algorithm = ?certified.signature_algorithm,
+                certified_checkpoint = ?certified,
                 "NOA checkpoint certified via MPC signature",
             );
 

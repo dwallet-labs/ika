@@ -103,12 +103,16 @@ impl NOACheckpointKind for DWallet {
     }
 
     fn signable_bytes(
-        _checkpoint: &NOACheckpointMessage<Self>,
+        checkpoint: &NOACheckpointMessage<Self>,
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
     ) -> Vec<Vec<u8>> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
-        todo!("Sui TransactionData construction for DWallet checkpoints")
+        // Currently BCS-serializes the checkpoint as a single transaction placeholder.
+        vec![
+            bcs::to_bytes(checkpoint)
+                .expect("BCS serialization of NOA DWallet checkpoint should not fail"),
+        ]
     }
 }
 
@@ -130,12 +134,16 @@ impl NOACheckpointKind for System {
     }
 
     fn signable_bytes(
-        _checkpoint: &NOACheckpointMessage<Self>,
+        checkpoint: &NOACheckpointMessage<Self>,
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
     ) -> Vec<Vec<u8>> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
-        todo!("Sui TransactionData construction for System checkpoints")
+        // Currently BCS-serializes the checkpoint as a single transaction placeholder.
+        vec![
+            bcs::to_bytes(checkpoint)
+                .expect("BCS serialization of NOA System checkpoint should not fail"),
+        ]
     }
 }
 

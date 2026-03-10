@@ -7,7 +7,6 @@
 //! These tests verify the channel-based NOA checkpoint flow without requiring
 //! the full MPC infrastructure. Sign outputs are simulated.
 
-#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
@@ -17,7 +16,9 @@ mod tests {
     use ika_types::message::DWalletCheckpointMessageKind;
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
-    use ika_types::noa_checkpoint::{self, NOACheckpointKind, NOACheckpointMessage};
+    use ika_types::noa_checkpoint::{
+        self, NOACheckpointKind, NOACheckpointMessage, SuiChainContext,
+    };
     use tokio::sync::mpsc;
 
     use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
@@ -292,6 +293,8 @@ mod tests {
             sign_tx,
             store.clone(),
             1,
+            SuiChainContext,
+            vec![],
         );
 
         // Spawn the submitter in the background.
@@ -322,7 +325,7 @@ mod tests {
             assert_eq!(req.hash_scheme, noa_checkpoint::DWallet::hash_scheme());
         }
 
-        // Messages should be different (different sequence numbers → different BCS).
+        // Messages should be different (different sequence numbers → different signable bytes).
         assert_ne!(
             requests[0].message, requests[1].message,
             "different checkpoints should produce different tx bytes"
@@ -344,6 +347,8 @@ mod tests {
             sign_tx,
             store.clone(),
             42,
+            SuiChainContext,
+            vec![],
         );
 
         let handle = tokio::spawn(submitter.run());
@@ -357,17 +362,18 @@ mod tests {
         // Verify each checkpoint got a monotonically increasing sequence number
         // by checking the pending store for entries 0..5.
         // Since nothing has been signed, all should still be pending.
-        // We verify by trying to sign each one — the tx_bytes are BCS of the checkpoint.
+        // We verify by trying to sign each one — the tx_bytes are signable_bytes output.
         for seq in 0..5u64 {
             let checkpoint = NOACheckpointMessage::<noa_checkpoint::System> {
                 epoch: 42,
                 sequence_number: seq,
                 messages: vec![],
             };
-            let expected_bytes = bcs::to_bytes(&checkpoint).unwrap();
+            let expected_bytes =
+                noa_checkpoint::System::signable_bytes(&checkpoint, &SuiChainContext, &[]);
             // Signing should find the pending entry.
             let result = store.add_signature(
-                &expected_bytes,
+                &expected_bytes[0],
                 b"test_sig".to_vec(),
                 DWalletCurve::Curve25519,
                 DWalletSignatureAlgorithm::EdDSA,
@@ -488,6 +494,8 @@ mod tests {
             sign_request_tx,
             store.clone(),
             7,
+            SuiChainContext,
+            vec![],
         );
         let submitter_handle = tokio::spawn(submitter.run());
 
@@ -562,6 +570,8 @@ mod tests {
             sign_request_tx,
             store.clone(),
             3,
+            SuiChainContext,
+            vec![],
         );
         let submitter_handle = tokio::spawn(submitter.run());
 
@@ -701,6 +711,8 @@ mod tests {
             sign_tx,
             store.clone(),
             1,
+            SuiChainContext,
+            vec![],
         );
         let handle = tokio::spawn(submitter.run());
 

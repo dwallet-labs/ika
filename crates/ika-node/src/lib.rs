@@ -1292,8 +1292,12 @@ impl IkaNode {
         // Broadcast task: sends each sign output to both certifiers.
         tasks.spawn(async move {
             while let Some(output) = noa_sign_output_receiver.recv().await {
-                let _ = dwallet_output_tx.send(output.clone()).await;
-                let _ = system_output_tx.send(output).await;
+                if let Err(e) = dwallet_output_tx.send(output.clone()).await {
+                    error!("Failed to broadcast NOA sign output to DWallet certifier: {e}",);
+                }
+                if let Err(e) = system_output_tx.send(output).await {
+                    error!("Failed to broadcast NOA sign output to System certifier: {e}",);
+                }
             }
         });
 
@@ -1330,6 +1334,8 @@ impl IkaNode {
             noa_sign_request_sender.clone(),
             dwallet_noa_store.clone(),
             epoch,
+            noa_checkpoint::SuiChainContext,
+            vec![],
         );
         tasks.spawn(dwallet_submitter.run());
 
@@ -1341,6 +1347,8 @@ impl IkaNode {
             noa_sign_request_sender.clone(),
             system_noa_store.clone(),
             epoch,
+            noa_checkpoint::SuiChainContext,
+            vec![],
         );
         tasks.spawn(system_submitter.run());
 
