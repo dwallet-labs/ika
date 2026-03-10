@@ -1,6 +1,22 @@
 ---
 name: ika-cli
+version: 1.0.0
 description: Guide for using the Ika CLI tool for dWallet operations, validator management, system deployment, and network administration. Use when performing CLI-based dWallet creation, signing, presigning, key management, validator operations, system initialization, or querying Ika network state via the terminal. Triggers on tasks involving `ika` CLI commands, dWallet CLI operations, Ika system deployment, or MCP tool integration with Ika.
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - ika
+        - sui
+    emoji: "🔐"
+    homepage: "https://ika.xyz"
+    tags:
+      - crypto
+      - mpc
+      - dwallet
+      - sui
+      - signing
+      - cli
 ---
 
 # Ika CLI

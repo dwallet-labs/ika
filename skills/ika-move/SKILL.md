@@ -1,6 +1,21 @@
 ---
 name: ika-move
+version: 1.0.0
 description: Guide for integrating Ika dWallet 2PC-MPC protocol into Sui Move contracts. Use when building Move contracts that need cross-chain signing, dWallet creation, presigning, signing, future signing, key importing, or any Ika on-chain integration. Triggers on Move/Sui contract tasks involving dWallets, cross-chain signing, or Ika protocol operations.
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - sui
+    emoji: "📜"
+    homepage: "https://ika.xyz"
+    tags:
+      - move
+      - sui
+      - dwallet
+      - smart-contracts
+      - cross-chain
+      - mpc
 ---
 
 # Ika Move Integration

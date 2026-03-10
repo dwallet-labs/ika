@@ -1,6 +1,22 @@
 ---
 name: ika-operator
+version: 1.0.0
 description: Guide for operating Ika network nodes - validators, fullnodes, and notifiers. Use when deploying, configuring, monitoring, or troubleshooting Ika infrastructure. Triggers on tasks involving ika-node, ika-validator, ika-fullnode, ika-notifier, NodeConfig, consensus setup, P2P networking, validator registration, or Ika node operations.
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - ika
+        - sui
+    emoji: "🖥️"
+    homepage: "https://ika.xyz"
+    tags:
+      - infrastructure
+      - validator
+      - node-operator
+      - sui
+      - dwallet
+      - devops
 ---
 
 # Ika Node Operator Guide
