@@ -1,26 +1,15 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use async_trait::async_trait;
 use ika_types::error::IkaResult;
 use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, ChainDestination, NOACheckpointKind, NOACheckpointMessage,
 };
-use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
 
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
-use crate::dwallet_checkpoints::DWalletCheckpointStore;
-use crate::dwallet_checkpoints::dwallet_checkpoint_output::DWalletCheckpointOutput;
 use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
-use crate::noa_checkpoints::NOACheckpointLocalStore;
-use crate::system_checkpoints::SystemCheckpointStore;
-use crate::system_checkpoints::system_checkpoint_output::SystemCheckpointOutput;
 use ika_network::state_sync::noa_sync::NOACheckpointSyncHandle;
-use ika_types::messages_dwallet_checkpoint::DWalletCheckpointMessage;
-use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
-use ika_types::noa_checkpoint;
 
 /// Trait for handling newly built NOA checkpoints.
 pub trait NOACheckpointOutput<K: NOACheckpointKind>: Send + Sync + 'static {
@@ -149,188 +138,6 @@ impl<K: NOACheckpointKind> CertifiedNOACheckpointOutput<K> for SendNOACheckpoint
         checkpoint: &CertifiedNOACheckpointMessage<K>,
     ) -> IkaResult {
         self.handle.send(checkpoint.clone());
-        Ok(())
-    }
-}
-
-// === V1 trait bridges: DWallet checkpoint builder → NOA MPC signing ===
-
-/// Bridges the existing DWalletCheckpointBuilder to the NOA MPC signing pipeline.
-/// Implements the V1 `DWalletCheckpointOutput` trait so it can be plugged directly
-/// into the existing builder without any builder changes.
-pub struct SubmitDWalletCheckpointToNOASign {
-    noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-    noa_store: Arc<NOACheckpointLocalStore<noa_checkpoint::DWallet>>,
-}
-
-impl SubmitDWalletCheckpointToNOASign {
-    pub fn new(
-        noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-        noa_store: Arc<NOACheckpointLocalStore<noa_checkpoint::DWallet>>,
-    ) -> Self {
-        Self {
-            noa_sign_sender,
-            noa_store,
-        }
-    }
-}
-
-#[async_trait]
-impl DWalletCheckpointOutput for SubmitDWalletCheckpointToNOASign {
-    async fn dwallet_checkpoint_created(
-        &self,
-        checkpoint_message: &DWalletCheckpointMessage,
-        _epoch_store: &Arc<AuthorityPerEpochStore>,
-        _checkpoint_store: &Arc<DWalletCheckpointStore>,
-    ) -> IkaResult {
-        let noa_checkpoint_msg = NOACheckpointMessage {
-            epoch: checkpoint_message.epoch,
-            sequence_number: checkpoint_message.sequence_number,
-            messages: checkpoint_message.messages.clone(),
-        };
-
-        // Use BCS serialization as placeholder until real Sui tx construction is implemented.
-        let signable_bytes = bcs::to_bytes(&noa_checkpoint_msg).unwrap_or_default();
-        let all_tx_bytes = vec![signable_bytes];
-
-        self.noa_store.insert_pending(
-            noa_checkpoint_msg.sequence_number,
-            noa_checkpoint_msg,
-            all_tx_bytes.clone(),
-        );
-
-        info!(
-            sequence_number = checkpoint_message.sequence_number,
-            epoch = checkpoint_message.epoch,
-            messages_count = checkpoint_message.messages.len(),
-            "Submitting DWallet NOA checkpoint to MPC signing pipeline",
-        );
-
-        for tx_bytes in all_tx_bytes {
-            let request = NetworkOwnedAddressSignRequest {
-                message: tx_bytes,
-                curve: noa_checkpoint::DWallet::curve(),
-                signature_algorithm: noa_checkpoint::DWallet::signature_algorithm(),
-                hash_scheme: noa_checkpoint::DWallet::hash_scheme(),
-            };
-
-            if let Err(e) = self.noa_sign_sender.send(request) {
-                error!(error = %e, "Failed to send DWallet NOA checkpoint sign request");
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Bridges the existing SystemCheckpointBuilder to the NOA MPC signing pipeline.
-pub struct SubmitSystemCheckpointToNOASign {
-    noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-    noa_store: Arc<NOACheckpointLocalStore<noa_checkpoint::System>>,
-}
-
-impl SubmitSystemCheckpointToNOASign {
-    pub fn new(
-        noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-        noa_store: Arc<NOACheckpointLocalStore<noa_checkpoint::System>>,
-    ) -> Self {
-        Self {
-            noa_sign_sender,
-            noa_store,
-        }
-    }
-}
-
-#[async_trait]
-impl SystemCheckpointOutput for SubmitSystemCheckpointToNOASign {
-    async fn system_checkpoint_created(
-        &self,
-        checkpoint_message: &SystemCheckpointMessage,
-        _epoch_store: &Arc<AuthorityPerEpochStore>,
-        _system_checkpoint_store: &Arc<SystemCheckpointStore>,
-    ) -> IkaResult {
-        let noa_checkpoint_msg = NOACheckpointMessage {
-            epoch: checkpoint_message.epoch,
-            sequence_number: checkpoint_message.sequence_number,
-            messages: checkpoint_message.messages.clone(),
-        };
-
-        // Use BCS serialization as placeholder until real Sui tx construction is implemented.
-        let signable_bytes = bcs::to_bytes(&noa_checkpoint_msg).unwrap_or_default();
-        let all_tx_bytes = vec![signable_bytes];
-
-        self.noa_store.insert_pending(
-            noa_checkpoint_msg.sequence_number,
-            noa_checkpoint_msg,
-            all_tx_bytes.clone(),
-        );
-
-        info!(
-            sequence_number = checkpoint_message.sequence_number,
-            epoch = checkpoint_message.epoch,
-            messages_count = checkpoint_message.messages.len(),
-            "Submitting System NOA checkpoint to MPC signing pipeline",
-        );
-
-        for tx_bytes in all_tx_bytes {
-            let request = NetworkOwnedAddressSignRequest {
-                message: tx_bytes,
-                curve: noa_checkpoint::System::curve(),
-                signature_algorithm: noa_checkpoint::System::signature_algorithm(),
-                hash_scheme: noa_checkpoint::System::hash_scheme(),
-            };
-
-            if let Err(e) = self.noa_sign_sender.send(request) {
-                error!(error = %e, "Failed to send System NOA checkpoint sign request");
-            }
-        }
-
-        Ok(())
-    }
-}
-
-// === Composite outputs: run both BLS and NOA outputs ===
-
-/// Dispatches to multiple `DWalletCheckpointOutput` implementations.
-pub struct CompositeDWalletCheckpointOutput {
-    pub outputs: Vec<Box<dyn DWalletCheckpointOutput>>,
-}
-
-#[async_trait]
-impl DWalletCheckpointOutput for CompositeDWalletCheckpointOutput {
-    async fn dwallet_checkpoint_created(
-        &self,
-        summary: &DWalletCheckpointMessage,
-        epoch_store: &Arc<AuthorityPerEpochStore>,
-        checkpoint_store: &Arc<DWalletCheckpointStore>,
-    ) -> IkaResult {
-        for output in &self.outputs {
-            output
-                .dwallet_checkpoint_created(summary, epoch_store, checkpoint_store)
-                .await?;
-        }
-        Ok(())
-    }
-}
-
-/// Dispatches to multiple `SystemCheckpointOutput` implementations.
-pub struct CompositeSystemCheckpointOutput {
-    pub outputs: Vec<Box<dyn SystemCheckpointOutput>>,
-}
-
-#[async_trait]
-impl SystemCheckpointOutput for CompositeSystemCheckpointOutput {
-    async fn system_checkpoint_created(
-        &self,
-        summary: &SystemCheckpointMessage,
-        epoch_store: &Arc<AuthorityPerEpochStore>,
-        system_checkpoint_store: &Arc<SystemCheckpointStore>,
-    ) -> IkaResult {
-        for output in &self.outputs {
-            output
-                .system_checkpoint_created(summary, epoch_store, system_checkpoint_store)
-                .await?;
-        }
         Ok(())
     }
 }

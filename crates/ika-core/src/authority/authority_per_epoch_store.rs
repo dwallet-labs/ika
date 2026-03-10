@@ -17,7 +17,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
 use typed_store::rocksdb::Options;
 
@@ -1517,10 +1517,13 @@ impl AuthorityPerEpochStore {
         &self,
         transactions: Vec<SequencedConsensusTransaction>,
         consensus_stats: &ExecutionIndicesWithStats,
-        checkpoint_service: &Arc<C>,
-        system_checkpoint_service: &Arc<SystemCheckpointService>,
+        checkpoint_service: &Option<Arc<C>>,
+        system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
         consensus_commit_info: &ConsensusCommitInfo,
         authority_metrics: &Arc<AuthorityMetrics>,
+        noa_system_checkpoint_sender: Option<
+            &tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>,
+        >,
     ) -> IkaResult<(
         Vec<DWalletCheckpointMessageKind>,
         Vec<SystemCheckpointMessageKind>,
@@ -1564,7 +1567,10 @@ impl AuthorityPerEpochStore {
             .last()
             .is_some_and(|msg| matches!(msg, SystemCheckpointMessageKind::EndOfPublish));
         let make_checkpoint = should_accept_tx || final_round;
-        if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
+        if self.protocol_config().bls_checkpoints()
+            && make_checkpoint
+            && !verified_system_checkpoint_messages.is_empty()
+        {
             let checkpoint_height = consensus_commit_info.round;
 
             let pending_system_checkpoint =
@@ -1581,12 +1587,28 @@ impl AuthorityPerEpochStore {
 
         // Only after batch is written, notify checkpoint service to start building any new
         // pending checkpoints.
-        if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
+        if self.protocol_config().bls_checkpoints()
+            && make_checkpoint
+            && !verified_system_checkpoint_messages.is_empty()
+        {
             debug!(
                 ?consensus_commit_info.round,
                 "Notifying system_checkpoint service about new pending checkpoint(s)",
             );
-            system_checkpoint_service.notify_checkpoint()?;
+            if let Some(service) = system_checkpoint_service {
+                service.notify_checkpoint()?;
+            }
+        }
+
+        if let Some(sender) = noa_system_checkpoint_sender {
+            if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
+                if let Err(e) = sender.try_send(verified_system_checkpoint_messages.clone()) {
+                    error!(
+                        error=?e,
+                        "failed to send system checkpoint messages to NOA submitter"
+                    );
+                }
+            }
         }
 
         self.process_notifications(&notifications);
@@ -1613,8 +1635,8 @@ impl AuthorityPerEpochStore {
         &self,
         output: &mut ConsensusCommitOutput,
         transactions: &[VerifiedSequencedConsensusTransaction],
-        checkpoint_service: &Arc<C>,
-        system_checkpoint_service: &Arc<SystemCheckpointService>,
+        checkpoint_service: &Option<Arc<C>>,
+        system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
         consensus_commit_info: &ConsensusCommitInfo,
         //roots: &mut BTreeSet<MessageDigest>,
         authority_metrics: &Arc<AuthorityMetrics>,
@@ -1858,8 +1880,8 @@ impl AuthorityPerEpochStore {
         &self,
         _output: &mut ConsensusCommitOutput,
         transaction: &VerifiedSequencedConsensusTransaction,
-        checkpoint_service: &Arc<C>,
-        system_checkpoint_service: &Arc<SystemCheckpointService>, // should i do this generic as the checkpoint service?
+        checkpoint_service: &Option<Arc<C>>,
+        system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
         _commit_round: Round,
         _authority_metrics: &Arc<AuthorityMetrics>,
     ) -> IkaResult<ConsensusCertificateResult> {
@@ -1900,7 +1922,9 @@ impl AuthorityPerEpochStore {
                     // We usually call notify_checkpoint_signature in IkaTxValidator, but that
                     // step can be skipped when a batch is already part of a certificate, so we
                     // must also notify here.
-                    checkpoint_service.notify_checkpoint_signature(self, info)?;
+                    if let Some(service) = checkpoint_service {
+                        service.notify_checkpoint_signature(self, info)?;
+                    }
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
@@ -1923,7 +1947,9 @@ impl AuthorityPerEpochStore {
             }) => {
                 // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
                 if self.protocol_config().bls_checkpoints() {
-                    system_checkpoint_service.notify_checkpoint_signature(self, data)?;
+                    if let Some(service) = system_checkpoint_service {
+                        service.notify_checkpoint_signature(self, data)?;
+                    }
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }

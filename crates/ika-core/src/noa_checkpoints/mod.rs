@@ -9,10 +9,11 @@ use std::sync::Arc;
 use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, NOACheckpointKind, NOACheckpointMessage,
 };
-use tokio::sync::mpsc::Receiver;
+use sui_types::base_types::EpochId;
+use tokio::sync::mpsc::{Receiver, UnboundedSender};
 use tracing::{error, info};
 
-use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
+use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use checkpoint_output::CertifiedNOACheckpointOutput;
 
 /// Tracks a checkpoint whose transactions are being signed individually.
@@ -119,6 +120,91 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     pub fn get_certified(&self, seq: u64) -> Option<CertifiedNOACheckpointMessage<K>> {
         self.certified.lock().get(&seq).cloned()
+    }
+}
+
+/// Receives raw checkpoint messages from a channel and submits them to the NOA MPC signing
+/// pipeline. This replaces the V1 bridge structs (`SubmitDWalletCheckpointToNOASign` /
+/// `SubmitSystemCheckpointToNOASign`) with a channel-based, independently gated path.
+pub struct NOACheckpointSubmitter<K: NOACheckpointKind> {
+    receiver: tokio::sync::mpsc::Receiver<Vec<K::MessageKind>>,
+    noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
+    store: Arc<NOACheckpointLocalStore<K>>,
+    epoch: EpochId,
+    next_sequence_number: u64,
+}
+
+impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
+    pub fn new(
+        receiver: tokio::sync::mpsc::Receiver<Vec<K::MessageKind>>,
+        noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
+        store: Arc<NOACheckpointLocalStore<K>>,
+        epoch: EpochId,
+    ) -> Self {
+        Self {
+            receiver,
+            noa_sign_sender,
+            store,
+            epoch,
+            next_sequence_number: 0,
+        }
+    }
+
+    pub async fn run(mut self) {
+        info!(
+            kind = K::NAME,
+            epoch = self.epoch,
+            "Starting NOACheckpointSubmitter"
+        );
+
+        while let Some(messages) = self.receiver.recv().await {
+            let seq = self.next_sequence_number;
+            self.next_sequence_number += 1;
+
+            let checkpoint = NOACheckpointMessage {
+                epoch: self.epoch,
+                sequence_number: seq,
+                messages,
+            };
+
+            // BCS-serialize as placeholder signable bytes.
+            let signable_bytes = bcs::to_bytes(&checkpoint).unwrap_or_default();
+            let all_tx_bytes = vec![signable_bytes];
+
+            self.store
+                .insert_pending(seq, checkpoint, all_tx_bytes.clone());
+
+            info!(
+                kind = K::NAME,
+                sequence_number = seq,
+                epoch = self.epoch,
+                tx_count = all_tx_bytes.len(),
+                "Submitting NOA checkpoint to MPC signing pipeline",
+            );
+
+            for tx_bytes in all_tx_bytes {
+                let request = NetworkOwnedAddressSignRequest {
+                    message: tx_bytes,
+                    curve: K::curve(),
+                    signature_algorithm: K::signature_algorithm(),
+                    hash_scheme: K::hash_scheme(),
+                };
+
+                if let Err(e) = self.noa_sign_sender.send(request) {
+                    error!(
+                        kind = K::NAME,
+                        sequence_number = seq,
+                        error = %e,
+                        "Failed to send NOA checkpoint sign request",
+                    );
+                }
+            }
+        }
+
+        info!(
+            kind = K::NAME,
+            "NOACheckpointSubmitter channel closed, shutting down"
+        );
     }
 }
 

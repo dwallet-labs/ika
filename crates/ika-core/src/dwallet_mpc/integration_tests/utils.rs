@@ -492,7 +492,7 @@ fn create_dwallet_mpc_service(
         seed,
         dwallet_submit_to_consensus.clone(),
         Arc::new(TestingAuthorityState::new()),
-        checkpoint_notify.clone(),
+        Some(checkpoint_notify.clone()),
         *authority_name,
         committee.clone(),
         sui_data_receivers.clone(),

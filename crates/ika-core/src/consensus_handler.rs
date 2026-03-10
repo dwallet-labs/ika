@@ -31,6 +31,7 @@ use ika_types::digests::ConsensusCommitDigest;
 use ika_types::messages_consensus::{
     AuthorityIndex, ConsensusTransaction, ConsensusTransactionKey, ConsensusTransactionKind,
 };
+use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 use lru::LruCache;
 use mysten_metrics::{monitored_future, monitored_mpsc::UnboundedReceiver, monitored_scope};
@@ -42,21 +43,26 @@ use tracing::{debug, error, instrument, trace_span, warn};
 
 pub struct ConsensusHandlerInitializer {
     state: Arc<AuthorityState>,
-    checkpoint_service: Arc<DWalletCheckpointService>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
+    noa_system_checkpoint_sender:
+        Option<tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>>,
 }
 
 impl ConsensusHandlerInitializer {
     pub fn new(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        noa_system_checkpoint_sender: Option<
+            tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>,
+        >,
     ) -> Self {
         Self {
             state,
@@ -65,6 +71,7 @@ impl ConsensusHandlerInitializer {
             epoch_store,
             low_scoring_authorities,
             throughput_calculator,
+            noa_system_checkpoint_sender,
         }
     }
 
@@ -72,8 +79,8 @@ impl ConsensusHandlerInitializer {
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     ) -> Self {
         Self {
             state: state.clone(),
@@ -85,6 +92,7 @@ impl ConsensusHandlerInitializer {
                 None,
                 state.metrics.clone(),
             )),
+            noa_system_checkpoint_sender: None,
         }
     }
 
@@ -100,6 +108,7 @@ impl ConsensusHandlerInitializer {
             consensus_committee,
             self.state.metrics.clone(),
             self.throughput_calculator,
+            self.noa_system_checkpoint_sender,
         )
     }
 
@@ -118,8 +127,10 @@ pub struct ConsensusHandler<C> {
     /// It is used for avoiding replaying already processed transactions,
     /// checking chain consistency, and accumulating per-epoch consensus output stats.
     last_consensus_stats: ExecutionIndicesWithStats,
-    checkpoint_service: Arc<C>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<C>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
+    noa_system_checkpoint_sender:
+        Option<tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>>,
     /// Reputation scores used by consensus adapter that we update, forwarded from consensus
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     /// The consensus committee used to do stake computations for deciding set of low scoring authorities
@@ -138,12 +149,15 @@ const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
 impl<C> ConsensusHandler<C> {
     pub fn new(
         epoch_store: Arc<AuthorityPerEpochStore>,
-        checkpoint_service: Arc<C>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<C>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        noa_system_checkpoint_sender: Option<
+            tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>,
+        >,
     ) -> Self {
         // Recover last_consensus_stats so it is consistent across validators.
         let mut last_consensus_stats = epoch_store
@@ -159,6 +173,7 @@ impl<C> ConsensusHandler<C> {
             last_consensus_stats,
             checkpoint_service,
             system_checkpoint_service,
+            noa_system_checkpoint_sender,
             low_scoring_authorities,
             committee,
             metrics,
@@ -349,6 +364,7 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
                 &self.system_checkpoint_service,
                 &ConsensusCommitInfo::new(self.epoch_store.protocol_config(), &consensus_commit),
                 &self.metrics,
+                self.noa_system_checkpoint_sender.as_ref(),
             )
             .await
             .expect("Unrecoverable error in consensus handler");

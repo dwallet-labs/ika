@@ -75,7 +75,9 @@ pub struct DWalletMPCService {
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
     dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
-    dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+    dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
+    noa_dwallet_checkpoint_sender:
+        Option<tokio::sync::mpsc::Sender<Vec<DWalletCheckpointMessageKind>>>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
     end_of_publish: bool,
@@ -113,7 +115,10 @@ impl DWalletMPCService {
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
-        dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
+        noa_dwallet_checkpoint_sender: Option<
+            tokio::sync::mpsc::Sender<Vec<DWalletCheckpointMessageKind>>,
+        >,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
@@ -163,6 +168,7 @@ impl DWalletMPCService {
             dwallet_submit_to_consensus: consensus_adapter,
             state,
             dwallet_checkpoint_service,
+            noa_dwallet_checkpoint_sender,
             dwallet_mpc_manager,
             exit,
             end_of_publish: false,
@@ -192,7 +198,7 @@ impl DWalletMPCService {
         seed: RootSeed,
         dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
         authority_state: Arc<dyn AuthorityStateTrait>,
-        checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
         authority_name: AuthorityName,
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
@@ -215,6 +221,7 @@ impl DWalletMPCService {
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
+            noa_dwallet_checkpoint_sender: None,
             dwallet_mpc_manager: DWalletMPCManager::new(
                 authority_name,
                 Arc::new(committee.clone()),
@@ -988,43 +995,57 @@ impl DWalletMPCService {
                 }
 
                 if !checkpoint_messages.is_empty() {
-                    let pending_checkpoint =
-                        PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
-                            messages: checkpoint_messages.clone(),
-                            details: PendingDWalletCheckpointInfo {
-                                checkpoint_height: consensus_round,
-                            },
-                        });
-                    if let Err(e) = self
-                        .epoch_store
-                        .insert_pending_dwallet_checkpoint(pending_checkpoint)
-                    {
-                        error!(
+                    if self.protocol_config.bls_checkpoints() {
+                        let pending_checkpoint =
+                            PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
+                                messages: checkpoint_messages.clone(),
+                                details: PendingDWalletCheckpointInfo {
+                                    checkpoint_height: consensus_round,
+                                },
+                            });
+                        if let Err(e) = self
+                            .epoch_store
+                            .insert_pending_dwallet_checkpoint(pending_checkpoint)
+                        {
+                            error!(
+                                    error=?e,
+                                    ?consensus_round,
+                                    ?checkpoint_messages,
+                                    "failed to insert pending checkpoint into the local DB"
+                            );
+
+                            panic!("failed to insert pending checkpoint into the local DB");
+                        };
+
+                        debug!(
+                            ?consensus_round,
+                            "Notifying checkpoint service about new pending checkpoint(s)",
+                        );
+                        // Only after batch is written, notify checkpoint service to start building
+                        // any new pending checkpoints.
+                        if let Some(ref service) = self.dwallet_checkpoint_service {
+                            if let Err(e) = service.notify_checkpoint() {
+                                error!(
+                                    error=?e,
+                                    ?consensus_round,
+                                    "failed to notify checkpoint service about new pending checkpoint(s)"
+                                );
+
+                                panic!(
+                                    "failed to notify checkpoint service about new pending checkpoint(s)"
+                                );
+                            }
+                        }
+                    }
+
+                    if let Some(ref sender) = self.noa_dwallet_checkpoint_sender {
+                        if let Err(e) = sender.try_send(checkpoint_messages.clone()) {
+                            error!(
                                 error=?e,
                                 ?consensus_round,
-                                ?checkpoint_messages,
-                                "failed to insert pending checkpoint into the local DB"
-                        );
-
-                        panic!("failed to insert pending checkpoint into the local DB");
-                    };
-
-                    debug!(
-                        ?consensus_round,
-                        "Notifying checkpoint service about new pending checkpoint(s)",
-                    );
-                    // Only after batch is written, notify checkpoint service to start building any new
-                    // pending checkpoints.
-                    if let Err(e) = self.dwallet_checkpoint_service.notify_checkpoint() {
-                        error!(
-                            error=?e,
-                            ?consensus_round,
-                            "failed to notify checkpoint service about new pending checkpoint(s)"
-                        );
-
-                        panic!(
-                            "failed to notify checkpoint service about new pending checkpoint(s)"
-                        );
+                                "failed to send dwallet checkpoint messages to NOA submitter"
+                            );
+                        }
                     }
                 }
 
