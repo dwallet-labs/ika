@@ -79,7 +79,8 @@ pub async fn register_encryption_key(
 
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
     let encryption_key_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key)?))?;
-    let encryption_key_sig_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_signature)?))?;
+    let encryption_key_sig_arg =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_signature)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
     ptb.programmable_move_call(
@@ -189,7 +190,8 @@ pub async fn request_dwallet_dkg(
     let enc_secret_share_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &encrypted_centralized_secret_share_and_proof,
     )?))?;
-    let encryption_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
+    let encryption_key_addr_arg =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
@@ -1000,7 +1002,8 @@ pub async fn request_imported_key_dwallet_verification(
     let enc_secret_share_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
         &encrypted_centralized_secret_share_and_proof,
     )?))?;
-    let encryption_key_addr_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
+    let encryption_key_addr_arg =
+        ptb.input(CallArg::Pure(bcs::to_bytes(&encryption_key_address)?))?;
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 

@@ -569,8 +569,7 @@ async fn find_created_object_by_type(
                 let type_str = move_obj.type_().to_string();
                 // Skip dynamic field wrapper types (e.g. Field<ID, SignSession>)
                 // to avoid matching wrappers instead of the actual object.
-                if type_str.contains("dynamic_field") || type_str.contains("dynamic_object_field")
-                {
+                if type_str.contains("dynamic_field") || type_str.contains("dynamic_object_field") {
                     continue;
                 }
                 if type_str.contains(type_substr) {
@@ -687,8 +686,7 @@ async fn poll_sign_session(
         match fetch_object_fields(&sdk_client, sign_session_id).await {
             Ok(fields) => {
                 if let Some(state) = fields.get("state") {
-                    let variant =
-                        state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
+                    let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
                     match variant {
                         "Completed" => {
                             let sig_bytes = state
@@ -1044,21 +1042,17 @@ async fn get_network_key_info_for(
 
     // Derive protocol parameters: use reconfiguration output if the key was created
     // in a prior epoch (matching TS SDK behavior).
-    let protocol_public_parameters =
-        if key_data.current_reconfiguration_public_output.is_empty() {
-            network_dkg_public_output_to_protocol_pp_inner(
-                curve_id,
-                key_data.network_dkg_public_output,
-            )
+    let protocol_public_parameters = if key_data.current_reconfiguration_public_output.is_empty() {
+        network_dkg_public_output_to_protocol_pp_inner(curve_id, key_data.network_dkg_public_output)
             .context("Failed to derive protocol parameters from network DKG output")?
-        } else {
-            reconfiguration_public_output_to_protocol_pp_inner(
-                curve_id,
-                key_data.current_reconfiguration_public_output,
-                key_data.network_dkg_public_output,
-            )
-            .context("Failed to derive protocol parameters from reconfiguration output")?
-        };
+    } else {
+        reconfiguration_public_output_to_protocol_pp_inner(
+            curve_id,
+            key_data.current_reconfiguration_public_output,
+            key_data.network_dkg_public_output,
+        )
+        .context("Failed to derive protocol parameters from reconfiguration output")?
+    };
 
     Ok(NetworkKeyInfo {
         network_encryption_key_id: *id,
@@ -1359,8 +1353,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let curve_id = curve_name_to_id(&curve)?;
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
@@ -1466,24 +1465,21 @@ impl IkaDWalletCommand {
                 let (digest, _status) = tx_digest_and_status(&response);
                 let events = fetch_tx_events(context, &digest).await;
                 let event_list = events.as_deref().unwrap_or(&[]);
-                let dwallet_id = extract_event_field(
-                    event_list,
-                    "DWalletDKGRequestEvent",
-                    "dwallet_id",
-                )
-                .and_then(|s| s.parse::<ObjectID>().ok());
-                let dwallet_cap_id = extract_event_field(
-                    event_list,
-                    "DWalletDKGRequestEvent",
-                    "dwallet_cap_id",
-                )
-                .and_then(|s| s.parse::<ObjectID>().ok());
+                let dwallet_id =
+                    extract_event_field(event_list, "DWalletDKGRequestEvent", "dwallet_id")
+                        .and_then(|s| s.parse::<ObjectID>().ok());
+                let dwallet_cap_id =
+                    extract_event_field(event_list, "DWalletDKGRequestEvent", "dwallet_cap_id")
+                        .and_then(|s| s.parse::<ObjectID>().ok());
                 // encrypted_user_secret_key_share_id is nested inside
                 // event_data.user_secret_key_share (an enum variant: Encrypted { ... })
                 let encrypted_share_id = extract_nested_event_field(
                     event_list,
                     "DWalletDKGRequestEvent",
-                    &["user_secret_key_share", "encrypted_user_secret_key_share_id"],
+                    &[
+                        "user_secret_key_share",
+                        "encrypted_user_secret_key_share_id",
+                    ],
                 )
                 .and_then(|s| s.parse::<ObjectID>().ok());
 
@@ -1575,8 +1571,13 @@ impl IkaDWalletCommand {
                 ika_sui_config,
                 wait,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
                 let message_bytes = hex_decode(&message)?;
@@ -1632,8 +1633,7 @@ impl IkaDWalletCommand {
                 let secret_share_bytes =
                     std::fs::read(&secret_share).context("Failed to read secret share file")?;
 
-                if !quiet {
-                }
+                if !quiet {}
                 let network_key_info = get_network_key_info_for(
                     context,
                     &config_path,
@@ -1747,8 +1747,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
                 let message_bytes = hex_decode(&message)?;
@@ -1842,8 +1847,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
                 let session_id = random_bytes().to_vec();
@@ -1910,13 +1920,17 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
                 let session_id = random_bytes().to_vec();
-                let network_key_info =
-                    get_network_key_info(context, &config_path, curve).await?;
+                let network_key_info = get_network_key_info(context, &config_path, curve).await?;
 
                 let response = ika_dwallet_transactions::request_global_presign_tx(
                     context,
@@ -1945,8 +1959,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let curve_id = curve_name_to_id(&curve)?;
                 let (ika_coin, sui_coin) =
                     resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
@@ -2114,8 +2133,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, _config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, _config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
                 let curve_id = curve_name_to_id(&curve)?;
 
                 let seed = parse_or_random_seed(seed)?;
@@ -2178,8 +2202,13 @@ impl IkaDWalletCommand {
                 gas_budget,
                 ika_sui_config,
             } => {
-                let (gas_budget, _config_path, config) =
-                    resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                let (gas_budget, _config_path, config) = resolve_config!(
+                    gas_budget,
+                    ika_sui_config,
+                    global_gas_budget,
+                    global_ika_config,
+                    context
+                );
 
                 let response = ika_dwallet_transactions::verify_presign_cap(
                     context,
@@ -2266,8 +2295,13 @@ impl IkaDWalletCommand {
                     gas_budget,
                     ika_sui_config,
                 } => {
-                    let (gas_budget, _config_path, config) =
-                        resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                    let (gas_budget, _config_path, config) = resolve_config!(
+                        gas_budget,
+                        ika_sui_config,
+                        global_gas_budget,
+                        global_ika_config,
+                        context
+                    );
                     let (ika_coin, sui_coin) =
                         resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
                     let share_bytes = std::fs::read(&secret_share)?;
@@ -2299,8 +2333,13 @@ impl IkaDWalletCommand {
                     gas_budget,
                     ika_sui_config,
                 } => {
-                    let (gas_budget, config_path, config) =
-                        resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                    let (gas_budget, config_path, config) = resolve_config!(
+                        gas_budget,
+                        ika_sui_config,
+                        global_gas_budget,
+                        global_ika_config,
+                        context
+                    );
                     let curve_id = curve_name_to_id(&curve)?;
                     let (ika_coin, sui_coin) =
                         resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
@@ -2310,8 +2349,7 @@ impl IkaDWalletCommand {
                     let dest_encryption_key = hex_decode(&destination_encryption_key)?;
 
                     // Use the dWallet's specific network key for protocol parameters
-                    let dwallet_metadata =
-                        fetch_dwallet_metadata(context, dwallet_id).await?;
+                    let dwallet_metadata = fetch_dwallet_metadata(context, dwallet_id).await?;
                     let network_key_info = get_network_key_info_for(
                         context,
                         &config_path,
@@ -2354,8 +2392,13 @@ impl IkaDWalletCommand {
                     gas_budget,
                     ika_sui_config,
                 } => {
-                    let (gas_budget, _config_path, config) =
-                        resolve_config!(gas_budget, ika_sui_config, global_gas_budget, global_ika_config, context);
+                    let (gas_budget, _config_path, config) = resolve_config!(
+                        gas_budget,
+                        ika_sui_config,
+                        global_gas_budget,
+                        global_ika_config,
+                        context
+                    );
                     let sig_bytes = hex_decode(&user_output_signature)?;
 
                     let response = ika_dwallet_transactions::accept_encrypted_user_share(
@@ -2391,4 +2434,3 @@ async fn resolve_presign_output(
         None => fetch_presign_output(context, presign_cap_id).await,
     }
 }
-

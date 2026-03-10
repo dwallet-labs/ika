@@ -92,8 +92,7 @@ impl DeployedAddresses {
 }
 
 fn parse_object_id(s: &str) -> Result<ObjectID> {
-    s.parse()
-        .with_context(|| format!("Invalid object ID: {s}"))
+    s.parse().with_context(|| format!("Invalid object ID: {s}"))
 }
 
 impl IkaConfigCommand {
@@ -133,8 +132,8 @@ impl IkaConfigCommand {
                 }
 
                 let config_file = IkaPackagesConfigFile { envs };
-                let yaml = serde_yaml::to_string(&config_file)
-                    .context("Failed to serialize config")?;
+                let yaml =
+                    serde_yaml::to_string(&config_file).context("Failed to serialize config")?;
 
                 if let Some(parent) = output_path.parent() {
                     std::fs::create_dir_all(parent)?;
