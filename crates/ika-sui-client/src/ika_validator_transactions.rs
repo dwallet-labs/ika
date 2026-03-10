@@ -738,7 +738,7 @@ pub(crate) async fn construct_unsigned_txn(
         && dry_run.transaction.effects.status().is_err()
     {
         let err_msg = format!("{:?}", dry_run.transaction.effects.status());
-        println!("{:?}", dry_run.transaction.effects);
+        tracing::debug!(?dry_run.transaction.effects, "Dry run failed");
         return Err(IkaError::DryRunFailed(err_msg));
     };
 

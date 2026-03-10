@@ -101,6 +101,43 @@ pub const SET_PRICING_VOTE_FUNCTION_NAME: &IdentStr = ident_str!("set_pricing_vo
 pub const SET_NEXT_EPOCH_MPC_DATA_BYTES_FUNCTION_NAME: &IdentStr =
     ident_str!("set_next_epoch_mpc_data_bytes");
 
+// Coordinator dWallet function names
+pub const REGISTER_SESSION_IDENTIFIER_FUNCTION_NAME: &IdentStr =
+    ident_str!("register_session_identifier");
+pub const REGISTER_ENCRYPTION_KEY_FUNCTION_NAME: &IdentStr = ident_str!("register_encryption_key");
+pub const GET_ACTIVE_ENCRYPTION_KEY_FUNCTION_NAME: &IdentStr =
+    ident_str!("get_active_encryption_key");
+pub const REQUEST_DWALLET_DKG_FUNCTION_NAME: &IdentStr = ident_str!("request_dwallet_dkg");
+pub const REQUEST_DWALLET_DKG_WITH_PUBLIC_USER_SECRET_KEY_SHARE_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_dwallet_dkg_with_public_user_secret_key_share");
+pub const REQUEST_IMPORTED_KEY_DWALLET_VERIFICATION_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_imported_key_dwallet_verification");
+pub const APPROVE_MESSAGE_FUNCTION_NAME: &IdentStr = ident_str!("approve_message");
+pub const APPROVE_IMPORTED_KEY_MESSAGE_FUNCTION_NAME: &IdentStr =
+    ident_str!("approve_imported_key_message");
+pub const REQUEST_IMPORTED_KEY_SIGN_AND_RETURN_ID_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_imported_key_sign_and_return_id");
+pub const REQUEST_PRESIGN_FUNCTION_NAME: &IdentStr = ident_str!("request_presign");
+pub const REQUEST_GLOBAL_PRESIGN_FUNCTION_NAME: &IdentStr = ident_str!("request_global_presign");
+pub const VERIFY_PRESIGN_CAP_FUNCTION_NAME: &IdentStr = ident_str!("verify_presign_cap");
+pub const REQUEST_SIGN_FUNCTION_NAME: &IdentStr = ident_str!("request_sign");
+pub const REQUEST_SIGN_AND_RETURN_ID_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_sign_and_return_id");
+pub const REQUEST_FUTURE_SIGN_FUNCTION_NAME: &IdentStr = ident_str!("request_future_sign");
+pub const VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME: &IdentStr =
+    ident_str!("verify_partial_user_signature_cap");
+pub const REQUEST_SIGN_WITH_PARTIAL_USER_SIGNATURE_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_sign_with_partial_user_signature");
+pub const REQUEST_MAKE_DWALLET_USER_SECRET_KEY_SHARES_PUBLIC_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_make_dwallet_user_secret_key_shares_public");
+pub const REQUEST_RE_ENCRYPT_USER_SHARE_FOR_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_re_encrypt_user_share_for");
+pub const ACCEPT_ENCRYPTED_USER_SHARE_FUNCTION_NAME: &IdentStr =
+    ident_str!("accept_encrypted_user_share");
+pub const SIGN_DURING_DKG_REQUEST_FUNCTION_NAME: &IdentStr = ident_str!("sign_during_dkg_request");
+pub const CURRENT_PRICING_FUNCTION_NAME: &IdentStr = ident_str!("current_pricing");
+pub const GET_DWALLET_FUNCTION_NAME: &IdentStr = ident_str!("get_dwallet");
+
 pub const NEW_VALIDATOR_METADATA_FUNCTION_NAME: &IdentStr = ident_str!("new");
 
 pub const TABLE_VEC_MODULE_NAME: &IdentStr = ident_str!("table_vec");

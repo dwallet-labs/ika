@@ -8,10 +8,15 @@ use std::path::PathBuf;
 use sui_config::PersistedConfig;
 use sui_sdk::wallet_context::WalletContext;
 
+pub mod context;
+pub mod output;
+
 #[macro_use]
 pub mod ika_commands;
+pub mod dwallet_commands;
 #[cfg(feature = "protocol-commands")]
 pub(crate) mod protocol_commands;
+pub mod system_commands;
 pub(crate) mod validator_commands;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

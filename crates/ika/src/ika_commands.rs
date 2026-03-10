@@ -14,8 +14,10 @@ use std::path::PathBuf;
 use std::thread;
 use sui_config::{SUI_CLIENT_CONFIG, sui_config_dir};
 
+use crate::dwallet_commands::IkaDWalletCommand;
 #[cfg(feature = "protocol-commands")]
 use crate::protocol_commands::IkaProtocolCommand;
+use crate::system_commands::IkaSystemCommand;
 use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
@@ -135,10 +137,39 @@ pub enum IkaCommand {
         #[clap(short = 'y', long = "yes")]
         accept_defaults: bool,
     },
+
+    /// dWallet operations: create, sign, presign, import, and key management.
+    #[clap(name = "dwallet")]
+    DWallet {
+        #[clap(subcommand)]
+        cmd: IkaDWalletCommand,
+    },
+
+    /// System deployment and initialization operations (publish contracts, mint tokens, init env).
+    #[clap(name = "system")]
+    System {
+        #[clap(subcommand)]
+        cmd: IkaSystemCommand,
+    },
+
+    /// Generate shell completions for the given shell.
+    #[clap(name = "completion")]
+    Completion {
+        /// The shell to generate completions for.
+        #[clap(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 impl IkaCommand {
-    pub async fn execute(self) -> Result<(), anyhow::Error> {
+    pub async fn execute(
+        self,
+        json: bool,
+        quiet: bool,
+        client_config: Option<PathBuf>,
+        _ika_config: Option<PathBuf>,
+        _gas_budget: Option<u64>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             IkaCommand::Network {
                 config,
@@ -210,12 +241,18 @@ impl IkaCommand {
                 Ok(())
             }
             IkaCommand::Validator {
-                config, cmd, json, ..
+                config,
+                cmd,
+                json: cmd_json,
+                ..
             } => {
-                let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let use_json = json || cmd_json;
+                let config_path = config
+                    .or(client_config)
+                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!json);
+                    cmd.execute(&mut context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
@@ -226,18 +263,38 @@ impl IkaCommand {
             }
             #[cfg(feature = "protocol-commands")]
             IkaCommand::Protocol {
-                config, cmd, json, ..
+                config,
+                cmd,
+                json: cmd_json,
+                ..
             } => {
-                let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let use_json = json || cmd_json;
+                let config_path = config
+                    .or(client_config)
+                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!json);
+                    cmd.execute(&mut context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
                     app.build();
                     app.find_subcommand_mut("protocol").unwrap().print_help()?;
                 }
+                Ok(())
+            }
+            IkaCommand::DWallet { cmd } => {
+                let config_path =
+                    client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let mut context = WalletContext::new(&config_path)?;
+                cmd.execute(&mut context, json, quiet, _ika_config, _gas_budget)
+                    .await
+            }
+            IkaCommand::System { cmd } => cmd.execute().await,
+            IkaCommand::Completion { shell } => {
+                let mut app =
+                    crate::ika_commands::IkaCommand::augment_subcommands(clap::Command::new("ika"));
+                clap_complete::generate(shell, &mut app, "ika", &mut std::io::stdout());
                 Ok(())
             }
         }
