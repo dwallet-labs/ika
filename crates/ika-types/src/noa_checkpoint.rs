@@ -8,6 +8,7 @@ use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSig
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::hash::Hash;
 
 // === ChainDestination ===
 
@@ -170,4 +171,32 @@ pub struct CertifiedNOACheckpointMessage<K: NOACheckpointKind> {
     pub signed_bytes: Vec<Vec<u8>>,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
+}
+
+// === NOA Checkpoint Finalization Types ===
+
+/// Status of an individual NOA checkpoint's on-chain transaction.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NOACheckpointTxStatus {
+    /// Signed and submitted, awaiting on-chain confirmation.
+    Pending,
+    /// On-chain execution confirmed by this validator; consensus vote submitted.
+    ConfirmedLocally,
+    /// 2f+1 validators confirmed on-chain execution.
+    Finalized,
+    /// 2f+1 failure votes received; awaiting MPC re-signing.
+    RetryPending,
+}
+
+/// Identifies a specific NOA checkpoint transaction for finalization voting.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NOACheckpointTxRef {
+    /// Which checkpoint kind (matches K::NAME).
+    pub kind_name: String,
+    /// Checkpoint sequence number within the epoch.
+    pub sequence_number: u64,
+    /// Index within the checkpoint's transaction set (for multi-tx checkpoints).
+    pub tx_index: u32,
+    /// The epoch this checkpoint belongs to.
+    pub epoch: EpochId,
 }

@@ -69,6 +69,7 @@ where
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!(?mode, "Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -96,6 +97,7 @@ where
                 system_object_receiver.clone(),
                 dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
+                noa_checkpoints_finalized,
             ));
             info!("Syncing last session to complete in current epoch");
             tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
@@ -449,6 +451,7 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         end_of_publish_sender: Sender<Option<u64>>,
+        noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) {
         loop {
             time::sleep(Duration::from_secs(10)).await;
@@ -488,6 +491,7 @@ where
             let all_network_encryption_keys_reconfiguration_completed =
                 coordinator.dwallet_network_encryption_keys.size
                     == coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
+            let all_noa_checkpoints_finalized = noa_checkpoints_finalized();
             if coordinator
                 .sessions_manager
                 .locked_last_user_initiated_session_to_complete_in_current_epoch
@@ -495,6 +499,7 @@ where
                 && all_immediate_sessions_completed
                 && next_epoch_committee_exists
                 && all_network_encryption_keys_reconfiguration_completed
+                && all_noa_checkpoints_finalized
                 && coordinator
                     .pricing_and_fee_management
                     .calculation_votes

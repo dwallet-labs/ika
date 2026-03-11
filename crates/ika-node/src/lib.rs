@@ -149,9 +149,12 @@ use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::noa_checkpoints::checkpoint_output::SendNOACheckpointToStateSync;
+use ika_core::noa_checkpoints::checkpoint_output::{
+    CompositeOutput, NotifyFinalizerOutput, SendNOACheckpointToStateSync,
+};
 use ika_core::noa_checkpoints::{
-    NOACheckpointCertifier, NOACheckpointLocalStore, NOACheckpointSubmitter,
+    LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointCertifier, NOACheckpointFinalizer,
+    NOACheckpointLocalStore, NOACheckpointSubmitter,
 };
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
@@ -202,6 +205,8 @@ pub struct IkaNode {
 
     shutdown_channel_tx: broadcast::Sender<Option<RunWithRange>>,
     system_checkpoint_store: Arc<SystemCheckpointStore>,
+    /// Shared flag for NOA checkpoint finalization epoch gate.
+    noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl fmt::Debug for IkaNode {
@@ -226,6 +231,12 @@ struct NOACheckpointComponents {
             Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
         >,
     >,
+    /// DWallet NOA checkpoint store for finalization queries.
+    dwallet_noa_store:
+        Arc<ika_core::noa_checkpoints::NOACheckpointLocalStore<ika_types::noa_checkpoint::DWallet>>,
+    /// System NOA checkpoint store for finalization queries.
+    system_noa_store:
+        Arc<ika_core::noa_checkpoints::NOACheckpointLocalStore<ika_types::noa_checkpoint::System>>,
 }
 
 impl IkaNode {
@@ -534,6 +545,14 @@ impl IkaNode {
         ) = watch::channel((0, 0));
         let (uncompleted_requests_sender, uncompleted_requests_receiver) =
             watch::channel((Vec::new(), 0));
+        // Shared flag for NOA checkpoint finalization gate.
+        // Starts as `true` (no NOA checkpoints to wait for); finalizer tasks set it to `false`
+        // when pending checkpoints exist, and back to `true` when all are finalized.
+        let noa_all_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let noa_all_finalized_clone = noa_all_finalized.clone();
+        let noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync> =
+            Arc::new(move || noa_all_finalized_clone.load(std::sync::atomic::Ordering::Acquire));
+
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
             system_checkpoint_store.clone(),
@@ -546,6 +565,7 @@ impl IkaNode {
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
+            noa_checkpoints_finalized,
         )
         .await?;
 
@@ -608,6 +628,7 @@ impl IkaNode {
                 previous_epoch_last_system_checkpoint_sequence_number,
                 dwallet_mpc_metrics.clone(),
                 sui_data_receivers.clone(),
+                noa_all_finalized.clone(),
             )
             .await?;
             // This is only needed during cold start.
@@ -644,6 +665,7 @@ impl IkaNode {
             sui_connector_service,
             _state_archive_handle: state_archive_handle,
             shutdown_channel_tx: shutdown_channel,
+            noa_all_finalized,
         };
 
         info!("IkaNode started!");
@@ -882,6 +904,7 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
+        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<ValidatorComponents> {
         let mut config_clone = config.clone();
         let consensus_config = config_clone
@@ -939,6 +962,7 @@ impl IkaNode {
             previous_epoch_last_dwallet_checkpoint_sequence_number,
             previous_epoch_last_system_checkpoint_sequence_number,
             sui_data_receivers,
+            noa_all_finalized,
         )
         .await
     }
@@ -961,6 +985,7 @@ impl IkaNode {
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         sui_data_receivers: SuiDataReceivers,
+        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<ValidatorComponents> {
         // Single channel for network-owned-address sign requests.
         let (
@@ -971,13 +996,39 @@ impl IkaNode {
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
+        // Create a channel for NOA finalizer to submit consensus transactions.
+        let (noa_consensus_tx, mut noa_consensus_rx) =
+            tokio::sync::mpsc::channel::<ConsensusTransaction>(256);
+
+        // Reset the finalization flag for the new epoch (all finalized until checkpoints arrive).
+        noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
+
         // Start NOA checkpoint certifier tasks and get stores/sender for builder wiring.
         let noa_components = Self::start_noa_checkpoint_tasks(
             &epoch_store,
             network_owned_address_sign_request_sender,
             network_owned_address_sign_output_receiver,
+            noa_consensus_tx,
+            noa_all_finalized.clone(),
         );
-        let noa_checkpoint_tasks = noa_components.tasks;
+        let mut noa_checkpoint_tasks = noa_components.tasks;
+
+        // Bridge task: reads consensus transactions from the NOA finalizer channel
+        // and submits them through the consensus adapter.
+        {
+            let consensus_adapter_clone = consensus_adapter.clone();
+            let epoch_store_clone = epoch_store.clone();
+            noa_checkpoint_tasks.spawn(async move {
+                while let Some(tx) = noa_consensus_rx.recv().await {
+                    if let Err(e) = consensus_adapter_clone
+                        .submit_to_consensus(&[tx], &epoch_store_clone)
+                        .await
+                    {
+                        error!(error = %e, "Failed to submit NOA finalization vote to consensus");
+                    }
+                }
+            });
+        }
 
         let bls_dwallet = Self::start_dwallet_checkpoint_service(
             config,
@@ -1256,6 +1307,8 @@ impl IkaNode {
         mut noa_sign_output_receiver: tokio::sync::mpsc::UnboundedReceiver<
             NetworkOwnedAddressSignOutput,
         >,
+        consensus_sender: tokio::sync::mpsc::Sender<ConsensusTransaction>,
+        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> NOACheckpointComponents {
         use ika_types::noa_checkpoint;
 
@@ -1270,6 +1323,8 @@ impl IkaNode {
                 tasks,
                 noa_dwallet_checkpoint_sender: None,
                 noa_system_checkpoint_sender: None,
+                dwallet_noa_store,
+                system_noa_store,
             };
         }
 
@@ -1301,10 +1356,22 @@ impl IkaNode {
             }
         });
 
-        // DWallet certifier with state sync output.
-        let dwallet_certified_output = Box::new(SendNOACheckpointToStateSync::<
-            noa_checkpoint::DWallet,
-        >::new(dwallet_sync_handle));
+        // Create certified-checkpoint notification channels (finalizer ← certifier).
+        let (dwallet_cert_notify_tx, dwallet_cert_notify_rx) =
+            tokio::sync::mpsc::channel::<u64>(256);
+        let (system_cert_notify_tx, system_cert_notify_rx) = tokio::sync::mpsc::channel::<u64>(256);
+
+        // DWallet certifier with composite output: state sync + finalizer notification.
+        let dwallet_certified_output: Box<
+            dyn ika_core::noa_checkpoints::checkpoint_output::CertifiedNOACheckpointOutput<
+                    noa_checkpoint::DWallet,
+                >,
+        > = Box::new(CompositeOutput::<noa_checkpoint::DWallet>::new(vec![
+            Box::new(
+                SendNOACheckpointToStateSync::<noa_checkpoint::DWallet>::new(dwallet_sync_handle),
+            ),
+            Box::new(NotifyFinalizerOutput::new(dwallet_cert_notify_tx)),
+        ]));
         let dwallet_certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
             dwallet_noa_store.clone(),
             dwallet_output_rx,
@@ -1312,10 +1379,17 @@ impl IkaNode {
         );
         tasks.spawn(dwallet_certifier.run());
 
-        // System certifier with state sync output.
-        let system_certified_output = Box::new(SendNOACheckpointToStateSync::<
-            noa_checkpoint::System,
-        >::new(system_sync_handle));
+        // System certifier with composite output: state sync + finalizer notification.
+        let system_certified_output: Box<
+            dyn ika_core::noa_checkpoints::checkpoint_output::CertifiedNOACheckpointOutput<
+                    noa_checkpoint::System,
+                >,
+        > = Box::new(CompositeOutput::<noa_checkpoint::System>::new(vec![
+            Box::new(SendNOACheckpointToStateSync::<noa_checkpoint::System>::new(
+                system_sync_handle,
+            )),
+            Box::new(NotifyFinalizerOutput::new(system_cert_notify_tx)),
+        ]));
         let system_certifier = NOACheckpointCertifier::<noa_checkpoint::System>::new(
             system_noa_store.clone(),
             system_output_rx,
@@ -1352,10 +1426,105 @@ impl IkaNode {
         );
         tasks.spawn(system_submitter.run());
 
+        // Read poll interval from protocol config.
+        let poll_interval_secs = epoch_store
+            .protocol_config()
+            .noa_checkpoint_poll_interval_secs_as_option()
+            .unwrap_or(10);
+        let poll_interval = Duration::from_secs(poll_interval_secs);
+        let authority_name = epoch_store.name;
+
+        // Create quorum-check closures backed by the epoch store.
+        let epoch_store_for_dwallet_fin = epoch_store.clone();
+        let dwallet_is_finalized: Arc<
+            dyn Fn(&ika_types::noa_checkpoint::NOACheckpointTxRef) -> bool + Send + Sync,
+        > = Arc::new(move |tx_ref| epoch_store_for_dwallet_fin.is_noa_checkpoint_finalized(tx_ref));
+        let epoch_store_for_dwallet_fail = epoch_store.clone();
+        let dwallet_is_failure_quorum: Arc<
+            dyn Fn(&ika_types::noa_checkpoint::NOACheckpointTxRef, u32) -> bool + Send + Sync,
+        > = Arc::new(move |tx_ref, round| {
+            epoch_store_for_dwallet_fail.has_noa_failure_quorum(tx_ref, round)
+        });
+
+        let epoch_store_for_system_fin = epoch_store.clone();
+        let system_is_finalized: Arc<
+            dyn Fn(&ika_types::noa_checkpoint::NOACheckpointTxRef) -> bool + Send + Sync,
+        > = Arc::new(move |tx_ref| epoch_store_for_system_fin.is_noa_checkpoint_finalized(tx_ref));
+        let epoch_store_for_system_fail = epoch_store.clone();
+        let system_is_failure_quorum: Arc<
+            dyn Fn(&ika_types::noa_checkpoint::NOACheckpointTxRef, u32) -> bool + Send + Sync,
+        > = Arc::new(move |tx_ref, round| {
+            epoch_store_for_system_fail.has_noa_failure_quorum(tx_ref, round)
+        });
+
+        // DWallet finalizer.
+        let dwallet_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::DWallet>> =
+            Arc::new(LogOnlyChainSubmitter);
+        let dwallet_finalizer = NOACheckpointFinalizer::<noa_checkpoint::DWallet>::new(
+            dwallet_noa_store.clone(),
+            dwallet_chain_submitter,
+            noa_sign_request_sender.clone(),
+            consensus_sender.clone(),
+            epoch,
+            authority_name,
+            noa_checkpoint::SuiChainContext,
+            vec![],
+            poll_interval,
+            dwallet_is_finalized,
+            dwallet_is_failure_quorum,
+            dwallet_cert_notify_rx,
+        );
+
+        // System finalizer.
+        let system_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::System>> =
+            Arc::new(LogOnlyChainSubmitter);
+        let system_finalizer = NOACheckpointFinalizer::<noa_checkpoint::System>::new(
+            system_noa_store.clone(),
+            system_chain_submitter,
+            noa_sign_request_sender.clone(),
+            consensus_sender,
+            epoch,
+            authority_name,
+            noa_checkpoint::SuiChainContext,
+            vec![],
+            poll_interval,
+            system_is_finalized,
+            system_is_failure_quorum,
+            system_cert_notify_rx,
+        );
+
+        // Spawn finalizer tasks with the shared finalization flag.
+        let dwallet_store_for_flag = dwallet_noa_store.clone();
+        let system_store_for_flag = system_noa_store.clone();
+        let flag = noa_all_finalized;
+        tasks.spawn(async move {
+            dwallet_finalizer.run().await;
+        });
+        tasks.spawn(async move {
+            system_finalizer.run().await;
+        });
+
+        // Spawn a lightweight task that periodically updates the shared finalization flag.
+        tasks.spawn(async move {
+            loop {
+                let dwallet_done = dwallet_store_for_flag.has_no_finalization_entries()
+                    || dwallet_store_for_flag.all_finalized();
+                let system_done = system_store_for_flag.has_no_finalization_entries()
+                    || system_store_for_flag.all_finalized();
+                flag.store(
+                    dwallet_done && system_done,
+                    std::sync::atomic::Ordering::Release,
+                );
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
         NOACheckpointComponents {
             tasks,
             noa_dwallet_checkpoint_sender: Some(noa_dwallet_tx),
             noa_system_checkpoint_sender: Some(noa_system_tx),
+            dwallet_noa_store,
+            system_noa_store,
         }
     }
 
@@ -1633,6 +1802,7 @@ impl IkaNode {
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
                             sui_data_receivers.clone(),
+                            self.noa_all_finalized.clone(),
                         )
                         .await?,
                     )
@@ -1668,6 +1838,7 @@ impl IkaNode {
                             previous_epoch_last_system_checkpoint_sequence_number,
                             dwallet_mpc_metrics.clone(),
                             sui_data_receivers.clone(),
+                            self.noa_all_finalized.clone(),
                         )
                         .await?,
                     )
