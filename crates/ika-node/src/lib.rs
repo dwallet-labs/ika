@@ -1004,14 +1004,19 @@ impl IkaNode {
         noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
 
         // Start NOA checkpoint certifier tasks and get stores/sender for builder wiring.
-        let noa_components = Self::start_noa_checkpoint_tasks(
+        let NOACheckpointComponents {
+            tasks: mut noa_checkpoint_tasks,
+            noa_dwallet_checkpoint_sender,
+            noa_system_checkpoint_sender,
+            dwallet_noa_store: _,
+            system_noa_store: _,
+        } = Self::start_noa_checkpoint_tasks(
             &epoch_store,
             network_owned_address_sign_request_sender,
             network_owned_address_sign_output_receiver,
             noa_consensus_tx,
             noa_all_finalized.clone(),
         );
-        let mut noa_checkpoint_tasks = noa_components.tasks;
 
         // Bridge task: reads consensus transactions from the NOA finalizer channel
         // and submits them through the consensus adapter.
@@ -1089,7 +1094,8 @@ impl IkaNode {
             EpochStoreSubmitToConsensus::new(epoch_store.clone(), consensus_adapter.clone()),
             config.clone(),
             dwallet_checkpoint_service_notify,
-            noa_components.noa_dwallet_checkpoint_sender,
+            noa_dwallet_checkpoint_sender,
+            noa_system_checkpoint_sender,
             dwallet_mpc_metrics.clone(),
             state.clone(),
             sui_data_receivers,
@@ -1130,7 +1136,6 @@ impl IkaNode {
             epoch_store.clone(),
             low_scoring_authorities,
             throughput_calculator,
-            noa_components.noa_system_checkpoint_sender,
         );
 
         info!("Starting consensus manager asynchronously");

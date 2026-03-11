@@ -171,6 +171,18 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
     }
 
+    fn next_verified_system_checkpoint_message(
+        &self,
+        _last_consensus_round: Option<Round>,
+    ) -> IkaResult<
+        Option<(
+            Round,
+            Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
+        )>,
+    > {
+        Ok(None)
+    }
+
     fn next_dwallet_internal_mpc_output(
         &self,
         last_consensus_round: Option<Round>,

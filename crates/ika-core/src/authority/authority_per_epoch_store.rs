@@ -249,6 +249,11 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<DWalletCheckpointMessageKind>)>>;
 
+    fn next_verified_system_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>>;
+
     /// Inserts presigns into the pool for the given signature algorithm and network encryption key.
     fn insert_presigns(
         &self,
@@ -387,6 +392,21 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         let tables = self.tables()?;
         let mut iter = tables
             .verified_dwallet_checkpoint_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_verified_system_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<SystemCheckpointMessageKind>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .verified_system_checkpoint_messages
             .safe_iter_with_bounds(last_consensus_round, None);
         if last_consensus_round.is_none() {
             Ok(iter.next().transpose()?)
@@ -601,6 +621,9 @@ pub struct AuthorityEpochTables {
     verified_dwallet_checkpoint_messages:
         DBMap<DWalletCheckpointHeight, Vec<DWalletCheckpointMessageKind>>,
 
+    #[default_options_override_fn = "verified_system_checkpoint_messages_table_default_config"]
+    verified_system_checkpoint_messages: DBMap<Round, Vec<SystemCheckpointMessageKind>>,
+
     /// Stores pending signatures
     /// The key in this table is checkpoint sequence number and an arbitrary integer
     pub(crate) pending_dwallet_checkpoint_signatures:
@@ -700,6 +723,12 @@ fn pending_consensus_transactions_table_default_config() -> DBOptions {
 }
 
 fn verified_dwallet_checkpoint_messages_table_default_config() -> DBOptions {
+    default_db_options()
+        .optimize_for_write_throughput()
+        .optimize_for_large_values_no_scan(1 << 10)
+}
+
+fn verified_system_checkpoint_messages_table_default_config() -> DBOptions {
     default_db_options()
         .optimize_for_write_throughput()
         .optimize_for_large_values_no_scan(1 << 10)
@@ -1569,9 +1598,6 @@ impl AuthorityPerEpochStore {
         system_checkpoint_service: &Option<Arc<SystemCheckpointService>>,
         consensus_commit_info: &ConsensusCommitInfo,
         authority_metrics: &Arc<AuthorityMetrics>,
-        noa_system_checkpoint_sender: Option<
-            &tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>,
-        >,
     ) -> IkaResult<(
         Vec<DWalletCheckpointMessageKind>,
         Vec<SystemCheckpointMessageKind>,
@@ -1615,6 +1641,11 @@ impl AuthorityPerEpochStore {
             .last()
             .is_some_and(|msg| matches!(msg, SystemCheckpointMessageKind::EndOfPublish));
         let make_checkpoint = should_accept_tx || final_round;
+        if make_checkpoint {
+            output.record_verified_system_checkpoint_messages(
+                verified_system_checkpoint_messages.clone(),
+            );
+        }
         if self.protocol_config().bls_checkpoints()
             && make_checkpoint
             && !verified_system_checkpoint_messages.is_empty()
@@ -1645,17 +1676,6 @@ impl AuthorityPerEpochStore {
             );
             if let Some(service) = system_checkpoint_service {
                 service.notify_checkpoint()?;
-            }
-        }
-
-        if let Some(sender) = noa_system_checkpoint_sender {
-            if make_checkpoint && !verified_system_checkpoint_messages.is_empty() {
-                if let Err(e) = sender.try_send(verified_system_checkpoint_messages.clone()) {
-                    error!(
-                        error=?e,
-                        "failed to send system checkpoint messages to NOA submitter"
-                    );
-                }
             }
         }
 
@@ -2375,6 +2395,7 @@ pub(crate) struct ConsensusCommitOutput {
     internal_sessions_status_updates: Vec<InternalSessionsStatusUpdate>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
+    verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
 }
 
 impl ConsensusCommitOutput {
@@ -2412,6 +2433,13 @@ impl ConsensusCommitOutput {
         verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
     ) {
         self.verified_dwallet_checkpoint_messages = verified_dwallet_checkpoint_messages;
+    }
+
+    fn record_verified_system_checkpoint_messages(
+        &mut self,
+        verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
+    ) {
+        self.verified_system_checkpoint_messages = verified_system_checkpoint_messages;
     }
 
     fn record_consensus_commit_stats(&mut self, stats: ExecutionIndicesWithStats) {
@@ -2463,6 +2491,13 @@ impl ConsensusCommitOutput {
             [(
                 self.consensus_round,
                 self.verified_dwallet_checkpoint_messages,
+            )],
+        )?;
+        batch.insert_batch(
+            &tables.verified_system_checkpoint_messages,
+            [(
+                self.consensus_round,
+                self.verified_system_checkpoint_messages,
             )],
         )?;
 

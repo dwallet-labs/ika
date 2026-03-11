@@ -49,6 +49,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyState, GlobalPresignRequest, InternalSessionsStatusUpdate,
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
+use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -78,6 +79,8 @@ pub struct DWalletMPCService {
     dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
     noa_dwallet_checkpoint_sender:
         Option<tokio::sync::mpsc::Sender<Vec<DWalletCheckpointMessageKind>>>,
+    noa_system_checkpoint_sender:
+        Option<tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
     end_of_publish: bool,
@@ -118,6 +121,9 @@ impl DWalletMPCService {
         dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
         noa_dwallet_checkpoint_sender: Option<
             tokio::sync::mpsc::Sender<Vec<DWalletCheckpointMessageKind>>,
+        >,
+        noa_system_checkpoint_sender: Option<
+            tokio::sync::mpsc::Sender<Vec<SystemCheckpointMessageKind>>,
         >,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
@@ -169,6 +175,7 @@ impl DWalletMPCService {
             state,
             dwallet_checkpoint_service,
             noa_dwallet_checkpoint_sender,
+            noa_system_checkpoint_sender,
             dwallet_mpc_manager,
             exit,
             end_of_publish: false,
@@ -222,6 +229,7 @@ impl DWalletMPCService {
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
             noa_dwallet_checkpoint_sender: None,
+            noa_system_checkpoint_sender: None,
             dwallet_mpc_manager: DWalletMPCManager::new(
                 authority_name,
                 Arc::new(committee.clone()),
@@ -747,6 +755,32 @@ impl DWalletMPCService {
                 }
             };
 
+            let verified_system_checkpoint_messages = self
+                .epoch_store
+                .next_verified_system_checkpoint_message(self.last_read_consensus_round);
+            let verified_system_checkpoint_messages = match verified_system_checkpoint_messages {
+                Ok(Some((round, messages))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for verified system checkpoint messages"
+                        );
+                        panic!("consensus round mismatch for verified system checkpoint messages");
+                    }
+                    messages
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load verified system checkpoint messages from the local DB"
+                    );
+                    panic!("failed to load verified system checkpoint messages from the local DB");
+                }
+            };
+
             let status_updates = self
                 .epoch_store
                 .next_internal_sessions_status_update(self.last_read_consensus_round);
@@ -1044,6 +1078,18 @@ impl DWalletMPCService {
                                 error=?e,
                                 ?consensus_round,
                                 "failed to send dwallet checkpoint messages to NOA submitter"
+                            );
+                        }
+                    }
+                }
+
+                if let Some(ref sender) = self.noa_system_checkpoint_sender {
+                    if !verified_system_checkpoint_messages.is_empty() {
+                        if let Err(e) = sender.try_send(verified_system_checkpoint_messages) {
+                            error!(
+                                error=?e,
+                                ?consensus_round,
+                                "failed to send system checkpoint messages to NOA submitter"
                             );
                         }
                     }
