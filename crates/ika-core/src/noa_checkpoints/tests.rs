@@ -17,7 +17,7 @@ mod tests {
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
     use ika_types::noa_checkpoint::{
-        self, NOACheckpointKind, NOACheckpointMessage, SuiChainContext,
+        self, NOACheckpointKind, NOACheckpointKindName, NOACheckpointMessage, SuiChainContext,
     };
     use tokio::sync::mpsc;
 
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn test_local_store_certified_insert_and_get() {
+    fn test_local_store_certified_stored_by_add_signature() {
         let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
@@ -192,7 +192,7 @@ mod tests {
             )
             .unwrap();
 
-        store.insert_certified(0, certified.clone());
+        // add_signature stores the certified checkpoint directly — no separate insert needed.
         let retrieved = store.get_certified(0);
         assert!(retrieved.is_some());
         assert_eq!(
@@ -433,7 +433,7 @@ mod tests {
         drop(output_tx);
         handle.await.unwrap();
 
-        // Verify the checkpoint was certified and stored.
+        // Verify the checkpoint was certified and stored (by add_signature directly).
         let certified = store.get_certified(0).expect("should be certified");
         assert_eq!(certified.checkpoint.sequence_number, 0);
         assert_eq!(certified.signatures, vec![b"mpc_signature".to_vec()]);
@@ -735,14 +735,42 @@ mod tests {
     // Finalization tracking tests
     // =========================================================================
 
+    /// Helper: insert a pending checkpoint so the entry exists for finalization tracking.
+    fn insert_pending_for_finalization(
+        store: &NOACheckpointLocalStore<noa_checkpoint::DWallet>,
+        seq: u64,
+        epoch: u64,
+    ) {
+        let checkpoint = NOACheckpointMessage {
+            epoch,
+            sequence_number: seq,
+            messages: vec![],
+        };
+        store.insert_pending(seq, checkpoint, vec![b"tx".to_vec()]);
+    }
+
+    fn insert_pending_for_finalization_system(
+        store: &NOACheckpointLocalStore<noa_checkpoint::System>,
+        seq: u64,
+        epoch: u64,
+    ) {
+        let checkpoint = NOACheckpointMessage {
+            epoch,
+            sequence_number: seq,
+            messages: vec![],
+        };
+        store.insert_pending(seq, checkpoint, vec![b"tx".to_vec()]);
+    }
+
     #[test]
     fn test_finalization_tracking() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
         let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        insert_pending_for_finalization(&store, 0, 1);
 
         let tx_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 0,
             tx_index: 0,
             epoch: 1,
@@ -796,14 +824,22 @@ mod tests {
 
         let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
+        // Insert a checkpoint with multi-tx (we need the entry to exist).
+        let checkpoint = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 0,
+            messages: vec![],
+        };
+        store.insert_pending(0, checkpoint, vec![b"tx_0".to_vec(), b"tx_1".to_vec()]);
+
         let first_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 0,
             tx_index: 0,
             epoch: 1,
         };
         let second_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 0,
             tx_index: 1,
             epoch: 1,
@@ -833,8 +869,9 @@ mod tests {
         assert!(can_advance);
 
         // Add a pending checkpoint — should block.
+        insert_pending_for_finalization_system(&store, 0, 5);
         let tx_ref = NOACheckpointTxRef {
-            kind_name: "noa_system_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::System,
             sequence_number: 0,
             tx_index: 0,
             epoch: 5,
@@ -856,7 +893,7 @@ mod tests {
         let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let unknown_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 99,
             tx_index: 0,
             epoch: 1,
@@ -877,9 +914,10 @@ mod tests {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
         let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        insert_pending_for_finalization(&store, 0, 1);
 
         let tx_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 0,
             tx_index: 0,
             epoch: 1,
@@ -1023,10 +1061,9 @@ mod tests {
                 DWalletSignatureAlgorithm::EdDSA,
             )
             .unwrap();
-        store.insert_certified(0, certified.clone());
 
         let tx_ref = NOACheckpointTxRef {
-            kind_name: "noa_dwallet_checkpoint".to_string(),
+            kind_name: NOACheckpointKindName::DWallet,
             sequence_number: 0,
             tx_index: 0,
             epoch: 1,
@@ -1053,5 +1090,96 @@ mod tests {
         );
         assert!(recertified.is_some());
         assert_eq!(recertified.unwrap().signatures[0], b"new_sig");
+    }
+
+    // =========================================================================
+    // Consolidated store: retry_round and voted_failed persistence tests
+    // =========================================================================
+
+    #[test]
+    fn test_retry_round_persisted_in_store() {
+        use ika_types::noa_checkpoint::NOACheckpointTxRef;
+
+        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+
+        let checkpoint = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 0,
+            messages: vec![],
+        };
+        store.insert_pending(0, checkpoint.clone(), vec![b"tx".to_vec()]);
+
+        // Initial retry_round is 0.
+        assert_eq!(store.get_retry_round(0), 0);
+
+        // Certify.
+        store.add_signature(
+            b"tx",
+            b"sig".to_vec(),
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        );
+
+        let tx_ref = NOACheckpointTxRef {
+            kind_name: NOACheckpointKindName::DWallet,
+            sequence_number: 0,
+            tx_index: 0,
+            epoch: 1,
+        };
+
+        // Submit and set voted_failed.
+        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
+        assert!(!store.has_voted_failed(&tx_ref));
+        store.set_voted_failed(&tx_ref);
+        assert!(store.has_voted_failed(&tx_ref));
+
+        // Simulate retry: mark_retry_pending then insert_pending again.
+        store.mark_retry_pending(&tx_ref);
+        let reconstructed_bytes = noa_checkpoint::DWallet::signable_bytes(
+            &checkpoint,
+            &noa_checkpoint::SuiChainContext,
+            &[],
+        );
+        store.insert_pending(0, checkpoint, reconstructed_bytes);
+
+        // retry_round should be incremented.
+        assert_eq!(store.get_retry_round(0), 1);
+        // voted_failed should be cleared by insert_pending.
+        assert!(!store.has_voted_failed(&tx_ref));
+    }
+
+    #[test]
+    fn test_confirmed_locally_skips_failure_quorum_check() {
+        // This is a design test: once a tx is ConfirmedLocally, the poll_loop
+        // should NOT check failure quorum. We verify by checking that
+        // ConfirmedLocally status is distinct from Pending.
+        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
+
+        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        insert_pending_for_finalization(&store, 0, 1);
+
+        let tx_ref = NOACheckpointTxRef {
+            kind_name: NOACheckpointKindName::DWallet,
+            sequence_number: 0,
+            tx_index: 0,
+            epoch: 1,
+        };
+
+        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
+        store.mark_confirmed_locally(&tx_ref);
+
+        // Status is ConfirmedLocally, not Pending — failure quorum check is only
+        // in the Pending arm of poll_loop's match, so it won't fire.
+        assert_eq!(
+            store.get_status(&tx_ref),
+            Some(NOACheckpointTxStatus::ConfirmedLocally)
+        );
+
+        // ConfirmedLocally is still not finalized.
+        assert!(!store.all_finalized());
+
+        // get_pending_refs returns ConfirmedLocally entries (they're not Finalized).
+        let pending = store.get_pending_refs();
+        assert_eq!(pending.len(), 1);
     }
 }

@@ -36,6 +36,14 @@ impl ChainDestination for SuiDestination {
 
 // === NOACheckpointKind ===
 
+/// Enum identifying a checkpoint kind. Used in `NOACheckpointTxRef` for type-safe,
+/// serialization-stable identification instead of raw strings.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NOACheckpointKindName {
+    DWallet,
+    System,
+}
+
 /// Defines a kind of NOA-signed checkpoint (e.g., DWallet or System).
 pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     /// The type of individual messages within a checkpoint.
@@ -54,6 +62,9 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
 
     /// Human-readable name for logging/metrics.
     const NAME: &'static str;
+
+    /// Typed identifier for this checkpoint kind, used in `NOACheckpointTxRef`.
+    fn kind_name() -> NOACheckpointKindName;
 
     /// The curve used for NOA MPC signing.
     fn curve() -> DWalletCurve;
@@ -91,6 +102,10 @@ impl NOACheckpointKind for DWallet {
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_dwallet_checkpoint";
 
+    fn kind_name() -> NOACheckpointKindName {
+        NOACheckpointKindName::DWallet
+    }
+
     fn curve() -> DWalletCurve {
         DWalletCurve::Curve25519
     }
@@ -121,6 +136,10 @@ impl NOACheckpointKind for System {
     type MessageKind = SystemCheckpointMessageKind;
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_system_checkpoint";
+
+    fn kind_name() -> NOACheckpointKindName {
+        NOACheckpointKindName::System
+    }
 
     fn curve() -> DWalletCurve {
         DWalletCurve::Curve25519
@@ -191,8 +210,8 @@ pub enum NOACheckpointTxStatus {
 /// Identifies a specific NOA checkpoint transaction for finalization voting.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NOACheckpointTxRef {
-    /// Which checkpoint kind (matches K::NAME).
-    pub kind_name: String,
+    /// Which checkpoint kind.
+    pub kind_name: NOACheckpointKindName,
     /// Checkpoint sequence number within the epoch.
     pub sequence_number: u64,
     /// Index within the checkpoint's transaction set (for multi-tx checkpoints).

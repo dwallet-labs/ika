@@ -3,7 +3,7 @@
 
 use ika_types::error::IkaResult;
 use ika_types::noa_checkpoint::{CertifiedNOACheckpointMessage, NOACheckpointKind};
-use tracing::{error, info};
+use tracing::info;
 
 use ika_network::state_sync::noa_sync::NOACheckpointSyncHandle;
 
@@ -73,14 +73,11 @@ impl<K: NOACheckpointKind> CertifiedNOACheckpointOutput<K> for NotifyFinalizerOu
         checkpoint: &CertifiedNOACheckpointMessage<K>,
     ) -> IkaResult {
         let seq = checkpoint.checkpoint.sequence_number;
-        if let Err(e) = self.sender.try_send(seq) {
-            error!(
-                kind = K::NAME,
-                sequence_number = seq,
-                error = %e,
-                "Failed to notify finalizer of certified checkpoint",
-            );
-        }
+        self.sender.try_send(seq).map_err(|e| {
+            ika_types::error::IkaError::GenericAuthorityError {
+                error: format!("Failed to notify finalizer of certified checkpoint seq={seq}: {e}"),
+            }
+        })?;
         Ok(())
     }
 }
