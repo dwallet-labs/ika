@@ -15,6 +15,7 @@ use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, ChainDestination, NOACheckpointKind, NOACheckpointMessage,
     NOACheckpointTxRef, NOACheckpointTxStatus,
 };
+use indexmap::IndexMap;
 use sui_types::base_types::EpochId;
 use tokio::sync::mpsc::{Receiver, UnboundedSender};
 use tracing::{error, info, warn};
@@ -76,27 +77,27 @@ impl<K: NOACheckpointKind> NOAChainSubmitter<K> for LogOnlyChainSubmitter {
 
 // === NOACheckpointLocalStore ===
 
-/// Per-transaction finalization state within a checkpoint entry.
-struct TxFinalizationState {
-    status: NOACheckpointTxStatus,
-    /// Chain-specific transaction identifier (set after submission).
+/// All per-transaction state, unified in one struct.
+struct TxState {
+    /// Signature from MPC signing (None until signed).
+    signature: Option<Vec<u8>>,
+    /// Finalization status (None until submitted to chain).
+    finalization_status: Option<NOACheckpointTxStatus>,
+    /// Chain-specific transaction identifier (set after chain submission).
     chain_tx_id: Option<Vec<u8>>,
-    /// Whether this validator has voted failure for this tx in the current retry round.
+    /// Whether this validator has voted failure in the current retry round.
     voted_failed: bool,
+    /// Per-tx retry round — incremented each time this tx is re-signed.
+    retry_round: u32,
 }
 
 /// Consolidated per-checkpoint state. One entry per sequence number.
 struct NOACheckpointEntry<K: NOACheckpointKind> {
     checkpoint: NOACheckpointMessage<K>,
-    expected_tx_bytes: Vec<Vec<u8>>,
-    /// Signing phase: tx_bytes → signature.
-    collected_signatures: HashMap<Vec<u8>, Vec<u8>>,
-    /// Set once all signatures collected (by `add_signature`).
+    /// Per-tx state keyed by tx_bytes. Insertion order = signable_bytes() output order.
+    transactions: IndexMap<Vec<u8>, TxState>,
+    /// Cached certified checkpoint (built once all signatures collected on initial signing).
     certified: Option<CertifiedNOACheckpointMessage<K>>,
-    /// Per-tx finalization (indexed by tx_index, populated on chain submission).
-    tx_states: Vec<TxFinalizationState>,
-    /// Retry tracking — incremented each time a failure quorum triggers re-signing.
-    retry_round: u32,
 }
 
 /// In-memory store for locally computed NOA checkpoints awaiting certification.
@@ -126,8 +127,7 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     }
 
     /// Register a pending checkpoint with all its transaction byte vectors.
-    /// On retry (entry already exists): clears signatures, clears certified,
-    /// increments retry_round, and resets voted_failed on all tx_states.
+    /// Initial insertion only — builds the IndexMap from tx_bytes.
     pub fn insert_pending(
         &self,
         seq: u64,
@@ -139,34 +139,33 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             tx_to_seq.insert(bytes.clone(), seq);
         }
 
-        let mut entries = self.entries.lock();
-        if let Some(entry) = entries.get_mut(&seq) {
-            // Retry case: reset signing state, preserve finalization tracking.
-            entry.checkpoint = checkpoint;
-            entry.expected_tx_bytes = tx_bytes;
-            entry.collected_signatures.clear();
-            entry.certified = None;
-            entry.retry_round += 1;
-            for tx_state in &mut entry.tx_states {
-                tx_state.voted_failed = false;
-            }
-        } else {
-            entries.insert(
-                seq,
-                NOACheckpointEntry {
-                    checkpoint,
-                    expected_tx_bytes: tx_bytes,
-                    collected_signatures: HashMap::new(),
-                    certified: None,
-                    tx_states: Vec::new(),
-                    retry_round: 0,
-                },
-            );
-        }
+        self.entries.lock().insert(
+            seq,
+            NOACheckpointEntry {
+                checkpoint,
+                transactions: tx_bytes
+                    .into_iter()
+                    .map(|bytes| {
+                        (
+                            bytes,
+                            TxState {
+                                signature: None,
+                                finalization_status: None,
+                                chain_tx_id: None,
+                                voted_failed: false,
+                                retry_round: 0,
+                            },
+                        )
+                    })
+                    .collect(),
+                certified: None,
+            },
+        );
     }
 
     /// Record a signature for a single transaction.
-    /// Returns `Some(certified)` when all transactions for that checkpoint are signed.
+    /// Handles both initial signing and retry.
+    /// Returns `Some(certified)` only on initial signing when all signatures are collected.
     /// On completion, stores the certified checkpoint directly in the entry.
     pub fn add_signature(
         &self,
@@ -176,8 +175,8 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
     ) -> Option<CertifiedNOACheckpointMessage<K>> {
         let seq = {
-            let tx_to_seq = self.tx_to_seq.lock();
-            match tx_to_seq.get(tx_bytes) {
+            let mut tx_to_seq = self.tx_to_seq.lock();
+            let seq = match tx_to_seq.get(tx_bytes) {
                 Some(&s) => s,
                 None => {
                     warn!(
@@ -186,32 +185,31 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
                     );
                     return None;
                 }
-            }
+            };
+            tx_to_seq.remove(tx_bytes);
+            seq
         };
 
         let mut entries = self.entries.lock();
         let entry = entries.get_mut(&seq)?;
-        entry
-            .collected_signatures
-            .insert(tx_bytes.to_vec(), signature);
+        let tx_state = entry.transactions.get_mut(tx_bytes)?;
+        tx_state.signature = Some(signature);
 
-        if entry.collected_signatures.len() < entry.expected_tx_bytes.len() {
+        // Only build certified on initial signing, not retry.
+        if entry.certified.is_some() {
+            return None;
+        }
+        if !entry.transactions.values().all(|t| t.signature.is_some()) {
             return None;
         }
 
-        // All signatures collected — build certified checkpoint.
+        // Build certified — IndexMap iteration preserves insertion order.
         let signatures = entry
-            .expected_tx_bytes
-            .iter()
-            .map(|tx| entry.collected_signatures[tx].clone())
+            .transactions
+            .values()
+            .filter_map(|t| t.signature.clone())
             .collect();
-        let signed_bytes = entry.expected_tx_bytes.clone();
-
-        // Clean up tx_to_seq entries.
-        let mut tx_to_seq = self.tx_to_seq.lock();
-        for bytes in &signed_bytes {
-            tx_to_seq.remove(bytes);
-        }
+        let signed_bytes = entry.transactions.keys().cloned().collect();
 
         let certified = CertifiedNOACheckpointMessage {
             checkpoint: entry.checkpoint.clone(),
@@ -240,41 +238,32 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         let Some(entry) = entries.get_mut(&tx_ref.sequence_number) else {
             return;
         };
-        let idx = tx_ref.tx_index as usize;
-        // Grow tx_states if needed (first submission for this checkpoint).
-        if entry.tx_states.len() <= idx {
-            entry
-                .tx_states
-                .resize_with(idx + 1, || TxFinalizationState {
-                    status: NOACheckpointTxStatus::Pending,
-                    chain_tx_id: None,
-                    voted_failed: false,
-                });
-        }
-        entry.tx_states[idx].status = NOACheckpointTxStatus::Pending;
-        entry.tx_states[idx].chain_tx_id = Some(chain_tx_id);
-        entry.tx_states[idx].voted_failed = false;
+        let Some((_, tx_state)) = entry.transactions.get_index_mut(tx_ref.tx_index as usize) else {
+            return;
+        };
+        tx_state.finalization_status = Some(NOACheckpointTxStatus::Pending);
+        tx_state.chain_tx_id = Some(chain_tx_id);
     }
 
     /// Mark a transaction as confirmed locally (this validator verified on-chain execution).
     pub fn mark_confirmed_locally(&self, tx_ref: &NOACheckpointTxRef) {
         let mut entries = self.entries.lock();
-        if let Some(state) = entries
+        if let Some((_, state)) = entries
             .get_mut(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get_mut(tx_ref.tx_index as usize))
+            .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
-            state.status = NOACheckpointTxStatus::ConfirmedLocally;
+            state.finalization_status = Some(NOACheckpointTxStatus::ConfirmedLocally);
         }
     }
 
     /// Mark a transaction as finalized (2f+1 validators confirmed on-chain execution).
     pub fn mark_finalized(&self, tx_ref: &NOACheckpointTxRef) {
         let mut entries = self.entries.lock();
-        if let Some(state) = entries
+        if let Some((_, state)) = entries
             .get_mut(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get_mut(tx_ref.tx_index as usize))
+            .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
-            state.status = NOACheckpointTxStatus::Finalized;
+            state.finalization_status = Some(NOACheckpointTxStatus::Finalized);
         }
     }
 
@@ -283,37 +272,50 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         self.entries
             .lock()
             .get(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get(tx_ref.tx_index as usize))
-            .map(|s| s.status.clone())
+            .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
+            .and_then(|(_, s)| s.finalization_status.clone())
     }
 
     /// Check if all tracked transactions are finalized.
+    /// Returns true when at least one tx has been submitted (finalization_status.is_some())
+    /// and all submitted txs are Finalized.
     pub fn all_finalized(&self) -> bool {
         let entries = self.entries.lock();
-        let has_any = entries.values().any(|e| !e.tx_states.is_empty());
-        has_any
-            && entries
-                .values()
-                .flat_map(|e| &e.tx_states)
-                .all(|s| s.status == NOACheckpointTxStatus::Finalized)
+        let submitted: Vec<_> = entries
+            .values()
+            .flat_map(|e| e.transactions.values())
+            .filter(|t| t.finalization_status.is_some())
+            .collect();
+        !submitted.is_empty()
+            && submitted
+                .iter()
+                .all(|t| t.finalization_status.as_ref() == Some(&NOACheckpointTxStatus::Finalized))
     }
 
     /// Returns true if no finalization entries have been registered.
     pub fn has_no_finalization_entries(&self) -> bool {
-        self.entries.lock().values().all(|e| e.tx_states.is_empty())
+        self.entries
+            .lock()
+            .values()
+            .flat_map(|e| e.transactions.values())
+            .all(|t| t.finalization_status.is_none())
     }
 
-    /// Returns all non-finalized tx_refs.
+    /// Returns all non-finalized tx_refs (those with a finalization_status that is not Finalized).
     pub fn get_pending_refs(&self) -> Vec<NOACheckpointTxRef> {
         let entries = self.entries.lock();
         entries
             .iter()
             .flat_map(|(&seq, entry)| {
                 entry
-                    .tx_states
+                    .transactions
                     .iter()
                     .enumerate()
-                    .filter(|(_, s)| s.status != NOACheckpointTxStatus::Finalized)
+                    .filter(|(_, (_, t))| {
+                        t.finalization_status
+                            .as_ref()
+                            .is_some_and(|s| *s != NOACheckpointTxStatus::Finalized)
+                    })
                     .map(move |(idx, _)| NOACheckpointTxRef {
                         kind_name: K::kind_name(),
                         sequence_number: seq,
@@ -324,17 +326,24 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             .collect()
     }
 
-    /// Mark a transaction as retry-pending (2f+1 failure votes received).
-    /// Clears the chain_tx_id so the retry cycle starts fresh.
-    pub fn mark_retry_pending(&self, tx_ref: &NOACheckpointTxRef) {
+    /// Prepare a single tx for retry. Returns the tx_bytes to send to MPC.
+    /// Sets status to RetryPending, clears signature/chain_tx_id/voted_failed,
+    /// increments per-tx retry_round, re-registers in tx_to_seq for routing.
+    pub fn initiate_tx_retry(&self, tx_ref: &NOACheckpointTxRef) -> Option<Vec<u8>> {
         let mut entries = self.entries.lock();
-        if let Some(state) = entries
-            .get_mut(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get_mut(tx_ref.tx_index as usize))
-        {
-            state.status = NOACheckpointTxStatus::RetryPending;
-            state.chain_tx_id = None;
-        }
+        let entry = entries.get_mut(&tx_ref.sequence_number)?;
+        let (tx_bytes, tx_state) = entry.transactions.get_index_mut(tx_ref.tx_index as usize)?;
+        let tx_bytes = tx_bytes.clone();
+        tx_state.finalization_status = Some(NOACheckpointTxStatus::RetryPending);
+        tx_state.chain_tx_id = None;
+        tx_state.signature = None;
+        tx_state.voted_failed = false;
+        tx_state.retry_round += 1;
+        // Re-register for routing so the retry signature can be matched.
+        self.tx_to_seq
+            .lock()
+            .insert(tx_bytes.clone(), tx_ref.sequence_number);
+        Some(tx_bytes)
     }
 
     /// Returns the stored chain tx identifier for a given tx_ref.
@@ -342,16 +351,17 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         self.entries
             .lock()
             .get(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get(tx_ref.tx_index as usize))
-            .and_then(|s| s.chain_tx_id.clone())
+            .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
+            .and_then(|(_, s)| s.chain_tx_id.clone())
     }
 
-    /// Returns the current retry round for a checkpoint.
-    pub fn get_retry_round(&self, seq: u64) -> u32 {
+    /// Returns the current per-tx retry round.
+    pub fn get_retry_round(&self, tx_ref: &NOACheckpointTxRef) -> u32 {
         self.entries
             .lock()
-            .get(&seq)
-            .map(|e| e.retry_round)
+            .get(&tx_ref.sequence_number)
+            .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
+            .map(|(_, s)| s.retry_round)
             .unwrap_or(0)
     }
 
@@ -360,20 +370,38 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         self.entries
             .lock()
             .get(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get(tx_ref.tx_index as usize))
-            .map(|s| s.voted_failed)
+            .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
+            .map(|(_, s)| s.voted_failed)
             .unwrap_or(false)
     }
 
     /// Record that this validator has voted failure for the given tx.
     pub fn set_voted_failed(&self, tx_ref: &NOACheckpointTxRef) {
         let mut entries = self.entries.lock();
-        if let Some(state) = entries
+        if let Some((_, state)) = entries
             .get_mut(&tx_ref.sequence_number)
-            .and_then(|e| e.tx_states.get_mut(tx_ref.tx_index as usize))
+            .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
             state.voted_failed = true;
         }
+    }
+
+    /// Returns whether the given tx has a signature stored.
+    pub fn has_signature(&self, tx_ref: &NOACheckpointTxRef) -> bool {
+        self.entries
+            .lock()
+            .get(&tx_ref.sequence_number)
+            .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
+            .is_some_and(|(_, s)| s.signature.is_some())
+    }
+
+    /// Returns (tx_bytes, signature) for a tx that's ready for (re-)submission.
+    pub fn get_tx_for_submission(&self, tx_ref: &NOACheckpointTxRef) -> Option<(Vec<u8>, Vec<u8>)> {
+        let entries = self.entries.lock();
+        let entry = entries.get(&tx_ref.sequence_number)?;
+        let (tx_bytes, tx_state) = entry.transactions.get_index(tx_ref.tx_index as usize)?;
+        let signature = tx_state.signature.as_ref()?;
+        Some((tx_bytes.clone(), signature.clone()))
     }
 }
 
@@ -545,7 +573,7 @@ impl<K: NOACheckpointKind> NOACheckpointCertifier<K> {
 /// One instance per checkpoint kind (DWallet, System).
 ///
 /// Polls the chain for execution confirmation of certified checkpoint transactions,
-/// submits finalization/failure votes via consensus, and coordinates retry on failure quorum.
+/// submits finalization/failure votes via consensus, and coordinates per-tx retry on failure quorum.
 pub struct NOACheckpointFinalizer<K: NOACheckpointKind> {
     store: Arc<NOACheckpointLocalStore<K>>,
     chain_submitter: Arc<dyn NOAChainSubmitter<K>>,
@@ -553,8 +581,6 @@ pub struct NOACheckpointFinalizer<K: NOACheckpointKind> {
     finalization_vote_sender: tokio::sync::mpsc::Sender<ConsensusTransaction>,
     epoch: EpochId,
     authority_name: AuthorityName,
-    chain_context: <K::Destination as ChainDestination>::Context,
-    noa_public_key: Vec<u8>,
     poll_interval: Duration,
     /// Callback to check if a tx_ref has reached 2f+1 finalization quorum in the epoch store.
     is_finalized: Arc<dyn Fn(&NOACheckpointTxRef) -> bool + Send + Sync>,
@@ -573,8 +599,6 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
         finalization_vote_sender: tokio::sync::mpsc::Sender<ConsensusTransaction>,
         epoch: EpochId,
         authority_name: AuthorityName,
-        chain_context: <K::Destination as ChainDestination>::Context,
-        noa_public_key: Vec<u8>,
         poll_interval: Duration,
         is_finalized: Arc<dyn Fn(&NOACheckpointTxRef) -> bool + Send + Sync>,
         is_failure_quorum: Arc<dyn Fn(&NOACheckpointTxRef, u32) -> bool + Send + Sync>,
@@ -587,8 +611,6 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
             finalization_vote_sender,
             epoch,
             authority_name,
-            chain_context,
-            noa_public_key,
             poll_interval,
             is_finalized,
             is_failure_quorum,
@@ -666,8 +688,7 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
                             }
                             Ok(TxExecutionStatus::Failed(reason)) => {
                                 if !self.store.has_voted_failed(&tx_ref) {
-                                    let retry_round =
-                                        self.store.get_retry_round(tx_ref.sequence_number);
+                                    let retry_round = self.store.get_retry_round(&tx_ref);
                                     warn!(
                                         kind = K::NAME,
                                         sequence_number = tx_ref.sequence_number,
@@ -693,9 +714,9 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
                     }
 
                     // 3. Check failure quorum (regardless of local vote status).
-                    let retry_round = self.store.get_retry_round(tx_ref.sequence_number);
+                    let retry_round = self.store.get_retry_round(&tx_ref);
                     if (self.is_failure_quorum)(&tx_ref, retry_round) {
-                        self.initiate_retry(&tx_ref).await;
+                        self.initiate_tx_retry(&tx_ref).await;
                     }
                 }
                 NOACheckpointTxStatus::ConfirmedLocally => {
@@ -708,8 +729,12 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
                     // Finalization always takes precedence — abort retry if finalized.
                     if (self.is_finalized)(&tx_ref) {
                         self.store.mark_finalized(&tx_ref);
+                        continue;
                     }
-                    // Otherwise waiting for MPC re-signing — no action.
+                    // Re-signed? Submit to chain.
+                    if self.store.has_signature(&tx_ref) {
+                        self.submit_retry_tx(&tx_ref).await;
+                    }
                 }
                 NOACheckpointTxStatus::Finalized => {
                     // Should not appear in pending_refs.
@@ -798,56 +823,59 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
         }
     }
 
-    async fn initiate_retry(&self, tx_ref: &NOACheckpointTxRef) {
-        let certified = match self.store.get_certified(tx_ref.sequence_number) {
-            Some(c) => c,
+    async fn initiate_tx_retry(&self, tx_ref: &NOACheckpointTxRef) {
+        let tx_bytes = match self.store.initiate_tx_retry(tx_ref) {
+            Some(bytes) => bytes,
             None => return,
         };
 
         info!(
             kind = K::NAME,
             sequence_number = tx_ref.sequence_number,
-            "Initiating retry: 2f+1 failure quorum reached"
+            tx_index = tx_ref.tx_index,
+            "Initiating per-tx retry: 2f+1 failure quorum reached"
         );
 
-        // Mark ALL tx_refs for this checkpoint as RetryPending.
-        for i in 0..certified.signed_bytes.len() {
-            let ref_i = NOACheckpointTxRef {
-                kind_name: K::kind_name(),
-                sequence_number: tx_ref.sequence_number,
-                tx_index: i as u32,
-                epoch: tx_ref.epoch,
-            };
-            self.store.mark_retry_pending(&ref_i);
+        let request = NetworkOwnedAddressSignRequest {
+            message: tx_bytes,
+            curve: K::curve(),
+            signature_algorithm: K::signature_algorithm(),
+            hash_scheme: K::hash_scheme(),
+        };
+        if let Err(e) = self.noa_sign_sender.send(request) {
+            error!(
+                kind = K::NAME,
+                sequence_number = tx_ref.sequence_number,
+                tx_index = tx_ref.tx_index,
+                error = %e,
+                "Failed to send per-tx retry sign request"
+            );
         }
+    }
 
-        // Reconstruct tx_bytes and re-enter the signing pipeline.
-        // insert_pending handles retry state reset (increments retry_round,
-        // clears voted_failed, clears signatures/certified).
-        let all_tx_bytes = K::signable_bytes(
-            &certified.checkpoint,
-            &self.chain_context,
-            &self.noa_public_key,
-        );
-        self.store.insert_pending(
-            tx_ref.sequence_number,
-            certified.checkpoint.clone(),
-            all_tx_bytes.clone(),
-        );
+    async fn submit_retry_tx(&self, tx_ref: &NOACheckpointTxRef) {
+        let (tx_bytes, signature) = match self.store.get_tx_for_submission(tx_ref) {
+            Some(pair) => pair,
+            None => return,
+        };
 
-        for tx_bytes in all_tx_bytes {
-            let request = NetworkOwnedAddressSignRequest {
-                message: tx_bytes,
-                curve: K::curve(),
-                signature_algorithm: K::signature_algorithm(),
-                hash_scheme: K::hash_scheme(),
-            };
-            if let Err(e) = self.noa_sign_sender.send(request) {
+        match self.chain_submitter.submit_tx(&tx_bytes, &signature).await {
+            Ok(chain_tx_id) => {
+                info!(
+                    kind = K::NAME,
+                    sequence_number = tx_ref.sequence_number,
+                    tx_index = tx_ref.tx_index,
+                    "Submitted retry tx to chain"
+                );
+                self.store.mark_submitted(tx_ref.clone(), chain_tx_id);
+            }
+            Err(e) => {
                 error!(
                     kind = K::NAME,
                     sequence_number = tx_ref.sequence_number,
+                    tx_index = tx_ref.tx_index,
                     error = %e,
-                    "Failed to send retry sign request"
+                    "Failed to submit retry tx to chain"
                 );
             }
         }

@@ -36,6 +36,7 @@ dashmap.workspace = true
 enum_dispatch.workspace = true
 eyre.workspace = true
 futures.workspace = true
+indexmap.workspace = true
 itertools.workspace = true
 lru.workspace = true
 mockall.workspace = true
