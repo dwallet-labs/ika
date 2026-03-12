@@ -5,7 +5,10 @@ import { toHex } from '@mysten/bcs';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { Curve, type DWallet, type EncryptedUserSecretKeyShare } from '../../src/client/types.js';
-import { UserShareEncryptionKeys } from '../../src/client/user-share-encryption-keys.js';
+import {
+	UserShareEncryptionKeys,
+	type HashVersion,
+} from '../../src/client/user-share-encryption-keys.js';
 
 describe('UserShareEncryptionKeys', () => {
 	// Pre-create two distinct keys to reuse across tests for better performance
@@ -18,9 +21,9 @@ describe('UserShareEncryptionKeys', () => {
 	const testSeed2 = new Uint8Array(32).fill(7);
 
 	beforeAll(async () => {
-		// Generate keys once and reuse across tests
-		testKeys1 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
-		testKeys2 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed2, Curve.SECP256K1);
+		// Generate keys once and reuse across tests (V1 to match existing behavior)
+		testKeys1 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
+		testKeys2 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed2, Curve.SECP256K1, 1);
 
 		// Pre-generate signatures for performance
 		testSignature1 = await testKeys1.getEncryptionKeySignature();
@@ -92,8 +95,8 @@ describe('UserShareEncryptionKeys', () => {
 
 		it('should generate consistent keys for same seed', async () => {
 			// Test that same seed generates same keys (using testSeed1)
-			const keys1 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
-			const keys2 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const keys1 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
+			const keys2 = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 
 			expect(keys1.encryptionKey, 'Same seed should produce same encryption key').toEqual(
 				keys2.encryptionKey,
@@ -126,7 +129,7 @@ describe('UserShareEncryptionKeys', () => {
 
 		it('should generate same keys as constructor', async () => {
 			// Test with our pre-created seed1
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 
 			expect(newKeys.encryptionKey, 'New keys should match pre-created encryption key').toEqual(
 				testKeys1.encryptionKey,
@@ -148,7 +151,7 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent public key for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 
 			expect(
 				testKeys1.getPublicKey().toRawBytes(),
@@ -173,7 +176,7 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent address for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 
 			expect(testKeys1.getSuiAddress(), 'Same seed should produce same address').toBe(
 				newKeys.getSuiAddress(),
@@ -209,7 +212,7 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent bytes for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 
 			expect(
 				testKeys1.getSigningPublicKeyBytes(),
@@ -233,7 +236,7 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should create consistent signature for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1, 1);
 			const newSignature = await newKeys.getEncryptionKeySignature();
 
 			expect(testSignature1, 'Same seed should produce same signature').toEqual(newSignature);
@@ -390,6 +393,102 @@ describe('UserShareEncryptionKeys', () => {
 			// Test that the static method exists and can be called
 			expect(UserShareEncryptionKeys.fromShareEncryptionKeysBytes).toBeDefined();
 			expect(typeof UserShareEncryptionKeys.fromShareEncryptionKeysBytes).toBe('function');
+		});
+
+		it('should round-trip V1 keys through serialization', () => {
+			const serialized = testKeys1.toShareEncryptionKeysBytes();
+			const deserialized = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(serialized);
+
+			expect(deserialized.encryptionKey).toEqual(testKeys1.encryptionKey);
+			expect(deserialized.decryptionKey).toEqual(testKeys1.decryptionKey);
+			expect(deserialized.getSigningPublicKeyBytes()).toEqual(
+				testKeys1.getSigningPublicKeyBytes(),
+			);
+			expect(deserialized.hashVersion).toBe(1);
+		});
+
+		it('should round-trip V2 keys through serialization', async () => {
+			const v2Keys = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.SECP256K1,
+				2,
+			);
+			const serialized = v2Keys.toShareEncryptionKeysBytes();
+			const deserialized = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(serialized);
+
+			expect(deserialized.encryptionKey).toEqual(v2Keys.encryptionKey);
+			expect(deserialized.decryptionKey).toEqual(v2Keys.decryptionKey);
+			expect(deserialized.getSigningPublicKeyBytes()).toEqual(
+				v2Keys.getSigningPublicKeyBytes(),
+			);
+			expect(deserialized.hashVersion).toBe(2);
+		});
+	});
+
+	describe('hash version', () => {
+		it('should default to V2 when no version specified', async () => {
+			const keys = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			expect(keys.hashVersion).toBe(2);
+		});
+
+		it('should produce different keys for V1 vs V2 with different curves', async () => {
+			// V1 bug: all curves hash to the same value (curve byte is always 0)
+			const v1Secp = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.SECP256K1,
+				1,
+			);
+			const v1Ed = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.ED25519,
+				1,
+			);
+			// V1 keys should be identical across curves (the bug)
+			expect(v1Secp.getSigningPublicKeyBytes()).toEqual(v1Ed.getSigningPublicKeyBytes());
+
+			// V2 keys should differ across curves (the fix)
+			const v2Secp = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.SECP256K1,
+				2,
+			);
+			const v2Ed = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.ED25519,
+				2,
+			);
+			expect(v2Secp.getSigningPublicKeyBytes()).not.toEqual(v2Ed.getSigningPublicKeyBytes());
+		});
+
+		it('V1 and V2 should produce different keys for same seed and curve', async () => {
+			const v1Keys = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.SECP256K1,
+				1,
+			);
+			const v2Keys = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.SECP256K1,
+				2,
+			);
+			// SECP256K1 has curveNumber=0, so V1 (always 0) and V2 (curveNumber=0) produce the same hash
+			// They should be identical for SECP256K1 specifically
+			expect(v1Keys.getSigningPublicKeyBytes()).toEqual(v2Keys.getSigningPublicKeyBytes());
+		});
+
+		it('V1 and V2 should differ for non-zero curve numbers', async () => {
+			const v1Keys = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.ED25519,
+				1,
+			);
+			const v2Keys = await UserShareEncryptionKeys.fromRootSeedKey(
+				testSeed1,
+				Curve.ED25519,
+				2,
+			);
+			// ED25519 has curveNumber=2, so V1 (0) and V2 (2) should differ
+			expect(v1Keys.getSigningPublicKeyBytes()).not.toEqual(v2Keys.getSigningPublicKeyBytes());
 		});
 	});
 });

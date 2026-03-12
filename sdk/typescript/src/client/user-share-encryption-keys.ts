@@ -27,7 +27,16 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 		secretShareSigningSecretKey: bcs.string(),
 		curve: bcs.u64(),
 	}),
+	V2: bcs.struct('UserShareEncryptionKeysV2', {
+		encryptionKey: bcs.vector(bcs.u8()),
+		decryptionKey: bcs.vector(bcs.u8()),
+		secretShareSigningSecretKey: bcs.string(),
+		curve: bcs.u64(),
+	}),
 });
+
+/** Hash version for key derivation. V1 has a bug where the curve byte is always 0. */
+export type HashVersion = 1 | 2;
 
 /**
  * UserShareEncryptionKeys manages encryption/decryption keys and signing keypairs for user shares.
@@ -43,6 +52,8 @@ export class UserShareEncryptionKeys {
 	#encryptedSecretShareSigningKeypair: Ed25519Keypair;
 	/** The curve used to generate the encryption/decryption keys */
 	curve: Curve;
+	/** The hash version used to derive these keys (1 = legacy buggy, 2 = fixed) */
+	readonly hashVersion: HashVersion;
 
 	static domainSeparators = {
 		classGroups: 'CLASS_GROUPS_DECRYPTION_KEY_V1',
@@ -54,11 +65,13 @@ export class UserShareEncryptionKeys {
 		decryptionKey: Uint8Array,
 		secretShareSigningSecretKey: Ed25519Keypair,
 		curve: Curve,
+		hashVersion: HashVersion = 2,
 	) {
 		this.encryptionKey = encryptionKey;
 		this.decryptionKey = decryptionKey;
 		this.#encryptedSecretShareSigningKeypair = secretShareSigningSecretKey;
 		this.curve = curve;
+		this.hashVersion = hashVersion;
 	}
 
 	/**
@@ -66,19 +79,23 @@ export class UserShareEncryptionKeys {
 	 *
 	 * @param rootSeedKey - The root seed key to generate keys from
 	 * @param curve - The curve to use for key generation
+	 * @param version - Hash version to use: 2 (default, fixed) or 1 (legacy, curve byte always 0)
 	 * @returns A new UserShareEncryptionKeys instance
 	 */
 	static async fromRootSeedKey(
 		rootSeedKey: Uint8Array,
 		curve: Curve,
+		version: HashVersion = 2,
 	): Promise<UserShareEncryptionKeys> {
-		const classGroupsSeed = UserShareEncryptionKeys.hash(
+		const hashFn = version === 1 ? UserShareEncryptionKeys.hashV1 : UserShareEncryptionKeys.hash;
+
+		const classGroupsSeed = hashFn(
 			UserShareEncryptionKeys.domainSeparators.classGroups,
 			rootSeedKey,
 			curve,
 		);
 
-		const encryptionSignerKeySeed = UserShareEncryptionKeys.hash(
+		const encryptionSignerKeySeed = hashFn(
 			UserShareEncryptionKeys.domainSeparators.encryptionSignerKey,
 			rootSeedKey,
 			curve,
@@ -94,13 +111,14 @@ export class UserShareEncryptionKeys {
 			new Uint8Array(classGroupsKeypair.decryptionKey),
 			encryptionSignerKey,
 			curve,
+			version,
 		);
 	}
 
 	static fromShareEncryptionKeysBytes(
 		shareEncryptionKeysBytes: Uint8Array,
 	): UserShareEncryptionKeys {
-		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } =
+		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve, hashVersion } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
 		const secretShareSigningKeypair = Ed25519Keypair.fromSecretKey(secretShareSigningSecretKey);
@@ -110,6 +128,7 @@ export class UserShareEncryptionKeys {
 			decryptionKey,
 			secretShareSigningKeypair,
 			curve,
+			hashVersion,
 		);
 	}
 
@@ -269,37 +288,63 @@ export class UserShareEncryptionKeys {
 	/**
 	 * Hashes a domain separator and root seed to produce a seed for a keypair.
 	 *
+	 * The hash is: keccak256(ASCII(domainSeparator) || curveNumber || rootSeed)
+	 *
 	 * @param domainSeparator - The domain separator to use
 	 * @param rootSeed - The root seed to use
+	 * @param curve - The curve to include in the hash
 	 * @returns The hashed seed as a Uint8Array
 	 */
 	static hash(domainSeparator: string, rootSeed: Uint8Array, curve: Curve): Uint8Array {
 		return new Uint8Array(
-			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), curve, ...rootSeed])),
+			keccak_256(
+				Uint8Array.from([...encodeToASCII(domainSeparator), fromCurveToNumber(curve), ...rootSeed]),
+			),
+		);
+	}
+
+	/**
+	 * Legacy V1 hash that matches the original behavior where the curve string
+	 * was coerced to 0 by Uint8Array.from(). Kept for backward compatibility with
+	 * encryption keys registered before the fix.
+	 *
+	 * @param domainSeparator - The domain separator to use
+	 * @param rootSeed - The root seed to use
+	 * @param _curve - Unused (always hashes as 0 for backward compatibility)
+	 * @returns The hashed seed as a Uint8Array
+	 */
+	static hashV1(domainSeparator: string, rootSeed: Uint8Array, _curve: Curve): Uint8Array {
+		return new Uint8Array(
+			keccak_256(Uint8Array.from([...encodeToASCII(domainSeparator), 0, ...rootSeed])),
 		);
 	}
 
 	#serializeShareEncryptionKeys() {
-		return VersionedUserShareEncryptionKeysBcs.serialize({
-			V1: {
-				encryptionKey: this.encryptionKey,
-				decryptionKey: this.decryptionKey,
-				secretShareSigningSecretKey: this.#encryptedSecretShareSigningKeypair.getSecretKey(),
-				curve: fromCurveToNumber(this.curve),
-			},
-		}).toBytes();
+		const fields = {
+			encryptionKey: this.encryptionKey,
+			decryptionKey: this.decryptionKey,
+			secretShareSigningSecretKey: this.#encryptedSecretShareSigningKeypair.getSecretKey(),
+			curve: fromCurveToNumber(this.curve),
+		};
+
+		return VersionedUserShareEncryptionKeysBcs.serialize(
+			this.hashVersion === 1 ? { V1: fields } : { V2: fields },
+		).toBytes();
 	}
 
 	static #parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
-		const {
-			V1: { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve },
-		} = VersionedUserShareEncryptionKeysBcs.parse(shareEncryptionKeysBytes);
+		const parsed = VersionedUserShareEncryptionKeysBcs.parse(shareEncryptionKeysBytes);
+
+		const variant = parsed.V1 ?? parsed.V2;
+		const hashVersion: HashVersion = parsed.V1 ? 1 : 2;
+		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } = variant;
 
 		return {
 			encryptionKey: new Uint8Array(encryptionKey),
 			decryptionKey: new Uint8Array(decryptionKey),
 			secretShareSigningSecretKey,
 			curve: fromNumberToCurve(Number(curve)),
+			hashVersion,
 		};
 	}
 }
