@@ -92,8 +92,14 @@ describe('UserShareEncryptionKeys', () => {
 
 		it('should generate consistent keys for same seed', async () => {
 			// Test that same seed generates same keys (using testSeed1)
-			const keys1 = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
-			const keys2 = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const keys1 = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
+			const keys2 = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 
 			expect(keys1.encryptionKey, 'Same seed should produce same encryption key').toEqual(
 				keys2.encryptionKey,
@@ -126,7 +132,10 @@ describe('UserShareEncryptionKeys', () => {
 
 		it('should generate same keys as constructor', async () => {
 			// Test with our pre-created seed1
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 
 			expect(newKeys.encryptionKey, 'New keys should match pre-created encryption key').toEqual(
 				testKeys1.encryptionKey,
@@ -148,7 +157,10 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent public key for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 
 			expect(
 				testKeys1.getPublicKey().toRawBytes(),
@@ -173,7 +185,10 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent address for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 
 			expect(testKeys1.getSuiAddress(), 'Same seed should produce same address').toBe(
 				newKeys.getSuiAddress(),
@@ -209,7 +224,10 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should return consistent bytes for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 
 			expect(
 				testKeys1.getSigningPublicKeyBytes(),
@@ -233,7 +251,10 @@ describe('UserShareEncryptionKeys', () => {
 		});
 
 		it('should create consistent signature for same seed', async () => {
-			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed1, Curve.SECP256K1);
+			const newKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed1,
+				Curve.SECP256K1,
+			);
 			const newSignature = await newKeys.getEncryptionKeySignature();
 
 			expect(testSignature1, 'Same seed should produce same signature').toEqual(newSignature);
@@ -398,9 +419,7 @@ describe('UserShareEncryptionKeys', () => {
 
 			expect(deserialized.encryptionKey).toEqual(testKeys1.encryptionKey);
 			expect(deserialized.decryptionKey).toEqual(testKeys1.decryptionKey);
-			expect(deserialized.getSigningPublicKeyBytes()).toEqual(
-				testKeys1.getSigningPublicKeyBytes(),
-			);
+			expect(deserialized.getSigningPublicKeyBytes()).toEqual(testKeys1.getSigningPublicKeyBytes());
 			expect(deserialized.legacyHash).toBe(true);
 		});
 
@@ -411,9 +430,7 @@ describe('UserShareEncryptionKeys', () => {
 
 			expect(deserialized.encryptionKey).toEqual(keys.encryptionKey);
 			expect(deserialized.decryptionKey).toEqual(keys.decryptionKey);
-			expect(deserialized.getSigningPublicKeyBytes()).toEqual(
-				keys.getSigningPublicKeyBytes(),
-			);
+			expect(deserialized.getSigningPublicKeyBytes()).toEqual(keys.getSigningPublicKeyBytes());
 			expect(deserialized.legacyHash).toBe(false);
 		});
 	});
@@ -441,23 +458,13 @@ describe('UserShareEncryptionKeys', () => {
 				testSeed1,
 				Curve.ED25519,
 			);
-			expect(legacySecp.getSigningPublicKeyBytes()).toEqual(
-				legacyEd.getSigningPublicKeyBytes(),
-			);
+			expect(legacySecp.getSigningPublicKeyBytes()).toEqual(legacyEd.getSigningPublicKeyBytes());
 		});
 
 		it('fixed hash should produce different keys across curves', async () => {
-			const fixedSecp = await UserShareEncryptionKeys.fromRootSeedKey(
-				testSeed1,
-				Curve.SECP256K1,
-			);
-			const fixedEd = await UserShareEncryptionKeys.fromRootSeedKey(
-				testSeed1,
-				Curve.ED25519,
-			);
-			expect(fixedSecp.getSigningPublicKeyBytes()).not.toEqual(
-				fixedEd.getSigningPublicKeyBytes(),
-			);
+			const fixedSecp = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
+			const fixedEd = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.ED25519);
+			expect(fixedSecp.getSigningPublicKeyBytes()).not.toEqual(fixedEd.getSigningPublicKeyBytes());
 		});
 
 		it('legacy and fixed should match for secp256k1 (curve number 0)', async () => {
@@ -465,10 +472,7 @@ describe('UserShareEncryptionKeys', () => {
 				testSeed1,
 				Curve.SECP256K1,
 			);
-			const fixed = await UserShareEncryptionKeys.fromRootSeedKey(
-				testSeed1,
-				Curve.SECP256K1,
-			);
+			const fixed = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.SECP256K1);
 			// SECP256K1 has curveNumber=0, so legacy (always 0) and fixed (0) produce the same hash
 			expect(legacy.getSigningPublicKeyBytes()).toEqual(fixed.getSigningPublicKeyBytes());
 		});
@@ -478,14 +482,9 @@ describe('UserShareEncryptionKeys', () => {
 				testSeed1,
 				Curve.ED25519,
 			);
-			const fixed = await UserShareEncryptionKeys.fromRootSeedKey(
-				testSeed1,
-				Curve.ED25519,
-			);
+			const fixed = await UserShareEncryptionKeys.fromRootSeedKey(testSeed1, Curve.ED25519);
 			// ED25519 has curveNumber=2, so legacy (0) and fixed (2) should differ
-			expect(legacy.getSigningPublicKeyBytes()).not.toEqual(
-				fixed.getSigningPublicKeyBytes(),
-			);
+			expect(legacy.getSigningPublicKeyBytes()).not.toEqual(fixed.getSigningPublicKeyBytes());
 		});
 	});
 });
