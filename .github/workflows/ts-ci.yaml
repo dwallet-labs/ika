@@ -6,7 +6,7 @@ on:
       - main
   pull_request:
     paths:
-      - 'sdk/**'
+      - "sdk/**"
   workflow_dispatch:
 
 concurrency:
@@ -46,28 +46,24 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22.x
-          cache: 'pnpm'
+          cache: "pnpm"
 
       - name: Install wasm pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
-          version: 'latest'
+          version: "latest"
 
       - name: Install curl
         run: sudo apt-get install -y curl
 
       - name: Install Sui from Github
         run: |
-          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.64.2/sui-mainnet-v1.64.2-ubuntu-x86_64.tgz > sui.tgz
+          curl -L https://github.com/MystenLabs/sui/releases/download/testnet-v1.67.1/sui-testnet-v1.67.1-ubuntu-x86_64.tgz > sui.tgz
           tar -xvzf sui.tgz
           sudo cp ./sui /usr/local/bin/sui
 
       - name: Install dependencies
         run: pnpm install
-        working-directory: ./sdk/typescript
-
-      - name: Generate types from Move contracts
-        run: pnpm sui-ts-codegen generate
         working-directory: ./sdk/typescript
 
       - name: Format Check
