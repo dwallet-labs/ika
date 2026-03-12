@@ -527,20 +527,24 @@ reconfigurationPublicOutputToProtocolPublicParameters(
 ### Creation
 
 ```typescript
-// From seed (deterministic). version defaults to 2 (fixed hash).
-// Pass 1 for backward compat with keys registered before the curve-byte fix.
+// From seed (deterministic, correct curve byte in hash)
 static fromRootSeedKey(
-    rootSeedKey: Uint8Array, curve: Curve, version?: HashVersion
+    rootSeedKey: Uint8Array, curve: Curve
 ): Promise<UserShareEncryptionKeys>
 
-// From serialized bytes (auto-detects V1 vs V2)
+// Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
+static fromRootSeedKeyLegacyHash(
+    rootSeedKey: Uint8Array, curve: Curve
+): Promise<UserShareEncryptionKeys>
+
+// From serialized bytes (auto-detects legacy vs fixed)
 static fromShareEncryptionKeysBytes(bytes: Uint8Array): UserShareEncryptionKeys
 ```
 
 ### Serialization
 
 ```typescript
-toShareEncryptionKeysBytes(): Uint8Array  // Uses V1 or V2 BCS variant based on hashVersion
+toShareEncryptionKeysBytes(): Uint8Array  // Preserves legacy/fixed distinction via BCS variant
 ```
 
 ### Properties
@@ -549,7 +553,7 @@ toShareEncryptionKeysBytes(): Uint8Array  // Uses V1 or V2 BCS variant based on 
 encryptionKey: Uint8Array       // Class-groups public key
 decryptionKey: Uint8Array       // Class-groups private key
 curve: Curve                     // Curve used for generation
-readonly hashVersion: HashVersion // 1 (legacy) or 2 (fixed curve byte in hash)
+readonly legacyHash: boolean     // true if derived with legacy hash (curve byte always 0)
 ```
 
 ### Identity

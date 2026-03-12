@@ -253,15 +253,15 @@ All `*InParticularState` methods accept:
 ## UserShareEncryptionKeys
 
 ```typescript
-import { UserShareEncryptionKeys, type HashVersion } from '@ika.xyz/sdk';
+import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
-// Create from seed (V2 hash by default — correct curve byte in hash)
+// Create from seed (correct curve byte in hash)
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
 
-// Backward-compatible: use V1 hash for keys registered before the curve-byte fix
-const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve, 1);
+// Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
+const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(seed, curve);
 
-// Serialize/deserialize for storage (preserves hash version)
+// Serialize/deserialize for storage (preserves legacy/fixed distinction)
 const bytes = keys.toShareEncryptionKeysBytes();
 const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(bytes);
 
@@ -271,7 +271,7 @@ keys.getSigningPublicKeyBytes(); // Ed25519 public key bytes
 keys.encryptionKey;              // Class-groups public key
 keys.decryptionKey;              // Class-groups private key
 keys.curve;                      // Curve used
-keys.hashVersion;                // 1 (legacy) or 2 (fixed)
+keys.legacyHash;                 // true if legacy hash derivation
 
 // Operations
 await keys.getEncryptionKeySignature();     // Proof of ownership
@@ -279,7 +279,7 @@ await keys.getUserOutputSignature(dWallet, userPublicOutput); // Authorize dWall
 await keys.decryptUserShare(dWallet, encShare, pp); // Decrypt secret share
 ```
 
-**Hash Version Migration:** V1 had a bug where the curve byte was always 0 regardless of curve (only affects non-SECP256K1 curves). V2 uses the correct `fromCurveToNumber(curve)` byte. If you registered encryption keys before this fix with a non-SECP256K1 curve, pass `1` as the third argument to `fromRootSeedKey` to reproduce the legacy keys.
+**Legacy Hash:** The legacy hash had a bug where the curve byte was always 0 regardless of curve (only affects non-SECP256K1 curves). If you registered encryption keys before the fix with a non-SECP256K1 curve, use `fromRootSeedKeyLegacyHash` to reproduce the legacy keys.
 
 ## Network Config
 
@@ -328,7 +328,7 @@ coordinatorTransactions.approveMessage(config, coordRef, ...params, tx);
 import { IkaClient, IkaTransaction, getNetworkConfig } from '@ika.xyz/sdk';
 
 // Keys
-import { UserShareEncryptionKeys, type HashVersion } from '@ika.xyz/sdk';
+import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 // Cryptography
 import {
