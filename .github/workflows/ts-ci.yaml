@@ -66,6 +66,10 @@ jobs:
         run: pnpm install
         working-directory: ./sdk/typescript
 
+      - name: Generate types from Move contracts
+        run: pnpm sui-ts-codegen generate
+        working-directory: ./sdk/typescript
+
       - name: Format Check
         run: pnpm run prettier:check
         working-directory: ./sdk/typescript
