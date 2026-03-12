@@ -19,7 +19,9 @@ use ika_types::sui::{
     REQUEST_IMPORTED_KEY_SIGN_AND_RETURN_ID_FUNCTION_NAME,
     REQUEST_MAKE_DWALLET_USER_SECRET_KEY_SHARES_PUBLIC_FUNCTION_NAME,
     REQUEST_PRESIGN_FUNCTION_NAME, REQUEST_RE_ENCRYPT_USER_SHARE_FOR_FUNCTION_NAME,
-    REQUEST_SIGN_AND_RETURN_ID_FUNCTION_NAME, SIGN_DURING_DKG_REQUEST_FUNCTION_NAME,
+    REQUEST_SIGN_AND_RETURN_ID_FUNCTION_NAME,
+    REQUEST_SIGN_WITH_PARTIAL_USER_SIGNATURE_AND_RETURN_ID_FUNCTION_NAME,
+    SIGN_DURING_DKG_REQUEST_FUNCTION_NAME, VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME,
     VERIFY_PRESIGN_CAP_FUNCTION_NAME,
 };
 use sui_json_rpc_types::SuiTransactionBlockResponse;
@@ -1358,6 +1360,111 @@ pub async fn create_zero_ika_coin(
     );
 
     ptb.transfer_arg(sender, zero_coin);
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+    execute_transaction(context, tx_data).await
+}
+
+/// Fulfill a future sign: verify partial user signature cap + approve message + request sign.
+///
+/// This is the second step of the future-sign two-step flow. The first step (`request_future_sign_tx`)
+/// creates the partial user signature cap. This function verifies it, creates a message approval,
+/// and submits the final sign request.
+#[allow(clippy::too_many_arguments)]
+pub async fn request_future_sign_fulfill_tx(
+    context: &mut WalletContext,
+    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
+    partial_user_signature_cap_id: ObjectID,
+    dwallet_cap_id: ObjectID,
+    signature_algorithm: u32,
+    hash_scheme: u32,
+    message: Vec<u8>,
+    session_identifier_bytes: Vec<u8>,
+    ika_coin_id: ObjectID,
+    sui_coin_id: ObjectID,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let sender = context.active_address()?;
+
+    let coordinator = ptb.input(
+        get_dwallet_2pc_mpc_coordinator_call_arg(
+            context,
+            ika_dwallet_2pc_mpc_coordinator_object_id,
+        )
+        .await?,
+    )?;
+
+    let session_id = register_session_identifier(
+        &mut ptb,
+        coordinator,
+        &session_identifier_bytes,
+        ika_dwallet_2pc_mpc_package_id,
+    )?;
+
+    // Verify the partial user signature cap
+    let client = context.grpc_client()?;
+    let partial_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(partial_user_signature_cap_id)
+        .await?;
+    let partial_cap_input = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        partial_cap_ref,
+    )))?;
+    let verified_cap = ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+        VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME.to_owned(),
+        vec![],
+        vec![coordinator, partial_cap_input],
+    );
+
+    // Create message approval
+    let dwallet_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(dwallet_cap_id)
+        .await?;
+    let dwallet_cap_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+        dwallet_cap_ref,
+    )))?;
+    let message_approval = approve_message(
+        &mut ptb,
+        coordinator,
+        dwallet_cap_arg,
+        signature_algorithm,
+        hash_scheme,
+        &message,
+        ika_dwallet_2pc_mpc_package_id,
+    )?;
+
+    // Get coin refs
+    let ika_coin_ref = client
+        .transaction_builder()
+        .get_object_ref(ika_coin_id)
+        .await?;
+    let sui_coin_ref = client
+        .transaction_builder()
+        .get_object_ref(sui_coin_id)
+        .await?;
+    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
+    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+
+    // Request sign with partial user signature
+    ptb.programmable_move_call(
+        ika_dwallet_2pc_mpc_package_id,
+        DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+        REQUEST_SIGN_WITH_PARTIAL_USER_SIGNATURE_AND_RETURN_ID_FUNCTION_NAME.to_owned(),
+        vec![],
+        vec![
+            coordinator,
+            verified_cap,
+            message_approval,
+            session_id,
+            ika_coin_arg,
+            sui_coin_arg,
+        ],
+    );
 
     let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
     execute_transaction(context, tx_data).await

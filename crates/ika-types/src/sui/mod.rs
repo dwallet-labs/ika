@@ -128,6 +128,8 @@ pub const VERIFY_PARTIAL_USER_SIGNATURE_CAP_FUNCTION_NAME: &IdentStr =
     ident_str!("verify_partial_user_signature_cap");
 pub const REQUEST_SIGN_WITH_PARTIAL_USER_SIGNATURE_FUNCTION_NAME: &IdentStr =
     ident_str!("request_sign_with_partial_user_signature");
+pub const REQUEST_SIGN_WITH_PARTIAL_USER_SIGNATURE_AND_RETURN_ID_FUNCTION_NAME: &IdentStr =
+    ident_str!("request_sign_with_partial_user_signature_and_return_id");
 pub const REQUEST_MAKE_DWALLET_USER_SECRET_KEY_SHARES_PUBLIC_FUNCTION_NAME: &IdentStr =
     ident_str!("request_make_dwallet_user_secret_key_shares_public");
 pub const REQUEST_RE_ENCRYPT_USER_SHARE_FOR_FUNCTION_NAME: &IdentStr =
