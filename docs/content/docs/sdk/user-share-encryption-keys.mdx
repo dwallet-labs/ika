@@ -66,17 +66,18 @@ There are several ways to create a `UserShareEncryptionKeys` instance depending 
 The most common way is to create keys from a root seed. This method deterministically derives all necessary keys from a single seed:
 
 ```typescript
-import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import { Curve, UserShareEncryptionKeys, type HashVersion } from '@ika.xyz/sdk';
 
 // Generate a random 32-byte seed (in practice, derive this securely)
 const rootSeedKey = new Uint8Array(32);
 crypto.getRandomValues(rootSeedKey);
 
-// Create UserShareEncryptionKeys from the seed
+// Create UserShareEncryptionKeys from the seed (V2 hash by default)
 // IMPORTANT: Use the curve that matches your dWallet's curve
 const userShareKeys = await UserShareEncryptionKeys.fromRootSeedKey(rootSeedKey, Curve.SECP256K1);
 
 console.log('Sui address:', userShareKeys.getSuiAddress());
+console.log('Hash version:', userShareKeys.hashVersion); // 2
 ```
 
 **Examples with different curves:**
@@ -94,6 +95,26 @@ const secp256r1Keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.
 // For SchnorrkelSubstrate signature algorithm
 const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.RISTRETTO);
 ```
+
+### Hash Version (V1 / V2)
+
+`fromRootSeedKey` accepts an optional third parameter `version` (`HashVersion`), which defaults to `2`.
+
+- **V2 (default):** Uses the correct numeric curve byte in the key derivation hash (`fromCurveToNumber(curve)`).
+- **V1 (legacy):** Always uses `0` as the curve byte, regardless of the actual curve. This was a bug where the `Curve` string enum was passed directly to `Uint8Array.from()`, which coerced it to `NaN` then `0`.
+
+<Warning title="Migration Note">
+If you registered encryption keys **before this fix** with a **non-SECP256K1** curve (ED25519, SECP256R1, or RISTRETTO), you must pass `1` as the third argument to reproduce your existing keys:
+
+```typescript
+// Reproduce legacy keys for a previously registered ED25519 encryption key
+const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.ED25519, 1);
+```
+
+SECP256K1 keys are unaffected because its curve number is `0`, which matches the buggy V1 behavior.
+</Warning>
+
+Serialized keys (`toShareEncryptionKeysBytes` / `fromShareEncryptionKeysBytes`) automatically track the hash version via V1/V2 BCS variants, so deserialized keys always use the correct hash version.
 
 <Info title="Choosing the Right Curve">
 	Choose your curve based on the signature algorithm you intend to use: - **SECP256K1**: Best for

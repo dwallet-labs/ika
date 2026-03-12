@@ -527,17 +527,20 @@ reconfigurationPublicOutputToProtocolPublicParameters(
 ### Creation
 
 ```typescript
-// From seed (deterministic)
-static fromRootSeedKey(rootSeedKey: Uint8Array, curve: Curve): Promise<UserShareEncryptionKeys>
+// From seed (deterministic). version defaults to 2 (fixed hash).
+// Pass 1 for backward compat with keys registered before the curve-byte fix.
+static fromRootSeedKey(
+    rootSeedKey: Uint8Array, curve: Curve, version?: HashVersion
+): Promise<UserShareEncryptionKeys>
 
-// From serialized bytes
+// From serialized bytes (auto-detects V1 vs V2)
 static fromShareEncryptionKeysBytes(bytes: Uint8Array): UserShareEncryptionKeys
 ```
 
 ### Serialization
 
 ```typescript
-toShareEncryptionKeysBytes(): Uint8Array
+toShareEncryptionKeysBytes(): Uint8Array  // Uses V1 or V2 BCS variant based on hashVersion
 ```
 
 ### Properties
@@ -546,6 +549,7 @@ toShareEncryptionKeysBytes(): Uint8Array
 encryptionKey: Uint8Array       // Class-groups public key
 decryptionKey: Uint8Array       // Class-groups private key
 curve: Curve                     // Curve used for generation
+readonly hashVersion: HashVersion // 1 (legacy) or 2 (fixed curve byte in hash)
 ```
 
 ### Identity
