@@ -141,16 +141,21 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     /// The hash scheme for NOA signing.
     fn hash_scheme() -> DWalletHashScheme;
 
-    /// Convert checkpoint data + chain context into transaction bytes for NOA signing.
-    /// Returns one `Vec<u8>` per transaction — a single checkpoint may need multiple
-    /// transactions when the message set exceeds Sui's 128 KB tx size limit.
-    /// Crypto params (curve, sig algo, hash) come from Self::curve() etc.
-    /// `noa_public_key` is runtime data from the current network key.
-    fn signable_bytes(
-        checkpoint: &NOACheckpointMessage<Self>,
+    /// Split checkpoint messages into per-tx groups.
+    /// Pure function of messages + size limits.
+    fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>>;
+
+    /// Build tx bytes for a single message group. Context-dependent.
+    /// `retry_round` acts as a nonce for uniqueness across retries.
+    fn build_tx_bytes(
+        epoch: EpochId,
+        sequence_number: u64,
+        tx_index: u32,
+        messages: &[Self::MessageKind],
         context: &<Self::Destination as ChainDestination>::Context,
         noa_public_key: &[u8],
-    ) -> Vec<Vec<u8>>;
+        retry_round: u32,
+    ) -> Vec<u8>;
 }
 
 // === Marker types implementing NOACheckpointKind ===
@@ -184,17 +189,24 @@ impl NOACheckpointKind for DWallet {
         DWalletHashScheme::SHA512
     }
 
-    fn signable_bytes(
-        checkpoint: &NOACheckpointMessage<Self>,
+    fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
+        // Single tx for now; future: split by 128KB limit.
+        vec![messages.to_vec()]
+    }
+
+    fn build_tx_bytes(
+        epoch: EpochId,
+        sequence_number: u64,
+        tx_index: u32,
+        messages: &[Self::MessageKind],
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
-    ) -> Vec<Vec<u8>> {
+        retry_round: u32,
+    ) -> Vec<u8> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
-        // Currently BCS-serializes the checkpoint as a single transaction placeholder.
-        vec![
-            bcs::to_bytes(checkpoint)
-                .expect("BCS serialization of NOA DWallet checkpoint should not fail"),
-        ]
+        // Currently BCS-serializes the components as a placeholder.
+        bcs::to_bytes(&(epoch, sequence_number, tx_index, messages, retry_round))
+            .expect("BCS serialization of NOA DWallet tx bytes should not fail")
     }
 }
 
@@ -219,17 +231,24 @@ impl NOACheckpointKind for System {
         DWalletHashScheme::SHA512
     }
 
-    fn signable_bytes(
-        checkpoint: &NOACheckpointMessage<Self>,
+    fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
+        // Single tx for now; future: split by 128KB limit.
+        vec![messages.to_vec()]
+    }
+
+    fn build_tx_bytes(
+        epoch: EpochId,
+        sequence_number: u64,
+        tx_index: u32,
+        messages: &[Self::MessageKind],
         _context: &SuiChainContext,
         _noa_public_key: &[u8],
-    ) -> Vec<Vec<u8>> {
+        retry_round: u32,
+    ) -> Vec<u8> {
         // TODO: Build actual Sui TransactionData bytes using context + NOA public key.
-        // Currently BCS-serializes the checkpoint as a single transaction placeholder.
-        vec![
-            bcs::to_bytes(checkpoint)
-                .expect("BCS serialization of NOA System checkpoint should not fail"),
-        ]
+        // Currently BCS-serializes the components as a placeholder.
+        bcs::to_bytes(&(epoch, sequence_number, tx_index, messages, retry_round))
+            .expect("BCS serialization of NOA System tx bytes should not fail")
     }
 }
 
@@ -284,4 +303,23 @@ pub struct NOACheckpointTxRef {
     pub tx_index: u32,
     /// The epoch this checkpoint belongs to.
     pub epoch: EpochId,
+}
+
+/// A single validator's observation of a checkpoint tx's on-chain status.
+/// Piggybacked on `InternalSessionsStatusUpdate` so that quorum resolution
+/// happens in the same consensus round as chain context agreement.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum NOACheckpointTxObservation {
+    Finalized(NOACheckpointTxRef),
+    Failed(NOACheckpointTxRef, u32), // (tx_ref, retry_round)
+}
+
+/// Command from MPC service to finalizer after consensus quorum resolution.
+#[derive(Clone, Debug)]
+pub enum NOACheckpointCommand<D: ChainDestination> {
+    MarkFinalized(NOACheckpointTxRef),
+    RetryWithContext {
+        tx_ref: NOACheckpointTxRef,
+        context: D::Context,
+    },
 }

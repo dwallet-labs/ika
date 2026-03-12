@@ -48,7 +48,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
 use ika_types::noa_checkpoint::{
-    ChainDestination, SuiChainContext, SuiChainObservation, SuiDestination,
+    ChainDestination, NOACheckpointTxObservation, NOACheckpointTxRef, SuiChainContext,
+    SuiChainObservation, SuiDestination,
 };
 
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
@@ -89,6 +90,10 @@ pub struct AgreedStatusUpdate {
     pub agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
     /// The most recently consensus-agreed Sui chain context.
     pub agreed_sui_chain_context: Option<SuiChainContext>,
+    /// NOA checkpoint tx_refs that reached 2f+1 finalization quorum this round.
+    pub newly_finalized_tx_refs: Vec<NOACheckpointTxRef>,
+    /// NOA checkpoint (tx_ref, retry_round) pairs that reached 2f+1 failure quorum this round.
+    pub newly_failed_tx_refs: Vec<(NOACheckpointTxRef, u32)>,
 }
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -206,6 +211,15 @@ pub(crate) struct DWalletMPCManager {
     sui_chain_observations_by_party: HashMap<PartyID, SuiChainObservation>,
     /// The most recently consensus-agreed Sui chain context (None at startup).
     agreed_sui_chain_context: Option<SuiChainContext>,
+
+    /// NOA finalization observation votes: tx_ref → set of party IDs that observed finalization.
+    noa_finalization_observations: HashMap<NOACheckpointTxRef, HashSet<PartyID>>,
+    /// NOA failure observation votes: (tx_ref, retry_round) → set of party IDs.
+    noa_failure_observations: HashMap<(NOACheckpointTxRef, u32), HashSet<PartyID>>,
+    /// tx_refs that have already reached finalization quorum (prevents duplicate commands).
+    finalized_tx_refs: HashSet<NOACheckpointTxRef>,
+    /// (tx_ref, retry_round) pairs that have already reached failure quorum.
+    failed_tx_ref_rounds: HashSet<(NOACheckpointTxRef, u32)>,
 }
 
 impl DWalletMPCManager {
@@ -313,6 +327,10 @@ impl DWalletMPCManager {
             noa_sign_session_messages: HashMap::new(),
             sui_chain_observations_by_party: HashMap::new(),
             agreed_sui_chain_context: None,
+            noa_finalization_observations: HashMap::new(),
+            noa_failure_observations: HashMap::new(),
+            finalized_tx_refs: HashSet::new(),
+            failed_tx_ref_rounds: HashSet::new(),
         })
     }
 
@@ -397,6 +415,8 @@ impl DWalletMPCManager {
         status_updates: Vec<InternalSessionsStatusUpdate>,
     ) -> Option<AgreedStatusUpdate> {
         let mut agreed_presign_requests = Vec::new();
+        let mut newly_finalized = Vec::new();
+        let mut newly_failed = Vec::new();
 
         for status_update in status_updates {
             let sender_authority = status_update.authority;
@@ -491,7 +511,51 @@ impl DWalletMPCManager {
                     );
                 }
             }
+
+            // Process NOA checkpoint observations and resolve quorum.
+            for observation in status_update.noa_checkpoint_observations {
+                match observation {
+                    NOACheckpointTxObservation::Finalized(tx_ref) => {
+                        if self.finalized_tx_refs.contains(&tx_ref) {
+                            continue;
+                        }
+                        let parties = self
+                            .noa_finalization_observations
+                            .entry(tx_ref.clone())
+                            .or_default();
+                        parties.insert(sender_party_id);
+                        if self.access_structure.is_authorized_subset(parties).is_ok() {
+                            self.finalized_tx_refs.insert(tx_ref.clone());
+                            newly_finalized.push(tx_ref);
+                        }
+                    }
+                    NOACheckpointTxObservation::Failed(tx_ref, retry_round) => {
+                        if self.finalized_tx_refs.contains(&tx_ref) {
+                            continue;
+                        }
+                        let key = (tx_ref.clone(), retry_round);
+                        if self.failed_tx_ref_rounds.contains(&key) {
+                            continue;
+                        }
+                        let parties = self
+                            .noa_failure_observations
+                            .entry(key.clone())
+                            .or_default();
+                        parties.insert(sender_party_id);
+                        if self.access_structure.is_authorized_subset(parties).is_ok() {
+                            self.failed_tx_ref_rounds.insert(key);
+                            newly_failed.push((tx_ref, retry_round));
+                        }
+                    }
+                }
+            }
         }
+
+        // Finalization takes precedence: filter out failures for already-finalized tx_refs.
+        let newly_failed: Vec<_> = newly_failed
+            .into_iter()
+            .filter(|(tx_ref, _)| !self.finalized_tx_refs.contains(tx_ref))
+            .collect();
 
         // Compute agreed chain context from accumulated observations.
         compute_chain_context::<SuiDestination>(
@@ -509,6 +573,8 @@ impl DWalletMPCManager {
             global_presign_requests: agreed_presign_requests,
             agreed_network_key_data: self.agreed_network_key_data.clone(),
             agreed_sui_chain_context: self.agreed_sui_chain_context.clone(),
+            newly_finalized_tx_refs: newly_finalized,
+            newly_failed_tx_refs: newly_failed,
         })
     }
 

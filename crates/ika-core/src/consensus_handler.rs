@@ -438,8 +438,6 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => {
             "internal_sessions_status_update"
         }
-        ConsensusTransactionKind::NOACheckpointFinalized(..) => "noa_checkpoint_finalized",
-        ConsensusTransactionKind::NOACheckpointTxFailed(..) => "noa_checkpoint_tx_failed",
     }
 }
 

@@ -50,7 +50,10 @@ use ika_types::messages_dwallet_mpc::{
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
-use ika_types::noa_checkpoint::{SuiChainContext, SuiChainObservation};
+use ika_types::noa_checkpoint::{
+    NOACheckpointCommand, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
+    SuiChainObservation, SuiDestination,
+};
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
 use itertools::Itertools;
@@ -120,6 +123,16 @@ pub struct DWalletMPCService {
     buffered_noa_dwallet_messages: Vec<Vec<DWalletCheckpointMessageKind>>,
     /// Buffered system checkpoint messages waiting for context agreement.
     buffered_noa_system_messages: Vec<Vec<SystemCheckpointMessageKind>>,
+    /// Receiver for NOA checkpoint tx observations from finalizer tasks.
+    noa_observation_receiver: tokio::sync::mpsc::UnboundedReceiver<NOACheckpointTxObservation>,
+    /// Buffered NOA checkpoint observations to include in the next status update.
+    buffered_noa_observations: Vec<NOACheckpointTxObservation>,
+    /// Command sender for the DWallet NOA checkpoint finalizer.
+    noa_dwallet_command_sender:
+        Option<tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>>,
+    /// Command sender for the System NOA checkpoint finalizer.
+    noa_system_command_sender:
+        Option<tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>>,
 }
 
 impl DWalletMPCService {
@@ -146,6 +159,13 @@ impl DWalletMPCService {
             NetworkOwnedAddressSignRequest,
         >,
         network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+        noa_observation_receiver: tokio::sync::mpsc::UnboundedReceiver<NOACheckpointTxObservation>,
+        noa_dwallet_command_sender: Option<
+            tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>,
+        >,
+        noa_system_command_sender: Option<
+            tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>,
+        >,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -208,6 +228,10 @@ impl DWalletMPCService {
             current_agreed_sui_chain_context: None,
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
+            noa_observation_receiver,
+            buffered_noa_observations: Vec::new(),
+            noa_dwallet_command_sender,
+            noa_system_command_sender,
         }
     }
 
@@ -280,6 +304,10 @@ impl DWalletMPCService {
             current_agreed_sui_chain_context: None,
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
+            noa_observation_receiver: tokio::sync::mpsc::unbounded_channel().1,
+            buffered_noa_observations: Vec::new(),
+            noa_dwallet_command_sender: None,
+            noa_system_command_sender: None,
         };
 
         (
@@ -521,13 +549,23 @@ impl DWalletMPCService {
         // TODO: fetch from SuiSyncer when wired up.
         let sui_chain_observation: Option<SuiChainObservation> = None;
 
+        // Drain buffered NOA observations from the finalizer tasks.
+        while let Ok(obs) = self.noa_observation_receiver.try_recv() {
+            self.buffered_noa_observations.push(obs);
+        }
+
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
         let has_new_key_data = !new_key_data.is_empty();
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
+        let has_noa_observations = !self.buffered_noa_observations.is_empty();
 
-        if !has_unsent_requests && !idle_status_changed && !has_new_key_data && !observation_changed
+        if !has_unsent_requests
+            && !idle_status_changed
+            && !has_new_key_data
+            && !observation_changed
+            && !has_noa_observations
         {
             return;
         }
@@ -538,6 +576,7 @@ impl DWalletMPCService {
             unsent_presign_requests,
             new_key_data.clone(),
             sui_chain_observation.clone(),
+            self.buffered_noa_observations.clone(),
         );
 
         let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
@@ -559,6 +598,40 @@ impl DWalletMPCService {
                 self.sent_network_key_ids.insert(key_data.id);
             }
             self.last_sent_sui_chain_observation = sui_chain_observation;
+            self.buffered_noa_observations.clear();
+        }
+    }
+
+    /// Dispatch NOA checkpoint commands to the appropriate finalizer tasks
+    /// based on the quorum results from the current consensus round.
+    fn dispatch_noa_commands(
+        &self,
+        agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
+    ) {
+        for tx_ref in &agreed_status.newly_finalized_tx_refs {
+            let cmd = NOACheckpointCommand::MarkFinalized(tx_ref.clone());
+            let sender = match tx_ref.kind_name {
+                NOACheckpointKindName::DWallet => &self.noa_dwallet_command_sender,
+                NOACheckpointKindName::System => &self.noa_system_command_sender,
+            };
+            if let Some(s) = sender {
+                let _ = s.try_send(cmd);
+            }
+        }
+        for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
+            if let Some(ctx) = &self.current_agreed_sui_chain_context {
+                let cmd = NOACheckpointCommand::RetryWithContext {
+                    tx_ref: tx_ref.clone(),
+                    context: ctx.clone(),
+                };
+                let sender = match tx_ref.kind_name {
+                    NOACheckpointKindName::DWallet => &self.noa_dwallet_command_sender,
+                    NOACheckpointKindName::System => &self.noa_system_command_sender,
+                };
+                if let Some(s) = sender {
+                    let _ = s.try_send(cmd);
+                }
+            }
         }
     }
 
@@ -867,6 +940,13 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_status_updates(consensus_round, status_updates)
             {
+                // Update persistent context from consensus agreement.
+                self.current_agreed_sui_chain_context =
+                    agreed_status.agreed_sui_chain_context.clone();
+
+                // Dispatch NOA checkpoint commands to finalizers.
+                self.dispatch_noa_commands(&agreed_status);
+
                 // Take only the requests we haven't agreed on yet, and haven't processed.
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
@@ -879,10 +959,6 @@ impl DWalletMPCService {
                     })
                     .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
-
-                // Update persistent context from consensus agreement.
-                self.current_agreed_sui_chain_context =
-                    agreed_status.agreed_sui_chain_context.clone();
 
                 if self.network_is_idle != agreed_status.is_idle
                     || !new_global_presign_requests.is_empty()

@@ -13,7 +13,6 @@ use crate::messages_dwallet_mpc::{
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
 };
-use crate::noa_checkpoint::NOACheckpointTxRef;
 use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
@@ -70,11 +69,6 @@ pub enum ConsensusTransactionKey {
     /// Internal sessions status update from a validator.
     /// The nonce ensures each update is unique.
     InternalSessionsStatusUpdate(AuthorityName, [u8; 32]),
-    /// NOA checkpoint finalization vote from a validator.
-    NOACheckpointFinalized(AuthorityName, NOACheckpointTxRef),
-    /// NOA checkpoint transaction failure vote from a validator.
-    /// The u32 is the retry_round for deduplication across retry cycles.
-    NOACheckpointTxFailed(AuthorityName, NOACheckpointTxRef, u32),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -139,23 +133,6 @@ impl Debug for ConsensusTransactionKey {
                     "InternalSessionsStatusUpdate({:?}, 0x{})",
                     authority.concise(),
                     hex::encode(nonce)
-                )
-            }
-            ConsensusTransactionKey::NOACheckpointFinalized(authority, tx_ref) => {
-                write!(
-                    f,
-                    "NOACheckpointFinalized({:?}, {:?})",
-                    authority.concise(),
-                    tx_ref
-                )
-            }
-            ConsensusTransactionKey::NOACheckpointTxFailed(authority, tx_ref, retry_round) => {
-                write!(
-                    f,
-                    "NOACheckpointTxFailed({:?}, {:?}, retry_round={})",
-                    authority.concise(),
-                    tx_ref,
-                    retry_round
                 )
             }
         }
@@ -233,8 +210,6 @@ pub enum ConsensusTransactionKind {
     DWalletMPCOutput(DWalletMPCOutput),
     DWalletInternalMPCOutput(DWalletInternalMPCOutput),
     InternalSessionsStatusUpdate(InternalSessionsStatusUpdate),
-    NOACheckpointFinalized(AuthorityName, NOACheckpointTxRef),
-    NOACheckpointTxFailed(AuthorityName, NOACheckpointTxRef, u32),
 }
 
 impl ConsensusTransaction {
@@ -369,38 +344,6 @@ impl ConsensusTransaction {
         }
     }
 
-    /// Create a new consensus transaction for an NOA checkpoint finalization vote.
-    pub fn new_noa_checkpoint_finalized(
-        authority: AuthorityName,
-        tx_ref: NOACheckpointTxRef,
-    ) -> Self {
-        let mut hasher = DefaultHasher::new();
-        authority.hash(&mut hasher);
-        tx_ref.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::NOACheckpointFinalized(authority, tx_ref),
-        }
-    }
-
-    /// Create a new consensus transaction for an NOA checkpoint tx failure vote.
-    pub fn new_noa_checkpoint_tx_failed(
-        authority: AuthorityName,
-        tx_ref: NOACheckpointTxRef,
-        retry_round: u32,
-    ) -> Self {
-        let mut hasher = DefaultHasher::new();
-        authority.hash(&mut hasher);
-        tx_ref.hash(&mut hasher);
-        retry_round.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::NOACheckpointTxFailed(authority, tx_ref, retry_round),
-        }
-    }
-
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
             .read_u64::<BigEndian>()
@@ -454,16 +397,6 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::InternalSessionsStatusUpdate(
                     status_update.authority,
                     status_update.nonce,
-                )
-            }
-            ConsensusTransactionKind::NOACheckpointFinalized(authority, tx_ref) => {
-                ConsensusTransactionKey::NOACheckpointFinalized(*authority, tx_ref.clone())
-            }
-            ConsensusTransactionKind::NOACheckpointTxFailed(authority, tx_ref, retry_round) => {
-                ConsensusTransactionKey::NOACheckpointTxFailed(
-                    *authority,
-                    tx_ref.clone(),
-                    *retry_round,
                 )
             }
         }

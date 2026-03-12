@@ -12,12 +12,12 @@ use ika_types::digests::ChainIdentifier;
 use ika_types::error::{IkaError, IkaResult};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
 use typed_store::rocksdb::Options;
 
@@ -67,7 +67,6 @@ use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
     SystemCheckpointSignatureMessage,
 };
-use ika_types::noa_checkpoint::NOACheckpointTxRef;
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
 use mpc::WeightedThresholdAccessStructure;
 use mysten_common::sync::notify_once::NotifyOnce;
@@ -564,10 +563,6 @@ pub struct AuthorityPerEpochStore {
     pub packages_config: IkaNetworkConfig,
     reconfig_state: RwLock<ReconfigState>,
     end_of_publish: Mutex<StakeAggregator<(), true>>,
-    /// NOA checkpoint finalization vote aggregators, one per tx_ref.
-    noa_finalization_votes: Mutex<HashMap<NOACheckpointTxRef, StakeAggregator<(), true>>>,
-    /// NOA checkpoint failure vote aggregators, keyed by (tx_ref, retry_round).
-    noa_failure_votes: Mutex<HashMap<(NOACheckpointTxRef, u32), StakeAggregator<(), true>>>,
 }
 
 /// The reconfiguration state of the authority.
@@ -1078,8 +1073,6 @@ impl AuthorityPerEpochStore {
                 status: ReconfigCertStatus::AcceptAllCerts,
             }),
             end_of_publish: Mutex::new(end_of_publish),
-            noa_finalization_votes: Mutex::new(HashMap::new()),
-            noa_failure_votes: Mutex::new(HashMap::new()),
         });
 
         s.update_buffer_stake_metric();
@@ -1349,23 +1342,6 @@ impl AuthorityPerEpochStore {
         Ok(())
     }
 
-    /// Check if a given NOA checkpoint tx_ref has reached 2f+1 finalization quorum.
-    pub fn is_noa_checkpoint_finalized(&self, tx_ref: &NOACheckpointTxRef) -> bool {
-        self.noa_finalization_votes
-            .lock()
-            .get(tx_ref)
-            .is_some_and(|agg| agg.has_quorum())
-    }
-
-    /// Check if a given NOA checkpoint tx_ref has reached 2f+1 failure quorum
-    /// for the given retry_round.
-    pub fn has_noa_failure_quorum(&self, tx_ref: &NOACheckpointTxRef, retry_round: u32) -> bool {
-        self.noa_failure_votes
-            .lock()
-            .get(&(tx_ref.clone(), retry_round))
-            .is_some_and(|agg| agg.has_quorum())
-    }
-
     pub async fn user_certs_closed_notify(&self) {
         self.user_certs_closed_notify.wait().await
     }
@@ -1544,30 +1520,6 @@ impl AuthorityPerEpochStore {
                 if &transaction.sender_authority() != authority {
                     warn!(
                         "EndOfPublish authority {} does not match its author from consensus {}",
-                        authority, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NOACheckpointFinalized(authority, _),
-                ..
-            }) => {
-                if &transaction.sender_authority() != authority {
-                    warn!(
-                        "NOACheckpointFinalized authority {} does not match its author from consensus {}",
-                        authority, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NOACheckpointTxFailed(authority, _, _),
-                ..
-            }) => {
-                if &transaction.sender_authority() != authority {
-                    warn!(
-                        "NOACheckpointTxFailed authority {} does not match its author from consensus {}",
                         authority, transaction.certificate_author_index
                     );
                     return None;
@@ -2039,52 +1991,6 @@ impl AuthorityPerEpochStore {
                         .is_quorum_reached()
                 {
                     return Ok(ConsensusCertificateResult::EndOfPublish);
-                }
-                Ok(ConsensusCertificateResult::ConsensusMessage)
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NOACheckpointFinalized(authority, tx_ref),
-                ..
-            }) => {
-                let quorum_reached = {
-                    let mut votes = self.noa_finalization_votes.lock();
-                    let aggregator = votes
-                        .entry(tx_ref.clone())
-                        .or_insert_with(|| StakeAggregator::new(self.committee.clone()));
-                    !aggregator.has_quorum()
-                        && aggregator
-                            .insert_generic(*authority, ())
-                            .is_quorum_reached()
-                };
-                if quorum_reached {
-                    info!(?tx_ref, "NOA checkpoint finalization quorum reached (2f+1)");
-                }
-                Ok(ConsensusCertificateResult::ConsensusMessage)
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind:
-                    ConsensusTransactionKind::NOACheckpointTxFailed(authority, tx_ref, retry_round),
-                ..
-            }) => {
-                // Skip if already finalized — finalization takes precedence.
-                if self.is_noa_checkpoint_finalized(tx_ref) {
-                    return Ok(ConsensusCertificateResult::ConsensusMessage);
-                }
-                let quorum_reached = {
-                    let mut votes = self.noa_failure_votes.lock();
-                    let aggregator = votes
-                        .entry((tx_ref.clone(), *retry_round))
-                        .or_insert_with(|| StakeAggregator::new(self.committee.clone()));
-                    !aggregator.has_quorum()
-                        && aggregator
-                            .insert_generic(*authority, ())
-                            .is_quorum_reached()
-                };
-                if quorum_reached {
-                    info!(
-                        ?tx_ref,
-                        retry_round, "NOA checkpoint failure quorum reached (2f+1)"
-                    );
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }

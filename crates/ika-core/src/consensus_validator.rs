@@ -80,9 +80,7 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::DWalletMPCMessage(..)
                 | ConsensusTransactionKind::DWalletMPCOutput(..)
                 | ConsensusTransactionKind::DWalletInternalMPCOutput(..)
-                | ConsensusTransactionKind::InternalSessionsStatusUpdate(..)
-                | ConsensusTransactionKind::NOACheckpointFinalized(..)
-                | ConsensusTransactionKind::NOACheckpointTxFailed(..) => {}
+                | ConsensusTransactionKind::InternalSessionsStatusUpdate(..) => {}
                 ConsensusTransactionKind::SystemCheckpointSignature(signature) => {
                     system_checkpoints.push(signature.as_ref());
                     params_batch.push(&signature.checkpoint_message);

@@ -1,6 +1,6 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
-use crate::noa_checkpoint::SuiChainObservation;
+use crate::noa_checkpoint::{NOACheckpointTxObservation, SuiChainObservation};
 use anyhow::anyhow;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use move_core_types::account_address::AccountAddress;
@@ -132,6 +132,10 @@ pub struct InternalSessionsStatusUpdate {
     pub network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
     /// This validator's locally observed Sui chain state for context agreement.
     pub sui_chain_observation: Option<SuiChainObservation>,
+    /// NOA checkpoint tx observations (finalized/failed) from this validator.
+    /// Piggybacked here so quorum resolution happens in the same consensus round
+    /// as chain context agreement.
+    pub noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
 }
 
 impl InternalSessionsStatusUpdate {
@@ -142,6 +146,7 @@ impl InternalSessionsStatusUpdate {
         global_presign_requests: Vec<GlobalPresignRequest>,
         network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
         sui_chain_observation: Option<SuiChainObservation>,
+        noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
     ) -> Self {
         use rand::RngCore;
         let mut nonce = [0u8; 32];
@@ -153,6 +158,7 @@ impl InternalSessionsStatusUpdate {
             global_presign_requests,
             network_key_data,
             sui_chain_observation,
+            noa_checkpoint_observations,
         }
     }
 }
