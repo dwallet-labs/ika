@@ -30,13 +30,13 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.string(),
-		curve: bcs.u64(),
+		curve: bcs.u32(),
 	}),
 	V2: bcs.struct('UserShareEncryptionKeysV2', {
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.string(),
-		curve: bcs.u64(),
+		curve: bcs.u32(),
 	}),
 });
 
@@ -153,9 +153,7 @@ export class UserShareEncryptionKeys {
 		curve: Curve,
 		legacyHash: boolean,
 	): Promise<UserShareEncryptionKeys> {
-		const hashFn = legacyHash
-			? UserShareEncryptionKeys.hashLegacy
-			: UserShareEncryptionKeys.hash;
+		const hashFn = legacyHash ? UserShareEncryptionKeys.hashLegacy : UserShareEncryptionKeys.hash;
 
 		const classGroupsSeed = hashFn(
 			UserShareEncryptionKeys.domainSeparators.classGroups,
