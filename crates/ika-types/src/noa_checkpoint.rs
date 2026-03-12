@@ -5,8 +5,10 @@ use crate::committee::EpochId;
 use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_system_checkpoints::SystemCheckpointMessageKind;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
+use mpc::WeightedThresholdAccessStructure;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -15,10 +17,34 @@ use std::hash::Hash;
 /// Encapsulates chain-specific configuration for checkpoint submission.
 pub trait ChainDestination: Clone + Debug + Send + Sync + 'static {
     /// Chain context needed at runtime to build signable transaction bytes.
-    type Context: Send + Sync;
+    type Context: Clone + Debug + Send + Sync + 'static;
+
+    /// A validator's local observation of chain state, submitted through consensus.
+    type Observation: Clone
+        + Debug
+        + Serialize
+        + DeserializeOwned
+        + PartialEq
+        + Eq
+        + Hash
+        + Send
+        + Sync
+        + 'static;
 
     /// Human-readable chain name (e.g., "sui", "solana").
     const CHAIN_NAME: &'static str;
+
+    /// Compute chain context from all validators' latest observations.
+    ///
+    /// Uses the `access_structure` to verify that agreeing parties form an authorized
+    /// subset (weighted 2f+1 threshold), not just a majority of respondents.
+    /// Returns `Some(context)` when agreement is reached,
+    /// `None` to keep `current_context` unchanged.
+    fn context_from_observations(
+        observations: &HashMap<u16, Self::Observation>,
+        current_context: Option<&Self::Context>,
+        access_structure: &WeightedThresholdAccessStructure,
+    ) -> Option<Self::Context>;
 }
 
 /// Sui chain destination — carries Sui object IDs, module info, etc.
@@ -26,12 +52,52 @@ pub trait ChainDestination: Clone + Debug + Send + Sync + 'static {
 pub struct SuiDestination;
 
 /// Runtime context for building Sui transactions.
-/// Fields TBD when implementing actual tx building.
-pub struct SuiChainContext;
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SuiChainContext {
+    pub reference_gas_price: u64,
+    pub sui_epoch: u64,
+}
+
+/// A validator's locally observed Sui chain state for context agreement.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct SuiChainObservation {
+    pub reference_gas_price: u64,
+    pub sui_epoch: u64,
+}
 
 impl ChainDestination for SuiDestination {
     type Context = SuiChainContext;
+    type Observation = SuiChainObservation;
     const CHAIN_NAME: &'static str = "sui";
+
+    fn context_from_observations(
+        observations: &HashMap<u16, SuiChainObservation>,
+        _current_context: Option<&SuiChainContext>,
+        access_structure: &WeightedThresholdAccessStructure,
+    ) -> Option<SuiChainContext> {
+        if observations.is_empty() {
+            return None;
+        }
+
+        // Group party IDs by their observation value.
+        let mut votes: HashMap<&SuiChainObservation, HashSet<u16>> = HashMap::new();
+        for (&party_id, observation) in observations {
+            votes.entry(observation).or_default().insert(party_id);
+        }
+
+        // Check if any observation value is supported by an authorized subset.
+        for (observation, parties) in &votes {
+            if access_structure.is_authorized_subset(parties).is_ok() {
+                return Some(SuiChainContext {
+                    reference_gas_price: observation.reference_gas_price,
+                    sui_epoch: observation.sui_epoch,
+                });
+            }
+        }
+
+        // No authorized subset agrees — keep current context unchanged.
+        None
+    }
 }
 
 // === NOACheckpointKind ===

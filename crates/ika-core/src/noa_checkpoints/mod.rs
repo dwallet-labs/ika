@@ -407,26 +407,30 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
 // === NOACheckpointSubmitter ===
 
-/// Receives raw checkpoint messages from a channel and submits them to the NOA MPC signing
-/// pipeline via `K::signable_bytes()`, which converts checkpoint data into chain-specific
-/// transaction bytes for NOA signing.
+/// Receives raw checkpoint messages bundled with their chain context from a channel and submits
+/// them to the NOA MPC signing pipeline via `K::signable_bytes()`, which converts checkpoint data
+/// into chain-specific transaction bytes for NOA signing.
 pub struct NOACheckpointSubmitter<K: NOACheckpointKind> {
-    receiver: tokio::sync::mpsc::Receiver<Vec<K::MessageKind>>,
+    receiver: tokio::sync::mpsc::Receiver<(
+        Vec<K::MessageKind>,
+        <K::Destination as ChainDestination>::Context,
+    )>,
     noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
     store: Arc<NOACheckpointLocalStore<K>>,
     epoch: EpochId,
     next_sequence_number: u64,
-    chain_context: <K::Destination as ChainDestination>::Context,
     noa_public_key: Vec<u8>,
 }
 
 impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
     pub fn new(
-        receiver: tokio::sync::mpsc::Receiver<Vec<K::MessageKind>>,
+        receiver: tokio::sync::mpsc::Receiver<(
+            Vec<K::MessageKind>,
+            <K::Destination as ChainDestination>::Context,
+        )>,
         noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
         store: Arc<NOACheckpointLocalStore<K>>,
         epoch: EpochId,
-        chain_context: <K::Destination as ChainDestination>::Context,
         noa_public_key: Vec<u8>,
     ) -> Self {
         Self {
@@ -435,7 +439,6 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
             store,
             epoch,
             next_sequence_number: 0,
-            chain_context,
             noa_public_key,
         }
     }
@@ -447,7 +450,7 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
             "Starting NOACheckpointSubmitter"
         );
 
-        while let Some(messages) = self.receiver.recv().await {
+        while let Some((messages, chain_context)) = self.receiver.recv().await {
             let seq = self.next_sequence_number;
             self.next_sequence_number += 1;
 
@@ -457,8 +460,7 @@ impl<K: NOACheckpointKind> NOACheckpointSubmitter<K> {
                 messages,
             };
 
-            let all_tx_bytes =
-                K::signable_bytes(&checkpoint, &self.chain_context, &self.noa_public_key);
+            let all_tx_bytes = K::signable_bytes(&checkpoint, &chain_context, &self.noa_public_key);
 
             self.store
                 .insert_pending(seq, checkpoint, all_tx_bytes.clone());

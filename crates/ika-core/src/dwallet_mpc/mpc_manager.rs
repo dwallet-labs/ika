@@ -47,7 +47,36 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
+use ika_types::noa_checkpoint::{
+    ChainDestination, SuiChainContext, SuiChainObservation, SuiDestination,
+};
+
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
+
+/// Compute the agreed chain context for any `ChainDestination` implementation.
+/// Updates `current_context` in place if a new context is agreed upon.
+fn compute_chain_context<D: ChainDestination>(
+    observations_by_party: &HashMap<PartyID, D::Observation>,
+    current_context: &mut Option<D::Context>,
+    access_structure: &WeightedThresholdAccessStructure,
+    consensus_round: u64,
+) {
+    let observations: HashMap<u16, D::Observation> = observations_by_party
+        .iter()
+        .map(|(party_id, obs)| (*party_id as u16, obs.clone()))
+        .collect();
+
+    if let Some(context) =
+        D::context_from_observations(&observations, current_context.as_ref(), access_structure)
+    {
+        info!(
+            consensus_round,
+            chain = D::CHAIN_NAME,
+            "Chain context agreed upon"
+        );
+        *current_context = Some(context);
+    }
+}
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -58,6 +87,8 @@ pub struct AgreedStatusUpdate {
     pub global_presign_requests: Vec<GlobalPresignRequest>,
     /// Network key data that reached quorum agreement via weighted majority vote.
     pub agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    /// The most recently consensus-agreed Sui chain context.
+    pub agreed_sui_chain_context: Option<SuiChainContext>,
 }
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -169,6 +200,12 @@ pub(crate) struct DWalletMPCManager {
     /// Maps session identifiers to the original message bytes for NOA sign sessions.
     /// Populated when instantiating a session, consumed when handling the output.
     noa_sign_session_messages: HashMap<SessionIdentifier, Vec<u8>>,
+
+    /// Each validator's latest Sui chain observation, keyed by party ID.
+    /// Updated every time a status update with an observation is received.
+    sui_chain_observations_by_party: HashMap<PartyID, SuiChainObservation>,
+    /// The most recently consensus-agreed Sui chain context (None at startup).
+    agreed_sui_chain_context: Option<SuiChainContext>,
 }
 
 impl DWalletMPCManager {
@@ -274,6 +311,8 @@ impl DWalletMPCManager {
             epoch_store,
             network_owned_address_sign_output_sender,
             noa_sign_session_messages: HashMap::new(),
+            sui_chain_observations_by_party: HashMap::new(),
+            agreed_sui_chain_context: None,
         })
     }
 
@@ -419,6 +458,12 @@ impl DWalletMPCManager {
                 }
             }
 
+            // Store this validator's latest Sui chain observation.
+            if let Some(observation) = status_update.sui_chain_observation {
+                self.sui_chain_observations_by_party
+                    .insert(sender_party_id, observation);
+            }
+
             // Vote on network key data with inline is_authorized_subset check.
             for key_data in status_update.network_key_data {
                 let key_id = key_data.id;
@@ -448,6 +493,14 @@ impl DWalletMPCManager {
             }
         }
 
+        // Compute agreed chain context from accumulated observations.
+        compute_chain_context::<SuiDestination>(
+            &self.sui_chain_observations_by_party,
+            &mut self.agreed_sui_chain_context,
+            &self.access_structure,
+            consensus_round,
+        );
+
         // Perform majority vote on idle status at the end of processing.
         let network_is_idle = self.compute_idle_status_majority_vote();
 
@@ -455,6 +508,7 @@ impl DWalletMPCManager {
             is_idle: network_is_idle,
             global_presign_requests: agreed_presign_requests,
             agreed_network_key_data: self.agreed_network_key_data.clone(),
+            agreed_sui_chain_context: self.agreed_sui_chain_context.clone(),
         })
     }
 

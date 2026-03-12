@@ -222,14 +222,19 @@ const EVENTS_CHANNEL_BUFFER_SIZE: usize = 10_000;
 /// NOA checkpoint components returned for wiring into node startup.
 struct NOACheckpointComponents {
     tasks: JoinSet<()>,
-    /// Sender for dwallet checkpoint messages to the NOA submitter (None when NOA disabled).
-    noa_dwallet_checkpoint_sender:
-        Option<tokio::sync::mpsc::Sender<Vec<ika_types::message::DWalletCheckpointMessageKind>>>,
-    /// Sender for system checkpoint messages to the NOA submitter (None when NOA disabled).
+    /// Sender for dwallet checkpoint messages bundled with chain context (None when NOA disabled).
+    noa_dwallet_checkpoint_sender: Option<
+        tokio::sync::mpsc::Sender<(
+            Vec<ika_types::message::DWalletCheckpointMessageKind>,
+            ika_types::noa_checkpoint::SuiChainContext,
+        )>,
+    >,
+    /// Sender for system checkpoint messages bundled with chain context (None when NOA disabled).
     noa_system_checkpoint_sender: Option<
-        tokio::sync::mpsc::Sender<
+        tokio::sync::mpsc::Sender<(
             Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-        >,
+            ika_types::noa_checkpoint::SuiChainContext,
+        )>,
     >,
     /// DWallet NOA checkpoint store for finalization queries.
     dwallet_noa_store:
@@ -1405,28 +1410,28 @@ impl IkaNode {
         // Create bounded channels for NOA checkpoint submitter tasks.
         let epoch = epoch_store.epoch();
 
-        let (noa_dwallet_tx, noa_dwallet_rx) = tokio::sync::mpsc::channel::<
+        let (noa_dwallet_tx, noa_dwallet_rx) = tokio::sync::mpsc::channel::<(
             Vec<ika_types::message::DWalletCheckpointMessageKind>,
-        >(256);
+            ika_types::noa_checkpoint::SuiChainContext,
+        )>(256);
         let dwallet_submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
             noa_dwallet_rx,
             noa_sign_request_sender.clone(),
             dwallet_noa_store.clone(),
             epoch,
-            noa_checkpoint::SuiChainContext,
             vec![],
         );
         tasks.spawn(dwallet_submitter.run());
 
-        let (noa_system_tx, noa_system_rx) = tokio::sync::mpsc::channel::<
+        let (noa_system_tx, noa_system_rx) = tokio::sync::mpsc::channel::<(
             Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-        >(256);
+            ika_types::noa_checkpoint::SuiChainContext,
+        )>(256);
         let system_submitter = NOACheckpointSubmitter::<noa_checkpoint::System>::new(
             noa_system_rx,
             noa_sign_request_sender.clone(),
             system_noa_store.clone(),
             epoch,
-            noa_checkpoint::SuiChainContext,
             vec![],
         );
         tasks.spawn(system_submitter.run());

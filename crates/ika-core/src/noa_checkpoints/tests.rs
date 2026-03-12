@@ -26,6 +26,14 @@ mod tests {
     fn test_session_id() -> SessionIdentifier {
         SessionIdentifier::new(SessionType::System, [0u8; SessionIdentifier::LENGTH])
     }
+
+    fn test_sui_chain_context() -> SuiChainContext {
+        SuiChainContext {
+            reference_gas_price: 1000,
+            sui_epoch: 1,
+        }
+    }
+
     use crate::noa_checkpoints::checkpoint_output::{
         CertifiedNOACheckpointOutput, LogNOACheckpointOutput,
     };
@@ -287,23 +295,30 @@ mod tests {
     async fn test_submitter_sends_sign_requests() {
         let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
         let (sign_tx, mut sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) = mpsc::channel::<Vec<DWalletCheckpointMessageKind>>(16);
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
 
         let submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
             msg_rx,
             sign_tx,
             store.clone(),
             1,
-            SuiChainContext,
             vec![],
         );
 
         // Spawn the submitter in the background.
         let handle = tokio::spawn(submitter.run());
 
-        // Send checkpoint messages.
-        msg_tx.send(vec![]).await.expect("send should succeed");
-        msg_tx.send(vec![]).await.expect("send should succeed");
+        // Send checkpoint messages bundled with chain context.
+        let ctx = test_sui_chain_context();
+        msg_tx
+            .send((vec![], ctx.clone()))
+            .await
+            .expect("send should succeed");
+        msg_tx
+            .send((vec![], ctx))
+            .await
+            .expect("send should succeed");
 
         // Drop sender to close the channel and let the submitter exit.
         drop(msg_tx);
@@ -341,21 +356,22 @@ mod tests {
     async fn test_submitter_monotonic_sequence_numbers() {
         let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
         let (sign_tx, _sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) = mpsc::channel::<Vec<SystemCheckpointMessageKind>>(16);
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>(16);
 
         let submitter = NOACheckpointSubmitter::<noa_checkpoint::System>::new(
             msg_rx,
             sign_tx,
             store.clone(),
             42,
-            SuiChainContext,
             vec![],
         );
 
         let handle = tokio::spawn(submitter.run());
 
+        let ctx = test_sui_chain_context();
         for _ in 0..5 {
-            msg_tx.send(vec![]).await.unwrap();
+            msg_tx.send((vec![], ctx.clone())).await.unwrap();
         }
         drop(msg_tx);
         handle.await.unwrap();
@@ -371,7 +387,7 @@ mod tests {
                 messages: vec![],
             };
             let expected_bytes =
-                noa_checkpoint::System::signable_bytes(&checkpoint, &SuiChainContext, &[]);
+                noa_checkpoint::System::signable_bytes(&checkpoint, &test_sui_chain_context(), &[]);
             // Signing should find the pending entry.
             let result = store.add_signature(
                 &expected_bytes[0],
@@ -484,7 +500,8 @@ mod tests {
         let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
 
         // Channels: msg_tx → Submitter → sign_request_tx/rx → (simulated MPC) → output_tx → Certifier
-        let (msg_tx, msg_rx) = mpsc::channel::<Vec<DWalletCheckpointMessageKind>>(16);
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
         let (sign_request_tx, mut sign_request_rx) =
             mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
         let (sign_output_tx, sign_output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
@@ -495,7 +512,6 @@ mod tests {
             sign_request_tx,
             store.clone(),
             7,
-            SuiChainContext,
             vec![],
         );
         let submitter_handle = tokio::spawn(submitter.run());
@@ -509,8 +525,9 @@ mod tests {
         let certifier_handle = tokio::spawn(certifier.run());
 
         // Send 3 checkpoints.
+        let ctx = test_sui_chain_context();
         for _ in 0..3 {
-            msg_tx.send(vec![]).await.unwrap();
+            msg_tx.send((vec![], ctx.clone())).await.unwrap();
         }
         // Close msg channel so submitter can finish producing requests then exit.
         drop(msg_tx);
@@ -561,7 +578,8 @@ mod tests {
     async fn test_end_to_end_system_checkpoint_pipeline() {
         let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
 
-        let (msg_tx, msg_rx) = mpsc::channel::<Vec<SystemCheckpointMessageKind>>(16);
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>(16);
         let (sign_request_tx, mut sign_request_rx) =
             mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
         let (sign_output_tx, sign_output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
@@ -571,7 +589,6 @@ mod tests {
             sign_request_tx,
             store.clone(),
             3,
-            SuiChainContext,
             vec![],
         );
         let submitter_handle = tokio::spawn(submitter.run());
@@ -585,7 +602,10 @@ mod tests {
 
         // Send a system checkpoint with a real message.
         msg_tx
-            .send(vec![SystemCheckpointMessageKind::EndOfPublish])
+            .send((
+                vec![SystemCheckpointMessageKind::EndOfPublish],
+                test_sui_chain_context(),
+            ))
             .await
             .unwrap();
         drop(msg_tx);
@@ -705,22 +725,23 @@ mod tests {
         // Use a very small channel to test that the submitter doesn't lose messages.
         let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
         let (sign_tx, mut sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) = mpsc::channel::<Vec<DWalletCheckpointMessageKind>>(1);
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(1);
 
         let submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
             msg_rx,
             sign_tx,
             store.clone(),
             1,
-            SuiChainContext,
             vec![],
         );
         let handle = tokio::spawn(submitter.run());
 
         // Send messages one at a time (channel capacity is 1).
+        let ctx = test_sui_chain_context();
         let count = 10;
         for _ in 0..count {
-            msg_tx.send(vec![]).await.unwrap();
+            msg_tx.send((vec![], ctx.clone())).await.unwrap();
         }
         drop(msg_tx);
         handle.await.unwrap();

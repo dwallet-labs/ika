@@ -1,5 +1,6 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
+use crate::noa_checkpoint::SuiChainObservation;
 use anyhow::anyhow;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use move_core_types::account_address::AccountAddress;
@@ -129,6 +130,8 @@ pub struct InternalSessionsStatusUpdate {
     pub global_presign_requests: Vec<GlobalPresignRequest>,
     /// Network encryption key data this validator has loaded from Sui.
     pub network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
+    /// This validator's locally observed Sui chain state for context agreement.
+    pub sui_chain_observation: Option<SuiChainObservation>,
 }
 
 impl InternalSessionsStatusUpdate {
@@ -138,6 +141,7 @@ impl InternalSessionsStatusUpdate {
         is_idle: bool,
         global_presign_requests: Vec<GlobalPresignRequest>,
         network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
+        sui_chain_observation: Option<SuiChainObservation>,
     ) -> Self {
         use rand::RngCore;
         let mut nonce = [0u8; 32];
@@ -148,6 +152,7 @@ impl InternalSessionsStatusUpdate {
             is_idle,
             global_presign_requests,
             network_key_data,
+            sui_chain_observation,
         }
     }
 }
