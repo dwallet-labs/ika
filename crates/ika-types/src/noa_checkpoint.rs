@@ -323,3 +323,52 @@ pub enum NOACheckpointCommand<D: ChainDestination> {
         context: D::Context,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::DWalletCheckpointMessageKind;
+    use crate::messages_system_checkpoints::SystemCheckpointMessageKind;
+
+    #[test]
+    fn test_dwallet_build_tx_bytes_roundtrip() {
+        let ctx = SuiChainContext {
+            reference_gas_price: 1000,
+            sui_epoch: 1,
+        };
+        let bytes = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
+        assert!(!bytes.is_empty());
+
+        let decoded: (u64, u64, u32, Vec<DWalletCheckpointMessageKind>, u32) =
+            bcs::from_bytes(&bytes).expect("BCS round-trip should succeed");
+        assert_eq!(decoded, (1, 0, 0, vec![], 0));
+    }
+
+    #[test]
+    fn test_system_build_tx_bytes_roundtrip() {
+        let ctx = SuiChainContext {
+            reference_gas_price: 1000,
+            sui_epoch: 1,
+        };
+        let bytes = System::build_tx_bytes(2, 5, 1, &[], &ctx, &[], 3);
+        assert!(!bytes.is_empty());
+
+        let decoded: (u64, u64, u32, Vec<SystemCheckpointMessageKind>, u32) =
+            bcs::from_bytes(&bytes).expect("BCS round-trip should succeed");
+        assert_eq!(decoded, (2, 5, 1, vec![], 3));
+    }
+
+    #[test]
+    fn test_build_tx_bytes_retry_produces_different_output() {
+        let ctx = SuiChainContext {
+            reference_gas_price: 1000,
+            sui_epoch: 1,
+        };
+        let first = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
+        let retry = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 1);
+        assert_ne!(
+            first, retry,
+            "different retry_round should produce different bytes"
+        );
+    }
+}

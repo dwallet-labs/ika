@@ -528,6 +528,9 @@ impl DWalletMPCManager {
         {
             let global_presign_request = GlobalPresignRequest {
                 session_identifier: request.session_identifier,
+                // Safe: NOA sign sessions use None (mapped to 0 here), but they have a distinct
+                // SessionType, so session identifiers never collide with Sui-originated sessions
+                // at sequence_number 0.
                 session_sequence_number: request.session_sequence_number.unwrap_or(0),
                 presign_id,
                 curve,

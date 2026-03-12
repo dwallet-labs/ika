@@ -202,10 +202,6 @@ pub(crate) struct DWalletMPCManager {
     /// Channel sender for completed network-owned-address sign session outputs.
     network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
 
-    /// Maps session identifiers to the original message bytes for NOA sign sessions.
-    /// Populated when instantiating a session, consumed when handling the output.
-    noa_sign_session_messages: HashMap<SessionIdentifier, Vec<u8>>,
-
     /// Each validator's latest Sui chain observation, keyed by party ID.
     /// Updated every time a status update with an observation is received.
     sui_chain_observations_by_party: HashMap<PartyID, SuiChainObservation>,
@@ -324,7 +320,6 @@ impl DWalletMPCManager {
             completed_internal_presign_sessions: HashMap::new(),
             epoch_store,
             network_owned_address_sign_output_sender,
-            noa_sign_session_messages: HashMap::new(),
             sui_chain_observations_by_party: HashMap::new(),
             agreed_sui_chain_context: None,
             noa_finalization_observations: HashMap::new(),
@@ -1010,8 +1005,6 @@ impl DWalletMPCManager {
         );
 
         let session_identifier = request.session_identifier;
-        self.noa_sign_session_messages
-            .insert(session_identifier, message.clone());
 
         let status = self.session_status_from_request(request, true);
 
@@ -1531,27 +1524,14 @@ impl DWalletMPCManager {
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,
-                session_identifier: noa_session_identifier,
+                session_identifier,
+                message,
                 curve,
                 signature_algorithm,
                 hash_scheme,
             } => {
-                let message = match self
-                    .noa_sign_session_messages
-                    .remove(&noa_session_identifier)
-                {
-                    Some(msg) => msg,
-                    None => {
-                        error!(
-                            ?noa_session_identifier,
-                            should_never_happen = true,
-                            "No message mapping found for completed NOA sign session"
-                        );
-                        return;
-                    }
-                };
                 info!(
-                    ?noa_session_identifier,
+                    ?session_identifier,
                     ?curve,
                     ?signature_algorithm,
                     signature_length = output.len(),
@@ -1559,7 +1539,7 @@ impl DWalletMPCManager {
                     "Network-owned-address sign completed"
                 );
                 let sign_output = NetworkOwnedAddressSignOutput {
-                    session_identifier: noa_session_identifier,
+                    session_identifier,
                     message,
                     signature: output,
                     curve,
@@ -1571,7 +1551,7 @@ impl DWalletMPCManager {
                     .send(sign_output)
                 {
                     error!(
-                        ?noa_session_identifier,
+                        ?session_identifier,
                         error = ?e,
                         should_never_happen = true,
                         "Failed to send network-owned-address sign output to channel"

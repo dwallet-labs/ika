@@ -337,12 +337,6 @@ pub struct ProtocolConfig {
     internal_eddsa_presign_pool_maximum_size: Option<u64>,
     internal_schnorrkel_substrate_presign_pool_maximum_size: Option<u64>,
     internal_taproot_presign_pool_maximum_size: Option<u64>,
-
-    // === NOA Checkpoint Finalization Configuration ===
-    /// Interval in seconds between finalization poll cycles.
-    noa_checkpoint_poll_interval_secs: Option<u64>,
-    /// Timeout in seconds before triggering a retry for unconfirmed NOA checkpoint transactions.
-    noa_checkpoint_retry_timeout_secs: Option<u64>,
 }
 
 // feature flags
@@ -639,9 +633,6 @@ impl ProtocolConfig {
             internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
             internal_taproot_presign_pool_maximum_size: Some(30000),
 
-            // NOA checkpoint finalization (not set in base version, enabled in v4)
-            noa_checkpoint_poll_interval_secs: None,
-            noa_checkpoint_retry_timeout_secs: None,
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -651,6 +642,7 @@ impl ProtocolConfig {
         cfg.feature_flags
             .consensus_skip_gced_blocks_in_direct_finalization = false;
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
+        cfg.feature_flags.bls_checkpoints = true;
 
         #[allow(clippy::never_loop)]
         for cur in 2..=version.0 {
@@ -669,8 +661,6 @@ impl ProtocolConfig {
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.noa_checkpoints = true;
-                    cfg.noa_checkpoint_poll_interval_secs = Some(10);
-                    cfg.noa_checkpoint_retry_timeout_secs = Some(60);
                 }
                 // Use this template when making changes:
                 //

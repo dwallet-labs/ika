@@ -70,5 +70,3 @@ internal_secp256r1_ecdsa_presign_pool_maximum_size: 30000
 internal_eddsa_presign_pool_maximum_size: 30000
 internal_schnorrkel_substrate_presign_pool_maximum_size: 30000
 internal_taproot_presign_pool_maximum_size: 30000
-noa_checkpoint_poll_interval_secs: 10
-noa_checkpoint_retry_timeout_secs: 60

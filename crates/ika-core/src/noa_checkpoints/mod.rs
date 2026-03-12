@@ -22,6 +22,9 @@ use tracing::{error, info, warn};
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use checkpoint_output::CertifiedNOACheckpointOutput;
 
+/// Interval between finalization poll cycles for NOA checkpoint transactions.
+pub const NOA_CHECKPOINT_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 // === TxExecutionStatus ===
 
 /// Tri-state result of checking a transaction's on-chain status.
@@ -104,19 +107,29 @@ struct NOACheckpointEntry<K: NOACheckpointKind> {
 /// A single checkpoint may produce multiple sign requests (one per transaction).
 /// The store tracks individual tx bytes → sequence number mappings so that
 /// incoming sign outputs can be routed back to the correct checkpoint.
+///
+/// NOTE: Entirely in-memory — no crash recovery. If the node restarts, state is
+/// reconstructed from consensus replay during epoch initialization. This is safe
+/// because the submitter re-derives checkpoints deterministically from consensus
+/// messages.
 pub struct NOACheckpointLocalStore<K: NOACheckpointKind> {
-    /// Maps individual tx bytes → checkpoint sequence number (routing index,
-    /// kept as a separate lock to reduce contention on the main `entries` map).
-    tx_to_seq: parking_lot::Mutex<HashMap<Vec<u8>, u64>>,
+    inner: parking_lot::Mutex<NOACheckpointStoreInner<K>>,
+}
+
+struct NOACheckpointStoreInner<K: NOACheckpointKind> {
+    /// Maps individual tx bytes → checkpoint sequence number (routing index).
+    tx_to_seq: HashMap<Vec<u8>, u64>,
     /// All per-checkpoint state, keyed by sequence number.
-    entries: parking_lot::Mutex<HashMap<u64, NOACheckpointEntry<K>>>,
+    entries: HashMap<u64, NOACheckpointEntry<K>>,
 }
 
 impl<K: NOACheckpointKind> Default for NOACheckpointLocalStore<K> {
     fn default() -> Self {
         Self {
-            tx_to_seq: parking_lot::Mutex::new(HashMap::new()),
-            entries: parking_lot::Mutex::new(HashMap::new()),
+            inner: parking_lot::Mutex::new(NOACheckpointStoreInner {
+                tx_to_seq: HashMap::new(),
+                entries: HashMap::new(),
+            }),
         }
     }
 }
@@ -134,12 +147,12 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         checkpoint: NOACheckpointMessage<K>,
         tx_data: Vec<(Vec<u8>, Vec<K::MessageKind>)>,
     ) {
-        let mut tx_to_seq = self.tx_to_seq.lock();
+        let mut inner = self.inner.lock();
         for (bytes, _) in &tx_data {
-            tx_to_seq.insert(bytes.clone(), seq);
+            inner.tx_to_seq.insert(bytes.clone(), seq);
         }
 
-        self.entries.lock().insert(
+        inner.entries.insert(
             seq,
             NOACheckpointEntry {
                 checkpoint,
@@ -175,24 +188,20 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         curve: dwallet_mpc_types::dwallet_mpc::DWalletCurve,
         signature_algorithm: dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm,
     ) -> Option<CertifiedNOACheckpointMessage<K>> {
-        let seq = {
-            let mut tx_to_seq = self.tx_to_seq.lock();
-            let seq = match tx_to_seq.get(tx_bytes) {
-                Some(&s) => s,
-                None => {
-                    warn!(
-                        tx_bytes_len = tx_bytes.len(),
-                        "add_signature: tx_to_seq lookup failed — no pending checkpoint for these tx bytes"
-                    );
-                    return None;
-                }
-            };
-            tx_to_seq.remove(tx_bytes);
-            seq
+        let mut inner = self.inner.lock();
+        let seq = match inner.tx_to_seq.get(tx_bytes) {
+            Some(&s) => s,
+            None => {
+                warn!(
+                    tx_bytes_len = tx_bytes.len(),
+                    "add_signature: tx_to_seq lookup failed — no pending checkpoint for these tx bytes"
+                );
+                return None;
+            }
         };
+        inner.tx_to_seq.remove(tx_bytes);
 
-        let mut entries = self.entries.lock();
-        let entry = entries.get_mut(&seq)?;
+        let entry = inner.entries.get_mut(&seq)?;
         let tx_state = entry.transactions.get_mut(tx_bytes)?;
         tx_state.signature = Some(signature);
 
@@ -225,8 +234,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     }
 
     pub fn get_certified(&self, seq: u64) -> Option<CertifiedNOACheckpointMessage<K>> {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&seq)
             .and_then(|e| e.certified.clone())
     }
@@ -235,8 +245,8 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Record that a transaction has been submitted to the chain.
     pub fn mark_submitted(&self, tx_ref: NOACheckpointTxRef, chain_tx_id: Vec<u8>) {
-        let mut entries = self.entries.lock();
-        let Some(entry) = entries.get_mut(&tx_ref.sequence_number) else {
+        let mut inner = self.inner.lock();
+        let Some(entry) = inner.entries.get_mut(&tx_ref.sequence_number) else {
             return;
         };
         let Some((_, tx_state)) = entry.transactions.get_index_mut(tx_ref.tx_index as usize) else {
@@ -248,8 +258,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Mark a transaction as confirmed locally (this validator verified on-chain execution).
     pub fn mark_confirmed_locally(&self, tx_ref: &NOACheckpointTxRef) {
-        let mut entries = self.entries.lock();
-        if let Some((_, state)) = entries
+        let mut inner = self.inner.lock();
+        if let Some((_, state)) = inner
+            .entries
             .get_mut(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
@@ -259,8 +270,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Mark a transaction as finalized (2f+1 validators confirmed on-chain execution).
     pub fn mark_finalized(&self, tx_ref: &NOACheckpointTxRef) {
-        let mut entries = self.entries.lock();
-        if let Some((_, state)) = entries
+        let mut inner = self.inner.lock();
+        if let Some((_, state)) = inner
+            .entries
             .get_mut(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
@@ -270,33 +282,34 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Get the current status of a transaction.
     pub fn get_status(&self, tx_ref: &NOACheckpointTxRef) -> Option<NOACheckpointTxStatus> {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
             .and_then(|(_, s)| s.finalization_status.clone())
     }
 
     /// Check if all tracked transactions are finalized.
-    /// Returns true when at least one tx has been submitted (finalization_status.is_some())
-    /// and all submitted txs are Finalized.
+    /// Returns true when every tracked tx (not just submitted ones) is Finalized.
     pub fn all_finalized(&self) -> bool {
-        let entries = self.entries.lock();
-        let submitted: Vec<_> = entries
+        let inner = self.inner.lock();
+        let all_txs: Vec<_> = inner
+            .entries
             .values()
             .flat_map(|e| e.transactions.values())
-            .filter(|t| t.finalization_status.is_some())
             .collect();
-        !submitted.is_empty()
-            && submitted
+        !all_txs.is_empty()
+            && all_txs
                 .iter()
                 .all(|t| t.finalization_status.as_ref() == Some(&NOACheckpointTxStatus::Finalized))
     }
 
     /// Returns true if no finalization entries have been registered.
     pub fn has_no_finalization_entries(&self) -> bool {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .values()
             .flat_map(|e| e.transactions.values())
             .all(|t| t.finalization_status.is_none())
@@ -304,8 +317,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Returns all non-finalized tx_refs (those with a finalization_status that is not Finalized).
     pub fn get_pending_refs(&self) -> Vec<NOACheckpointTxRef> {
-        let entries = self.entries.lock();
-        entries
+        let inner = self.inner.lock();
+        inner
+            .entries
             .iter()
             .flat_map(|(&seq, entry)| {
                 entry
@@ -330,14 +344,20 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     /// Prepare a single tx for retry with regenerated bytes from fresh context.
     /// Sets status to RetryPending, clears signature/chain_tx_id/voted_failed,
     /// increments per-tx retry_round, rebuilds tx_bytes, and re-registers in tx_to_seq.
+    ///
+    /// NOTE: There is intentionally no maximum retry limit. All NOA checkpoint
+    /// transactions MUST eventually succeed — the epoch cannot transition until
+    /// every checkpoint is finalized. If a transaction fails permanently, manual
+    /// operator intervention is required to unblock the network. This is by design:
+    /// dropping a checkpoint would violate the integrity of the checkpoint chain.
     pub fn initiate_tx_retry(
         &self,
         tx_ref: &NOACheckpointTxRef,
         context: &<K::Destination as ChainDestination>::Context,
         noa_public_key: &[u8],
     ) -> Option<Vec<u8>> {
-        let mut entries = self.entries.lock();
-        let entry = entries.get_mut(&tx_ref.sequence_number)?;
+        let mut inner = self.inner.lock();
+        let entry = inner.entries.get_mut(&tx_ref.sequence_number)?;
         let tx_index = tx_ref.tx_index as usize;
         let (old_tx_bytes, tx_state) = entry.transactions.get_index_mut(tx_index)?;
         let old_tx_bytes = old_tx_bytes.clone();
@@ -363,17 +383,19 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         entry.transactions = pairs.into_iter().collect();
 
         // Update routing: remove old key, insert new key.
-        let mut tx_to_seq = self.tx_to_seq.lock();
-        tx_to_seq.remove(&old_tx_bytes);
-        tx_to_seq.insert(new_tx_bytes.clone(), tx_ref.sequence_number);
+        inner.tx_to_seq.remove(&old_tx_bytes);
+        inner
+            .tx_to_seq
+            .insert(new_tx_bytes.clone(), tx_ref.sequence_number);
 
         Some(new_tx_bytes)
     }
 
     /// Returns the stored chain tx identifier for a given tx_ref.
     pub fn get_chain_tx_id(&self, tx_ref: &NOACheckpointTxRef) -> Option<Vec<u8>> {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
             .and_then(|(_, s)| s.chain_tx_id.clone())
@@ -381,8 +403,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Returns the current per-tx retry round.
     pub fn get_retry_round(&self, tx_ref: &NOACheckpointTxRef) -> u32 {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
             .map(|(_, s)| s.retry_round)
@@ -391,8 +414,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Returns whether this validator has voted failure for the given tx in the current round.
     pub fn has_voted_failed(&self, tx_ref: &NOACheckpointTxRef) -> bool {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
             .map(|(_, s)| s.voted_failed)
@@ -401,8 +425,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Record that this validator has voted failure for the given tx.
     pub fn set_voted_failed(&self, tx_ref: &NOACheckpointTxRef) {
-        let mut entries = self.entries.lock();
-        if let Some((_, state)) = entries
+        let mut inner = self.inner.lock();
+        if let Some((_, state)) = inner
+            .entries
             .get_mut(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index_mut(tx_ref.tx_index as usize))
         {
@@ -412,8 +437,9 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Returns whether the given tx has a signature stored.
     pub fn has_signature(&self, tx_ref: &NOACheckpointTxRef) -> bool {
-        self.entries
+        self.inner
             .lock()
+            .entries
             .get(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_index(tx_ref.tx_index as usize))
             .is_some_and(|(_, s)| s.signature.is_some())
@@ -421,8 +447,8 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
 
     /// Returns (tx_bytes, signature) for a tx that's ready for (re-)submission.
     pub fn get_tx_for_submission(&self, tx_ref: &NOACheckpointTxRef) -> Option<(Vec<u8>, Vec<u8>)> {
-        let entries = self.entries.lock();
-        let entry = entries.get(&tx_ref.sequence_number)?;
+        let inner = self.inner.lock();
+        let entry = inner.entries.get(&tx_ref.sequence_number)?;
         let (tx_bytes, tx_state) = entry.transactions.get_index(tx_ref.tx_index as usize)?;
         let signature = tx_state.signature.as_ref()?;
         Some((tx_bytes.clone(), signature.clone()))
@@ -623,7 +649,6 @@ pub struct NOACheckpointFinalizer<K: NOACheckpointKind> {
     chain_submitter: Arc<dyn NOAChainSubmitter<K>>,
     noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
     epoch: EpochId,
-    poll_interval: Duration,
     /// Receives notifications when a checkpoint is certified (initial or retry).
     certified_checkpoint_receiver: tokio::sync::mpsc::Receiver<u64>,
     /// Sends observations (finalized/failed) to the MPC service for consensus piggybacking.
@@ -641,7 +666,6 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
         chain_submitter: Arc<dyn NOAChainSubmitter<K>>,
         noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
         epoch: EpochId,
-        poll_interval: Duration,
         certified_checkpoint_receiver: tokio::sync::mpsc::Receiver<u64>,
         observation_sender: tokio::sync::mpsc::UnboundedSender<NOACheckpointTxObservation>,
         command_receiver: tokio::sync::mpsc::Receiver<NOACheckpointCommand<K::Destination>>,
@@ -652,7 +676,6 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
             chain_submitter,
             noa_sign_sender,
             epoch,
-            poll_interval,
             certified_checkpoint_receiver,
             observation_sender,
             command_receiver,
@@ -664,11 +687,11 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
         info!(
             kind = K::NAME,
             epoch = self.epoch,
-            poll_interval_secs = self.poll_interval.as_secs(),
+            poll_interval_ms = NOA_CHECKPOINT_POLL_INTERVAL.as_millis() as u64,
             "Starting NOACheckpointFinalizer"
         );
 
-        let mut interval = tokio::time::interval(self.poll_interval);
+        let mut interval = tokio::time::interval(NOA_CHECKPOINT_POLL_INTERVAL);
 
         loop {
             tokio::select! {
@@ -833,6 +856,9 @@ impl<K: NOACheckpointKind> NOACheckpointFinalizer<K> {
                         error = %e,
                         "Failed to submit NOA checkpoint tx to chain"
                     );
+                    // Mark as pending so all_finalized() sees this tx and the
+                    // finalizer doesn't exit prematurely.
+                    self.store.mark_submitted(tx_ref, vec![]);
                 }
             }
         }

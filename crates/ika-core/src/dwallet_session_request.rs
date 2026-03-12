@@ -61,7 +61,7 @@ impl DWalletSessionRequest {
         let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
             [0; SessionIdentifier::LENGTH];
         transcript.challenge_bytes(
-            b"session idetnifier preimage",
+            b"session identifier preimage",
             &mut session_identifier_preimage,
         );
 

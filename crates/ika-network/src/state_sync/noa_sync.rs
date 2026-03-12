@@ -51,12 +51,11 @@ impl<K: NOACheckpointKind> NOACheckpointSync<K> {
         while let Some(checkpoint) = self.receiver.recv().await {
             let seq = checkpoint.checkpoint.sequence_number;
 
-            if self.highest_sequence_number.is_some_and(|h| seq <= h) {
+            if self.checkpoints.contains_key(&seq) {
                 warn!(
                     kind = K::NAME,
                     sequence_number = seq,
-                    highest = ?self.highest_sequence_number,
-                    "Received NOA checkpoint with non-monotonic sequence number, skipping",
+                    "Received duplicate NOA checkpoint, skipping",
                 );
                 continue;
             }
@@ -68,7 +67,8 @@ impl<K: NOACheckpointKind> NOACheckpointSync<K> {
                 "NOACheckpointSync received certified checkpoint",
             );
 
-            self.highest_sequence_number = Some(seq);
+            self.highest_sequence_number =
+                Some(self.highest_sequence_number.map_or(seq, |h| h.max(seq)));
             self.checkpoints.insert(seq, checkpoint);
         }
 

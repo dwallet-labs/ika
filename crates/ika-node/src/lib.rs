@@ -1012,7 +1012,10 @@ impl IkaNode {
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
-        // Reset the finalization flag for the new epoch (all finalized until checkpoints arrive).
+        // Start as true: at epoch start there are no checkpoints to finalize.
+        // The polling task (5s interval) will flip to false if checkpoints arrive.
+        // There is a <=5s window where the flag could be stale, but the epoch gate
+        // has other conditions (BLS checkpoints, consensus, etc.) that take longer.
         noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
 
         // Start NOA checkpoint certifier tasks and get stores/sender for builder wiring.
@@ -1443,14 +1446,11 @@ impl IkaNode {
         );
         tasks.spawn(system_submitter.run());
 
-        // Read poll interval from protocol config.
-        let poll_interval_secs = epoch_store
-            .protocol_config()
-            .noa_checkpoint_poll_interval_secs_as_option()
-            .unwrap_or(10);
-        let poll_interval = Duration::from_secs(poll_interval_secs);
-
         // DWallet finalizer.
+        warn!(
+            "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
+               Replace with actual chain submitter for production."
+        );
         let dwallet_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::DWallet>> =
             Arc::new(LogOnlyChainSubmitter);
         let dwallet_finalizer = NOACheckpointFinalizer::<noa_checkpoint::DWallet>::new(
@@ -1458,7 +1458,6 @@ impl IkaNode {
             dwallet_chain_submitter,
             noa_sign_request_sender.clone(),
             epoch,
-            poll_interval,
             dwallet_cert_notify_rx,
             obs_tx.clone(),
             dwallet_cmd_rx,
@@ -1473,7 +1472,6 @@ impl IkaNode {
             system_chain_submitter,
             noa_sign_request_sender.clone(),
             epoch,
-            poll_interval,
             system_cert_notify_rx,
             obs_tx,
             system_cmd_rx,

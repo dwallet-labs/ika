@@ -271,9 +271,11 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<u64>;
 
-    /// Pops a single presign from the pool for the given signature algorithm and network
-    /// encryption key. Returns the session identifier and presign bytes, or None if the pool
-    /// is empty.
+    /// Pop a presign from the internal pool for the given algorithm and key.
+    ///
+    /// Concurrency safety: This method is only called from the MPC manager
+    /// during consensus round processing, which is single-threaded (one round
+    /// at a time). There is no concurrent access to the presign pool.
     fn pop_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,

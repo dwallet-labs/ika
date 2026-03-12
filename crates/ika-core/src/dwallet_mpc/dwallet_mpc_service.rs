@@ -31,11 +31,12 @@ use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(any(test, feature = "test-utils"))]
 use dwallet_rng::RootSeed;
+use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
     DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
@@ -111,9 +112,9 @@ pub struct DWalletMPCService {
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
-    /// Set of message bytes that have already been submitted for signing.
-    /// Used to deduplicate sign requests and prevent signing the same message twice.
-    submitted_noa_sign_messages: HashSet<Vec<u8>>,
+    /// Set of message hashes that have already been submitted for signing.
+    /// Uses 32-byte Blake2b digests instead of full messages to bound memory.
+    submitted_noa_sign_messages: HashSet<[u8; 32]>,
     /// Last sent Sui chain observation, to avoid sending duplicate updates.
     last_sent_sui_chain_observation: Option<SuiChainObservation>,
     /// Persistent context from the latest consensus-agreed Sui chain observation.
@@ -461,7 +462,8 @@ impl DWalletMPCService {
     fn process_network_owned_address_sign_requests(&mut self) {
         // Drain the receiver into the shared pending buffer, deduplicating by message.
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
-            if self.submitted_noa_sign_messages.contains(&request.message) {
+            let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
+            if self.submitted_noa_sign_messages.contains(&message_hash) {
                 info!(
                     message_len = request.message.len(),
                     curve = ?request.curve,
@@ -484,7 +486,7 @@ impl DWalletMPCService {
             return;
         }
 
-        let mut newly_submitted = Vec::new();
+        let mut newly_submitted: Vec<[u8; 32]> = Vec::new();
         self.pending_network_owned_address_sign_requests
             .retain(|request| {
                 if !self
@@ -511,7 +513,7 @@ impl DWalletMPCService {
                         request.hash_scheme,
                     );
                 if instantiated {
-                    newly_submitted.push(request.message.clone());
+                    newly_submitted.push(DefaultHash::digest(&request.message).into());
                 }
                 !instantiated // keep in buffer if instantiation failed
             });
@@ -546,7 +548,9 @@ impl DWalletMPCService {
                 .collect()
         };
 
-        // TODO: fetch from SuiSyncer when wired up.
+        // FIXME(noa-checkpoints): Without a real SuiChainObservation, the entire NOA
+        // checkpoint flow is non-functional — messages buffer indefinitely because
+        // `current_agreed_sui_chain_context` never becomes Some. Wire up SuiSyncer.
         let sui_chain_observation: Option<SuiChainObservation> = None;
 
         // Drain buffered NOA observations from the finalizer tasks.
@@ -615,7 +619,10 @@ impl DWalletMPCService {
                 NOACheckpointKindName::System => &self.noa_system_command_sender,
             };
             if let Some(s) = sender {
-                let _ = s.try_send(cmd);
+                if let Err(e) = s.try_send(cmd) {
+                    error!(?tx_ref, error = ?e,
+                        "Failed to send NOA command to finalizer — channel full");
+                }
             }
         }
         for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
@@ -629,7 +636,10 @@ impl DWalletMPCService {
                     NOACheckpointKindName::System => &self.noa_system_command_sender,
                 };
                 if let Some(s) = sender {
-                    let _ = s.try_send(cmd);
+                    if let Err(e) = s.try_send(cmd) {
+                        error!(?tx_ref, error = ?e,
+                            "Failed to send NOA command to finalizer — channel full");
+                    }
                 }
             }
         }
@@ -1511,13 +1521,14 @@ impl DWalletMPCService {
                 }
             },
             SessionType::NetworkOwnedAddressSign => match &session_request.protocol_data {
-                ProtocolData::NetworkOwnedAddressSign { data, .. } => {
+                ProtocolData::NetworkOwnedAddressSign { data, message, .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
                         DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                             output,
                             session_identifier,
+                            message: message.clone(),
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
                             hash_scheme: data.hash_scheme.into(),
@@ -1607,7 +1618,17 @@ impl DWalletMPCService {
                     })
                 } else {
                     let (dwallet_dkg_output, signature): (Vec<u8>, Vec<u8>) =
-                        bcs::from_bytes(&output).expect("invalid dwallet dkg + sign output format");
+                        match bcs::from_bytes(&output) {
+                            Ok(parsed) => parsed,
+                            Err(e) => {
+                                error!(
+                                    error = ?e,
+                                    should_never_happen = true,
+                                    "Failed to deserialize dwallet dkg + sign output"
+                                );
+                                return vec![];
+                            }
+                        };
                     DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                         output: dwallet_dkg_output,
                         dwallet_id: dwallet_id.to_vec(),
