@@ -34,6 +34,41 @@ use crate::ika_validator_transactions::{
     construct_unsigned_txn, execute_transaction, get_dwallet_2pc_mpc_coordinator_call_arg,
 };
 
+/// Payment coin arguments for dWallet coordinator transactions.
+///
+/// `ika_coin_id` is always required (auto-detected by the CLI when not provided).
+/// `sui_coin_id` is optional — when `None`, the transaction's gas coin is used
+/// directly for SUI payment (matching the TypeScript SDK pattern of passing
+/// `transaction.gas` as the SUI coin).
+pub struct PaymentCoinArgs {
+    pub ika_coin_id: ObjectID,
+    pub sui_coin_id: Option<ObjectID>,
+}
+
+impl PaymentCoinArgs {
+    /// Resolve both coins into PTB `Argument`s.
+    async fn resolve(
+        &self,
+        ptb: &mut ProgrammableTransactionBuilder,
+        context: &WalletContext,
+    ) -> Result<(Argument, Argument), Error> {
+        let client = context.grpc_client()?;
+        let ika_coin_ref = client
+            .transaction_builder()
+            .get_object_ref(self.ika_coin_id)
+            .await?;
+        let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
+        let sui_coin_arg = match self.sui_coin_id {
+            Some(id) => {
+                let sui_coin_ref = client.transaction_builder().get_object_ref(id).await?;
+                ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?
+            }
+            None => Argument::GasCoin,
+        };
+        Ok((ika_coin_arg, sui_coin_arg))
+    }
+}
+
 /// Register a session identifier on the coordinator.
 ///
 /// Returns the `SessionIdentifier` Move object as a PTB `Argument` so it can
@@ -120,8 +155,7 @@ pub async fn request_dwallet_dkg(
     user_public_output: Vec<u8>,
     signer_public_key: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     sign_during_dkg: Option<SignDuringDkgParams>,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
@@ -197,17 +231,7 @@ pub async fn request_dwallet_dkg(
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let dwallet_cap = ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -252,8 +276,7 @@ pub async fn request_dwallet_dkg_with_public_share(
     user_public_output: Vec<u8>,
     public_user_secret_key_share: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     sign_during_dkg: Option<SignDuringDkgParams>,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
@@ -319,17 +342,7 @@ pub async fn request_dwallet_dkg_with_public_share(
     let public_share_arg =
         ptb.input(CallArg::Pure(bcs::to_bytes(&public_user_secret_key_share)?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let dwallet_cap = ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -432,8 +445,7 @@ pub async fn request_presign_tx(
     dwallet_id: ObjectID,
     signature_algorithm: u32,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -454,17 +466,7 @@ pub async fn request_presign_tx(
         ika_dwallet_2pc_mpc_package_id,
     )?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let presign_cap = request_presign(
         &mut ptb,
@@ -493,8 +495,7 @@ pub async fn request_global_presign_tx(
     curve: u32,
     signature_algorithm: u32,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -521,17 +522,7 @@ pub async fn request_global_presign_tx(
     let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
     let sig_algo_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signature_algorithm)?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let presign_cap = ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -613,8 +604,7 @@ pub async fn request_sign_tx(
     message_centralized_signature: Vec<u8>,
     verified_presign_cap_id: ObjectID,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
@@ -681,16 +671,7 @@ pub async fn request_sign_tx(
         &message_centralized_signature,
     )?))?;
 
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     // Request sign and return session ID
     ptb.programmable_move_call(
@@ -761,8 +742,7 @@ pub async fn request_imported_key_sign_tx(
     message_centralized_signature: Vec<u8>,
     verified_presign_cap_id: ObjectID,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
@@ -827,16 +807,7 @@ pub async fn request_imported_key_sign_tx(
         &message_centralized_signature,
     )?))?;
 
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     // Request imported key sign and return session ID
     ptb.programmable_move_call(
@@ -873,8 +844,7 @@ pub async fn request_future_sign_tx(
     hash_scheme: u32,
     message_centralized_signature: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
     verify_presign: bool,
 ) -> Result<SuiTransactionBlockResponse, Error> {
@@ -924,16 +894,7 @@ pub async fn request_future_sign_tx(
         &message_centralized_signature,
     )?))?;
 
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let partial_sig_cap = ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -973,8 +934,7 @@ pub async fn request_imported_key_dwallet_verification(
     user_public_output: Vec<u8>,
     signer_public_key: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1009,17 +969,7 @@ pub async fn request_imported_key_dwallet_verification(
     let user_public_output_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&user_public_output)?))?;
     let signer_pk_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signer_public_key)?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     let imported_cap = ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -1056,8 +1006,7 @@ pub async fn request_make_shares_public(
     dwallet_id: ObjectID,
     public_user_secret_key_shares: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1083,17 +1032,7 @@ pub async fn request_make_shares_public(
         &public_user_secret_key_shares,
     )?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -1125,8 +1064,7 @@ pub async fn request_re_encrypt_user_share(
     encrypted_centralized_secret_share_and_proof: Vec<u8>,
     source_encrypted_user_secret_key_share_id: ObjectID,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1158,17 +1096,7 @@ pub async fn request_re_encrypt_user_share(
         &source_encrypted_user_secret_key_share_id,
     )?))?;
 
-    let client = context.grpc_client()?;
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     ptb.programmable_move_call(
         ika_dwallet_2pc_mpc_package_id,
@@ -1381,8 +1309,7 @@ pub async fn request_future_sign_fulfill_tx(
     hash_scheme: u32,
     message: Vec<u8>,
     session_identifier_bytes: Vec<u8>,
-    ika_coin_id: ObjectID,
-    sui_coin_id: ObjectID,
+    coins: PaymentCoinArgs,
     gas_budget: u64,
 ) -> Result<SuiTransactionBlockResponse, Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
@@ -1439,16 +1366,7 @@ pub async fn request_future_sign_fulfill_tx(
     )?;
 
     // Get coin refs
-    let ika_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(ika_coin_id)
-        .await?;
-    let sui_coin_ref = client
-        .transaction_builder()
-        .get_object_ref(sui_coin_id)
-        .await?;
-    let ika_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(ika_coin_ref)))?;
-    let sui_coin_arg = ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_coin_ref)))?;
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
 
     // Request sign with partial user signature
     ptb.programmable_move_call(

@@ -29,6 +29,45 @@ use crate::read_ika_sui_config_yaml;
 
 const DEFAULT_GAS_BUDGET: u64 = 200_000_000; // 0.2 SUI
 
+/// Common payment arguments for dWallet transactions.
+#[derive(Args, Debug, Default, Clone)]
+pub struct PaymentArgs {
+    /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
+    #[arg(long)]
+    pub ika_coin_id: Option<ObjectID>,
+    /// SUI coin object ID for payment. Uses the gas coin if omitted.
+    #[arg(long)]
+    pub sui_coin_id: Option<ObjectID>,
+}
+
+/// Common transaction arguments (gas budget + config override).
+#[derive(Args, Debug, Default, Clone)]
+pub struct TxArgs {
+    /// Override the default gas budget (in MIST).
+    #[arg(long)]
+    pub gas_budget: Option<u64>,
+    /// Override the Ika network config path.
+    #[arg(long)]
+    pub ika_config: Option<PathBuf>,
+}
+
+/// Seed derivation arguments for encryption key operations.
+#[derive(Args, Debug, Default, Clone)]
+pub struct SeedArgs {
+    /// Path to a 32-byte seed file. Mutually exclusive with address-based derivation.
+    #[arg(long, conflicts_with_all = ["address"])]
+    pub seed_file: Option<PathBuf>,
+    /// Derive seed from a specific Sui address in the keystore (default: active address).
+    #[arg(long)]
+    pub address: Option<SuiAddress>,
+    /// Key derivation index (default: 0). Used with address-based seed derivation.
+    #[arg(long = "encryption-key-index", default_value = "0")]
+    pub index: u32,
+    /// Use legacy V1 hash (curve byte always 0). Only needed for keys registered before the fix.
+    #[arg(long)]
+    pub legacy_hash: bool,
+}
+
 /// Future sign subcommands: create (partial signature) and fulfill (complete signature).
 #[derive(Subcommand)]
 #[clap(rename_all = "kebab-case")]
@@ -66,16 +105,10 @@ pub enum IkaDWalletFutureSignCommand {
         /// Auto-fetched from --dwallet-id if omitted.
         #[clap(long)]
         dkg_output: Option<String>,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
     /// Fulfill a future sign using a partial user signature cap (second step).
     ///
@@ -98,16 +131,10 @@ pub enum IkaDWalletFutureSignCommand {
         /// The hash scheme to use.
         #[clap(long)]
         hash_scheme: u32,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
         /// Wait for the sign session to complete and return the signature.
         #[clap(long)]
         wait: bool,
@@ -127,16 +154,10 @@ pub enum IkaDWalletShareCommand {
         /// Path to the user secret share file.
         #[clap(long)]
         secret_share: PathBuf,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
     /// Re-encrypt user share for a different encryption key.
     #[clap(name = "re-encrypt")]
@@ -159,16 +180,10 @@ pub enum IkaDWalletShareCommand {
         /// The curve used for this dWallet.
         #[clap(long, value_parser = ["secp256k1", "secp256r1", "ed25519", "ristretto"])]
         curve: String,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
     /// Accept a re-encrypted user share.
     #[clap(name = "accept")]
@@ -182,10 +197,8 @@ pub enum IkaDWalletShareCommand {
         /// User output signature (hex-encoded).
         #[clap(long)]
         user_output_signature: String,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 }
 
@@ -211,25 +224,12 @@ pub enum IkaDWalletCommand {
         /// Hash scheme for sign-during-DKG (required if --sign-message is set).
         #[clap(long)]
         hash_scheme: Option<u32>,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        /// Path to a 32-byte seed file. Mutually exclusive with address-based derivation.
-        #[clap(long, conflicts_with_all = ["address"])]
-        seed_file: Option<PathBuf>,
-        /// Derive seed from a specific Sui address in the keystore (default: active address).
-        #[clap(long)]
-        address: Option<SuiAddress>,
-        /// Key derivation index (default: 0). Used with address-based seed derivation.
-        #[clap(long, default_value = "0")]
-        index: u32,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        seed: SeedArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Request a signature from a dWallet.
@@ -269,16 +269,10 @@ pub enum IkaDWalletCommand {
         /// Auto-fetched if --dwallet-id is provided.
         #[clap(long)]
         dkg_output: Option<String>,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
         /// Wait for the sign session to complete and return the signature.
         #[clap(long)]
         wait: bool,
@@ -300,16 +294,10 @@ pub enum IkaDWalletCommand {
         /// The signature algorithm to use.
         #[clap(long)]
         signature_algorithm: u32,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Request a global presign using network encryption key.
@@ -321,16 +309,10 @@ pub enum IkaDWalletCommand {
         /// The signature algorithm.
         #[clap(long)]
         signature_algorithm: u32,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Import an external key as a dWallet.
@@ -345,25 +327,12 @@ pub enum IkaDWalletCommand {
         /// Where to save the user secret share.
         #[clap(long, default_value = "imported_dwallet_secret_share.bin")]
         output_secret: PathBuf,
-        /// IKA coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        ika_coin_id: Option<ObjectID>,
-        /// SUI coin object ID for payment. Auto-detected from wallet if omitted.
-        #[clap(long)]
-        sui_coin_id: Option<ObjectID>,
-        /// Path to a 32-byte seed file. Mutually exclusive with address-based derivation.
-        #[clap(long, conflicts_with_all = ["address"])]
-        seed_file: Option<PathBuf>,
-        /// Derive seed from a specific Sui address in the keystore (default: active address).
-        #[clap(long)]
-        address: Option<SuiAddress>,
-        /// Key derivation index (default: 0). Used with address-based seed derivation.
-        #[clap(long, default_value = "0")]
-        index: u32,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        payment: PaymentArgs,
+        #[command(flatten)]
+        seed: SeedArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Register a user encryption key for dWallet operations.
@@ -372,19 +341,10 @@ pub enum IkaDWalletCommand {
         /// The curve for which to register the encryption key.
         #[clap(long, value_parser = ["secp256k1", "secp256r1", "ed25519", "ristretto"])]
         curve: String,
-        /// Path to a 32-byte seed file. Mutually exclusive with address-based derivation.
-        #[clap(long, conflicts_with_all = ["address"])]
-        seed_file: Option<PathBuf>,
-        /// Derive seed from a specific Sui address in the keystore (default: active address).
-        #[clap(long)]
-        address: Option<SuiAddress>,
-        /// Key derivation index (default: 0). Used with address-based seed derivation.
-        #[clap(long, default_value = "0")]
-        index: u32,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        seed: SeedArgs,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Get an encryption key by its object ID (returned from register-encryption-key).
@@ -393,8 +353,8 @@ pub enum IkaDWalletCommand {
         /// The encryption key object ID (returned from register-encryption-key).
         #[clap(long)]
         encryption_key_id: ObjectID,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Verify a presign capability.
@@ -403,10 +363,8 @@ pub enum IkaDWalletCommand {
         /// The unverified presign cap ID.
         #[clap(long)]
         presign_cap_id: ObjectID,
-        #[clap(long)]
-        gas_budget: Option<u64>,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Query dWallet information.
@@ -415,15 +373,15 @@ pub enum IkaDWalletCommand {
         /// The dWallet ID to query.
         #[clap(long)]
         dwallet_id: ObjectID,
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Query current pricing information.
     #[clap(name = "pricing")]
     Pricing {
-        #[clap(long)]
-        ika_sui_config: Option<PathBuf>,
+        #[command(flatten)]
+        tx: TxArgs,
     },
 
     /// Generate a class-groups encryption keypair (offline utility).
@@ -435,15 +393,8 @@ pub enum IkaDWalletCommand {
         /// The curve for the keypair.
         #[clap(long, value_parser = ["secp256k1", "secp256r1", "ed25519", "ristretto"])]
         curve: String,
-        /// Path to a 32-byte seed file. Mutually exclusive with address-based derivation.
-        #[clap(long, conflicts_with_all = ["address"])]
-        seed_file: Option<PathBuf>,
-        /// Derive seed from a specific Sui address in the keystore (default: active address).
-        #[clap(long)]
-        address: Option<SuiAddress>,
-        /// Key derivation index (default: 0). Used with address-based seed derivation.
-        #[clap(long, default_value = "0")]
-        index: u32,
+        #[command(flatten)]
+        seed: SeedArgs,
     },
 
     /// User share management operations.
@@ -904,21 +855,25 @@ fn on_chain_session_preimage(sender: &SuiAddress, user_bytes: &[u8]) -> [u8; 32]
 /// Hash matches the TS SDK `UserShareEncryptionKeys.hash()`:
 ///   `keccak256(ASCII(domain_separator) || curve_byte || seed)`
 ///
-/// NOTE: In the TS SDK, the curve parameter (a string like "SECP256K1") is placed as a
-/// single element in a Uint8Array.from() array, which converts it to NaN → 0. The hash
-/// is therefore curve-independent (always 0x00). We match this for compatibility.
+/// By default uses the numeric curve byte (matching TS SDK V2 hash).
+/// With `legacy_hash = true`, uses 0x00 as curve byte (matching TS SDK V1 bug).
 fn derive_encryption_keys(
     curve: u32,
     seed: [u8; 32],
+    legacy_hash: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, Ed25519KeyPair)> {
-    // Match TS SDK: keccak256([...encodeToASCII(domainSeparator), curve, ...rootSeed])
-    // where curve string → 0x00 in Uint8Array (NaN clamped to 0).
-    let _ = curve; // curve is unused in hash (see note above), but used for CG keypair gen below
+    let curve_byte = if legacy_hash {
+        0u8
+    } else {
+        u8::try_from(curve)
+            .map_err(|_| anyhow::anyhow!("Curve number {curve} does not fit in a single byte"))?
+    };
+
     let cg_seed = {
         use fastcrypto::hash::{HashFunction, Keccak256};
         let mut hasher = Keccak256::default();
         hasher.update(b"CLASS_GROUPS_DECRYPTION_KEY_V1");
-        hasher.update(&[0u8]); // curve string → 0 in TS SDK
+        hasher.update(&[curve_byte]);
         hasher.update(&seed);
         let digest = hasher.finalize();
         let mut cg_seed = [0u8; 32];
@@ -930,7 +885,7 @@ fn derive_encryption_keys(
         use fastcrypto::hash::{HashFunction, Keccak256};
         let mut hasher = Keccak256::default();
         hasher.update(b"ED25519_SIGNING_KEY_V1");
-        hasher.update(&[0u8]); // curve string → 0 in TS SDK
+        hasher.update(&[curve_byte]);
         hasher.update(&seed);
         let digest = hasher.finalize();
         let mut signing_seed = [0u8; 32];
@@ -1118,69 +1073,51 @@ async fn find_ika_coin(
     Ok(coin.coin_object_id)
 }
 
-/// Auto-find a SUI coin owned by the active address for use as the payment coin.
-/// Returns the coin with the smallest balance to minimize conflict with gas coin selection,
-/// which typically picks the coin with the largest balance.
-async fn find_sui_coin(sdk_client: &sui_sdk::SuiClient, owner: SuiAddress) -> Result<ObjectID> {
-    let coins = sdk_client
-        .coin_read_api()
-        .get_coins(owner, Some("0x2::sui::SUI".to_string()), None, Some(10))
-        .await
-        .context("Failed to query SUI coins")?;
-    // Pick the coin with the smallest balance to avoid conflict with gas coin
-    // (gas selection typically picks a coin with sufficient balance).
-    let coin = coins
-        .data
-        .into_iter()
-        .min_by_key(|c| c.balance)
-        .ok_or_else(|| anyhow::anyhow!("No SUI coins found for {owner}"))?;
-    Ok(coin.coin_object_id)
-}
-
-/// Resolve IKA and SUI coin IDs: use provided values or auto-detect from wallet.
-/// When no IKA coins exist (common on localnet with zero fees), creates a zero-value IKA coin.
-async fn resolve_coins(
+/// Resolve payment coins from CLI args.
+///
+/// IKA coin: use provided value or auto-detect from wallet. When no IKA coins exist
+/// (common on localnet with zero fees), creates a zero-value IKA coin.
+/// SUI coin: passed through as-is. When `None`, the transaction functions use the
+/// gas coin directly (like the TypeScript SDK's `transaction.gas`).
+async fn resolve_payment_coins(
     context: &mut WalletContext,
     config: &IkaNetworkConfig,
-    ika_coin_id: Option<ObjectID>,
-    sui_coin_id: Option<ObjectID>,
-) -> Result<(ObjectID, ObjectID)> {
-    let owner = context.active_address()?;
-    let sdk_client = if ika_coin_id.is_none() || sui_coin_id.is_none() {
-        Some(create_sdk_client(context).await?)
-    } else {
-        None
-    };
-
-    let ika = match ika_coin_id {
+    payment: &PaymentArgs,
+) -> Result<ika_dwallet_transactions::PaymentCoinArgs> {
+    let ika_coin_id = match payment.ika_coin_id {
         Some(id) => id,
-        None => match find_ika_coin(sdk_client.as_ref().unwrap(), owner, config).await {
-            Ok(id) => id,
-            Err(_) => {
-                // No IKA coins found. Create a zero-value IKA coin (needed even for
-                // zero-fee operations since the Move contract requires a Coin<IKA> argument).
-                let response = ika_dwallet_transactions::create_zero_ika_coin(
-                    context,
-                    config.packages.ika_package_id,
-                    DEFAULT_GAS_BUDGET,
-                )
-                .await
-                .context("Failed to create zero-value IKA coin")?;
-
-                // Extract the created coin ID from the transaction response
-                find_created_object_by_type(context, &response, "Coin")
+        None => {
+            let owner = context.active_address()?;
+            let sdk_client = create_sdk_client(context).await?;
+            match find_ika_coin(&sdk_client, owner, config).await {
+                Ok(id) => id,
+                Err(_) => {
+                    // No IKA coins found. Create a zero-value IKA coin (needed even for
+                    // zero-fee operations since the Move contract requires a Coin<IKA> argument).
+                    let response = ika_dwallet_transactions::create_zero_ika_coin(
+                        context,
+                        config.packages.ika_package_id,
+                        DEFAULT_GAS_BUDGET,
+                    )
                     .await
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Failed to find created IKA coin in transaction response")
-                    })?
+                    .context("Failed to create zero-value IKA coin")?;
+
+                    // Extract the created coin ID from the transaction response
+                    find_created_object_by_type(context, &response, "Coin")
+                        .await
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Failed to find created IKA coin in transaction response"
+                            )
+                        })?
+                }
             }
-        },
+        }
     };
-    let sui = match sui_coin_id {
-        Some(id) => id,
-        None => find_sui_coin(sdk_client.as_ref().unwrap(), owner).await?,
-    };
-    Ok((ika, sui))
+    Ok(ika_dwallet_transactions::PaymentCoinArgs {
+        ika_coin_id,
+        sui_coin_id: payment.sui_coin_id,
+    })
 }
 
 /// Check if a presign cap is already verified by inspecting its on-chain type.
@@ -1371,24 +1308,19 @@ impl IkaDWalletCommand {
                 public_share,
                 sign_message: _,
                 hash_scheme: _,
-                ika_coin_id,
-                sui_coin_id,
-                seed_file,
-                address,
-                index,
-                gas_budget,
-                ika_sui_config,
+                payment,
+                seed,
+                tx,
             } => {
                 let (gas_budget, config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
                 let curve_id = curve_name_to_id(&curve)?;
-                let (ika_coin, sui_coin) =
-                    resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                let coins = resolve_payment_coins(context, &config, &payment).await?;
 
                 // 1. Get network key and derive protocol parameters
                 let network_key_info =
@@ -1413,9 +1345,9 @@ impl IkaDWalletCommand {
                 .context("DKG output generation failed")?;
 
                 // 4. Derive encryption keys from seed
-                let seed = resolve_seed(context, seed_file, address, index)?;
+                let seed_bytes = resolve_seed(context, seed.seed_file, seed.address, seed.index)?;
                 let (encryption_key, _decryption_key, signing_keypair) =
-                    derive_encryption_keys(curve_id, seed)?;
+                    derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash)?;
                 let signer_public_key = signing_keypair.public().as_bytes().to_vec();
                 let encryption_key_address: SuiAddress = signing_keypair.public().into();
 
@@ -1445,8 +1377,7 @@ impl IkaDWalletCommand {
                         dkg_result.public_output,
                         dkg_result.centralized_secret_output.clone(),
                         session_id_random_bytes.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         None, // sign_during_dkg
                         gas_budget,
                     )
@@ -1472,8 +1403,7 @@ impl IkaDWalletCommand {
                         dkg_result.public_output,
                         signer_public_key,
                         session_id_random_bytes.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         None, // sign_during_dkg
                         gas_budget,
                     )
@@ -1584,21 +1514,18 @@ impl IkaDWalletCommand {
                 dwallet_id,
                 curve,
                 dkg_output,
-                ika_coin_id,
-                sui_coin_id,
-                gas_budget,
-                ika_sui_config,
+                payment,
+                tx,
                 wait,
             } => {
                 let (gas_budget, config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
-                let (ika_coin, sui_coin) =
-                    resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                let coins = resolve_payment_coins(context, &config, &payment).await?;
                 let message_bytes = hex_decode(&message)?;
 
                 // Resolve presign output: from flag or auto-fetch from presign cap
@@ -1691,8 +1618,7 @@ impl IkaDWalletCommand {
                         centralized_signature,
                         presign_cap_id,
                         session_id_preimage.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                         needs_verification,
                     )
@@ -1709,8 +1635,7 @@ impl IkaDWalletCommand {
                         centralized_signature,
                         presign_cap_id,
                         session_id_preimage.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                         needs_verification,
                     )
@@ -1762,20 +1687,17 @@ impl IkaDWalletCommand {
                     signature_algorithm,
                     curve,
                     dkg_output,
-                    ika_coin_id,
-                    sui_coin_id,
-                    gas_budget,
-                    ika_sui_config,
+                    payment,
+                    tx,
                 } => {
                     let (gas_budget, config_path, config) = resolve_config!(
-                        gas_budget,
-                        ika_sui_config,
+                        tx.gas_budget,
+                        tx.ika_config,
                         global_gas_budget,
                         global_ika_config,
                         context
                     );
-                    let (ika_coin, sui_coin) =
-                        resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                    let coins = resolve_payment_coins(context, &config, &payment).await?;
                     let message_bytes = hex_decode(&message)?;
 
                     let presign_output_bytes =
@@ -1841,8 +1763,7 @@ impl IkaDWalletCommand {
                         hash_scheme,
                         centralized_signature,
                         session_id_preimage.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                         needs_verification,
                     )
@@ -1862,21 +1783,18 @@ impl IkaDWalletCommand {
                     message,
                     signature_algorithm,
                     hash_scheme,
-                    ika_coin_id,
-                    sui_coin_id,
-                    gas_budget,
-                    ika_sui_config,
+                    payment,
+                    tx,
                     wait,
                 } => {
                     let (gas_budget, _config_path, config) = resolve_config!(
-                        gas_budget,
-                        ika_sui_config,
+                        tx.gas_budget,
+                        tx.ika_config,
                         global_gas_budget,
                         global_ika_config,
                         context
                     );
-                    let (ika_coin, sui_coin) =
-                        resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                    let coins = resolve_payment_coins(context, &config, &payment).await?;
                     let message_bytes = hex_decode(&message)?;
                     let session_id_preimage = random_bytes();
 
@@ -1890,8 +1808,7 @@ impl IkaDWalletCommand {
                         hash_scheme,
                         message_bytes,
                         session_id_preimage.to_vec(),
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                     )
                     .await?;
@@ -1931,20 +1848,17 @@ impl IkaDWalletCommand {
             IkaDWalletCommand::Presign {
                 dwallet_id,
                 signature_algorithm,
-                ika_coin_id,
-                sui_coin_id,
-                gas_budget,
-                ika_sui_config,
+                payment,
+                tx,
             } => {
                 let (gas_budget, config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
-                let (ika_coin, sui_coin) =
-                    resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                let coins = resolve_payment_coins(context, &config, &payment).await?;
                 let session_id = random_bytes().to_vec();
 
                 // Try per-dWallet presign first; if the protocol requires global presign
@@ -1956,8 +1870,7 @@ impl IkaDWalletCommand {
                     dwallet_id,
                     signature_algorithm,
                     session_id,
-                    ika_coin,
-                    sui_coin,
+                    coins,
                     gas_budget,
                 )
                 .await;
@@ -1976,8 +1889,7 @@ impl IkaDWalletCommand {
                             );
                         }
                         let metadata = fetch_dwallet_metadata(context, dwallet_id).await?;
-                        let (ika_coin, sui_coin) =
-                            resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                        let coins = resolve_payment_coins(context, &config, &payment).await?;
                         let network_key_info =
                             get_network_key_info(context, &config_path, metadata.curve).await?;
                         let session_id = random_bytes().to_vec();
@@ -1989,8 +1901,7 @@ impl IkaDWalletCommand {
                             metadata.curve,
                             signature_algorithm,
                             session_id,
-                            ika_coin,
-                            sui_coin,
+                            coins,
                             gas_budget,
                         )
                         .await?
@@ -2004,20 +1915,17 @@ impl IkaDWalletCommand {
             IkaDWalletCommand::GlobalPresign {
                 curve,
                 signature_algorithm,
-                ika_coin_id,
-                sui_coin_id,
-                gas_budget,
-                ika_sui_config,
+                payment,
+                tx,
             } => {
                 let (gas_budget, config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
-                let (ika_coin, sui_coin) =
-                    resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                let coins = resolve_payment_coins(context, &config, &payment).await?;
                 let session_id = random_bytes().to_vec();
                 let network_key_info = get_network_key_info(context, &config_path, curve).await?;
 
@@ -2029,8 +1937,7 @@ impl IkaDWalletCommand {
                     curve,
                     signature_algorithm,
                     session_id,
-                    ika_coin,
-                    sui_coin,
+                    coins,
                     gas_budget,
                 )
                 .await?;
@@ -2042,24 +1949,19 @@ impl IkaDWalletCommand {
                 curve,
                 centralized_message,
                 output_secret,
-                ika_coin_id,
-                sui_coin_id,
-                seed_file,
-                address,
-                index,
-                gas_budget,
-                ika_sui_config,
+                payment,
+                seed,
+                tx,
             } => {
                 let (gas_budget, config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
                 let curve_id = curve_name_to_id(&curve)?;
-                let (ika_coin, sui_coin) =
-                    resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                let coins = resolve_payment_coins(context, &config, &payment).await?;
 
                 let secret_key = std::fs::read(&centralized_message)
                     .context("Failed to read secret key file")?;
@@ -2086,9 +1988,9 @@ impl IkaDWalletCommand {
                     .context("Failed to run imported key centralized step")?;
 
                 // Derive encryption keys from seed
-                let seed = resolve_seed(context, seed_file, address, index)?;
+                let seed_bytes = resolve_seed(context, seed.seed_file, seed.address, seed.index)?;
                 let (encryption_key, _decryption_key, signing_keypair) =
-                    derive_encryption_keys(curve_id, seed)?;
+                    derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash)?;
                 let signer_public_key = signing_keypair.public().as_bytes().to_vec();
                 let encryption_key_address: SuiAddress = signing_keypair.public().into();
 
@@ -2123,8 +2025,7 @@ impl IkaDWalletCommand {
                     user_public_output,
                     signer_public_key,
                     session_id_random_bytes.to_vec(),
-                    ika_coin,
-                    sui_coin,
+                    coins,
                     gas_budget,
                 )
                 .await?;
@@ -2211,27 +2112,20 @@ impl IkaDWalletCommand {
                 }
             }
 
-            IkaDWalletCommand::RegisterEncryptionKey {
-                curve,
-                seed_file,
-                address,
-                index,
-                gas_budget,
-                ika_sui_config,
-            } => {
+            IkaDWalletCommand::RegisterEncryptionKey { curve, seed, tx } => {
                 let (gas_budget, _config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
                 );
                 let curve_id = curve_name_to_id(&curve)?;
 
-                let seed = resolve_seed(context, seed_file, address, index)?;
+                let seed_bytes = resolve_seed(context, seed.seed_file, seed.address, seed.index)?;
 
                 let (encryption_key, _decryption_key, signing_keypair) =
-                    derive_encryption_keys(curve_id, seed)?;
+                    derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash)?;
 
                 let sig: fastcrypto::ed25519::Ed25519Signature =
                     signing_keypair.sign(&encryption_key);
@@ -2267,14 +2161,10 @@ impl IkaDWalletCommand {
                 }
             }
 
-            IkaDWalletCommand::VerifyPresign {
-                presign_cap_id,
-                gas_budget,
-                ika_sui_config,
-            } => {
+            IkaDWalletCommand::VerifyPresign { presign_cap_id, tx } => {
                 let (gas_budget, _config_path, config) = resolve_config!(
-                    gas_budget,
-                    ika_sui_config,
+                    tx.gas_budget,
+                    tx.ika_config,
                     global_gas_budget,
                     global_ika_config,
                     context
@@ -2293,7 +2183,7 @@ impl IkaDWalletCommand {
 
             IkaDWalletCommand::GetEncryptionKey {
                 encryption_key_id,
-                ika_sui_config: _,
+                tx: _,
             } => {
                 let sdk_client = create_sdk_client(context).await?;
                 let fields = fetch_object_fields(&sdk_client, encryption_key_id).await?;
@@ -2305,10 +2195,7 @@ impl IkaDWalletCommand {
                 }
             }
 
-            IkaDWalletCommand::Get {
-                dwallet_id,
-                ika_sui_config: _,
-            } => {
+            IkaDWalletCommand::Get { dwallet_id, tx: _ } => {
                 let sdk_client = create_sdk_client(context).await?;
 
                 let object_response = sdk_client
@@ -2331,8 +2218,9 @@ impl IkaDWalletCommand {
                 }
             }
 
-            IkaDWalletCommand::Pricing { ika_sui_config } => {
-                let config_path = ika_sui_config
+            IkaDWalletCommand::Pricing { tx } => {
+                let config_path = tx
+                    .ika_config
                     .or(global_ika_config.clone())
                     .unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let client = create_sui_client(context, &config_path).await?;
@@ -2342,22 +2230,17 @@ impl IkaDWalletCommand {
                 IkaDWalletCommandResponse::Pricing { pricing }
             }
 
-            IkaDWalletCommand::GenerateKeypair {
-                curve,
-                seed_file,
-                address,
-                index,
-            } => {
+            IkaDWalletCommand::GenerateKeypair { curve, seed } => {
                 let curve_id = curve_name_to_id(&curve)?;
-                let seed = resolve_seed(context, seed_file, address, index)?;
+                let seed_bytes = resolve_seed(context, seed.seed_file, seed.address, seed.index)?;
                 let (encryption_key, decryption_key, signing_keypair) =
-                    derive_encryption_keys(curve_id, seed)?;
+                    derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash)?;
 
                 IkaDWalletCommandResponse::Keypair {
                     encryption_key: hex::encode(&encryption_key),
                     decryption_key: hex::encode(&decryption_key),
                     signer_public_key: hex::encode(signing_keypair.public().as_bytes()),
-                    seed: hex::encode(seed),
+                    seed: hex::encode(seed_bytes),
                 }
             }
 
@@ -2365,20 +2248,17 @@ impl IkaDWalletCommand {
                 IkaDWalletShareCommand::MakePublic {
                     dwallet_id,
                     secret_share,
-                    ika_coin_id,
-                    sui_coin_id,
-                    gas_budget,
-                    ika_sui_config,
+                    payment,
+                    tx,
                 } => {
                     let (gas_budget, _config_path, config) = resolve_config!(
-                        gas_budget,
-                        ika_sui_config,
+                        tx.gas_budget,
+                        tx.ika_config,
                         global_gas_budget,
                         global_ika_config,
                         context
                     );
-                    let (ika_coin, sui_coin) =
-                        resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                    let coins = resolve_payment_coins(context, &config, &payment).await?;
                     let share_bytes = std::fs::read(&secret_share)?;
                     let session_id = random_bytes().to_vec();
 
@@ -2389,8 +2269,7 @@ impl IkaDWalletCommand {
                         dwallet_id,
                         share_bytes,
                         session_id,
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                     )
                     .await?;
@@ -2403,21 +2282,18 @@ impl IkaDWalletCommand {
                     source_encrypted_share_id,
                     destination_encryption_key,
                     curve,
-                    ika_coin_id,
-                    sui_coin_id,
-                    gas_budget,
-                    ika_sui_config,
+                    payment,
+                    tx,
                 } => {
                     let (gas_budget, config_path, config) = resolve_config!(
-                        gas_budget,
-                        ika_sui_config,
+                        tx.gas_budget,
+                        tx.ika_config,
                         global_gas_budget,
                         global_ika_config,
                         context
                     );
                     let curve_id = curve_name_to_id(&curve)?;
-                    let (ika_coin, sui_coin) =
-                        resolve_coins(context, &config, ika_coin_id, sui_coin_id).await?;
+                    let coins = resolve_payment_coins(context, &config, &payment).await?;
 
                     let share_bytes =
                         std::fs::read(&secret_share).context("Failed to read secret share file")?;
@@ -2453,8 +2329,7 @@ impl IkaDWalletCommand {
                         encrypted_share_and_proof,
                         source_encrypted_share_id,
                         session_id,
-                        ika_coin,
-                        sui_coin,
+                        coins,
                         gas_budget,
                     )
                     .await?;
@@ -2464,12 +2339,11 @@ impl IkaDWalletCommand {
                     dwallet_id,
                     encrypted_share_id,
                     user_output_signature,
-                    gas_budget,
-                    ika_sui_config,
+                    tx,
                 } => {
                     let (gas_budget, _config_path, config) = resolve_config!(
-                        gas_budget,
-                        ika_sui_config,
+                        tx.gas_budget,
+                        tx.ika_config,
                         global_gas_budget,
                         global_ika_config,
                         context

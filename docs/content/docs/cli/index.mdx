@@ -72,14 +72,18 @@ After installation, initialize the CLI config to fetch deployed contract address
 ika config init
 ```
 
-This fetches the current mainnet and testnet contract addresses from GitHub and writes `~/.ika/ika_sui_config.yaml`.
+This fetches the current mainnet and testnet contract addresses from GitHub, writes `~/.ika/ika_sui_config.yaml`, and creates Sui CLI environments (`ika-testnet`, `ika-mainnet`) pointing to the correct RPC URLs.
 
-Then configure your Sui CLI environments:
+Then switch to the desired environment:
 
 ```bash
-sui client new-env --alias testnet --rpc https://fullnode.testnet.sui.io:443
-sui client new-env --alias mainnet --rpc https://fullnode.mainnet.sui.io:443
-sui client switch --env testnet
+sui client switch --env ika-testnet
+```
+
+To re-fetch the latest contract addresses after upgrades:
+
+```bash
+ika config sync
 ```
 
 ## Global Flags
@@ -112,13 +116,12 @@ ika
 ### Create a dWallet and Sign
 
 ```bash
-# 1. Register an encryption key
+# 1. Register an encryption key (derives from active Sui address by default)
 ika dwallet register-encryption-key --curve secp256k1
 
-# 2. Create a dWallet
+# 2. Create a dWallet (IKA/SUI coins auto-detected from wallet)
 ika dwallet create \
   --curve secp256k1 \
-  --encryption-key-id <ENCRYPTION_KEY_ID> \
   --output-secret ./my_secret.bin
 
 # 3. Request a presign
@@ -152,7 +155,7 @@ sui keytool list                # List known keys
 sui keytool import <MNEMONIC>   # Import from mnemonic
 ```
 
-dWallet encryption keypairs are stored locally at `~/.ika/ika_config/encryption_keys/` after `register-encryption-key` and are auto-loaded by commands that need them.
+dWallet encryption keys are derived stateless from the active Sui keystore address (no local file storage). The CLI uses `keccak256(keypair_bytes || index)` to derive a 32-byte seed, then hashes with domain separators to produce class-groups and Ed25519 keys. Use `--seed-file <PATH>` for raw 32-byte seed, `--address <ADDR>` for a specific keystore address, or `--encryption-key-index <N>` for multiple keys per address. Pass `--legacy-hash` for keys registered before the V2 hash fix (only affects non-SECP256K1 curves).
 
 ## Shell Completions
 
@@ -172,7 +175,7 @@ ika completion fish > ~/.config/fish/completions/ika.fish
 All commands support `--json` for structured output suitable for scripting:
 
 ```bash
-ika dwallet create --curve secp256k1 --encryption-key-id <ID> --json
+ika dwallet create --curve secp256k1 --json
 ```
 
 On errors, JSON mode returns `{"error": "description"}` with exit code 1.

@@ -15,10 +15,9 @@ echo " Query Command Tests"
 echo "=========================================="
 
 test_dwallet_get() {
-    local encryption_key_id
-    encryption_key_id=$(ensure_encryption_key "secp256k1")
+    ensure_encryption_key "secp256k1" > /dev/null
     local create_result
-    create_result=$(create_dwallet "secp256k1" "$encryption_key_id")
+    create_result=$(create_dwallet "secp256k1")
     local dwallet_id
     dwallet_id=$(json_field "$create_result" "dwallet_id")
 

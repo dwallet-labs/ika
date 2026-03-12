@@ -4,7 +4,7 @@
 # Prerequisites:
 #   1. Local Ika network running:  ika start --force-reinitiation
 #   2. CLI binary built:           cargo build --release -p ika
-#   3. Config at default path or set IKA_SUI_CONFIG
+#   3. Ika config initialized:     ika config init (or ika config add-env)
 #
 # Usage:
 #   ./crates/ika/tests/integration/run_all.sh                    # run all
@@ -13,7 +13,6 @@
 # Environment variables:
 #   IKA_BIN           Path to ika binary (default: ./target/release/ika)
 #   SUI_RPC_URL       Sui fullnode RPC (default: http://127.0.0.1:9000)
-#   IKA_SUI_CONFIG    Path to ika_sui_config.yaml
 #   POLL_INTERVAL     Seconds between polls (default: 3)
 #   POLL_TIMEOUT      Max seconds to wait (default: 300)
 
@@ -22,7 +21,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 export IKA_BIN="${IKA_BIN:-./target/release/ika}"
 export SUI_RPC_URL="${SUI_RPC_URL:-http://127.0.0.1:9000}"
-export IKA_SUI_CONFIG="${IKA_SUI_CONFIG:-./ika_sui_config.yaml}"
 
 # ---------------------------------------------------------------------------
 # Preflight checks
@@ -31,18 +29,11 @@ echo "Ika CLI Integration Tests"
 echo "========================="
 echo "  Binary:  $IKA_BIN"
 echo "  RPC:     $SUI_RPC_URL"
-echo "  Config:  $IKA_SUI_CONFIG"
 echo ""
 
 if [[ ! -x "$IKA_BIN" ]]; then
     echo "ERROR: ika binary not found at $IKA_BIN"
     echo "       Run: cargo build --release -p ika"
-    exit 1
-fi
-
-if [[ ! -f "$IKA_SUI_CONFIG" ]]; then
-    echo "ERROR: config not found at $IKA_SUI_CONFIG"
-    echo "       Run: ika start --force-reinitiation"
     exit 1
 fi
 

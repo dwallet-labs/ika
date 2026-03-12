@@ -33,10 +33,9 @@ test_public_secp256k1_ecdsa_double_sha256() {
 
 test_public_secp256k1_taproot_sha256() {
     # make-public uses regular create, Taproot needs global presign
-    local encryption_key_id
-    encryption_key_id=$(ensure_encryption_key "secp256k1")
+    ensure_encryption_key "secp256k1" > /dev/null
     local create_result
-    create_result=$(create_dwallet "secp256k1" "$encryption_key_id")
+    create_result=$(create_dwallet "secp256k1")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")
@@ -69,10 +68,9 @@ test_public_secp256r1_ecdsa_sha256() {
 # --- ed25519 + EdDSA ---
 
 test_public_ed25519_eddsa_sha512() {
-    local encryption_key_id
-    encryption_key_id=$(ensure_encryption_key "ed25519")
+    ensure_encryption_key "ed25519" > /dev/null
     local create_result
-    create_result=$(create_dwallet "ed25519" "$encryption_key_id")
+    create_result=$(create_dwallet "ed25519")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")
@@ -97,10 +95,9 @@ test_public_ed25519_eddsa_sha512() {
 # --- ristretto + SchnorrkelSubstrate ---
 
 test_public_ristretto_schnorrkel_merlin() {
-    local encryption_key_id
-    encryption_key_id=$(ensure_encryption_key "ristretto")
+    ensure_encryption_key "ristretto" > /dev/null
     local create_result
-    create_result=$(create_dwallet "ristretto" "$encryption_key_id")
+    create_result=$(create_dwallet "ristretto")
     local dwallet_id dwallet_cap_id secret_path
     dwallet_id=$(json_field "$create_result" "dwallet_id")
     dwallet_cap_id=$(json_field "$create_result" "dwallet_cap_id")

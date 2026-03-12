@@ -12,6 +12,39 @@ import { Info, Note } from '@/components/InfoBox';
 
 All dWallet operations are under the `ika dwallet` subcommand.
 
+## Shared Arguments
+
+Several argument groups are reused across commands:
+
+### Seed Derivation Args
+
+Commands that derive encryption keys accept these flags:
+
+| Flag | Description |
+|------|-------------|
+| `--seed-file <PATH>` | Path to a raw 32-byte seed file. Mutually exclusive with `--address` |
+| `--address <ADDR>` | Derive seed from a specific Sui keystore address (default: active address) |
+| `--encryption-key-index <N>` | Key derivation index (default: `0`). Used with address-based derivation |
+| `--legacy-hash` | Use legacy V1 hash (curve byte always 0). Only needed for keys registered before the V2 hash fix |
+
+**Seed derivation:** When `--seed-file` is omitted, the seed is derived from the active Sui keystore address (or `--address`) using `keccak256(keypair_bytes || index_le_bytes)`. Use `--legacy-hash` for encryption keys registered before the V2 hash fix (only affects non-SECP256K1 curves, since SECP256K1 has curve number 0 in both versions).
+
+### Payment Args
+
+| Flag | Description |
+|------|-------------|
+| `--ika-coin-id <ID>` | IKA coin object ID for payment. Auto-detected from wallet if omitted |
+| `--sui-coin-id <ID>` | SUI coin object ID for payment. Uses the gas coin if omitted |
+
+### Transaction Args
+
+| Flag | Description |
+|------|-------------|
+| `--gas-budget <MIST>` | Override the default gas budget |
+| `--ika-config <PATH>` | Override the Ika network config path |
+
+---
+
 ## `ika dwallet create`
 
 Create a new dWallet via Distributed Key Generation (DKG). Waits for the DKG to complete on chain before returning.
@@ -19,23 +52,19 @@ Create a new dWallet via Distributed Key Generation (DKG). Waits for the DKG to 
 ```bash
 ika dwallet create \
   --curve secp256k1 \
-  --encryption-key-id <ENCRYPTION_KEY_ID> \
   --output-secret ./my_secret.bin
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--encryption-key-id <ID>` | Yes | Network encryption key object ID |
 | `--output-secret <PATH>` | No | Output path (default: `dwallet_secret_share.bin`) |
 | `--public-share` | No | Create shared dWallet (public user key share) |
 | `--sign-message <HEX>` | No | Sign during DKG |
 | `--hash-scheme <U32>` | No | Hash scheme for sign-during-DKG |
-| `--encryption-seed <HEX>` | No | Seed for encryption key derivation (hex, 32 bytes). Random if omitted |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected from wallet) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected from wallet) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 **JSON output (`--json`):**
 
@@ -80,10 +109,8 @@ ika dwallet sign \
 | `--dwallet-id <ID>` | No | dWallet ID (auto-fetches curve and DKG output from chain) |
 | `--curve <CURVE>` | No | Required if `--dwallet-id` not provided |
 | `--wait` | No | Wait for sign session to complete and return the signature |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 <Info title="Auto-detection">
 When `--dwallet-id` is provided, curve and DKG output are fetched from the dWallet object on chain. When `--presign-output` is omitted, it is fetched from the presign session referenced by `--presign-cap-id`. The presign cap is auto-verified if unverified (composed into the same transaction). Imported key dWallets are auto-detected and routed to the correct sign flow.
@@ -116,10 +143,14 @@ With `--wait`:
 
 ## `ika dwallet future-sign`
 
-Request a conditional/future signature.
+Future/conditional signing operations. Has two subcommands: `create` (partial signature) and `fulfill` (complete signature).
+
+### `ika dwallet future-sign create`
+
+Create a partial user signature (first step of future signing).
 
 ```bash
-ika dwallet future-sign \
+ika dwallet future-sign create \
   --dwallet-id <DWALLET_ID> \
   --message <HEX_MESSAGE> \
   --hash-scheme 0 \
@@ -133,16 +164,38 @@ ika dwallet future-sign \
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--message <HEX>` | Yes | Message to sign |
 | `--hash-scheme <U32>` | Yes | Hash scheme |
-| `--presign-cap-id <ID>` | Yes | Presign cap ID (auto-verified if needed) |
+| `--presign-cap-id <ID>` | Yes | Verified presign cap ID |
 | `--secret-share <PATH>` | Yes | Path to user secret share |
 | `--signature-algorithm <U32>` | Yes | Signature algorithm |
 | `--presign-output <HEX>` | No | Presign output (hex). Auto-fetched if omitted |
 | `--dkg-output <HEX>` | No | DKG public output (hex). Auto-fetched if omitted |
 | `--curve <CURVE>` | No | Override auto-detected curve |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+### `ika dwallet future-sign fulfill`
+
+Fulfill a future sign using a partial user signature cap (second step).
+
+```bash
+ika dwallet future-sign fulfill \
+  --partial-cap-id <PARTIAL_CAP_ID> \
+  --dwallet-cap-id <CAP_ID> \
+  --message <HEX_MESSAGE> \
+  --signature-algorithm 0 \
+  --hash-scheme 0
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--partial-cap-id <ID>` | Yes | Partial user signature cap ID (from `future-sign create`) |
+| `--dwallet-cap-id <ID>` | Yes | dWallet cap ID (for message approval) |
+| `--message <HEX>` | Yes | Message to sign |
+| `--signature-algorithm <U32>` | Yes | Signature algorithm |
+| `--hash-scheme <U32>` | Yes | Hash scheme |
+| `--wait` | No | Wait for sign session to complete and return the signature |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -158,10 +211,8 @@ ika dwallet presign --dwallet-id <ID> --signature-algorithm 0
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--signature-algorithm <U32>` | Yes | Signature algorithm |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -177,10 +228,8 @@ ika dwallet global-presign --curve 0 --signature-algorithm 0
 |------|----------|-------------|
 | `--curve <U32>` | Yes | Curve identifier |
 | `--signature-algorithm <U32>` | Yes | Signature algorithm |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -191,26 +240,23 @@ Import an external key as a dWallet. Requires a previously registered encryption
 ```bash
 ika dwallet import \
   --curve secp256k1 \
-  --centralized-message ./secret_key.bin \
-  --encryption-key-id <ENCRYPTION_KEY_ID>
+  --centralized-message ./secret_key.bin
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
 | `--centralized-message <PATH>` | Yes | Path to the secret key file to import |
-| `--encryption-key-id <ID>` | Yes | Network encryption key object ID |
 | `--output-secret <PATH>` | No | Where to save user secret share (default: `imported_dwallet_secret_share.bin`) |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
 ## `ika dwallet register-encryption-key`
 
-Register a user encryption key for dWallet operations.
+Register a user encryption key for dWallet operations. Encryption keys are derived stateless from the active Sui keystore address.
 
 ```bash
 ika dwallet register-encryption-key --curve secp256k1
@@ -219,9 +265,8 @@ ika dwallet register-encryption-key --curve secp256k1
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--seed <HEX>` | No | Seed for key derivation (hex, 32 bytes). Random if omitted |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -236,7 +281,7 @@ ika dwallet get-encryption-key --encryption-key-id <ID>
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--encryption-key-id <ID>` | Yes | Encryption key object ID |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -251,8 +296,7 @@ ika dwallet verify-presign --presign-cap-id <ID>
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--presign-cap-id <ID>` | Yes | Unverified presign cap ID |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 <Note>
 The `sign` command auto-verifies unverified presign caps. This command is only needed if you want to verify a presign cap separately.
@@ -271,7 +315,7 @@ ika dwallet get --dwallet-id <ID>
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -285,7 +329,7 @@ ika dwallet pricing
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ---
 
@@ -300,7 +344,7 @@ ika dwallet generate-keypair --curve secp256k1
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--seed <HEX>` | No | Seed for derivation (hex, 32 bytes). Random if omitted |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
 
 ---
 
@@ -318,10 +362,8 @@ ika dwallet share make-public --dwallet-id <ID> --secret-share ./my_secret.bin
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--secret-share <PATH>` | Yes | Path to user secret share file |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ### `ika dwallet share re-encrypt`
 
@@ -345,10 +387,8 @@ ika dwallet share re-encrypt \
 | `--source-encrypted-share-id <ID>` | Yes | Source encrypted user secret key share ID |
 | `--destination-encryption-key <HEX>` | Yes | Destination user's encryption key (hex) |
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--ika-coin-id <ID>` | No | IKA coin for payment (auto-detected) |
-| `--sui-coin-id <ID>` | No | SUI coin for payment (auto-detected) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
 
 ### `ika dwallet share accept`
 
@@ -366,5 +406,4 @@ ika dwallet share accept \
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--encrypted-share-id <ID>` | Yes | Encrypted share object ID |
 | `--user-output-signature <HEX>` | Yes | User output signature (hex) |
-| `--gas-budget <MIST>` | No | Override gas budget |
-| `--ika-sui-config <PATH>` | No | Ika network config path |
+| Transaction args | No | `--gas-budget`, `--ika-config` |

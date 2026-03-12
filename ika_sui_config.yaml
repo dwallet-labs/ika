@@ -1,14 +1,5 @@
 ---
 envs:
-  localnet:
-    packages:
-      ika_package_id: '0x694c17a82f300304b07d1c66ca0d5aecb0247d348c96243118234ee90628b06b'
-      ika_common_package_id: '0xf4a57fb71d1a0184fae89021974e58e65a3dbe96fab0ad450250d2616894b7de'
-      ika_dwallet_2pc_mpc_package_id: '0x3625ec3aba47d9ddd7d14cd7db59c50689a67801e7cc5531d01856490e23e113'
-      ika_system_package_id: '0x0b462c05d4c3bfe49735a26f2a5ee47e09c6a59a8eae51e14f00ac7d19e47565'
-    objects:
-      ika_system_object_id: '0x484c1fb25495aa6c782abe380df72a89d2dc76844b2bde992d48af6df00f1947'
-      ika_dwallet_coordinator_object_id: '0xd4e27b44024371de695f7b2f457b669a61407ba50d3ef04eecc630d24e2d487c'
   testnet:
     packages:
       ika_package_id: '0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a'

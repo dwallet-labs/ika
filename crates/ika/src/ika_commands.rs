@@ -302,7 +302,7 @@ impl IkaCommand {
             }
             #[cfg(feature = "protocol-commands")]
             IkaCommand::System { cmd } => cmd.execute().await,
-            IkaCommand::Config { cmd } => cmd.execute().await,
+            IkaCommand::Config { cmd } => cmd.execute(client_config).await,
             IkaCommand::Completion { shell } => {
                 let mut app =
                     crate::ika_commands::IkaCommand::augment_subcommands(clap::Command::new("ika"));

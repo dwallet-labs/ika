@@ -77,7 +77,9 @@ ika
 │       ├── re-encrypt
 │       └── accept
 ├── config                     # Configuration management
-│   ├── init                   # Fetch deployed contract addresses
+│   ├── init                   # Fetch addresses + create Sui envs
+│   ├── add-env                # Add env from local ika_config.json
+│   ├── sync                   # Re-fetch latest contract addresses
 │   └── show                   # Show current config
 ├── validator                  # Validator operations (30+ subcommands)
 ├── protocol                   # Protocol governance (feature-gated)
@@ -88,13 +90,12 @@ ika
 
 ### Create a dWallet
 ```bash
-# Register encryption key first
+# Register encryption key first (derives from active Sui address by default)
 ika dwallet register-encryption-key --curve secp256k1
 
 # Create a secp256k1 dWallet (IKA/SUI coins auto-detected from wallet)
 ika dwallet create \
   --curve secp256k1 \
-  --encryption-key-id <ENCRYPTION_KEY_ID> \
   --output-secret ./my_dwallet_secret.bin
 # Output: dWallet ID, Cap ID, Public Key
 
@@ -109,7 +110,9 @@ ika dwallet sign \
   --presign-cap-id <PRESIGN_CAP_ID>
 ```
 
-**Auto-detection:** IKA/SUI coins are auto-detected from the active wallet. Curve, DKG output, and presign output are auto-fetched from chain when `--dwallet-id` and `--presign-cap-id` are provided. Encryption keypairs are stored locally at `~/.ika/ika_config/encryption_keys/` after registration and auto-loaded by `--encryption-key-id`.
+**Seed derivation:** Encryption keys are derived stateless from the active Sui keystore address. Use `--seed-file <PATH>` for raw 32-byte seed, `--address <ADDR>` for a specific keystore address, or `--encryption-key-index <N>` for multiple keys per address. Pass `--legacy-hash` for keys registered before the V2 hash fix (only affects non-SECP256K1 curves).
+
+**Auto-detection:** IKA/SUI coins are auto-detected from the active wallet. Curve, DKG output, and presign output are auto-fetched from chain when `--dwallet-id` and `--presign-cap-id` are provided.
 
 ### Validator Operations
 ```bash
@@ -133,7 +136,7 @@ sui keytool list                       # List known keys
 sui keytool import <MNEMONIC>          # Import key from mnemonic
 ```
 
-dWallet encryption keypairs are stored locally at `~/.ika/ika_config/encryption_keys/` after `register-encryption-key`. They are auto-loaded by `create`, `import`, and other commands that use `--encryption-key-id`. Each file contains the encryption key, decryption key, signer public key, and seed (JSON, 0600 permissions).
+dWallet encryption keys are derived stateless from Sui keystore addresses (no local file storage). The CLI uses `keccak256(keypair_bytes || index)` to derive a 32-byte seed, then hashes with domain separators to produce class-groups and Ed25519 keys.
 
 ## JSON Output
 
