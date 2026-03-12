@@ -30,7 +30,7 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 		encryptionKey: bcs.vector(bcs.u8()),
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.string(),
-		curve: bcs.u32(),
+		curve: bcs.u64(),
 	}),
 	V2: bcs.struct('UserShareEncryptionKeysV2', {
 		encryptionKey: bcs.vector(bcs.u8()),
