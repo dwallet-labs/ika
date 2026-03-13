@@ -7,7 +7,6 @@ mod tests;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use ika_types::noa_checkpoint::{
@@ -15,13 +14,9 @@ use ika_types::noa_checkpoint::{
     NOACheckpointMessage, NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus,
 };
 use sui_types::base_types::EpochId;
-use tokio::sync::mpsc::{Receiver, UnboundedSender};
 use tracing::{error, info, warn};
 
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
-
-/// Interval between finalization poll cycles for NOA checkpoint transactions.
-pub const NOA_CHECKPOINT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 // === TxExecutionStatus ===
 
@@ -53,6 +48,7 @@ pub trait NOAChainSubmitter<K: NOACheckpointKind>: Send + Sync + 'static {
 
 /// No-op chain submitter that logs operations and always reports execution success.
 /// Used as a placeholder until actual chain submission is implemented.
+// TODO: delete it once we have a real implementation
 pub struct LogOnlyChainSubmitter;
 
 #[async_trait]
@@ -108,11 +104,11 @@ struct NOACheckpointEntry<K: NOACheckpointKind> {
 /// The store tracks individual tx bytes → (sequence number, tx_index) mappings so
 /// that incoming sign outputs can be routed back to the correct checkpoint and tx.
 ///
-/// Owned by a single `NOACheckpointPipeline<K>` task — no Mutex needed.
+/// Owned by a single `NOACheckpointHandler<K>` — no Mutex needed.
 ///
 /// NOTE: Entirely in-memory — no crash recovery. If the node restarts, state is
 /// reconstructed from consensus replay during epoch initialization. This is safe
-/// because the pipeline re-derives checkpoints deterministically from consensus
+/// because the handler re-derives checkpoints deterministically from consensus
 /// messages.
 pub struct NOACheckpointLocalStore<K: NOACheckpointKind> {
     /// Maps individual tx bytes → (checkpoint sequence number, tx_index).
@@ -421,49 +417,24 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     }
 }
 
-// === NOACheckpointPipeline ===
+// === NOACheckpointHandler ===
 
-/// Unified pipeline that handles the full checkpoint lifecycle for a single kind.
-/// Replaces the separate Submitter, Certifier, and Finalizer tasks.
+/// Synchronous handler that drives the full checkpoint lifecycle for a single kind.
+/// Owned directly by `DWalletMPCService` — no separate tokio task or channels needed.
 ///
 /// Lifecycle: messages → MPC sign → submit to chain → poll chain → observe →
 /// consensus quorum → finalize (or retry → back to MPC sign)
-pub struct NOACheckpointPipeline<K: NOACheckpointKind> {
+pub struct NOACheckpointHandler<K: NOACheckpointKind> {
     store: NOACheckpointLocalStore<K>,
-
-    // Incoming
-    message_receiver: Receiver<(
-        Vec<K::MessageKind>,
-        <K::Destination as ChainDestination>::Context,
-    )>,
-    sign_output_receiver: Receiver<NetworkOwnedAddressSignOutput>,
-    command_receiver: Receiver<NOACheckpointCommand<K::Destination>>,
-
-    // Outgoing
-    noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-    observation_sender: UnboundedSender<NOACheckpointTxObservation>,
-
-    // Chain
     chain_submitter: Arc<dyn NOAChainSubmitter<K>>,
-
-    // State
     epoch: EpochId,
     next_sequence_number: u64,
     noa_public_key: Vec<u8>,
     all_finalized_flag: Arc<AtomicBool>,
 }
 
-impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
-    #[allow(clippy::too_many_arguments)]
+impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
     pub fn new(
-        message_receiver: Receiver<(
-            Vec<K::MessageKind>,
-            <K::Destination as ChainDestination>::Context,
-        )>,
-        sign_output_receiver: Receiver<NetworkOwnedAddressSignOutput>,
-        command_receiver: Receiver<NOACheckpointCommand<K::Destination>>,
-        noa_sign_sender: UnboundedSender<NetworkOwnedAddressSignRequest>,
-        observation_sender: UnboundedSender<NOACheckpointTxObservation>,
         chain_submitter: Arc<dyn NOAChainSubmitter<K>>,
         epoch: EpochId,
         noa_public_key: Vec<u8>,
@@ -471,11 +442,6 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
     ) -> Self {
         Self {
             store: NOACheckpointLocalStore::new(),
-            message_receiver,
-            sign_output_receiver,
-            command_receiver,
-            noa_sign_sender,
-            observation_sender,
             chain_submitter,
             epoch,
             next_sequence_number: 0,
@@ -484,92 +450,12 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
         }
     }
 
-    pub async fn run(mut self) {
-        info!(
-            kind = K::NAME,
-            epoch = self.epoch,
-            poll_interval_ms = NOA_CHECKPOINT_POLL_INTERVAL.as_millis() as u64,
-            "Starting NOACheckpointPipeline"
-        );
-
-        let mut interval = tokio::time::interval(NOA_CHECKPOINT_POLL_INTERVAL);
-        let mut messages_open = true;
-        let mut sign_outputs_open = true;
-        let mut commands_open = true;
-
-        loop {
-            tokio::select! {
-                // New checkpoint messages → build tx_bytes, store, send to MPC signer
-                msg = self.message_receiver.recv(), if messages_open => {
-                    match msg {
-                        Some((messages, chain_context)) => {
-                            self.handle_new_checkpoint(messages, chain_context);
-                        }
-                        None => messages_open = false,
-                    }
-                }
-
-                // MPC signature completed → store signature, if all txs signed → submit to chain
-                output = self.sign_output_receiver.recv(), if sign_outputs_open => {
-                    match output {
-                        Some(sign_output) => {
-                            self.handle_sign_output(sign_output).await;
-                        }
-                        None => sign_outputs_open = false,
-                    }
-                }
-
-                // 2f+1 quorum reached → MarkFinalized or RetryWithContext
-                cmd = self.command_receiver.recv(), if commands_open => {
-                    match cmd {
-                        Some(cmd) => {
-                            self.handle_command(cmd).await;
-                        }
-                        None => commands_open = false,
-                    }
-                }
-
-                // Poll chain for tx execution status
-                _ = interval.tick() => {
-                    self.poll_pending_txs().await;
-                }
-            }
-
-            // Update shared finalization flag.
-            let done = self.store.has_no_finalization_entries() || self.store.all_finalized();
-            self.all_finalized_flag.store(done, Ordering::Release);
-
-            // Exit: all checkpoints finalized.
-            if !self.store.has_no_finalization_entries() && self.store.all_finalized() {
-                info!(
-                    kind = K::NAME,
-                    epoch = self.epoch,
-                    "All NOA checkpoints finalized, stopping pipeline"
-                );
-                return;
-            }
-
-            // Exit: all input channels closed — no new messages, signatures, or
-            // commands can arrive. The all_finalized_flag already reflects current
-            // state for the epoch transition gate.
-            if !messages_open && !sign_outputs_open && !commands_open {
-                if !self.store.has_no_finalization_entries() && !self.store.all_finalized() {
-                    warn!(
-                        kind = K::NAME,
-                        epoch = self.epoch,
-                        "All channels closed with unfinalized checkpoints — exiting pipeline"
-                    );
-                }
-                return;
-            }
-        }
-    }
-
-    fn handle_new_checkpoint(
+    /// Process new checkpoint messages. Returns sign requests to submit.
+    pub fn handle_new_checkpoint(
         &mut self,
         messages: Vec<K::MessageKind>,
         chain_context: <K::Destination as ChainDestination>::Context,
-    ) {
+    ) -> Vec<NetworkOwnedAddressSignRequest> {
         let seq = self.next_sequence_number;
         self.next_sequence_number += 1;
 
@@ -608,26 +494,20 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
         let tx_bytes_list: Vec<Vec<u8>> = tx_data.iter().map(|(bytes, _)| bytes.clone()).collect();
         self.store.insert_pending(seq, checkpoint, tx_data);
 
-        for tx_bytes in tx_bytes_list {
-            let request = NetworkOwnedAddressSignRequest {
+        tx_bytes_list
+            .into_iter()
+            .map(|tx_bytes| NetworkOwnedAddressSignRequest {
                 message: tx_bytes,
                 curve: K::curve(),
                 signature_algorithm: K::signature_algorithm(),
                 hash_scheme: K::hash_scheme(),
-            };
-
-            if let Err(e) = self.noa_sign_sender.send(request) {
-                error!(
-                    kind = K::NAME,
-                    sequence_number = seq,
-                    error = %e,
-                    "Failed to send NOA checkpoint sign request",
-                );
-            }
-        }
+            })
+            .collect()
     }
 
-    async fn handle_sign_output(&mut self, sign_output: NetworkOwnedAddressSignOutput) {
+    /// Process a completed MPC sign output.
+    /// Stores signature; if all txs signed, submits to chain.
+    pub async fn handle_sign_output(&mut self, sign_output: NetworkOwnedAddressSignOutput) {
         let certified = match self.store.add_signature(
             &sign_output.message,
             sign_output.signature,
@@ -655,25 +535,36 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
         self.submit_certified_checkpoint(seq).await;
     }
 
-    async fn handle_command(&mut self, cmd: NOACheckpointCommand<K::Destination>) {
+    /// Apply a quorum command (MarkFinalized or RetryWithContext).
+    /// Returns sign requests for retries.
+    pub fn handle_command(
+        &mut self,
+        cmd: NOACheckpointCommand<K::Destination>,
+    ) -> Vec<NetworkOwnedAddressSignRequest> {
         match cmd {
             NOACheckpointCommand::MarkFinalized(tx_ref) => {
                 self.store.mark_finalized(&tx_ref);
+                vec![]
             }
             NOACheckpointCommand::RetryWithContext { tx_ref, context } => {
                 if self.store.get_status(&tx_ref) == Some(NOACheckpointTxStatus::Finalized) {
-                    return;
+                    return vec![];
                 }
-                self.initiate_tx_retry_with_context(&tx_ref, &context);
+                self.initiate_tx_retry_with_context(&tx_ref, &context)
+                    .into_iter()
+                    .collect()
             }
         }
     }
 
-    async fn poll_pending_txs(&mut self) {
+    /// Poll chain for submitted tx status.
+    /// Returns observations to send through consensus.
+    pub async fn poll_chain_status(&mut self) -> Vec<NOACheckpointTxObservation> {
         if self.store.has_no_finalization_entries() {
-            return;
+            return vec![];
         }
 
+        let mut observations = Vec::new();
         let pending_refs = self.store.get_pending_refs();
         for tx_ref in pending_refs {
             let status = match self.store.get_status(&tx_ref) {
@@ -693,9 +584,7 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
                                     "NOA checkpoint tx confirmed on-chain, sending finalization observation"
                                 );
                                 self.store.mark_confirmed_locally(&tx_ref);
-                                self.send_observation(NOACheckpointTxObservation::Finalized(
-                                    tx_ref,
-                                ));
+                                observations.push(NOACheckpointTxObservation::Finalized(tx_ref));
                                 continue;
                             }
                             Ok(TxExecutionStatus::Pending) => {
@@ -712,7 +601,7 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
                                         reason = %reason,
                                         "NOA checkpoint tx failed on-chain, sending failure observation"
                                     );
-                                    self.send_observation(NOACheckpointTxObservation::Failed(
+                                    observations.push(NOACheckpointTxObservation::Failed(
                                         tx_ref.clone(),
                                         retry_round,
                                     ));
@@ -745,6 +634,14 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
                 }
             }
         }
+
+        observations
+    }
+
+    /// Update the shared all_finalized AtomicBool flag.
+    pub fn update_finalized_flag(&self) {
+        let done = self.store.has_no_finalization_entries() || self.store.all_finalized();
+        self.all_finalized_flag.store(done, Ordering::Release);
     }
 
     /// Submit a certified checkpoint's transactions to the chain and register them
@@ -794,20 +691,10 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
                         "Failed to submit NOA checkpoint tx to chain"
                     );
                     // Mark as pending so all_finalized() sees this tx and the
-                    // pipeline doesn't exit prematurely.
+                    // handler doesn't stall.
                     self.store.mark_submitted(tx_ref, vec![]);
                 }
             }
-        }
-    }
-
-    fn send_observation(&self, observation: NOACheckpointTxObservation) {
-        if let Err(e) = self.observation_sender.send(observation) {
-            error!(
-                kind = K::NAME,
-                error = %e,
-                "Failed to send NOA checkpoint observation"
-            );
         }
     }
 
@@ -815,14 +702,10 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
         &mut self,
         tx_ref: &NOACheckpointTxRef,
         context: &<K::Destination as ChainDestination>::Context,
-    ) {
-        let tx_bytes = match self
+    ) -> Option<NetworkOwnedAddressSignRequest> {
+        let tx_bytes = self
             .store
-            .initiate_tx_retry(tx_ref, context, &self.noa_public_key)
-        {
-            Some(bytes) => bytes,
-            None => return,
-        };
+            .initiate_tx_retry(tx_ref, context, &self.noa_public_key)?;
 
         info!(
             kind = K::NAME,
@@ -831,21 +714,12 @@ impl<K: NOACheckpointKind> NOACheckpointPipeline<K> {
             "Initiating per-tx retry: 2f+1 failure quorum reached"
         );
 
-        let request = NetworkOwnedAddressSignRequest {
+        Some(NetworkOwnedAddressSignRequest {
             message: tx_bytes,
             curve: K::curve(),
             signature_algorithm: K::signature_algorithm(),
             hash_scheme: K::hash_scheme(),
-        };
-        if let Err(e) = self.noa_sign_sender.send(request) {
-            error!(
-                kind = K::NAME,
-                sequence_number = tx_ref.sequence_number,
-                tx_index = tx_ref.tx_index,
-                error = %e,
-                "Failed to send per-tx retry sign request"
-            );
-        }
+        })
     }
 
     async fn submit_retry_tx(&mut self, tx_ref: &NOACheckpointTxRef) {

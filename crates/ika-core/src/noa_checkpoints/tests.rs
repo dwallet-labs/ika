@@ -1,27 +1,23 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Tests for the NOA checkpoint pipeline:
-//! `NOACheckpointLocalStore` unit tests and `NOACheckpointPipeline<K>` integration tests.
+//! Tests for the NOA checkpoint handler:
+//! `NOACheckpointLocalStore` unit tests and `NOACheckpointHandler<K>` integration tests.
 
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use dwallet_mpc_types::dwallet_mpc::{
-        DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
-    };
-    use ika_types::message::DWalletCheckpointMessageKind;
+    use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
     use ika_types::noa_checkpoint::{
         self, NOACheckpointKind, NOACheckpointKindName, NOACheckpointMessage, SuiChainContext,
     };
-    use tokio::sync::mpsc;
 
-    use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
+    use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
     use crate::noa_checkpoints::{
-        LogOnlyChainSubmitter, NOACheckpointLocalStore, NOACheckpointPipeline,
+        LogOnlyChainSubmitter, NOACheckpointHandler, NOACheckpointLocalStore,
     };
 
     fn test_session_id() -> SessionIdentifier {
@@ -290,117 +286,62 @@ mod tests {
     }
 
     // =========================================================================
-    // NOACheckpointPipeline async tests
+    // NOACheckpointHandler tests
     // =========================================================================
 
-    /// Helper to create a pipeline and its channel handles for testing.
-    fn create_test_pipeline<K: NOACheckpointKind>() -> (
-        NOACheckpointPipeline<K>,
-        mpsc::Sender<(
-            Vec<K::MessageKind>,
-            <K::Destination as noa_checkpoint::ChainDestination>::Context,
-        )>,
-        mpsc::Sender<NetworkOwnedAddressSignOutput>,
-        mpsc::Sender<noa_checkpoint::NOACheckpointCommand<K::Destination>>,
-        mpsc::UnboundedReceiver<NetworkOwnedAddressSignRequest>,
-        mpsc::UnboundedReceiver<noa_checkpoint::NOACheckpointTxObservation>,
-        Arc<AtomicBool>,
-    ) {
-        let (msg_tx, msg_rx) = mpsc::channel(16);
-        let (sign_out_tx, sign_out_rx) = mpsc::channel(16);
-        let (cmd_tx, cmd_rx) = mpsc::channel(16);
-        let (sign_req_tx, sign_req_rx) = mpsc::unbounded_channel();
-        let (obs_tx, obs_rx) = mpsc::unbounded_channel();
+    /// Helper to create a handler for testing.
+    fn create_test_handler<K: NOACheckpointKind>() -> NOACheckpointHandler<K> {
         let flag = Arc::new(AtomicBool::new(true));
-
-        let pipeline = NOACheckpointPipeline::<K>::new(
-            msg_rx,
-            sign_out_rx,
-            cmd_rx,
-            sign_req_tx,
-            obs_tx,
+        NOACheckpointHandler::<K>::new(
             Arc::new(LogOnlyChainSubmitter),
             1, // epoch
             vec![],
-            flag.clone(),
-        );
-
-        (
-            pipeline,
-            msg_tx,
-            sign_out_tx,
-            cmd_tx,
-            sign_req_rx,
-            obs_rx,
             flag,
         )
     }
 
-    #[tokio::test]
-    async fn test_pipeline_sends_sign_requests() {
-        let (pipeline, msg_tx, _sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
-            create_test_pipeline::<noa_checkpoint::DWallet>();
-
-        let handle = tokio::spawn(pipeline.run());
+    #[test]
+    fn test_handler_sends_sign_requests() {
+        let mut handler = create_test_handler::<noa_checkpoint::DWallet>();
 
         let ctx = test_sui_chain_context();
-        msg_tx
-            .send((vec![], ctx.clone()))
-            .await
-            .expect("send should succeed");
-        msg_tx
-            .send((vec![], ctx))
-            .await
-            .expect("send should succeed");
+        let first_requests = handler.handle_new_checkpoint(vec![], ctx.clone());
+        let second_requests = handler.handle_new_checkpoint(vec![], ctx);
 
-        // Drop all senders to let the pipeline exit.
-        drop(msg_tx);
-        drop(_sign_out_tx);
-        drop(_cmd_tx);
-        handle.await.expect("pipeline should complete");
+        assert_eq!(first_requests.len(), 1, "should have 1 sign request");
+        assert_eq!(second_requests.len(), 1, "should have 1 sign request");
 
-        let mut requests = Vec::new();
-        while let Ok(req) = sign_rx.try_recv() {
-            requests.push(req);
-        }
-        assert_eq!(requests.len(), 2, "should have 2 sign requests");
-
-        for req in &requests {
-            assert_eq!(req.curve, noa_checkpoint::DWallet::curve());
-            assert_eq!(
-                req.signature_algorithm,
-                noa_checkpoint::DWallet::signature_algorithm()
-            );
-            assert_eq!(req.hash_scheme, noa_checkpoint::DWallet::hash_scheme());
-        }
+        assert_eq!(first_requests[0].curve, noa_checkpoint::DWallet::curve());
+        assert_eq!(
+            first_requests[0].signature_algorithm,
+            noa_checkpoint::DWallet::signature_algorithm()
+        );
+        assert_eq!(
+            first_requests[0].hash_scheme,
+            noa_checkpoint::DWallet::hash_scheme()
+        );
 
         // Messages should be different (different sequence numbers → different signable bytes).
         assert_ne!(
-            requests[0].message, requests[1].message,
+            first_requests[0].message, second_requests[0].message,
             "different checkpoints should produce different tx bytes"
         );
     }
 
     #[tokio::test]
-    async fn test_pipeline_certifies_and_submits_to_chain() {
-        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
-            create_test_pipeline::<noa_checkpoint::DWallet>();
-
-        let handle = tokio::spawn(pipeline.run());
+    async fn test_handler_certifies_and_submits_to_chain() {
+        let mut handler = create_test_handler::<noa_checkpoint::DWallet>();
 
         // Send a checkpoint.
         let ctx = test_sui_chain_context();
-        msg_tx.send((vec![], ctx)).await.unwrap();
+        let requests = handler.handle_new_checkpoint(vec![], ctx);
+        assert_eq!(requests.len(), 1);
 
-        // Wait for the sign request to arrive.
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let req = sign_rx.try_recv().expect("should have a sign request");
+        let req = &requests[0];
 
         // Simulate MPC signing.
-        sign_out_tx
-            .send(NetworkOwnedAddressSignOutput {
+        handler
+            .handle_sign_output(NetworkOwnedAddressSignOutput {
                 session_identifier: test_session_id(),
                 message: req.message.clone(),
                 signature: b"mpc_signature".to_vec(),
@@ -408,48 +349,28 @@ mod tests {
                 signature_algorithm: req.signature_algorithm,
                 hash_scheme: req.hash_scheme,
             })
-            .await
-            .unwrap();
+            .await;
 
-        // Give the pipeline time to process.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        // Drop all senders to let the pipeline exit.
-        drop(msg_tx);
-        drop(sign_out_tx);
-        drop(_cmd_tx);
-        handle.await.unwrap();
+        // After sign output, the checkpoint should be certified and submitted.
+        // With LogOnlyChainSubmitter, it's immediately "executed".
     }
 
     #[tokio::test]
-    async fn test_end_to_end_pipeline() {
-        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
-            create_test_pipeline::<noa_checkpoint::DWallet>();
-
-        let handle = tokio::spawn(pipeline.run());
+    async fn test_end_to_end_handler() {
+        let mut handler = create_test_handler::<noa_checkpoint::DWallet>();
 
         // Send 3 checkpoints.
         let ctx = test_sui_chain_context();
+        let mut all_requests = Vec::new();
         for _ in 0..3 {
-            msg_tx.send((vec![], ctx.clone())).await.unwrap();
+            let requests = handler.handle_new_checkpoint(vec![], ctx.clone());
+            all_requests.extend(requests);
         }
+        assert_eq!(all_requests.len(), 3, "one sign request per checkpoint");
 
-        // Close msg channel so pipeline stops receiving new checkpoints.
-        drop(msg_tx);
-
-        // Wait for sign requests.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // Collect sign requests and respond.
-        let mut sign_requests = Vec::new();
-        while let Ok(req) = sign_rx.try_recv() {
-            sign_requests.push(req);
-        }
-        assert_eq!(sign_requests.len(), 3, "one sign request per checkpoint");
-
-        for req in &sign_requests {
-            sign_out_tx
-                .send(NetworkOwnedAddressSignOutput {
+        for req in &all_requests {
+            handler
+                .handle_sign_output(NetworkOwnedAddressSignOutput {
                     session_identifier: test_session_id(),
                     message: req.message.clone(),
                     signature: format!(
@@ -461,42 +382,26 @@ mod tests {
                     signature_algorithm: req.signature_algorithm,
                     hash_scheme: req.hash_scheme,
                 })
-                .await
-                .unwrap();
+                .await;
         }
-
-        // Give the pipeline time to process and close.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        drop(sign_out_tx);
-        drop(_cmd_tx);
-        handle.await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_end_to_end_system_checkpoint_pipeline() {
-        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
-            create_test_pipeline::<noa_checkpoint::System>();
-
-        let handle = tokio::spawn(pipeline.run());
+    async fn test_end_to_end_system_checkpoint_handler() {
+        let mut handler = create_test_handler::<noa_checkpoint::System>();
 
         // Send a system checkpoint with a real message.
-        msg_tx
-            .send((
-                vec![SystemCheckpointMessageKind::EndOfPublish],
-                test_sui_chain_context(),
-            ))
-            .await
-            .unwrap();
-        drop(msg_tx);
+        let requests = handler.handle_new_checkpoint(
+            vec![SystemCheckpointMessageKind::EndOfPublish],
+            test_sui_chain_context(),
+        );
+        assert_eq!(requests.len(), 1);
 
-        // Wait for sign request.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let req = sign_rx.try_recv().expect("should have a sign request");
+        let req = &requests[0];
         assert_eq!(req.curve, noa_checkpoint::System::curve());
 
-        sign_out_tx
-            .send(NetworkOwnedAddressSignOutput {
+        handler
+            .handle_sign_output(NetworkOwnedAddressSignOutput {
                 session_identifier: test_session_id(),
                 message: req.message.clone(),
                 signature: b"system_sig".to_vec(),
@@ -504,13 +409,7 @@ mod tests {
                 signature_algorithm: req.signature_algorithm,
                 hash_scheme: req.hash_scheme,
             })
-            .await
-            .unwrap();
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        drop(sign_out_tx);
-        drop(_cmd_tx);
-        handle.await.unwrap();
+            .await;
     }
 
     // =========================================================================
@@ -993,50 +892,26 @@ mod tests {
     }
 
     // =========================================================================
-    // Pipeline finalization flag tests
+    // Handler finalization flag tests
     // =========================================================================
 
-    #[tokio::test]
-    async fn test_pipeline_updates_finalized_flag() {
+    #[test]
+    fn test_handler_updates_finalized_flag() {
         let flag = Arc::new(AtomicBool::new(true));
-
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
-        let (_sign_out_tx, sign_out_rx) = mpsc::channel(16);
-        let (_cmd_tx, cmd_rx) = mpsc::channel(16);
-        let (sign_req_tx, _sign_req_rx) = mpsc::unbounded_channel();
-        let (obs_tx, _obs_rx) = mpsc::unbounded_channel();
-
-        let pipeline = NOACheckpointPipeline::<noa_checkpoint::DWallet>::new(
-            msg_rx,
-            sign_out_rx,
-            cmd_rx,
-            sign_req_tx,
-            obs_tx,
+        let mut handler = NOACheckpointHandler::<noa_checkpoint::DWallet>::new(
             Arc::new(LogOnlyChainSubmitter),
             1,
             vec![],
             flag.clone(),
         );
 
-        let handle = tokio::spawn(pipeline.run());
-
-        // Send a checkpoint — the pipeline will store it but flag should remain true
+        // Send a checkpoint — handler will store it but flag should remain true
         // (has_no_finalization_entries is true since no txs submitted to chain yet).
-        msg_tx
-            .send((vec![], test_sui_chain_context()))
-            .await
-            .unwrap();
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let _requests = handler.handle_new_checkpoint(vec![], test_sui_chain_context());
+        handler.update_finalized_flag();
         assert!(
             flag.load(Ordering::Acquire),
             "flag should be true before any chain submission"
         );
-
-        drop(msg_tx);
-        drop(_sign_out_tx);
-        drop(_cmd_tx);
-        handle.await.unwrap();
     }
 }

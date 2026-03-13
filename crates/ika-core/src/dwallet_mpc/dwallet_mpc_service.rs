@@ -24,6 +24,7 @@ use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
@@ -51,9 +52,9 @@ use ika_types::messages_dwallet_mpc::{
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
+use ika_types::noa_checkpoint;
 use ika_types::noa_checkpoint::{
-    NOACheckpointCommand, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
-    SuiChainObservation, SuiDestination,
+    NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext, SuiChainObservation,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -82,10 +83,6 @@ pub struct DWalletMPCService {
     dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
     dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
-    noa_dwallet_checkpoint_sender:
-        Option<tokio::sync::mpsc::Sender<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>>,
-    noa_system_checkpoint_sender:
-        Option<tokio::sync::mpsc::Sender<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
     end_of_publish: bool,
@@ -124,31 +121,24 @@ pub struct DWalletMPCService {
     buffered_noa_dwallet_messages: Vec<Vec<DWalletCheckpointMessageKind>>,
     /// Buffered system checkpoint messages waiting for context agreement.
     buffered_noa_system_messages: Vec<Vec<SystemCheckpointMessageKind>>,
-    /// Receiver for NOA checkpoint tx observations from finalizer tasks.
-    noa_observation_receiver: tokio::sync::mpsc::UnboundedReceiver<NOACheckpointTxObservation>,
     /// Buffered NOA checkpoint observations to include in the next status update.
     buffered_noa_observations: Vec<NOACheckpointTxObservation>,
-    /// Command sender for the DWallet NOA checkpoint finalizer.
-    noa_dwallet_command_sender:
-        Option<tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>>,
-    /// Command sender for the System NOA checkpoint finalizer.
-    noa_system_command_sender:
-        Option<tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>>,
+    /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
+    network_owned_address_sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+    /// DWallet checkpoint handler, driven directly by the service.
+    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::DWallet>>,
+    /// System checkpoint handler, driven directly by the service.
+    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::System>>,
 }
 
 impl DWalletMPCService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
         dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
-        noa_dwallet_checkpoint_sender: Option<
-            tokio::sync::mpsc::Sender<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>,
-        >,
-        noa_system_checkpoint_sender: Option<
-            tokio::sync::mpsc::Sender<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>,
-        >,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
@@ -160,13 +150,11 @@ impl DWalletMPCService {
             NetworkOwnedAddressSignRequest,
         >,
         network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
-        noa_observation_receiver: tokio::sync::mpsc::UnboundedReceiver<NOACheckpointTxObservation>,
-        noa_dwallet_command_sender: Option<
-            tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>,
+        network_owned_address_sign_output_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignOutput,
         >,
-        noa_system_command_sender: Option<
-            tokio::sync::mpsc::Sender<NOACheckpointCommand<SuiDestination>>,
-        >,
+        dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::DWallet>>,
+        system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::System>>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -205,8 +193,6 @@ impl DWalletMPCService {
             dwallet_submit_to_consensus: consensus_adapter,
             state,
             dwallet_checkpoint_service,
-            noa_dwallet_checkpoint_sender,
-            noa_system_checkpoint_sender,
             dwallet_mpc_manager,
             exit,
             end_of_publish: false,
@@ -229,10 +215,10 @@ impl DWalletMPCService {
             current_agreed_sui_chain_context: None,
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
-            noa_observation_receiver,
             buffered_noa_observations: Vec::new(),
-            noa_dwallet_command_sender,
-            noa_system_command_sender,
+            network_owned_address_sign_output_receiver,
+            dwallet_checkpoint_handler,
+            system_checkpoint_handler,
         }
     }
 
@@ -267,8 +253,6 @@ impl DWalletMPCService {
             dwallet_submit_to_consensus,
             state: authority_state,
             dwallet_checkpoint_service: checkpoint_service,
-            noa_dwallet_checkpoint_sender: None,
-            noa_system_checkpoint_sender: None,
             dwallet_mpc_manager: DWalletMPCManager::new(
                 authority_name,
                 Arc::new(committee.clone()),
@@ -305,10 +289,10 @@ impl DWalletMPCService {
             current_agreed_sui_chain_context: None,
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
-            noa_observation_receiver: tokio::sync::mpsc::unbounded_channel().1,
             buffered_noa_observations: Vec::new(),
-            noa_dwallet_command_sender: None,
-            noa_system_command_sender: None,
+            network_owned_address_sign_output_receiver: tokio::sync::mpsc::unbounded_channel().1,
+            dwallet_checkpoint_handler: None,
+            system_checkpoint_handler: None,
         };
 
         (
@@ -450,6 +434,8 @@ impl DWalletMPCService {
         let newly_instantiated_network_key_ids = self.process_consensus_rounds_from_storage().await;
 
         self.process_cryptographic_computations().await;
+        self.handle_noa_sign_outputs().await;
+        self.poll_noa_chain_status().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
 
@@ -464,7 +450,8 @@ impl DWalletMPCService {
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
             let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
             if self.submitted_noa_sign_messages.contains(&message_hash) {
-                info!(
+                error!(
+                    should_never_happen =? true,
                     message_len = request.message.len(),
                     curve = ?request.curve,
                     algorithm = ?request.signature_algorithm,
@@ -553,11 +540,6 @@ impl DWalletMPCService {
         // `current_agreed_sui_chain_context` never becomes Some. Wire up SuiSyncer.
         let sui_chain_observation: Option<SuiChainObservation> = None;
 
-        // Drain buffered NOA observations from the finalizer tasks.
-        while let Ok(obs) = self.noa_observation_receiver.try_recv() {
-            self.buffered_noa_observations.push(obs);
-        }
-
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
@@ -606,22 +588,30 @@ impl DWalletMPCService {
         }
     }
 
-    /// Dispatch NOA checkpoint commands to the appropriate finalizer tasks
+    /// Dispatch NOA checkpoint commands directly to the appropriate handler
     /// based on the quorum results from the current consensus round.
     fn dispatch_noa_commands(
-        &self,
+        &mut self,
         agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
     ) {
+        use ika_types::noa_checkpoint::NOACheckpointCommand;
+
         for tx_ref in &agreed_status.newly_finalized_tx_refs {
             let cmd = NOACheckpointCommand::MarkFinalized(tx_ref.clone());
-            let sender = match tx_ref.kind_name {
-                NOACheckpointKindName::DWallet => &self.noa_dwallet_command_sender,
-                NOACheckpointKindName::System => &self.noa_system_command_sender,
-            };
-            if let Some(s) = sender {
-                if let Err(e) = s.try_send(cmd) {
-                    error!(?tx_ref, error = ?e,
-                        "Failed to send NOA command to finalizer — channel full");
+            match tx_ref.kind_name {
+                NOACheckpointKindName::DWallet => {
+                    if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                        let requests = handler.handle_command(cmd);
+                        self.pending_network_owned_address_sign_requests
+                            .extend(requests);
+                    }
+                }
+                NOACheckpointKindName::System => {
+                    if let Some(ref mut handler) = self.system_checkpoint_handler {
+                        let requests = handler.handle_command(cmd);
+                        self.pending_network_owned_address_sign_requests
+                            .extend(requests);
+                    }
                 }
             }
         }
@@ -631,17 +621,49 @@ impl DWalletMPCService {
                     tx_ref: tx_ref.clone(),
                     context: ctx.clone(),
                 };
-                let sender = match tx_ref.kind_name {
-                    NOACheckpointKindName::DWallet => &self.noa_dwallet_command_sender,
-                    NOACheckpointKindName::System => &self.noa_system_command_sender,
-                };
-                if let Some(s) = sender {
-                    if let Err(e) = s.try_send(cmd) {
-                        error!(?tx_ref, error = ?e,
-                            "Failed to send NOA command to finalizer — channel full");
+                match tx_ref.kind_name {
+                    NOACheckpointKindName::DWallet => {
+                        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                            let requests = handler.handle_command(cmd);
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
+                        }
+                    }
+                    NOACheckpointKindName::System => {
+                        if let Some(ref mut handler) = self.system_checkpoint_handler {
+                            let requests = handler.handle_command(cmd);
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
+                        }
                     }
                 }
             }
+        }
+    }
+
+    /// Drain sign outputs from MPC manager and route to the appropriate handler.
+    async fn handle_noa_sign_outputs(&mut self) {
+        while let Ok(output) = self.network_owned_address_sign_output_receiver.try_recv() {
+            if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                handler.handle_sign_output(output.clone()).await;
+            }
+            if let Some(ref mut handler) = self.system_checkpoint_handler {
+                handler.handle_sign_output(output).await;
+            }
+        }
+    }
+
+    /// Poll chain status for all NOA checkpoint handlers and collect observations.
+    async fn poll_noa_chain_status(&mut self) {
+        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+            let observations = handler.poll_chain_status().await;
+            self.buffered_noa_observations.extend(observations);
+            handler.update_finalized_flag();
+        }
+        if let Some(ref mut handler) = self.system_checkpoint_handler {
+            let observations = handler.poll_chain_status().await;
+            self.buffered_noa_observations.extend(observations);
+            handler.update_finalized_flag();
         }
     }
 
@@ -1188,25 +1210,16 @@ impl DWalletMPCService {
                     }
 
                     if let Some(ref ctx) = self.current_agreed_sui_chain_context {
-                        if let Some(ref sender) = self.noa_dwallet_checkpoint_sender {
+                        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
                             for buffered in self.buffered_noa_dwallet_messages.drain(..) {
-                                if let Err(e) = sender.try_send((buffered, ctx.clone())) {
-                                    error!(
-                                        ?e,
-                                        ?consensus_round,
-                                        "failed to flush buffered dwallet checkpoint messages"
-                                    );
-                                }
+                                let requests = handler.handle_new_checkpoint(buffered, ctx.clone());
+                                self.pending_network_owned_address_sign_requests
+                                    .extend(requests);
                             }
-                            if let Err(e) =
-                                sender.try_send((checkpoint_messages.clone(), ctx.clone()))
-                            {
-                                error!(
-                                    ?e,
-                                    ?consensus_round,
-                                    "failed to send dwallet checkpoint messages to NOA submitter"
-                                );
-                            }
+                            let requests = handler
+                                .handle_new_checkpoint(checkpoint_messages.clone(), ctx.clone());
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
                         }
                     } else {
                         self.buffered_noa_dwallet_messages
@@ -1215,26 +1228,19 @@ impl DWalletMPCService {
                 }
 
                 if let Some(ref ctx) = self.current_agreed_sui_chain_context {
-                    if let Some(ref sender) = self.noa_system_checkpoint_sender {
+                    if let Some(ref mut handler) = self.system_checkpoint_handler {
                         for buffered in self.buffered_noa_system_messages.drain(..) {
-                            if let Err(e) = sender.try_send((buffered, ctx.clone())) {
-                                error!(
-                                    ?e,
-                                    ?consensus_round,
-                                    "failed to flush buffered system checkpoint messages"
-                                );
-                            }
+                            let requests = handler.handle_new_checkpoint(buffered, ctx.clone());
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
                         }
                         if !verified_system_checkpoint_messages.is_empty() {
-                            if let Err(e) =
-                                sender.try_send((verified_system_checkpoint_messages, ctx.clone()))
-                            {
-                                error!(
-                                    ?e,
-                                    ?consensus_round,
-                                    "failed to send system checkpoint messages to NOA submitter"
-                                );
-                            }
+                            let requests = handler.handle_new_checkpoint(
+                                verified_system_checkpoint_messages,
+                                ctx.clone(),
+                            );
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
                         }
                     }
                 } else if !verified_system_checkpoint_messages.is_empty() {

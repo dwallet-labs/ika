@@ -160,10 +160,12 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
 
 // === Marker types implementing NOACheckpointKind ===
 
+// FIXME: choose better name e.g. SuiDWalletCheckpointKind
 /// DWallet checkpoint kind — carries MPC session results.
 #[derive(Clone, Debug)]
 pub struct DWallet;
 
+// FIXME: choose better name like SuiSystemCheckpointKind
 /// System checkpoint kind — carries governance/config updates.
 #[derive(Clone, Debug)]
 pub struct System;

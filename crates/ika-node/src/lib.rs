@@ -100,7 +100,6 @@ pub struct ValidatorComponents {
     // Keeping the handle to the checkpoint service tasks to shut them down during reconfiguration.
     checkpoint_service_tasks: JoinSet<()>,
     system_checkpoint_service_tasks: JoinSet<()>,
-    noa_checkpoint_tasks: JoinSet<()>,
     checkpoint_metrics: Arc<DWalletCheckpointMetrics>,
     system_checkpoint_metrics: Arc<SystemCheckpointMetrics>,
     ika_tx_validator_metrics: Arc<IkaTxValidatorMetrics>,
@@ -149,7 +148,7 @@ use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointPipeline};
+use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -211,36 +210,6 @@ impl fmt::Debug for IkaNode {
 }
 
 const EVENTS_CHANNEL_BUFFER_SIZE: usize = 10_000;
-
-/// NOA checkpoint components returned for wiring into node startup.
-struct NOACheckpointComponents {
-    tasks: JoinSet<()>,
-    /// Sender for dwallet checkpoint messages bundled with chain context (None when NOA disabled).
-    noa_dwallet_checkpoint_sender: Option<
-        tokio::sync::mpsc::Sender<(
-            Vec<ika_types::message::DWalletCheckpointMessageKind>,
-            ika_types::noa_checkpoint::SuiChainContext,
-        )>,
-    >,
-    /// Sender for system checkpoint messages bundled with chain context (None when NOA disabled).
-    noa_system_checkpoint_sender: Option<
-        tokio::sync::mpsc::Sender<(
-            Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-            ika_types::noa_checkpoint::SuiChainContext,
-        )>,
-    >,
-    /// Receiver for NOA checkpoint observations from pipelines to MPC service.
-    noa_observation_receiver:
-        tokio::sync::mpsc::UnboundedReceiver<ika_types::noa_checkpoint::NOACheckpointTxObservation>,
-    /// Command sender for DWallet NOA checkpoint pipeline.
-    noa_dwallet_command_sender: tokio::sync::mpsc::Sender<
-        ika_types::noa_checkpoint::NOACheckpointCommand<ika_types::noa_checkpoint::SuiDestination>,
-    >,
-    /// Command sender for System NOA checkpoint pipeline.
-    noa_system_command_sender: tokio::sync::mpsc::Sender<
-        ika_types::noa_checkpoint::NOACheckpointCommand<ika_types::noa_checkpoint::SuiDestination>,
-    >,
-}
 
 impl IkaNode {
     pub async fn start(
@@ -990,9 +959,10 @@ impl IkaNode {
         sui_data_receivers: SuiDataReceivers,
         noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<ValidatorComponents> {
-        // Single channel for network-owned-address sign requests.
+        // Channel for network-owned-address sign requests (sender unused after
+        // pipeline→handler migration; receiver still drained by service loop).
         let (
-            network_owned_address_sign_request_sender,
+            _network_owned_address_sign_request_sender,
             network_owned_address_sign_request_receiver,
         ) = tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
         // Output channel: MPC service sends completed signatures here.
@@ -1000,25 +970,44 @@ impl IkaNode {
             tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
 
         // Start as true: at epoch start there are no checkpoints to finalize.
-        // The polling task (5s interval) will flip to false if checkpoints arrive.
-        // There is a <=5s window where the flag could be stale, but the epoch gate
+        // The service loop will flip to false if checkpoints arrive.
+        // There is a brief window where the flag could be stale, but the epoch gate
         // has other conditions (BLS checkpoints, consensus, etc.) that take longer.
         noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
 
-        // Start NOA checkpoint pipeline tasks and get senders for MPC service wiring.
-        let NOACheckpointComponents {
-            tasks: noa_checkpoint_tasks,
-            noa_dwallet_checkpoint_sender,
-            noa_system_checkpoint_sender,
-            noa_observation_receiver,
-            noa_dwallet_command_sender,
-            noa_system_command_sender,
-        } = Self::start_noa_checkpoint_tasks(
-            &epoch_store,
-            network_owned_address_sign_request_sender,
-            network_owned_address_sign_output_receiver,
-            noa_all_finalized.clone(),
-        );
+        // Create NOA checkpoint handlers (driven directly by DWalletMPCService).
+        let (dwallet_checkpoint_handler, system_checkpoint_handler) =
+            if epoch_store.protocol_config().noa_checkpoints() {
+                use ika_types::noa_checkpoint;
+
+                info!("Creating NOA checkpoint handlers");
+
+                warn!(
+                    "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
+                       Replace with actual chain submitter for production."
+                );
+                let dwallet_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::DWallet>> =
+                    Arc::new(LogOnlyChainSubmitter);
+                let system_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::System>> =
+                    Arc::new(LogOnlyChainSubmitter);
+
+                let dwallet_handler = NOACheckpointHandler::<noa_checkpoint::DWallet>::new(
+                    dwallet_chain_submitter,
+                    epoch_store.epoch(),
+                    vec![],
+                    noa_all_finalized.clone(),
+                );
+                let system_handler = NOACheckpointHandler::<noa_checkpoint::System>::new(
+                    system_chain_submitter,
+                    epoch_store.epoch(),
+                    vec![],
+                    noa_all_finalized.clone(),
+                );
+                (Some(dwallet_handler), Some(system_handler))
+            } else {
+                info!("NOA checkpoints disabled, skipping NOA checkpoint handlers");
+                (None, None)
+            };
 
         let bls_dwallet = Self::start_dwallet_checkpoint_service(
             config,
@@ -1079,8 +1068,6 @@ impl IkaNode {
             EpochStoreSubmitToConsensus::new(epoch_store.clone(), consensus_adapter.clone()),
             config.clone(),
             dwallet_checkpoint_service_notify,
-            noa_dwallet_checkpoint_sender,
-            noa_system_checkpoint_sender,
             dwallet_mpc_metrics.clone(),
             state.clone(),
             sui_data_receivers,
@@ -1090,9 +1077,9 @@ impl IkaNode {
             epoch_store.protocol_config().clone(),
             network_owned_address_sign_request_receiver,
             network_owned_address_sign_output_sender,
-            noa_observation_receiver,
-            Some(noa_dwallet_command_sender),
-            Some(noa_system_command_sender),
+            network_owned_address_sign_output_receiver,
+            dwallet_checkpoint_handler,
+            system_checkpoint_handler,
         );
 
         // create a new map that gets injected into both the consensus handler and the consensus adapter
@@ -1171,7 +1158,6 @@ impl IkaNode {
             consensus_adapter,
             checkpoint_service_tasks,
             system_checkpoint_service_tasks,
-            noa_checkpoint_tasks,
             checkpoint_metrics: dwallet_checkpoint_metrics,
             system_checkpoint_metrics,
             ika_tx_validator_metrics,
@@ -1292,121 +1278,6 @@ impl IkaNode {
             max_system_checkpoint_size_bytes,
             previous_epoch_last_system_checkpoint_sequence_number,
         ))
-    }
-
-    fn start_noa_checkpoint_tasks(
-        epoch_store: &Arc<AuthorityPerEpochStore>,
-        noa_sign_request_sender: tokio::sync::mpsc::UnboundedSender<NetworkOwnedAddressSignRequest>,
-        mut noa_sign_output_receiver: tokio::sync::mpsc::UnboundedReceiver<
-            NetworkOwnedAddressSignOutput,
-        >,
-        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
-    ) -> NOACheckpointComponents {
-        use ika_types::noa_checkpoint;
-
-        let mut tasks = JoinSet::new();
-
-        // Channels for observation/command flow between pipelines and MPC service.
-        let (obs_tx, obs_rx) =
-            tokio::sync::mpsc::unbounded_channel::<noa_checkpoint::NOACheckpointTxObservation>();
-        let (dwallet_cmd_tx, dwallet_cmd_rx) = tokio::sync::mpsc::channel::<
-            noa_checkpoint::NOACheckpointCommand<noa_checkpoint::SuiDestination>,
-        >(256);
-        let (system_cmd_tx, system_cmd_rx) = tokio::sync::mpsc::channel::<
-            noa_checkpoint::NOACheckpointCommand<noa_checkpoint::SuiDestination>,
-        >(256);
-
-        if !epoch_store.protocol_config().noa_checkpoints() {
-            info!("NOA checkpoints disabled, skipping NOA checkpoint tasks");
-            drop(noa_sign_output_receiver);
-            return NOACheckpointComponents {
-                tasks,
-                noa_dwallet_checkpoint_sender: None,
-                noa_system_checkpoint_sender: None,
-                noa_observation_receiver: obs_rx,
-                noa_dwallet_command_sender: dwallet_cmd_tx,
-                noa_system_command_sender: system_cmd_tx,
-            };
-        }
-
-        info!("Starting NOA checkpoint pipeline tasks");
-
-        let epoch = epoch_store.epoch();
-
-        // Bounded channels for broadcasting sign outputs to per-kind pipelines.
-        let (dwallet_output_tx, dwallet_output_rx) =
-            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
-        let (system_output_tx, system_output_rx) =
-            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
-
-        // Broadcast task: sends each sign output to both pipelines.
-        tasks.spawn(async move {
-            while let Some(output) = noa_sign_output_receiver.recv().await {
-                if let Err(e) = dwallet_output_tx.send(output.clone()).await {
-                    error!("Failed to broadcast NOA sign output to DWallet pipeline: {e}");
-                }
-                if let Err(e) = system_output_tx.send(output).await {
-                    error!("Failed to broadcast NOA sign output to System pipeline: {e}");
-                }
-            }
-        });
-
-        // Message channels from MPC service to pipelines.
-        let (noa_dwallet_tx, noa_dwallet_rx) = tokio::sync::mpsc::channel::<(
-            Vec<ika_types::message::DWalletCheckpointMessageKind>,
-            ika_types::noa_checkpoint::SuiChainContext,
-        )>(256);
-        let (noa_system_tx, noa_system_rx) = tokio::sync::mpsc::channel::<(
-            Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
-            ika_types::noa_checkpoint::SuiChainContext,
-        )>(256);
-
-        // Chain submitters.
-        warn!(
-            "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
-               Replace with actual chain submitter for production."
-        );
-        let dwallet_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::DWallet>> =
-            Arc::new(LogOnlyChainSubmitter);
-        let system_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::System>> =
-            Arc::new(LogOnlyChainSubmitter);
-
-        // DWallet pipeline.
-        let dwallet_pipeline = NOACheckpointPipeline::<noa_checkpoint::DWallet>::new(
-            noa_dwallet_rx,
-            dwallet_output_rx,
-            dwallet_cmd_rx,
-            noa_sign_request_sender.clone(),
-            obs_tx.clone(),
-            dwallet_chain_submitter,
-            epoch,
-            vec![],
-            noa_all_finalized.clone(),
-        );
-        tasks.spawn(dwallet_pipeline.run());
-
-        // System pipeline.
-        let system_pipeline = NOACheckpointPipeline::<noa_checkpoint::System>::new(
-            noa_system_rx,
-            system_output_rx,
-            system_cmd_rx,
-            noa_sign_request_sender.clone(),
-            obs_tx,
-            system_chain_submitter,
-            epoch,
-            vec![],
-            noa_all_finalized,
-        );
-        tasks.spawn(system_pipeline.run());
-
-        NOACheckpointComponents {
-            tasks,
-            noa_dwallet_checkpoint_sender: Some(noa_dwallet_tx),
-            noa_system_checkpoint_sender: Some(noa_system_tx),
-            noa_observation_receiver: obs_rx,
-            noa_dwallet_command_sender: dwallet_cmd_tx,
-            noa_system_command_sender: system_cmd_tx,
-        }
     }
 
     fn construct_consensus_adapter(
@@ -1607,7 +1478,6 @@ impl IkaNode {
                 consensus_adapter,
                 mut checkpoint_service_tasks,
                 mut system_checkpoint_service_tasks,
-                mut noa_checkpoint_tasks,
                 checkpoint_metrics,
                 system_checkpoint_metrics,
                 ika_tx_validator_metrics,
@@ -1621,7 +1491,6 @@ impl IkaNode {
                 // may wait on transactions while consensus on peers have already shut down.
                 checkpoint_service_tasks.abort_all();
                 system_checkpoint_service_tasks.abort_all();
-                noa_checkpoint_tasks.abort_all();
 
                 if let Err(err) = dwallet_mpc_service_exit.send(()) {
                     warn!(error=?err, "failed to send exit signal to dwallet mpc service");
