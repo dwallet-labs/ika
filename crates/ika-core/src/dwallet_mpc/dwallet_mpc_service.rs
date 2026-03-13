@@ -127,9 +127,9 @@ pub struct DWalletMPCService {
     /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
     network_owned_address_sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
     /// DWallet checkpoint handler, driven directly by the service.
-    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWallet>>,
+    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>>,
     /// System checkpoint handler, driven directly by the service.
-    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystem>>,
+    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
 }
 
 impl DWalletMPCService {
@@ -154,8 +154,12 @@ impl DWalletMPCService {
         network_owned_address_sign_output_receiver: UnboundedReceiver<
             NetworkOwnedAddressSignOutput,
         >,
-        dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWallet>>,
-        system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystem>>,
+        dwallet_checkpoint_handler: Option<
+            NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>,
+        >,
+        system_checkpoint_handler: Option<
+            NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>,
+        >,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 

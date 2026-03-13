@@ -976,39 +976,42 @@ impl IkaNode {
         noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
 
         // Create NOA checkpoint handlers (driven directly by DWalletMPCService).
-        let (dwallet_checkpoint_handler, system_checkpoint_handler) =
-            if epoch_store.protocol_config().noa_checkpoints() {
-                use ika_types::noa_checkpoint;
+        let (dwallet_checkpoint_handler, system_checkpoint_handler) = if epoch_store
+            .protocol_config()
+            .noa_checkpoints()
+        {
+            use ika_types::noa_checkpoint;
 
-                info!("Creating NOA checkpoint handlers");
+            info!("Creating NOA checkpoint handlers");
 
-                warn!(
-                    "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
+            warn!(
+                "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
                        Replace with actual chain submitter for production."
-                );
-                let dwallet_chain_submitter: Arc<
-                    dyn NOAChainSubmitter<noa_checkpoint::SuiDWallet>,
-                > = Arc::new(LogOnlyChainSubmitter);
-                let system_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::SuiSystem>> =
-                    Arc::new(LogOnlyChainSubmitter);
+            );
+            let dwallet_chain_submitter: Arc<
+                dyn NOAChainSubmitter<noa_checkpoint::SuiDWalletCheckpoint>,
+            > = Arc::new(LogOnlyChainSubmitter);
+            let system_chain_submitter: Arc<
+                dyn NOAChainSubmitter<noa_checkpoint::SuiSystemCheckpoint>,
+            > = Arc::new(LogOnlyChainSubmitter);
 
-                let dwallet_handler = NOACheckpointHandler::<noa_checkpoint::SuiDWallet>::new(
-                    dwallet_chain_submitter,
-                    epoch_store.epoch(),
-                    vec![],
-                    noa_all_finalized.clone(),
-                );
-                let system_handler = NOACheckpointHandler::<noa_checkpoint::SuiSystem>::new(
-                    system_chain_submitter,
-                    epoch_store.epoch(),
-                    vec![],
-                    noa_all_finalized.clone(),
-                );
-                (Some(dwallet_handler), Some(system_handler))
-            } else {
-                info!("NOA checkpoints disabled, skipping NOA checkpoint handlers");
-                (None, None)
-            };
+            let dwallet_handler = NOACheckpointHandler::<noa_checkpoint::SuiDWalletCheckpoint>::new(
+                dwallet_chain_submitter,
+                epoch_store.epoch(),
+                vec![],
+                noa_all_finalized.clone(),
+            );
+            let system_handler = NOACheckpointHandler::<noa_checkpoint::SuiSystemCheckpoint>::new(
+                system_chain_submitter,
+                epoch_store.epoch(),
+                vec![],
+                noa_all_finalized.clone(),
+            );
+            (Some(dwallet_handler), Some(system_handler))
+        } else {
+            info!("NOA checkpoints disabled, skipping NOA checkpoint handlers");
+            (None, None)
+        };
 
         let bls_dwallet = Self::start_dwallet_checkpoint_service(
             config,

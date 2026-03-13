@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_local_store_single_tx_checkpoint() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn test_local_store_multi_tx_checkpoint() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiSystem>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiSystemCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 2,
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_local_store_multiple_checkpoints() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         // Insert two checkpoints with different sequence numbers.
         let first = NOACheckpointMessage {
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_local_store_certified_stored_by_add_signature() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_local_store_cleanup_after_certification() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_local_store_duplicate_signature_ignored() {
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_handler_sends_sign_requests() {
-        let mut handler = create_test_handler::<noa_checkpoint::SuiDWallet>();
+        let mut handler = create_test_handler::<noa_checkpoint::SuiDWalletCheckpoint>();
 
         let ctx = test_sui_chain_context();
         let first_requests = handler.handle_new_checkpoint(vec![], ctx.clone());
@@ -334,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handler_certifies_and_submits_to_chain() {
-        let mut handler = create_test_handler::<noa_checkpoint::SuiDWallet>();
+        let mut handler = create_test_handler::<noa_checkpoint::SuiDWalletCheckpoint>();
 
         // Send a checkpoint.
         let ctx = test_sui_chain_context();
@@ -361,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_to_end_handler() {
-        let mut handler = create_test_handler::<noa_checkpoint::SuiDWallet>();
+        let mut handler = create_test_handler::<noa_checkpoint::SuiDWalletCheckpoint>();
 
         // Send 3 checkpoints.
         let ctx = test_sui_chain_context();
@@ -392,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_to_end_system_checkpoint_handler() {
-        let mut handler = create_test_handler::<noa_checkpoint::SuiSystem>();
+        let mut handler = create_test_handler::<noa_checkpoint::SuiSystemCheckpoint>();
 
         // Send a system checkpoint with a real message.
         let requests = handler.handle_new_checkpoint(
@@ -424,7 +424,7 @@ mod tests {
     fn test_finalization_tracking() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -485,7 +485,7 @@ mod tests {
     fn test_all_finalized_multiple_txs() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -527,7 +527,7 @@ mod tests {
     fn test_epoch_change_blocked_until_finalized() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiSystem>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiSystemCheckpoint>::new();
 
         // No entries = no finalization entries, should not block.
         assert!(store.has_no_finalization_entries());
@@ -562,7 +562,7 @@ mod tests {
     fn test_finalization_mark_unknown_ref_is_noop() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let unknown_ref = NOACheckpointTxRef {
             kind_name: NOACheckpointKindName::SuiDWallet,
@@ -585,7 +585,7 @@ mod tests {
     fn test_retry_pending_status() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -645,7 +645,7 @@ mod tests {
         let submitter = LogOnlyChainSubmitter;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let status = rt.block_on(async {
-            <LogOnlyChainSubmitter as NOAChainSubmitter<noa_checkpoint::SuiDWallet>>::check_tx_status(
+            <LogOnlyChainSubmitter as NOAChainSubmitter<noa_checkpoint::SuiDWalletCheckpoint>>::check_tx_status(
                 &submitter, b"any",
             )
             .await
@@ -658,7 +658,7 @@ mod tests {
     fn test_initiate_retry_reregisters_pending() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         // Insert a checkpoint and certify it.
         let checkpoint = NOACheckpointMessage {
@@ -721,7 +721,7 @@ mod tests {
     fn test_retry_round_persisted_in_store() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -767,7 +767,7 @@ mod tests {
     fn test_partial_finalization_retry() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         // 3-tx checkpoint.
         let checkpoint = NOACheckpointMessage {
@@ -862,7 +862,7 @@ mod tests {
     fn test_confirmed_locally_skips_failure_quorum_check() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn test_handler_updates_finalized_flag() {
         let flag = Arc::new(AtomicBool::new(true));
-        let mut handler = NOACheckpointHandler::<noa_checkpoint::SuiDWallet>::new(
+        let mut handler = NOACheckpointHandler::<noa_checkpoint::SuiDWalletCheckpoint>::new(
             Arc::new(LogOnlyChainSubmitter),
             1,
             vec![],

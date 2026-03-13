@@ -484,7 +484,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .collect();
 
         info!(
-            kind = K::NAME,
+            kind = %K::KIND_NAME,
             sequence_number = seq,
             epoch = self.epoch,
             tx_count = tx_data.len(),
@@ -521,7 +521,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
         let seq = certified.checkpoint.sequence_number;
 
         info!(
-            kind = K::NAME,
+            kind = %K::KIND_NAME,
             sequence_number = seq,
             epoch = certified.checkpoint.epoch,
             messages_count = certified.checkpoint.messages.len(),
@@ -578,7 +578,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                         match self.chain_submitter.check_tx_status(&chain_tx_id).await {
                             Ok(TxExecutionStatus::Executed) => {
                                 info!(
-                                    kind = K::NAME,
+                                    kind = %K::KIND_NAME,
                                     sequence_number = tx_ref.sequence_number,
                                     tx_index = tx_ref.tx_index,
                                     "NOA checkpoint tx confirmed on-chain, sending finalization observation"
@@ -594,7 +594,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                                 if !self.store.has_voted_failed(&tx_ref) {
                                     let retry_round = self.store.get_retry_round(&tx_ref);
                                     warn!(
-                                        kind = K::NAME,
+                                        kind = %K::KIND_NAME,
                                         sequence_number = tx_ref.sequence_number,
                                         tx_index = tx_ref.tx_index,
                                         retry_round,
@@ -610,7 +610,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                             }
                             Err(e) => {
                                 warn!(
-                                    kind = K::NAME,
+                                    kind = %K::KIND_NAME,
                                     sequence_number = tx_ref.sequence_number,
                                     tx_index = tx_ref.tx_index,
                                     error = %e,
@@ -651,7 +651,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             Some(c) => c,
             None => {
                 warn!(
-                    kind = K::NAME,
+                    kind = %K::KIND_NAME,
                     sequence_number = seq,
                     "Cannot submit: checkpoint not certified"
                 );
@@ -675,7 +675,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             match self.chain_submitter.submit_tx(tx_bytes, signature).await {
                 Ok(chain_tx_id) => {
                     info!(
-                        kind = K::NAME,
+                        kind = %K::KIND_NAME,
                         sequence_number = seq,
                         tx_index,
                         "Submitted NOA checkpoint tx to chain"
@@ -684,7 +684,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                 }
                 Err(e) => {
                     error!(
-                        kind = K::NAME,
+                        kind = %K::KIND_NAME,
                         sequence_number = seq,
                         tx_index,
                         error = %e,
@@ -708,7 +708,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .initiate_tx_retry(tx_ref, context, &self.noa_public_key)?;
 
         info!(
-            kind = K::NAME,
+            kind = %K::KIND_NAME,
             sequence_number = tx_ref.sequence_number,
             tx_index = tx_ref.tx_index,
             "Initiating per-tx retry: 2f+1 failure quorum reached"
@@ -731,7 +731,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
         match self.chain_submitter.submit_tx(&tx_bytes, &signature).await {
             Ok(chain_tx_id) => {
                 info!(
-                    kind = K::NAME,
+                    kind = %K::KIND_NAME,
                     sequence_number = tx_ref.sequence_number,
                     tx_index = tx_ref.tx_index,
                     "Submitted retry tx to chain"
@@ -740,7 +740,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             }
             Err(e) => {
                 error!(
-                    kind = K::NAME,
+                    kind = %K::KIND_NAME,
                     sequence_number = tx_ref.sequence_number,
                     tx_index = tx_ref.tx_index,
                     error = %e,
