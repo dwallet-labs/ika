@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use ika_types::noa_checkpoint::{
-    CertifiedNOACheckpointMessage, CounterpartyChain, NOACheckpointCommand, NOACheckpointKind,
-    NOACheckpointMessage, NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus,
+    CertifiedNOACheckpointMessage, CounterpartyChain, NOACheckpointKind, NOACheckpointMessage,
+    NOACheckpointResolution, NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus,
 };
 use sui_types::base_types::EpochId;
 use tracing::{error, info, warn};
@@ -535,18 +535,18 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
         self.submit_certified_checkpoint(seq).await;
     }
 
-    /// Apply a quorum command (MarkFinalized or RetryWithContext).
+    /// Apply a consensus quorum resolution (Finalized or RetryWithContext).
     /// Returns sign requests for retries.
-    pub fn handle_command(
+    pub fn handle_resolution(
         &mut self,
-        cmd: NOACheckpointCommand<K::Counterparty>,
+        resolution: NOACheckpointResolution<K::Counterparty>,
     ) -> Vec<NetworkOwnedAddressSignRequest> {
-        match cmd {
-            NOACheckpointCommand::MarkFinalized(tx_ref) => {
+        match resolution {
+            NOACheckpointResolution::Finalized(tx_ref) => {
                 self.store.mark_finalized(&tx_ref);
                 vec![]
             }
-            NOACheckpointCommand::RetryWithContext { tx_ref, context } => {
+            NOACheckpointResolution::RetryWithContext { tx_ref, context } => {
                 if self.store.get_status(&tx_ref) == Some(NOACheckpointTxStatus::Finalized) {
                     return vec![];
                 }
@@ -621,7 +621,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
                     }
                 }
                 NOACheckpointTxStatus::ConfirmedLocally => {
-                    // Waiting for MarkFinalized command from MPC service — no-op.
+                    // Waiting for Finalized resolution from MPC service — no-op.
                 }
                 NOACheckpointTxStatus::RetryPending => {
                     // Re-signed? Submit to chain.

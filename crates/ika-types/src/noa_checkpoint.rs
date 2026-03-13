@@ -17,7 +17,6 @@ use std::hash::Hash;
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display,
 )]
-#[strum(serialize_all = "lowercase")]
 pub enum CounterpartyChainKind {
     Sui,
 }
@@ -129,7 +128,6 @@ impl CounterpartyChain for SuiCounterpartyChain {
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display,
 )]
-#[strum(serialize_all = "snake_case")]
 pub enum NOACheckpointKindName {
     SuiDWallet,
     SuiSystem,
@@ -297,10 +295,10 @@ pub enum NOACheckpointTxObservation {
     Failed(NOACheckpointTxRef, u32), // (tx_ref, retry_round)
 }
 
-/// Command from MPC service to finalizer after consensus quorum resolution.
+/// Consensus quorum resolution for an NOA checkpoint transaction.
 #[derive(Clone, Debug)]
-pub enum NOACheckpointCommand<C: CounterpartyChain> {
-    MarkFinalized(NOACheckpointTxRef),
+pub enum NOACheckpointResolution<C: CounterpartyChain> {
+    Finalized(NOACheckpointTxRef),
     RetryWithContext {
         tx_ref: NOACheckpointTxRef,
         context: C::Context,

@@ -593,27 +593,27 @@ impl DWalletMPCService {
         }
     }
 
-    /// Dispatch NOA checkpoint commands directly to the appropriate handler
+    /// Dispatch NOA checkpoint resolutions directly to the appropriate handler
     /// based on the quorum results from the current consensus round.
-    fn dispatch_noa_commands(
+    fn dispatch_noa_resolutions(
         &mut self,
         agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
     ) {
-        use ika_types::noa_checkpoint::NOACheckpointCommand;
+        use ika_types::noa_checkpoint::NOACheckpointResolution;
 
         for tx_ref in &agreed_status.newly_finalized_tx_refs {
-            let cmd = NOACheckpointCommand::MarkFinalized(tx_ref.clone());
+            let resolution = NOACheckpointResolution::Finalized(tx_ref.clone());
             match tx_ref.kind_name {
                 NOACheckpointKindName::SuiDWallet => {
                     if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
-                        let requests = handler.handle_command(cmd);
+                        let requests = handler.handle_resolution(resolution);
                         self.pending_network_owned_address_sign_requests
                             .extend(requests);
                     }
                 }
                 NOACheckpointKindName::SuiSystem => {
                     if let Some(ref mut handler) = self.system_checkpoint_handler {
-                        let requests = handler.handle_command(cmd);
+                        let requests = handler.handle_resolution(resolution);
                         self.pending_network_owned_address_sign_requests
                             .extend(requests);
                     }
@@ -622,21 +622,21 @@ impl DWalletMPCService {
         }
         for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
             if let Some(ctx) = &self.current_agreed_sui_chain_context {
-                let cmd = NOACheckpointCommand::RetryWithContext {
+                let resolution = NOACheckpointResolution::RetryWithContext {
                     tx_ref: tx_ref.clone(),
                     context: ctx.clone(),
                 };
                 match tx_ref.kind_name {
                     NOACheckpointKindName::SuiDWallet => {
                         if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
-                            let requests = handler.handle_command(cmd);
+                            let requests = handler.handle_resolution(resolution);
                             self.pending_network_owned_address_sign_requests
                                 .extend(requests);
                         }
                     }
                     NOACheckpointKindName::SuiSystem => {
                         if let Some(ref mut handler) = self.system_checkpoint_handler {
-                            let requests = handler.handle_command(cmd);
+                            let requests = handler.handle_resolution(resolution);
                             self.pending_network_owned_address_sign_requests
                                 .extend(requests);
                         }
@@ -981,8 +981,8 @@ impl DWalletMPCService {
                 self.current_agreed_sui_chain_context =
                     agreed_status.agreed_sui_chain_context.clone();
 
-                // Dispatch NOA checkpoint commands to finalizers.
-                self.dispatch_noa_commands(&agreed_status);
+                // Dispatch NOA checkpoint resolutions to finalizers.
+                self.dispatch_noa_resolutions(&agreed_status);
 
                 // Take only the requests we haven't agreed on yet, and haven't processed.
                 let new_global_presign_requests: Vec<_> = agreed_status
