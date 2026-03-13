@@ -253,10 +253,15 @@ All `*InParticularState` methods accept:
 ## UserShareEncryptionKeys
 
 ```typescript
-// Create from seed
+import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
+
+// Create from seed (correct curve byte in hash)
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, curve);
 
-// Serialize/deserialize for storage
+// Legacy: for keys registered before the curve-byte fix (non-SECP256K1 only)
+const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(seed, curve);
+
+// Serialize/deserialize for storage (preserves legacy/fixed distinction)
 const bytes = keys.toShareEncryptionKeysBytes();
 const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(bytes);
 
@@ -266,12 +271,15 @@ keys.getSigningPublicKeyBytes(); // Ed25519 public key bytes
 keys.encryptionKey;              // Class-groups public key
 keys.decryptionKey;              // Class-groups private key
 keys.curve;                      // Curve used
+keys.legacyHash;                 // true if legacy hash derivation
 
 // Operations
 await keys.getEncryptionKeySignature();     // Proof of ownership
 await keys.getUserOutputSignature(dWallet, userPublicOutput); // Authorize dWallet
 await keys.decryptUserShare(dWallet, encShare, pp); // Decrypt secret share
 ```
+
+**Legacy Hash:** The legacy hash had a bug where the curve byte was always 0 regardless of curve (only affects non-SECP256K1 curves). If you registered encryption keys before the fix with a non-SECP256K1 curve, use `fromRootSeedKeyLegacyHash` to reproduce the legacy keys.
 
 ## Network Config
 
