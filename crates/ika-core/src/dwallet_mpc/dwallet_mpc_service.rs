@@ -1502,20 +1502,29 @@ impl DWalletMPCService {
                 ProtocolData::InternalPresign {
                     data,
                     dwallet_network_encryption_key_id,
-                } => Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
-                    self.name,
-                    session_identifier,
-                    DWalletInternalMPCOutputKind::InternalPresign {
-                        output,
-                        curve: data.curve,
-                        signature_algorithm: data.signature_algorithm,
-                        session_sequence_number: session_request
-                            .session_sequence_number
-                            .unwrap_or(0),
-                        dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
-                    },
-                    malicious_authorities,
-                )),
+                } => {
+                    if session_request.session_sequence_number.is_none() {
+                        error!(
+                            should_never_happen = true,
+                            ?session_identifier,
+                            "internal presign session missing session_sequence_number",
+                        );
+                    }
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalPresign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .expect("internal presign sessions always have a session sequence number"),
+                            dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
+                        },
+                        malicious_authorities,
+                    ))
+                }
                 _ => {
                     error!(
                         should_never_happen =? true,

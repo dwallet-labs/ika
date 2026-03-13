@@ -526,12 +526,18 @@ impl DWalletMPCManager {
         if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
             request.protocol_data.is_global_presign()
         {
+            if request.session_sequence_number.is_none() {
+                error!(
+                    should_never_happen = true,
+                    session_identifier = ?request.session_identifier,
+                    "internal presign session missing session_sequence_number",
+                );
+            }
             let global_presign_request = GlobalPresignRequest {
                 session_identifier: request.session_identifier,
-                // Safe: NOA sign sessions use None (mapped to 0 here), but they have a distinct
-                // SessionType, so session identifiers never collide with Sui-originated sessions
-                // at sequence_number 0.
-                session_sequence_number: request.session_sequence_number.unwrap_or(0),
+                session_sequence_number: request
+                    .session_sequence_number
+                    .expect("internal presign sessions always have a session sequence number"),
                 presign_id,
                 curve,
                 signature_algorithm,

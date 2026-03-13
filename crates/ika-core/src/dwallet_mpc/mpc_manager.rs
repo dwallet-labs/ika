@@ -1175,7 +1175,16 @@ impl DWalletMPCManager {
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
-                        request.session_sequence_number.unwrap_or(0)
+                        if request.session_sequence_number.is_none() {
+                            error!(
+                                should_never_happen = true,
+                                session_identifier = ?request.session_identifier,
+                                "User session missing session_sequence_number",
+                            );
+                        }
+                        request
+                            .session_sequence_number
+                            .expect("User sessions always have a session sequence number")
                             <= self.last_session_to_complete_in_current_epoch
                     }
                     SessionType::System => true,
