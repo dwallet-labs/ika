@@ -309,7 +309,7 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
                             .is_some_and(|s| *s != NOACheckpointTxStatus::Finalized)
                     })
                     .map(move |(idx, _)| NOACheckpointTxRef {
-                        kind_name: K::kind_name(),
+                        kind_name: K::KIND_NAME,
                         sequence_number: seq,
                         tx_index: idx as u32,
                         epoch: entry.checkpoint.epoch,
@@ -498,9 +498,9 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .into_iter()
             .map(|tx_bytes| NetworkOwnedAddressSignRequest {
                 message: tx_bytes,
-                curve: K::curve(),
-                signature_algorithm: K::signature_algorithm(),
-                hash_scheme: K::hash_scheme(),
+                curve: K::CURVE,
+                signature_algorithm: K::SIGNATURE_ALGORITHM,
+                hash_scheme: K::HASH_SCHEME,
             })
             .collect()
     }
@@ -666,7 +666,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .enumerate()
         {
             let tx_ref = NOACheckpointTxRef {
-                kind_name: K::kind_name(),
+                kind_name: K::KIND_NAME,
                 sequence_number: seq,
                 tx_index: tx_index as u32,
                 epoch: self.epoch,
@@ -716,9 +716,9 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
 
         Some(NetworkOwnedAddressSignRequest {
             message: tx_bytes,
-            curve: K::curve(),
-            signature_algorithm: K::signature_algorithm(),
-            hash_scheme: K::hash_scheme(),
+            curve: K::CURVE,
+            signature_algorithm: K::SIGNATURE_ALGORITHM,
+            hash_scheme: K::HASH_SCHEME,
         })
     }
 

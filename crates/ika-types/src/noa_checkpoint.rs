@@ -104,7 +104,7 @@ impl ChainDestination for SuiDestination {
 
 /// Enum identifying a checkpoint kind. Used in `NOACheckpointTxRef` for type-safe,
 /// serialization-stable identification instead of raw strings.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NOACheckpointKindName {
     SuiDWallet,
     SuiSystem,
@@ -130,16 +130,16 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     const NAME: &'static str;
 
     /// Typed identifier for this checkpoint kind, used in `NOACheckpointTxRef`.
-    fn kind_name() -> NOACheckpointKindName;
+    const KIND_NAME: NOACheckpointKindName;
 
     /// The curve used for NOA MPC signing.
-    fn curve() -> DWalletCurve;
+    const CURVE: DWalletCurve;
 
     /// The signature algorithm for NOA signing.
-    fn signature_algorithm() -> DWalletSignatureAlgorithm;
+    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm;
 
     /// The hash scheme for NOA signing.
-    fn hash_scheme() -> DWalletHashScheme;
+    const HASH_SCHEME: DWalletHashScheme;
 
     /// Split checkpoint messages into per-tx groups.
     /// Pure function of messages + size limits.
@@ -173,21 +173,10 @@ impl NOACheckpointKind for SuiDWallet {
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_dwallet_checkpoint";
 
-    fn kind_name() -> NOACheckpointKindName {
-        NOACheckpointKindName::SuiDWallet
-    }
-
-    fn curve() -> DWalletCurve {
-        DWalletCurve::Curve25519
-    }
-
-    fn signature_algorithm() -> DWalletSignatureAlgorithm {
-        DWalletSignatureAlgorithm::EdDSA
-    }
-
-    fn hash_scheme() -> DWalletHashScheme {
-        DWalletHashScheme::SHA512
-    }
+    const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiDWallet;
+    const CURVE: DWalletCurve = DWalletCurve::Curve25519;
+    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm = DWalletSignatureAlgorithm::EdDSA;
+    const HASH_SCHEME: DWalletHashScheme = DWalletHashScheme::SHA512;
 
     fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
         // Single tx for now; future: split by 128KB limit.
@@ -215,21 +204,10 @@ impl NOACheckpointKind for SuiSystem {
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_system_checkpoint";
 
-    fn kind_name() -> NOACheckpointKindName {
-        NOACheckpointKindName::SuiSystem
-    }
-
-    fn curve() -> DWalletCurve {
-        DWalletCurve::Curve25519
-    }
-
-    fn signature_algorithm() -> DWalletSignatureAlgorithm {
-        DWalletSignatureAlgorithm::EdDSA
-    }
-
-    fn hash_scheme() -> DWalletHashScheme {
-        DWalletHashScheme::SHA512
-    }
+    const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiSystem;
+    const CURVE: DWalletCurve = DWalletCurve::Curve25519;
+    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm = DWalletSignatureAlgorithm::EdDSA;
+    const HASH_SCHEME: DWalletHashScheme = DWalletHashScheme::SHA512;
 
     fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
         // Single tx for now; future: split by 128KB limit.

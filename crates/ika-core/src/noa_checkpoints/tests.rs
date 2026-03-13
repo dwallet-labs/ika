@@ -311,14 +311,14 @@ mod tests {
         assert_eq!(first_requests.len(), 1, "should have 1 sign request");
         assert_eq!(second_requests.len(), 1, "should have 1 sign request");
 
-        assert_eq!(first_requests[0].curve, noa_checkpoint::SuiDWallet::curve());
+        assert_eq!(first_requests[0].curve, noa_checkpoint::SuiDWallet::CURVE);
         assert_eq!(
             first_requests[0].signature_algorithm,
-            noa_checkpoint::SuiDWallet::signature_algorithm()
+            noa_checkpoint::SuiDWallet::SIGNATURE_ALGORITHM
         );
         assert_eq!(
             first_requests[0].hash_scheme,
-            noa_checkpoint::SuiDWallet::hash_scheme()
+            noa_checkpoint::SuiDWallet::HASH_SCHEME
         );
 
         // Messages should be different (different sequence numbers → different signable bytes).
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
 
         let req = &requests[0];
-        assert_eq!(req.curve, noa_checkpoint::SuiSystem::curve());
+        assert_eq!(req.curve, noa_checkpoint::SuiSystem::CURVE);
 
         handler
             .handle_sign_output(NetworkOwnedAddressSignOutput {
