@@ -40,6 +40,14 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_internal_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
+    pub(crate) round_to_verified_system_checkpoint: Arc<
+        Mutex<
+            HashMap<
+                Round,
+                Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
+            >,
+        >,
+    >,
     pub(crate) round_to_status_updates:
         Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
@@ -108,6 +116,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_internal_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
@@ -174,14 +183,23 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn next_verified_system_checkpoint_message(
         &self,
-        _last_consensus_round: Option<Round>,
+        last_consensus_round: Option<Round>,
     ) -> IkaResult<
         Option<(
             Round,
             Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
         )>,
     > {
-        Ok(None)
+        let round_to_verified_system_checkpoint =
+            self.round_to_verified_system_checkpoint.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_verified_system_checkpoint
+                .get(&0)
+                .map(|messages| (0, messages.clone())));
+        }
+        Ok(round_to_verified_system_checkpoint
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
     }
 
     fn next_dwallet_internal_mpc_output(
@@ -604,6 +622,13 @@ pub(crate) fn send_advance_results_between_parties(
                 .entry(new_data_consensus_round)
                 .or_default();
 
+            other_epoch_store
+                .round_to_verified_system_checkpoint
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default();
+
             // Distribute internal MPC outputs (e.g. completed internal presign sessions) to all parties
             other_epoch_store
                 .round_to_internal_outputs
@@ -707,6 +732,12 @@ pub(crate) fn send_advance_results_between_parties_excluding(
                 .extend(dwallet_outputs.clone());
             other_epoch_store
                 .round_to_verified_checkpoint
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default();
+            other_epoch_store
+                .round_to_verified_system_checkpoint
                 .lock()
                 .unwrap()
                 .entry(new_data_consensus_round)

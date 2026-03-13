@@ -201,7 +201,8 @@ pub(crate) struct DWalletMPCManager {
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
-    network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+    pub(crate) network_owned_address_sign_output_sender:
+        UnboundedSender<NetworkOwnedAddressSignOutput>,
 
     /// Each validator's latest Sui chain observation, keyed by party ID.
     /// Updated every time a status update with an observation is received.

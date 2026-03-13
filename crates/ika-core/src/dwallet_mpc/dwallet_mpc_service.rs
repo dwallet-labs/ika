@@ -345,6 +345,35 @@ impl DWalletMPCService {
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
     }
 
+    /// Wire up NOA checkpoint handlers for testing.
+    ///
+    /// `new_for_testing` creates a disconnected sign-output receiver (the connected one
+    /// is returned externally). This method replaces *both* the manager's sender and the
+    /// service's receiver with a fresh connected pair, then installs the handler(s).
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn setup_noa_checkpoint_handlers_for_testing(
+        &mut self,
+        dwallet_handler: NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>,
+        system_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
+    ) {
+        let (sender, receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+        self.dwallet_mpc_manager
+            .network_owned_address_sign_output_sender = sender;
+        self.network_owned_address_sign_output_receiver = receiver;
+        self.dwallet_checkpoint_handler = Some(dwallet_handler);
+        self.system_checkpoint_handler = system_handler;
+    }
+
+    /// Set the agreed Sui chain context for testing, bypassing the consensus
+    /// observation agreement flow that isn't wired in `new_for_testing`.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn set_agreed_sui_chain_context_for_testing(&mut self, context: SuiChainContext) {
+        self.current_agreed_sui_chain_context = Some(context);
+    }
+
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
         let (ika_current_epoch_on_sui, last_session_to_complete_in_current_epoch) = *self
             .sui_data_requests
