@@ -15,6 +15,7 @@ use ika_types::messages_dwallet_mpc::{
     MakeDWalletUserSecretKeySharesPublicRequestEvent, PresignRequestEvent,
     SESSIONS_MANAGER_MODULE_NAME, SignDuringDKGRequestEvent, SignRequestEvent,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use move_core_types::language_storage::StructTag;
 use serde::de::DeserializeOwned;
 use sui_types::dynamic_field::Field;
@@ -160,6 +161,7 @@ fn make_dwallet_user_secret_key_shares_public_request_event_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -178,6 +180,7 @@ fn dwallet_imported_key_verification_request_event_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -196,6 +199,7 @@ fn dwallet_dkg_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -216,6 +220,7 @@ fn dwallet_dkg_with_sign_session_request(
     sign_during_dkg_request: &SignDuringDKGRequestEvent,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -236,6 +241,7 @@ fn presign_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -252,6 +258,7 @@ fn sign_party_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -268,6 +275,7 @@ fn get_verify_partial_signatures_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -286,6 +294,7 @@ fn network_dkg_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -304,6 +313,7 @@ fn network_decryption_key_reconfiguration_session_request_from_event(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),
@@ -322,6 +332,7 @@ fn start_encrypted_share_verification_session_request(
     pulled: bool,
 ) -> DwalletMPCResult<DWalletSessionRequest> {
     Ok(DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
         session_type: deserialized_event.session_type,
         session_identifier: deserialized_event.session_identifier_digest(),
         session_sequence_number: Some(deserialized_event.session_sequence_number),

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use ika_types::noa_checkpoint::{
-    CertifiedNOACheckpointMessage, ChainDestination, NOACheckpointCommand, NOACheckpointKind,
+    CertifiedNOACheckpointMessage, CounterpartyChain, NOACheckpointCommand, NOACheckpointKind,
     NOACheckpointMessage, NOACheckpointTxObservation, NOACheckpointTxRef, NOACheckpointTxStatus,
 };
 use sui_types::base_types::EpochId;
@@ -330,7 +330,7 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     pub fn initiate_tx_retry(
         &mut self,
         tx_ref: &NOACheckpointTxRef,
-        context: &<K::Destination as ChainDestination>::Context,
+        context: &<K::Counterparty as CounterpartyChain>::Context,
         noa_public_key: &[u8],
     ) -> Option<Vec<u8>> {
         let entry = self.entries.get_mut(&tx_ref.sequence_number)?;
@@ -454,7 +454,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
     pub fn handle_new_checkpoint(
         &mut self,
         messages: Vec<K::MessageKind>,
-        chain_context: <K::Destination as ChainDestination>::Context,
+        chain_context: <K::Counterparty as CounterpartyChain>::Context,
     ) -> Vec<NetworkOwnedAddressSignRequest> {
         let seq = self.next_sequence_number;
         self.next_sequence_number += 1;
@@ -539,7 +539,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
     /// Returns sign requests for retries.
     pub fn handle_command(
         &mut self,
-        cmd: NOACheckpointCommand<K::Destination>,
+        cmd: NOACheckpointCommand<K::Counterparty>,
     ) -> Vec<NetworkOwnedAddressSignRequest> {
         match cmd {
             NOACheckpointCommand::MarkFinalized(tx_ref) => {
@@ -701,7 +701,7 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
     fn initiate_tx_retry_with_context(
         &mut self,
         tx_ref: &NOACheckpointTxRef,
-        context: &<K::Destination as ChainDestination>::Context,
+        context: &<K::Counterparty as CounterpartyChain>::Context,
     ) -> Option<NetworkOwnedAddressSignRequest> {
         let tx_bytes = self
             .store

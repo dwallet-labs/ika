@@ -20,6 +20,7 @@ use ika_types::message::{DWalletCheckpointMessageKind, DWalletDKGOutput};
 use ika_types::messages_dwallet_mpc::{
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::messages_consensus::Round;
 use tracing::info;
@@ -427,6 +428,7 @@ pub(crate) fn send_start_imported_dwallet_verification_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -468,6 +470,7 @@ pub(crate) fn send_make_dwallet_public_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,

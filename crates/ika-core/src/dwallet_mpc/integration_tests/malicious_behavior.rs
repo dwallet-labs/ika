@@ -5,6 +5,7 @@ use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,6 +43,7 @@ async fn test_some_malicious_validators_flows_succeed() {
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: Some(1),
@@ -184,6 +186,7 @@ async fn test_party_copies_other_party_message_dkg_round() {
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
                 session_sequence_number: Some(1),

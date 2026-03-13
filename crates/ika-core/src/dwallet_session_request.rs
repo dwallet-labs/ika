@@ -7,6 +7,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use merlin::Transcript;
 use std::cmp::Ordering;
 use std::fmt;
@@ -14,6 +15,9 @@ use sui_types::base_types::ObjectID;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
+    /// Which counterparty chain this session belongs to. `None` for internal sessions
+    /// (InternalPresign, NetworkOwnedAddressSign) that are chain-agnostic.
+    pub counterparty_chain: Option<CounterpartyChainKind>,
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
@@ -75,6 +79,7 @@ impl DWalletSessionRequest {
         );
 
         Self {
+            counterparty_chain: None,
             session_type,
             session_identifier,
             session_sequence_number: Some(session_sequence_number),
@@ -137,6 +142,7 @@ impl DWalletSessionRequest {
         );
 
         Self {
+            counterparty_chain: None,
             session_type,
             session_identifier,
             session_sequence_number: None,

@@ -19,6 +19,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState, SessionIdentifier,
     SessionType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
@@ -234,6 +235,7 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
         );
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(
                     SessionType::System,

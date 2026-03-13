@@ -54,7 +54,8 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
 use ika_types::noa_checkpoint::{
-    NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext, SuiChainObservation,
+    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
+    SuiChainObservation,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -1136,22 +1137,33 @@ impl DWalletMPCService {
                 Vec::new()
             };
 
-            // Take back the external outputs' internal checkpoint messages
-            let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
-                .into_iter()
-                .flat_map(|output| match output {
-                    DWalletMPCOutputKind::External { output } => output,
-                    _ => vec![],
-                })
-                .chain(global_presign_checkpoint_messages)
-                .collect();
+            // Group checkpoint messages by chain.
+            let mut messages_by_chain: HashMap<
+                CounterpartyChainKind,
+                Vec<DWalletCheckpointMessageKind>,
+            > = HashMap::new();
 
-            // Add messages from the consensus output such as EndOfPublish.
-            checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
+            for (output, counterparty_chain) in agreed_external_mpc_outputs {
+                if let DWalletMPCOutputKind::External { output } = output {
+                    let chain = counterparty_chain.unwrap_or(CounterpartyChainKind::Sui);
+                    messages_by_chain.entry(chain).or_default().extend(output);
+                }
+            }
 
+            // Global presign and verified messages are Sui for now.
+            let sui_messages = messages_by_chain
+                .entry(CounterpartyChainKind::Sui)
+                .or_default();
+            sui_messages.extend(global_presign_checkpoint_messages);
+            sui_messages.extend(verified_dwallet_checkpoint_messages);
+
+            // EndOfPublish detection — always on Sui messages.
+            let sui_checkpoint_messages = messages_by_chain
+                .get(&CounterpartyChainKind::Sui)
+                .map(|m| m.as_slice())
+                .unwrap_or(&[]);
             if !self.end_of_publish {
-                let final_round = checkpoint_messages
-                    .iter()
+                let final_round = sui_checkpoint_messages
                     .last()
                     .is_some_and(|msg| matches!(msg, DWalletCheckpointMessageKind::EndOfPublish));
                 if final_round {
@@ -1165,8 +1177,15 @@ impl DWalletMPCService {
                     );
                 }
 
-                if !checkpoint_messages.is_empty() {
-                    if self.protocol_config.bls_checkpoints() {
+                for (chain, checkpoint_messages) in &mut messages_by_chain {
+                    if checkpoint_messages.is_empty() {
+                        continue;
+                    }
+
+                    // BLS checkpoint path (Sui only for now).
+                    if *chain == CounterpartyChainKind::Sui
+                        && self.protocol_config.bls_checkpoints()
+                    {
                         let pending_checkpoint =
                             PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
                                 messages: checkpoint_messages.clone(),
@@ -1192,8 +1211,6 @@ impl DWalletMPCService {
                             ?consensus_round,
                             "Notifying checkpoint service about new pending checkpoint(s)",
                         );
-                        // Only after batch is written, notify checkpoint service to start building
-                        // any new pending checkpoints.
                         if let Some(ref service) = self.dwallet_checkpoint_service {
                             if let Err(e) = service.notify_checkpoint() {
                                 error!(
@@ -1209,24 +1226,37 @@ impl DWalletMPCService {
                         }
                     }
 
+                    // NOA checkpoint routing by chain.
                     if let Some(ref ctx) = self.current_agreed_sui_chain_context {
-                        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
-                            for buffered in self.buffered_noa_dwallet_messages.drain(..) {
-                                let requests = handler.handle_new_checkpoint(buffered, ctx.clone());
-                                self.pending_network_owned_address_sign_requests
-                                    .extend(requests);
+                        match chain {
+                            CounterpartyChainKind::Sui => {
+                                if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                                    for buffered in self.buffered_noa_dwallet_messages.drain(..) {
+                                        let requests =
+                                            handler.handle_new_checkpoint(buffered, ctx.clone());
+                                        self.pending_network_owned_address_sign_requests
+                                            .extend(requests);
+                                    }
+                                    let requests = handler.handle_new_checkpoint(
+                                        std::mem::take(checkpoint_messages),
+                                        ctx.clone(),
+                                    );
+                                    self.pending_network_owned_address_sign_requests
+                                        .extend(requests);
+                                }
                             }
-                            let requests = handler
-                                .handle_new_checkpoint(checkpoint_messages.clone(), ctx.clone());
-                            self.pending_network_owned_address_sign_requests
-                                .extend(requests);
                         }
                     } else {
-                        self.buffered_noa_dwallet_messages
-                            .push(checkpoint_messages.clone());
+                        match chain {
+                            CounterpartyChainKind::Sui => {
+                                self.buffered_noa_dwallet_messages
+                                    .push(std::mem::take(checkpoint_messages));
+                            }
+                        }
                     }
                 }
 
+                // System checkpoint messages — always Sui, independent of MPC session chains.
                 if let Some(ref ctx) = self.current_agreed_sui_chain_context {
                     if let Some(ref mut handler) = self.system_checkpoint_handler {
                         for buffered in self.buffered_noa_system_messages.drain(..) {

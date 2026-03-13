@@ -22,6 +22,7 @@ use ika_types::messages_dwallet_mpc::{
     AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
     InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -1329,6 +1330,7 @@ pub(crate) fn send_configurable_start_network_dkg_event(
         .for_each(|(_, sui_data_sender)| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DWalletSessionRequest {
+                    counterparty_chain: Some(CounterpartyChainKind::Sui),
                     session_type: SessionType::System,
                     session_identifier: SessionIdentifier::new(
                         SessionType::System,
@@ -1360,6 +1362,7 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -1401,6 +1404,7 @@ pub(crate) fn send_start_dwallet_dkg_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,

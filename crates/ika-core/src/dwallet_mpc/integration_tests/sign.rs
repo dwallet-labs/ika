@@ -18,6 +18,7 @@ use group::HashScheme;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
 
@@ -295,6 +296,7 @@ pub(crate) fn send_start_sign_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -345,6 +347,7 @@ pub(crate) fn send_start_future_sign_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -395,6 +398,7 @@ pub(crate) fn send_start_partial_signature_verification_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -436,6 +440,7 @@ pub(crate) fn send_start_presign_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -475,6 +480,7 @@ pub(crate) fn send_start_direct_presign_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
@@ -515,6 +521,7 @@ pub(crate) fn send_global_presign_request_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,

@@ -12,10 +12,20 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 
-// === ChainDestination ===
+/// Identifies which counterparty chain a session belongs to.
+/// Events come from this chain, checkpoint results go back to it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CounterpartyChainKind {
+    Sui,
+}
+
+// === CounterpartyChain ===
 
 /// Encapsulates chain-specific configuration for checkpoint submission.
-pub trait ChainDestination: Clone + Debug + Send + Sync + 'static {
+pub trait CounterpartyChain: Clone + Debug + Send + Sync + 'static {
+    /// Which variant of `CounterpartyChainKind` this implementor corresponds to.
+    const KIND: CounterpartyChainKind;
+
     /// Chain context needed at runtime to build signable transaction bytes.
     type Context: Clone + Debug + Send + Sync + 'static;
 
@@ -47,9 +57,9 @@ pub trait ChainDestination: Clone + Debug + Send + Sync + 'static {
     ) -> Option<Self::Context>;
 }
 
-/// Sui chain destination — carries Sui object IDs, module info, etc.
+/// Sui counterparty chain — carries Sui object IDs, module info, etc.
 #[derive(Clone, Debug)]
-pub struct SuiDestination;
+pub struct SuiCounterpartyChain;
 
 /// Runtime context for building Sui transactions.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -65,7 +75,8 @@ pub struct SuiChainObservation {
     pub sui_epoch: u64,
 }
 
-impl ChainDestination for SuiDestination {
+impl CounterpartyChain for SuiCounterpartyChain {
+    const KIND: CounterpartyChainKind = CounterpartyChainKind::Sui;
     type Context = SuiChainContext;
     type Observation = SuiChainObservation;
     const CHAIN_NAME: &'static str = "sui";
@@ -123,8 +134,8 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
         + Sync
         + 'static;
 
-    /// The chain this checkpoint targets.
-    type Destination: ChainDestination;
+    /// The counterparty chain this checkpoint targets.
+    type Counterparty: CounterpartyChain;
 
     /// Human-readable name for logging/metrics.
     const NAME: &'static str;
@@ -152,7 +163,7 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
         sequence_number: u64,
         tx_index: u32,
         messages: &[Self::MessageKind],
-        context: &<Self::Destination as ChainDestination>::Context,
+        context: &<Self::Counterparty as CounterpartyChain>::Context,
         noa_public_key: &[u8],
         retry_round: u32,
     ) -> Vec<u8>;
@@ -170,7 +181,7 @@ pub struct SuiSystem;
 
 impl NOACheckpointKind for SuiDWallet {
     type MessageKind = DWalletCheckpointMessageKind;
-    type Destination = SuiDestination;
+    type Counterparty = SuiCounterpartyChain;
     const NAME: &'static str = "noa_dwallet_checkpoint";
 
     const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiDWallet;
@@ -201,7 +212,7 @@ impl NOACheckpointKind for SuiDWallet {
 
 impl NOACheckpointKind for SuiSystem {
     type MessageKind = SystemCheckpointMessageKind;
-    type Destination = SuiDestination;
+    type Counterparty = SuiCounterpartyChain;
     const NAME: &'static str = "noa_system_checkpoint";
 
     const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiSystem;
@@ -294,11 +305,11 @@ pub enum NOACheckpointTxObservation {
 
 /// Command from MPC service to finalizer after consensus quorum resolution.
 #[derive(Clone, Debug)]
-pub enum NOACheckpointCommand<D: ChainDestination> {
+pub enum NOACheckpointCommand<C: CounterpartyChain> {
     MarkFinalized(NOACheckpointTxRef),
     RetryWithContext {
         tx_ref: NOACheckpointTxRef,
-        context: D::Context,
+        context: C::Context,
     },
 }
 

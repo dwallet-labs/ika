@@ -39,6 +39,7 @@ use ika_types::messages_dwallet_mpc::{
     InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -48,31 +49,31 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
 use ika_types::noa_checkpoint::{
-    ChainDestination, NOACheckpointTxObservation, NOACheckpointTxRef, SuiChainContext,
-    SuiChainObservation, SuiDestination,
+    CounterpartyChain, NOACheckpointTxObservation, NOACheckpointTxRef, SuiChainContext,
+    SuiChainObservation, SuiCounterpartyChain,
 };
 
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
 
-/// Compute the agreed chain context for any `ChainDestination` implementation.
+/// Compute the agreed chain context for any `CounterpartyChain` implementation.
 /// Updates `current_context` in place if a new context is agreed upon.
-fn compute_chain_context<D: ChainDestination>(
-    observations_by_party: &HashMap<PartyID, D::Observation>,
-    current_context: &mut Option<D::Context>,
+fn compute_chain_context<C: CounterpartyChain>(
+    observations_by_party: &HashMap<PartyID, C::Observation>,
+    current_context: &mut Option<C::Context>,
     access_structure: &WeightedThresholdAccessStructure,
     consensus_round: u64,
 ) {
-    let observations: HashMap<u16, D::Observation> = observations_by_party
+    let observations: HashMap<u16, C::Observation> = observations_by_party
         .iter()
         .map(|(party_id, obs)| (*party_id as u16, obs.clone()))
         .collect();
 
     if let Some(context) =
-        D::context_from_observations(&observations, current_context.as_ref(), access_structure)
+        C::context_from_observations(&observations, current_context.as_ref(), access_structure)
     {
         info!(
             consensus_round,
-            chain = D::CHAIN_NAME,
+            chain = C::CHAIN_NAME,
             "Chain context agreed upon"
         );
         *current_context = Some(context);
@@ -353,12 +354,16 @@ impl DWalletMPCManager {
     }
 
     /// Handle the outputs of a given consensus round.
+    /// Returns each agreed output paired with the session's chain (if any),
+    /// plus the list of completed session identifiers.
     pub fn handle_consensus_round_outputs(
         &mut self,
         consensus_round: u64,
         outputs: Vec<DWalletMPCOutputReport>,
-    ) -> (Vec<DWalletMPCOutputKind>, Vec<SessionIdentifier>) {
-        // Not let's move to process MPC outputs for the current round.
+    ) -> (
+        Vec<(DWalletMPCOutputKind, Option<CounterpartyChainKind>)>,
+        Vec<SessionIdentifier>,
+    ) {
         let mut agreed_outputs = vec![];
         let mut completed_sessions = vec![];
         for output in &outputs {
@@ -368,8 +373,13 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Read counterparty_chain before completing (which removes session data).
+                    let counterparty_chain = self
+                        .sessions
+                        .get(&session_identifier)
+                        .and_then(|s| s.counterparty_chain);
                     self.complete_mpc_session(&session_identifier);
-                    agreed_outputs.push(output_result);
+                    agreed_outputs.push((output_result, counterparty_chain));
                     completed_sessions.push(session_identifier);
                     info!(
                         consensus_round,
@@ -553,7 +563,7 @@ impl DWalletMPCManager {
             .collect();
 
         // Compute agreed chain context from accumulated observations.
-        compute_chain_context::<SuiDestination>(
+        compute_chain_context::<SuiCounterpartyChain>(
             &self.sui_chain_observations_by_party,
             &mut self.agreed_sui_chain_context,
             &self.access_structure,
@@ -667,6 +677,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
+                    None, // chain unknown until request arrives
                     // only MPC sessions have messages.
                     SessionComputationType::MPC {
                         messages_by_consensus_round: HashMap::new(),
@@ -877,7 +888,7 @@ impl DWalletMPCManager {
             "instantiating new internal presign session",
         );
 
-        self.new_session(&session_identifier, status, session_computation_type);
+        self.new_session(&session_identifier, status, None, session_computation_type);
 
         self.next_internal_presign_sequence_number += 1;
     }
@@ -1020,7 +1031,7 @@ impl DWalletMPCManager {
             "instantiating network-owned-address sign session",
         );
 
-        self.new_session(&session_identifier, status, session_computation_type);
+        self.new_session(&session_identifier, status, None, session_computation_type);
         true
     }
 
@@ -1112,6 +1123,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
+        counterparty_chain: Option<CounterpartyChainKind>,
         session_computation_type: SessionComputationType,
     ) {
         info!(
@@ -1126,6 +1138,7 @@ impl DWalletMPCManager {
             status,
             *session_identifier,
             self.party_id,
+            counterparty_chain,
             session_computation_type,
         );
 
@@ -1437,6 +1450,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
+                    None, // chain unknown until request arrives
                     session_computation_type.clone(),
                 );
                 // Safe to `unwrap()`: we just created the session.
@@ -1736,6 +1750,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     session_identifier,
                     SessionStatus::ComputationCompleted,
+                    None, // chain unknown until request arrives
                     session_type,
                 );
             }
