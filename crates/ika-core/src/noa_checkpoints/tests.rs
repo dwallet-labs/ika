@@ -444,7 +444,7 @@ mod tests {
         assert!(store.get_status(&tx_ref).is_none());
 
         // Mark submitted.
-        store.mark_submitted(tx_ref.clone(), b"chain_tx_id_0".to_vec());
+        store.mark_submitted(&tx_ref, b"chain_tx_id_0".to_vec());
         assert!(!store.has_no_finalization_entries());
         assert_eq!(
             store.get_status(&tx_ref),
@@ -511,8 +511,8 @@ mod tests {
             epoch: 1,
         };
 
-        store.mark_submitted(first_ref.clone(), b"id_0".to_vec());
-        store.mark_submitted(second_ref.clone(), b"id_1".to_vec());
+        store.mark_submitted(&first_ref, b"id_0".to_vec());
+        store.mark_submitted(&second_ref, b"id_1".to_vec());
 
         // Only one finalized — should return false.
         store.mark_finalized(&first_ref);
@@ -548,7 +548,7 @@ mod tests {
             tx_index: 0,
             epoch: 5,
         };
-        store.mark_submitted(tx_ref.clone(), b"id".to_vec());
+        store.mark_submitted(&tx_ref, b"id".to_vec());
         let can_advance = store.has_no_finalization_entries() || store.all_finalized();
         assert!(!can_advance);
 
@@ -571,7 +571,7 @@ mod tests {
             epoch: 1,
         };
 
-        // These should be no-ops, not panic.
+        // These should be no-ops, not panic (unknown ref → `if let` doesn't enter).
         store.mark_confirmed_locally(&unknown_ref);
         store.mark_finalized(&unknown_ref);
         assert!(store.get_status(&unknown_ref).is_none());
@@ -601,7 +601,7 @@ mod tests {
         };
 
         // Submit and verify Pending.
-        store.mark_submitted(tx_ref.clone(), b"chain_id_0".to_vec());
+        store.mark_submitted(&tx_ref, b"chain_id_0".to_vec());
         assert_eq!(
             store.get_status(&tx_ref),
             Some(NOACheckpointTxStatus::Pending)
@@ -686,7 +686,7 @@ mod tests {
         };
 
         // Submit, then initiate per-tx retry.
-        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
+        store.mark_submitted(&tx_ref, b"chain_id".to_vec());
         let retry_bytes = store.initiate_tx_retry(&tx_ref, &test_sui_chain_context(), &[]);
         assert!(retry_bytes.is_some());
         let retry_bytes = retry_bytes.unwrap();
@@ -749,7 +749,7 @@ mod tests {
         );
 
         // Submit and set voted_failed.
-        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
+        store.mark_submitted(&tx_ref, b"chain_id".to_vec());
         assert!(!store.has_voted_failed(&tx_ref));
         store.set_voted_failed(&tx_ref);
         assert!(store.has_voted_failed(&tx_ref));
@@ -815,9 +815,9 @@ mod tests {
         };
 
         // Submit all 3.
-        store.mark_submitted(make_ref(0), b"id_0".to_vec());
-        store.mark_submitted(make_ref(1), b"id_1".to_vec());
-        store.mark_submitted(make_ref(2), b"id_2".to_vec());
+        store.mark_submitted(&make_ref(0), b"id_0".to_vec());
+        store.mark_submitted(&make_ref(1), b"id_1".to_vec());
+        store.mark_submitted(&make_ref(2), b"id_2".to_vec());
 
         // Finalize tx_0 only.
         store.mark_finalized(&make_ref(0));
@@ -877,7 +877,7 @@ mod tests {
             epoch: 1,
         };
 
-        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
+        store.mark_submitted(&tx_ref, b"chain_id".to_vec());
         store.mark_confirmed_locally(&tx_ref);
 
         // Status is ConfirmedLocally, not Pending — failure quorum check is only
@@ -893,6 +893,94 @@ mod tests {
         // get_pending_refs returns ConfirmedLocally entries (they're not Finalized).
         let pending = store.get_pending_refs();
         assert_eq!(pending.len(), 1);
+    }
+
+    // =========================================================================
+    // SubmitFailed status tests
+    // =========================================================================
+
+    #[test]
+    fn test_submit_failed_status() {
+        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
+
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
+        let checkpoint = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 0,
+            messages: vec![],
+        };
+        store.insert_pending(0, checkpoint, vec![(b"tx".to_vec(), vec![])]);
+
+        let tx_ref = NOACheckpointTxRef {
+            kind_name: NOACheckpointKindName::SuiDWallet,
+            sequence_number: 0,
+            tx_index: 0,
+            epoch: 1,
+        };
+
+        // Mark submit failed.
+        store.mark_submit_failed(&tx_ref);
+        assert_eq!(
+            store.get_status(&tx_ref),
+            Some(NOACheckpointTxStatus::SubmitFailed)
+        );
+        assert!(!store.all_finalized());
+
+        // SubmitFailed appears in pending_refs.
+        let pending = store.get_pending_refs();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0], tx_ref);
+
+        // Can transition to Pending via mark_submitted (re-submission succeeds).
+        store.mark_submitted(&tx_ref, b"chain_tx_id".to_vec());
+        assert_eq!(
+            store.get_status(&tx_ref),
+            Some(NOACheckpointTxStatus::Pending)
+        );
+    }
+
+    // =========================================================================
+    // Separate AtomicBool flag tests
+    // =========================================================================
+
+    #[test]
+    fn test_separate_flags_both_must_be_true() {
+        let dwallet_flag = Arc::new(AtomicBool::new(true));
+        let system_flag = Arc::new(AtomicBool::new(true));
+
+        let mut dwallet_handler = NOACheckpointHandler::<noa_checkpoint::SuiDWalletCheckpoint>::new(
+            Arc::new(LogOnlyChainSubmitter),
+            1,
+            vec![],
+            dwallet_flag.clone(),
+        );
+        let mut system_handler = NOACheckpointHandler::<noa_checkpoint::SuiSystemCheckpoint>::new(
+            Arc::new(LogOnlyChainSubmitter),
+            1,
+            vec![],
+            system_flag.clone(),
+        );
+
+        let dwallet_flag_clone = dwallet_flag.clone();
+        let system_flag_clone = system_flag.clone();
+        let gate = move || {
+            dwallet_flag_clone.load(Ordering::Acquire) && system_flag_clone.load(Ordering::Acquire)
+        };
+
+        // Both empty → both true → gate open.
+        dwallet_handler.update_finalized_flag();
+        system_handler.update_finalized_flag();
+        assert!(gate());
+
+        // Add pending checkpoint to dwallet handler.
+        let _requests = dwallet_handler.handle_new_checkpoint(vec![], test_sui_chain_context());
+        // Before any chain submission, has_no_finalization_entries is still true.
+        dwallet_handler.update_finalized_flag();
+        assert!(gate(), "gate should be open before chain submission");
+
+        // system handler with no checkpoints: flag stays true.
+        system_handler.update_finalized_flag();
+        assert!(gate());
     }
 
     // =========================================================================

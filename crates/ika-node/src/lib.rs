@@ -197,8 +197,9 @@ pub struct IkaNode {
 
     shutdown_channel_tx: broadcast::Sender<Option<RunWithRange>>,
     system_checkpoint_store: Arc<SystemCheckpointStore>,
-    /// Shared flag for NOA checkpoint finalization epoch gate.
-    noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
+    /// Per-kind flags for NOA checkpoint finalization epoch gate.
+    noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
+    noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl fmt::Debug for IkaNode {
@@ -517,13 +518,15 @@ impl IkaNode {
         ) = watch::channel((0, 0));
         let (uncompleted_requests_sender, uncompleted_requests_receiver) =
             watch::channel((Vec::new(), 0));
-        // Shared flag for NOA checkpoint finalization gate.
-        // Starts as `true` (no NOA checkpoints to wait for); finalizer tasks set it to `false`
-        // when pending checkpoints exist, and back to `true` when all are finalized.
-        let noa_all_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let noa_all_finalized_clone = noa_all_finalized.clone();
-        let noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync> =
-            Arc::new(move || noa_all_finalized_clone.load(std::sync::atomic::Ordering::Acquire));
+        // Separate flags for each NOA checkpoint kind to avoid race between handlers.
+        let noa_dwallet_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let noa_system_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let noa_dwallet_finalized_clone = noa_dwallet_finalized.clone();
+        let noa_system_finalized_clone = noa_system_finalized.clone();
+        let noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            noa_dwallet_finalized_clone.load(std::sync::atomic::Ordering::Acquire)
+                && noa_system_finalized_clone.load(std::sync::atomic::Ordering::Acquire)
+        });
 
         let (sui_connector_service, network_keys_receiver) = SuiConnectorService::new(
             dwallet_checkpoint_store.clone(),
@@ -600,7 +603,8 @@ impl IkaNode {
                 previous_epoch_last_system_checkpoint_sequence_number,
                 dwallet_mpc_metrics.clone(),
                 sui_data_receivers.clone(),
-                noa_all_finalized.clone(),
+                noa_dwallet_finalized.clone(),
+                noa_system_finalized.clone(),
             )
             .await?;
             // This is only needed during cold start.
@@ -637,7 +641,8 @@ impl IkaNode {
             sui_connector_service,
             _state_archive_handle: state_archive_handle,
             shutdown_channel_tx: shutdown_channel,
-            noa_all_finalized,
+            noa_dwallet_finalized,
+            noa_system_finalized,
         };
 
         info!("IkaNode started!");
@@ -876,7 +881,8 @@ impl IkaNode {
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         sui_data_receivers: SuiDataReceivers,
-        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
+        noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
+        noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<ValidatorComponents> {
         let mut config_clone = config.clone();
         let consensus_config = config_clone
@@ -934,7 +940,8 @@ impl IkaNode {
             previous_epoch_last_dwallet_checkpoint_sequence_number,
             previous_epoch_last_system_checkpoint_sequence_number,
             sui_data_receivers,
-            noa_all_finalized,
+            noa_dwallet_finalized,
+            noa_system_finalized,
         )
         .await
     }
@@ -957,7 +964,8 @@ impl IkaNode {
         previous_epoch_last_dwallet_checkpoint_sequence_number: u64,
         previous_epoch_last_system_checkpoint_sequence_number: u64,
         sui_data_receivers: SuiDataReceivers,
-        noa_all_finalized: Arc<std::sync::atomic::AtomicBool>,
+        noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
+        noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<ValidatorComponents> {
         // Channel for network-owned-address sign requests (sender unused after
         // pipeline→handler migration; receiver still drained by service loop).
@@ -973,7 +981,8 @@ impl IkaNode {
         // The service loop will flip to false if checkpoints arrive.
         // There is a brief window where the flag could be stale, but the epoch gate
         // has other conditions (BLS checkpoints, consensus, etc.) that take longer.
-        noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
+        noa_dwallet_finalized.store(true, std::sync::atomic::Ordering::Release);
+        noa_system_finalized.store(true, std::sync::atomic::Ordering::Release);
 
         // Create NOA checkpoint handlers (driven directly by DWalletMPCService).
         let (dwallet_checkpoint_handler, system_checkpoint_handler) = if epoch_store
@@ -999,13 +1008,13 @@ impl IkaNode {
                 dwallet_chain_submitter,
                 epoch_store.epoch(),
                 vec![],
-                noa_all_finalized.clone(),
+                noa_dwallet_finalized.clone(),
             );
             let system_handler = NOACheckpointHandler::<noa_checkpoint::SuiSystemCheckpoint>::new(
                 system_chain_submitter,
                 epoch_store.epoch(),
                 vec![],
-                noa_all_finalized.clone(),
+                noa_system_finalized.clone(),
             );
             (Some(dwallet_handler), Some(system_handler))
         } else {
@@ -1556,7 +1565,8 @@ impl IkaNode {
                             previous_epoch_last_checkpoint_sequence_number,
                             previous_epoch_last_system_checkpoint_sequence_number,
                             sui_data_receivers.clone(),
-                            self.noa_all_finalized.clone(),
+                            self.noa_dwallet_finalized.clone(),
+                            self.noa_system_finalized.clone(),
                         )
                         .await?,
                     )
@@ -1592,7 +1602,8 @@ impl IkaNode {
                             previous_epoch_last_system_checkpoint_sequence_number,
                             dwallet_mpc_metrics.clone(),
                             sui_data_receivers.clone(),
-                            self.noa_all_finalized.clone(),
+                            self.noa_dwallet_finalized.clone(),
+                            self.noa_system_finalized.clone(),
                         )
                         .await?,
                     )

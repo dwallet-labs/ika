@@ -93,7 +93,7 @@ impl CounterpartyChain for SuiCounterpartyChain {
 
     fn context_from_observations(
         observations: &HashMap<u16, SuiChainObservation>,
-        _current_context: Option<&SuiChainContext>,
+        current_context: Option<&SuiChainContext>,
         access_structure: &WeightedThresholdAccessStructure,
     ) -> Option<SuiChainContext> {
         if observations.is_empty() {
@@ -106,18 +106,27 @@ impl CounterpartyChain for SuiCounterpartyChain {
             votes.entry(observation).or_default().insert(party_id);
         }
 
-        // Check if any observation value is supported by an authorized subset.
+        let min_epoch = current_context.map(|c| c.sui_epoch).unwrap_or(0);
+
+        // Collect all observations that reach quorum and don't regress.
+        let mut best: Option<SuiChainContext> = None;
         for (observation, parties) in &votes {
+            if observation.sui_epoch < min_epoch {
+                continue;
+            }
             if access_structure.is_authorized_subset(parties).is_ok() {
-                return Some(SuiChainContext {
+                let candidate = SuiChainContext {
                     reference_gas_price: observation.reference_gas_price,
                     sui_epoch: observation.sui_epoch,
+                };
+                best = Some(match best {
+                    Some(prev) if prev.sui_epoch >= candidate.sui_epoch => prev,
+                    _ => candidate,
                 });
             }
         }
 
-        // No authorized subset agrees — keep current context unchanged.
-        None
+        best
     }
 }
 
@@ -265,6 +274,8 @@ pub struct CertifiedNOACheckpointMessage<K: NOACheckpointKind> {
 pub enum NOACheckpointTxStatus {
     /// Signed and submitted, awaiting on-chain confirmation.
     Pending,
+    /// Chain submission failed; will be re-attempted on next poll.
+    SubmitFailed,
     /// On-chain execution confirmed by this validator; consensus vote submitted.
     ConfirmedLocally,
     /// 2f+1 validators confirmed on-chain execution.

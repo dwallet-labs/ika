@@ -593,6 +593,32 @@ impl DWalletMPCService {
         }
     }
 
+    /// Route a single NOA checkpoint resolution to the appropriate handler.
+    fn route_resolution(
+        &mut self,
+        resolution: ika_types::noa_checkpoint::NOACheckpointResolution<
+            ika_types::noa_checkpoint::SuiCounterpartyChain,
+        >,
+        kind_name: NOACheckpointKindName,
+    ) {
+        match kind_name {
+            NOACheckpointKindName::SuiDWallet => {
+                if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                    let requests = handler.handle_resolution(resolution);
+                    self.pending_network_owned_address_sign_requests
+                        .extend(requests);
+                }
+            }
+            NOACheckpointKindName::SuiSystem => {
+                if let Some(ref mut handler) = self.system_checkpoint_handler {
+                    let requests = handler.handle_resolution(resolution);
+                    self.pending_network_owned_address_sign_requests
+                        .extend(requests);
+                }
+            }
+        }
+    }
+
     /// Dispatch NOA checkpoint resolutions directly to the appropriate handler
     /// based on the quorum results from the current consensus round.
     fn dispatch_noa_resolutions(
@@ -603,22 +629,7 @@ impl DWalletMPCService {
 
         for tx_ref in &agreed_status.newly_finalized_tx_refs {
             let resolution = NOACheckpointResolution::Finalized(tx_ref.clone());
-            match tx_ref.kind_name {
-                NOACheckpointKindName::SuiDWallet => {
-                    if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
-                        let requests = handler.handle_resolution(resolution);
-                        self.pending_network_owned_address_sign_requests
-                            .extend(requests);
-                    }
-                }
-                NOACheckpointKindName::SuiSystem => {
-                    if let Some(ref mut handler) = self.system_checkpoint_handler {
-                        let requests = handler.handle_resolution(resolution);
-                        self.pending_network_owned_address_sign_requests
-                            .extend(requests);
-                    }
-                }
-            }
+            self.route_resolution(resolution, tx_ref.kind_name);
         }
         for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
             if let Some(ctx) = &self.current_agreed_sui_chain_context {
@@ -626,27 +637,15 @@ impl DWalletMPCService {
                     tx_ref: tx_ref.clone(),
                     context: ctx.clone(),
                 };
-                match tx_ref.kind_name {
-                    NOACheckpointKindName::SuiDWallet => {
-                        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
-                            let requests = handler.handle_resolution(resolution);
-                            self.pending_network_owned_address_sign_requests
-                                .extend(requests);
-                        }
-                    }
-                    NOACheckpointKindName::SuiSystem => {
-                        if let Some(ref mut handler) = self.system_checkpoint_handler {
-                            let requests = handler.handle_resolution(resolution);
-                            self.pending_network_owned_address_sign_requests
-                                .extend(requests);
-                        }
-                    }
-                }
+                self.route_resolution(resolution, tx_ref.kind_name);
             }
         }
     }
 
-    /// Drain sign outputs from MPC manager and route to the appropriate handler.
+    /// Drain sign outputs from MPC manager and route to both NOA checkpoint handlers.
+    /// Each handler's `add_signature` silently ignores outputs for tx bytes it doesn't
+    /// own (returns `None`), so broadcasting is correct. The `debug!` log in `add_signature`
+    /// is the only side-effect of sending to the wrong handler.
     async fn handle_noa_sign_outputs(&mut self) {
         while let Ok(output) = self.network_owned_address_sign_output_receiver.try_recv() {
             if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
