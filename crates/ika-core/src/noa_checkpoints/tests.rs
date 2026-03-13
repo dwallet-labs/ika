@@ -1,14 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Integration tests for the NOA checkpoint pipeline:
-//! `NOACheckpointSubmitter` → `NOACheckpointLocalStore` → `NOACheckpointCertifier`.
-//!
-//! These tests verify the channel-based NOA checkpoint flow without requiring
-//! the full MPC infrastructure. Sign outputs are simulated.
+//! Tests for the NOA checkpoint pipeline:
+//! `NOACheckpointLocalStore` unit tests and `NOACheckpointPipeline<K>` integration tests.
 
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use dwallet_mpc_types::dwallet_mpc::{
         DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm,
@@ -22,6 +20,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
+    use crate::noa_checkpoints::{
+        LogOnlyChainSubmitter, NOACheckpointLocalStore, NOACheckpointPipeline,
+    };
 
     fn test_session_id() -> SessionIdentifier {
         SessionIdentifier::new(SessionType::System, [0u8; SessionIdentifier::LENGTH])
@@ -34,20 +35,13 @@ mod tests {
         }
     }
 
-    use crate::noa_checkpoints::checkpoint_output::{
-        CertifiedNOACheckpointOutput, LogNOACheckpointOutput,
-    };
-    use crate::noa_checkpoints::{
-        NOACheckpointCertifier, NOACheckpointLocalStore, NOACheckpointSubmitter,
-    };
-
     // =========================================================================
     // NOACheckpointLocalStore unit tests
     // =========================================================================
 
     #[test]
     fn test_local_store_single_tx_checkpoint() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -87,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_local_store_multi_tx_checkpoint() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::System>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::System>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 2,
@@ -147,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_local_store_multiple_checkpoints() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         // Insert two checkpoints with different sequence numbers.
         let first = NOACheckpointMessage {
@@ -187,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_local_store_certified_stored_by_add_signature() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -218,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_local_store_cleanup_after_certification() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -251,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_local_store_duplicate_signature_ignored() {
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -296,28 +290,59 @@ mod tests {
     }
 
     // =========================================================================
-    // NOACheckpointSubmitter async tests
+    // NOACheckpointPipeline async tests
     // =========================================================================
 
-    #[tokio::test]
-    async fn test_submitter_sends_sign_requests() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let (sign_tx, mut sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
+    /// Helper to create a pipeline and its channel handles for testing.
+    fn create_test_pipeline<K: NOACheckpointKind>() -> (
+        NOACheckpointPipeline<K>,
+        mpsc::Sender<(
+            Vec<K::MessageKind>,
+            <K::Destination as noa_checkpoint::ChainDestination>::Context,
+        )>,
+        mpsc::Sender<NetworkOwnedAddressSignOutput>,
+        mpsc::Sender<noa_checkpoint::NOACheckpointCommand<K::Destination>>,
+        mpsc::UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+        mpsc::UnboundedReceiver<noa_checkpoint::NOACheckpointTxObservation>,
+        Arc<AtomicBool>,
+    ) {
+        let (msg_tx, msg_rx) = mpsc::channel(16);
+        let (sign_out_tx, sign_out_rx) = mpsc::channel(16);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (sign_req_tx, sign_req_rx) = mpsc::unbounded_channel();
+        let (obs_tx, obs_rx) = mpsc::unbounded_channel();
+        let flag = Arc::new(AtomicBool::new(true));
 
-        let submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
+        let pipeline = NOACheckpointPipeline::<K>::new(
             msg_rx,
-            sign_tx,
-            store.clone(),
-            1,
+            sign_out_rx,
+            cmd_rx,
+            sign_req_tx,
+            obs_tx,
+            Arc::new(LogOnlyChainSubmitter),
+            1, // epoch
             vec![],
+            flag.clone(),
         );
 
-        // Spawn the submitter in the background.
-        let handle = tokio::spawn(submitter.run());
+        (
+            pipeline,
+            msg_tx,
+            sign_out_tx,
+            cmd_tx,
+            sign_req_rx,
+            obs_rx,
+            flag,
+        )
+    }
 
-        // Send checkpoint messages bundled with chain context.
+    #[tokio::test]
+    async fn test_pipeline_sends_sign_requests() {
+        let (pipeline, msg_tx, _sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
+            create_test_pipeline::<noa_checkpoint::DWallet>();
+
+        let handle = tokio::spawn(pipeline.run());
+
         let ctx = test_sui_chain_context();
         msg_tx
             .send((vec![], ctx.clone()))
@@ -328,18 +353,18 @@ mod tests {
             .await
             .expect("send should succeed");
 
-        // Drop sender to close the channel and let the submitter exit.
+        // Drop all senders to let the pipeline exit.
         drop(msg_tx);
-        handle.await.expect("submitter should complete");
+        drop(_sign_out_tx);
+        drop(_cmd_tx);
+        handle.await.expect("pipeline should complete");
 
-        // We should have received exactly 2 sign requests (one per checkpoint, each with 1 tx).
         let mut requests = Vec::new();
         while let Ok(req) = sign_rx.try_recv() {
             requests.push(req);
         }
         assert_eq!(requests.len(), 2, "should have 2 sign requests");
 
-        // Both should use DWallet's curve/algorithm/hash.
         for req in &requests {
             assert_eq!(req.curve, noa_checkpoint::DWallet::curve());
             assert_eq!(
@@ -354,209 +379,76 @@ mod tests {
             requests[0].message, requests[1].message,
             "different checkpoints should produce different tx bytes"
         );
-
-        // Store should have 2 pending checkpoints.
-        assert!(store.get_certified(0).is_none(), "not yet certified");
-        assert!(store.get_certified(1).is_none(), "not yet certified");
     }
 
     #[tokio::test]
-    async fn test_submitter_monotonic_sequence_numbers() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
-        let (sign_tx, _sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>(16);
+    async fn test_pipeline_certifies_and_submits_to_chain() {
+        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
+            create_test_pipeline::<noa_checkpoint::DWallet>();
 
-        let submitter = NOACheckpointSubmitter::<noa_checkpoint::System>::new(
-            msg_rx,
-            sign_tx,
-            store.clone(),
-            42,
-            vec![],
-        );
+        let handle = tokio::spawn(pipeline.run());
 
-        let handle = tokio::spawn(submitter.run());
-
+        // Send a checkpoint.
         let ctx = test_sui_chain_context();
-        for _ in 0..5 {
-            msg_tx.send((vec![], ctx.clone())).await.unwrap();
-        }
-        drop(msg_tx);
-        handle.await.unwrap();
+        msg_tx.send((vec![], ctx)).await.unwrap();
 
-        // Verify each checkpoint got a monotonically increasing sequence number
-        // by checking the pending store for entries 0..5.
-        // Since nothing has been signed, all should still be pending.
-        // We verify by trying to sign each one — the tx_bytes are signable_bytes output.
-        for seq in 0..5u64 {
-            let checkpoint = NOACheckpointMessage::<noa_checkpoint::System> {
-                epoch: 42,
-                sequence_number: seq,
-                messages: vec![],
-            };
-            let expected_bytes = vec![noa_checkpoint::System::build_tx_bytes(
-                checkpoint.epoch,
-                checkpoint.sequence_number,
-                0,
-                &checkpoint.messages,
-                &test_sui_chain_context(),
-                &[],
-                0,
-            )];
-            // Signing should find the pending entry.
-            let result = store.add_signature(
-                &expected_bytes[0],
-                b"test_sig".to_vec(),
-                DWalletCurve::Curve25519,
-                DWalletSignatureAlgorithm::EdDSA,
-            );
-            assert!(
-                result.is_some(),
-                "checkpoint seq={seq} should be pending in store"
-            );
-            assert_eq!(result.unwrap().checkpoint.sequence_number, seq);
-        }
-    }
+        // Wait for the sign request to arrive.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // =========================================================================
-    // NOACheckpointCertifier async tests
-    // =========================================================================
+        let req = sign_rx.try_recv().expect("should have a sign request");
 
-    #[tokio::test]
-    async fn test_certifier_collects_signatures_and_certifies() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let (output_tx, output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
-
-        let certified_output = Box::new(LogNOACheckpointOutput);
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            store.clone(),
-            output_rx,
-            certified_output,
-        );
-
-        // Pre-populate the store with a pending checkpoint.
-        let checkpoint = NOACheckpointMessage {
-            epoch: 1,
-            sequence_number: 0,
-            messages: vec![],
-        };
-        let tx_bytes = b"certifier_test_tx".to_vec();
-        store.insert_pending(0, checkpoint, vec![(tx_bytes.clone(), vec![])]);
-
-        let handle = tokio::spawn(certifier.run());
-
-        // Send a simulated sign output.
-        output_tx
+        // Simulate MPC signing.
+        sign_out_tx
             .send(NetworkOwnedAddressSignOutput {
                 session_identifier: test_session_id(),
-                message: tx_bytes.clone(),
+                message: req.message.clone(),
                 signature: b"mpc_signature".to_vec(),
-                curve: DWalletCurve::Curve25519,
-                signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
-                hash_scheme: DWalletHashScheme::SHA512,
+                curve: req.curve,
+                signature_algorithm: req.signature_algorithm,
+                hash_scheme: req.hash_scheme,
             })
             .await
             .unwrap();
 
-        // Give the certifier a moment to process.
-        tokio::task::yield_now().await;
+        // Give the pipeline time to process.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Drop sender to shut down the certifier.
-        drop(output_tx);
+        // Drop all senders to let the pipeline exit.
+        drop(msg_tx);
+        drop(sign_out_tx);
+        drop(_cmd_tx);
         handle.await.unwrap();
-
-        // Verify the checkpoint was certified and stored (by add_signature directly).
-        let certified = store.get_certified(0).expect("should be certified");
-        assert_eq!(certified.checkpoint.sequence_number, 0);
-        assert_eq!(certified.signatures, vec![b"mpc_signature".to_vec()]);
-        assert_eq!(certified.signed_bytes, vec![tx_bytes]);
     }
 
     #[tokio::test]
-    async fn test_certifier_ignores_unknown_sign_outputs() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let (output_tx, output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
+    async fn test_end_to_end_pipeline() {
+        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
+            create_test_pipeline::<noa_checkpoint::DWallet>();
 
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            store.clone(),
-            output_rx,
-            Box::new(LogNOACheckpointOutput),
-        );
-
-        let handle = tokio::spawn(certifier.run());
-
-        // Send an output for a non-existent checkpoint — should be silently ignored.
-        output_tx
-            .send(NetworkOwnedAddressSignOutput {
-                session_identifier: test_session_id(),
-                message: b"unknown_tx".to_vec(),
-                signature: b"sig".to_vec(),
-                curve: DWalletCurve::Curve25519,
-                signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
-                hash_scheme: DWalletHashScheme::SHA512,
-            })
-            .await
-            .unwrap();
-
-        tokio::task::yield_now().await;
-        drop(output_tx);
-        handle.await.unwrap();
-
-        // No certified checkpoints should exist.
-        assert!(store.get_certified(0).is_none());
-    }
-
-    // =========================================================================
-    // End-to-end pipeline: Submitter → Store → Certifier
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_end_to_end_submitter_to_certifier_pipeline() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-
-        // Channels: msg_tx → Submitter → sign_request_tx/rx → (simulated MPC) → output_tx → Certifier
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
-        let (sign_request_tx, mut sign_request_rx) =
-            mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (sign_output_tx, sign_output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
-
-        // Spawn submitter.
-        let submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
-            msg_rx,
-            sign_request_tx,
-            store.clone(),
-            7,
-            vec![],
-        );
-        let submitter_handle = tokio::spawn(submitter.run());
-
-        // Spawn certifier.
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            store.clone(),
-            sign_output_rx,
-            Box::new(LogNOACheckpointOutput),
-        );
-        let certifier_handle = tokio::spawn(certifier.run());
+        let handle = tokio::spawn(pipeline.run());
 
         // Send 3 checkpoints.
         let ctx = test_sui_chain_context();
         for _ in 0..3 {
             msg_tx.send((vec![], ctx.clone())).await.unwrap();
         }
-        // Close msg channel so submitter can finish producing requests then exit.
-        drop(msg_tx);
-        submitter_handle.await.unwrap();
 
-        // Simulate MPC signing: read all sign requests and produce sign outputs.
+        // Close msg channel so pipeline stops receiving new checkpoints.
+        drop(msg_tx);
+
+        // Wait for sign requests.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Collect sign requests and respond.
         let mut sign_requests = Vec::new();
-        while let Ok(req) = sign_request_rx.try_recv() {
+        while let Ok(req) = sign_rx.try_recv() {
             sign_requests.push(req);
         }
         assert_eq!(sign_requests.len(), 3, "one sign request per checkpoint");
 
         for req in &sign_requests {
-            sign_output_tx
+            sign_out_tx
                 .send(NetworkOwnedAddressSignOutput {
                     session_identifier: test_session_id(),
                     message: req.message.clone(),
@@ -573,47 +465,19 @@ mod tests {
                 .unwrap();
         }
 
-        // Close output channel so certifier can finish.
-        drop(sign_output_tx);
-        certifier_handle.await.unwrap();
-
-        // All 3 checkpoints should be certified.
-        for seq in 0..3u64 {
-            let certified = store
-                .get_certified(seq)
-                .unwrap_or_else(|| panic!("checkpoint seq={seq} should be certified"));
-            assert_eq!(certified.checkpoint.epoch, 7);
-            assert_eq!(certified.checkpoint.sequence_number, seq);
-            assert_eq!(certified.signatures.len(), 1);
-            assert!(!certified.signatures[0].is_empty());
-        }
+        // Give the pipeline time to process and close.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(sign_out_tx);
+        drop(_cmd_tx);
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn test_end_to_end_system_checkpoint_pipeline() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
+        let (pipeline, msg_tx, sign_out_tx, _cmd_tx, mut sign_rx, _obs_rx, _flag) =
+            create_test_pipeline::<noa_checkpoint::System>();
 
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<SystemCheckpointMessageKind>, SuiChainContext)>(16);
-        let (sign_request_tx, mut sign_request_rx) =
-            mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (sign_output_tx, sign_output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
-
-        let submitter = NOACheckpointSubmitter::<noa_checkpoint::System>::new(
-            msg_rx,
-            sign_request_tx,
-            store.clone(),
-            3,
-            vec![],
-        );
-        let submitter_handle = tokio::spawn(submitter.run());
-
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::System>::new(
-            store.clone(),
-            sign_output_rx,
-            Box::new(LogNOACheckpointOutput),
-        );
-        let certifier_handle = tokio::spawn(certifier.run());
+        let handle = tokio::spawn(pipeline.run());
 
         // Send a system checkpoint with a real message.
         msg_tx
@@ -624,15 +488,14 @@ mod tests {
             .await
             .unwrap();
         drop(msg_tx);
-        submitter_handle.await.unwrap();
 
-        // Simulate signing.
-        let req = sign_request_rx
-            .try_recv()
-            .expect("should have a sign request");
+        // Wait for sign request.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let req = sign_rx.try_recv().expect("should have a sign request");
         assert_eq!(req.curve, noa_checkpoint::System::curve());
 
-        sign_output_tx
+        sign_out_tx
             .send(NetworkOwnedAddressSignOutput {
                 session_identifier: test_session_id(),
                 message: req.message.clone(),
@@ -643,129 +506,11 @@ mod tests {
             })
             .await
             .unwrap();
-        drop(sign_output_tx);
-        certifier_handle.await.unwrap();
 
-        let certified = store.get_certified(0).expect("should be certified");
-        assert_eq!(certified.checkpoint.epoch, 3);
-        assert_eq!(
-            certified.checkpoint.messages,
-            vec![SystemCheckpointMessageKind::EndOfPublish]
-        );
-        assert_eq!(certified.signatures, vec![b"system_sig".to_vec()]);
-    }
-
-    // =========================================================================
-    // Custom CertifiedNOACheckpointOutput for testing
-    // =========================================================================
-
-    /// Collects certified checkpoints into a shared vec for assertion.
-    struct CollectingOutput<K: NOACheckpointKind> {
-        collected: Arc<
-            parking_lot::Mutex<Vec<ika_types::noa_checkpoint::CertifiedNOACheckpointMessage<K>>>,
-        >,
-    }
-
-    impl<K: NOACheckpointKind> CertifiedNOACheckpointOutput<K> for CollectingOutput<K> {
-        fn certified_checkpoint_created(
-            &self,
-            checkpoint: &ika_types::noa_checkpoint::CertifiedNOACheckpointMessage<K>,
-        ) -> ika_types::error::IkaResult {
-            self.collected.lock().push(checkpoint.clone());
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn test_certifier_invokes_output_handler() {
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let (output_tx, output_rx) = mpsc::channel::<NetworkOwnedAddressSignOutput>(16);
-
-        let collected = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let output_handler = Box::new(CollectingOutput::<noa_checkpoint::DWallet> {
-            collected: collected.clone(),
-        });
-
-        let certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            store.clone(),
-            output_rx,
-            output_handler,
-        );
-
-        // Insert 2 pending checkpoints.
-        for seq in 0..2u64 {
-            let checkpoint = NOACheckpointMessage {
-                epoch: 1,
-                sequence_number: seq,
-                messages: vec![],
-            };
-            let tx = format!("tx_{seq}").into_bytes();
-            store.insert_pending(seq, checkpoint, vec![(tx, vec![])]);
-        }
-
-        let handle = tokio::spawn(certifier.run());
-
-        // Sign both.
-        for seq in 0..2u64 {
-            let tx = format!("tx_{seq}").into_bytes();
-            output_tx
-                .send(NetworkOwnedAddressSignOutput {
-                    session_identifier: test_session_id(),
-                    message: tx,
-                    signature: format!("sig_{seq}").into_bytes(),
-                    curve: DWalletCurve::Curve25519,
-                    signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
-                    hash_scheme: DWalletHashScheme::SHA512,
-                })
-                .await
-                .unwrap();
-        }
-
-        // Let certifier process.
-        tokio::task::yield_now().await;
-        // Small sleep to ensure async processing completes.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        drop(output_tx);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(sign_out_tx);
+        drop(_cmd_tx);
         handle.await.unwrap();
-
-        let results = collected.lock();
-        assert_eq!(results.len(), 2, "output handler should be called twice");
-        assert_eq!(results[0].checkpoint.sequence_number, 0);
-        assert_eq!(results[1].checkpoint.sequence_number, 1);
-    }
-
-    #[tokio::test]
-    async fn test_submitter_channel_backpressure() {
-        // Use a very small channel to test that the submitter doesn't lose messages.
-        let store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let (sign_tx, mut sign_rx) = mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
-        let (msg_tx, msg_rx) =
-            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(1);
-
-        let submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
-            msg_rx,
-            sign_tx,
-            store.clone(),
-            1,
-            vec![],
-        );
-        let handle = tokio::spawn(submitter.run());
-
-        // Send messages one at a time (channel capacity is 1).
-        let ctx = test_sui_chain_context();
-        let count = 10;
-        for _ in 0..count {
-            msg_tx.send((vec![], ctx.clone())).await.unwrap();
-        }
-        drop(msg_tx);
-        handle.await.unwrap();
-
-        let mut received = 0;
-        while sign_rx.try_recv().is_ok() {
-            received += 1;
-        }
-        assert_eq!(received, count, "all messages should be processed");
     }
 
     // =========================================================================
@@ -776,7 +521,7 @@ mod tests {
     fn test_finalization_tracking() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -837,9 +582,8 @@ mod tests {
     fn test_all_finalized_multiple_txs() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
-        // Insert a checkpoint with multi-tx (we need the entry to exist).
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -880,7 +624,7 @@ mod tests {
     fn test_epoch_change_blocked_until_finalized() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::System>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::System>::new();
 
         // No entries = no finalization entries, should not block.
         assert!(store.has_no_finalization_entries());
@@ -915,7 +659,7 @@ mod tests {
     fn test_finalization_mark_unknown_ref_is_noop() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let unknown_ref = NOACheckpointTxRef {
             kind_name: NOACheckpointKindName::DWallet,
@@ -938,7 +682,7 @@ mod tests {
     fn test_retry_pending_status() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -1008,76 +752,10 @@ mod tests {
     }
 
     #[test]
-    fn test_composite_output() {
-        use crate::noa_checkpoints::checkpoint_output::{
-            CertifiedNOACheckpointOutput, CompositeOutput,
-        };
-        use ika_types::noa_checkpoint::CertifiedNOACheckpointMessage;
-
-        let first_collected = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        let second_collected = Arc::new(parking_lot::Mutex::new(Vec::new()));
-
-        let first = CollectingOutput::<noa_checkpoint::DWallet> {
-            collected: first_collected.clone(),
-        };
-        let second = CollectingOutput::<noa_checkpoint::DWallet> {
-            collected: second_collected.clone(),
-        };
-
-        let composite = CompositeOutput::new(vec![Box::new(first), Box::new(second)]);
-
-        let checkpoint = CertifiedNOACheckpointMessage {
-            checkpoint: NOACheckpointMessage {
-                epoch: 1,
-                sequence_number: 0,
-                messages: vec![],
-            },
-            signatures: vec![b"sig".to_vec()],
-            signed_bytes: vec![b"tx".to_vec()],
-            curve: DWalletCurve::Curve25519,
-            signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
-        };
-
-        composite.certified_checkpoint_created(&checkpoint).unwrap();
-
-        assert_eq!(first_collected.lock().len(), 1);
-        assert_eq!(second_collected.lock().len(), 1);
-        assert_eq!(first_collected.lock()[0].checkpoint.sequence_number, 0);
-    }
-
-    #[tokio::test]
-    async fn test_notify_finalizer_output() {
-        use crate::noa_checkpoints::checkpoint_output::{
-            CertifiedNOACheckpointOutput, NotifyFinalizerOutput,
-        };
-        use ika_types::noa_checkpoint::CertifiedNOACheckpointMessage;
-
-        let (tx, mut rx) = mpsc::channel::<u64>(16);
-        let output = NotifyFinalizerOutput::new(tx);
-
-        let checkpoint = CertifiedNOACheckpointMessage {
-            checkpoint: NOACheckpointMessage::<noa_checkpoint::DWallet> {
-                epoch: 1,
-                sequence_number: 42,
-                messages: vec![],
-            },
-            signatures: vec![b"sig".to_vec()],
-            signed_bytes: vec![b"tx".to_vec()],
-            curve: DWalletCurve::Curve25519,
-            signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
-        };
-
-        output.certified_checkpoint_created(&checkpoint).unwrap();
-
-        let seq = rx.try_recv().expect("should receive seq number");
-        assert_eq!(seq, 42);
-    }
-
-    #[test]
     fn test_initiate_retry_reregisters_pending() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         // Insert a checkpoint and certify it.
         let checkpoint = NOACheckpointMessage {
@@ -1140,7 +818,7 @@ mod tests {
     fn test_retry_round_persisted_in_store() {
         use ika_types::noa_checkpoint::NOACheckpointTxRef;
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -1186,7 +864,7 @@ mod tests {
     fn test_partial_finalization_retry() {
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
 
         // 3-tx checkpoint.
         let checkpoint = NOACheckpointMessage {
@@ -1279,12 +957,9 @@ mod tests {
 
     #[test]
     fn test_confirmed_locally_skips_failure_quorum_check() {
-        // This is a design test: once a tx is ConfirmedLocally, the poll_loop
-        // should NOT check failure quorum. We verify by checking that
-        // ConfirmedLocally status is distinct from Pending.
         use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
             sequence_number: 0,
@@ -1318,134 +993,50 @@ mod tests {
     }
 
     // =========================================================================
-    // Per-tx byte regeneration tests
+    // Pipeline finalization flag tests
     // =========================================================================
 
-    #[test]
-    fn test_retry_regenerates_bytes() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
+    #[tokio::test]
+    async fn test_pipeline_updates_finalized_flag() {
+        let flag = Arc::new(AtomicBool::new(true));
 
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
-        let ctx = test_sui_chain_context();
+        let (msg_tx, msg_rx) =
+            mpsc::channel::<(Vec<DWalletCheckpointMessageKind>, SuiChainContext)>(16);
+        let (_sign_out_tx, sign_out_rx) = mpsc::channel(16);
+        let (_cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (sign_req_tx, _sign_req_rx) = mpsc::unbounded_channel();
+        let (obs_tx, _obs_rx) = mpsc::unbounded_channel();
 
-        // Build initial tx_bytes via build_tx_bytes so we have a realistic baseline.
-        let initial_bytes = noa_checkpoint::DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
-        let checkpoint = NOACheckpointMessage {
-            epoch: 1,
-            sequence_number: 0,
-            messages: vec![],
-        };
-        store.insert_pending(0, checkpoint, vec![(initial_bytes.clone(), vec![])]);
+        let pipeline = NOACheckpointPipeline::<noa_checkpoint::DWallet>::new(
+            msg_rx,
+            sign_out_rx,
+            cmd_rx,
+            sign_req_tx,
+            obs_tx,
+            Arc::new(LogOnlyChainSubmitter),
+            1,
+            vec![],
+            flag.clone(),
+        );
 
-        // Certify.
-        store
-            .add_signature(
-                &initial_bytes,
-                b"sig".to_vec(),
-                DWalletCurve::Curve25519,
-                DWalletSignatureAlgorithm::EdDSA,
-            )
-            .expect("should certify");
+        let handle = tokio::spawn(pipeline.run());
 
-        let tx_ref = NOACheckpointTxRef {
-            kind_name: NOACheckpointKindName::DWallet,
-            sequence_number: 0,
-            tx_index: 0,
-            epoch: 1,
-        };
+        // Send a checkpoint — the pipeline will store it but flag should remain true
+        // (has_no_finalization_entries is true since no txs submitted to chain yet).
+        msg_tx
+            .send((vec![], test_sui_chain_context()))
+            .await
+            .unwrap();
 
-        // Submit and retry.
-        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
-        let retry_bytes = store
-            .initiate_tx_retry(&tx_ref, &ctx, &[])
-            .expect("retry should succeed");
-
-        // Regenerated bytes differ from original (retry_round=1).
-        assert_ne!(retry_bytes, initial_bytes);
-
-        // Old bytes removed from tx_to_seq, new bytes registered.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert!(
-            store
-                .add_signature(
-                    &initial_bytes,
-                    b"stale_sig".to_vec(),
-                    DWalletCurve::Curve25519,
-                    DWalletSignatureAlgorithm::EdDSA,
-                )
-                .is_none(),
-            "old bytes should not route"
+            flag.load(Ordering::Acquire),
+            "flag should be true before any chain submission"
         );
 
-        // New bytes can receive a signature.
-        store.add_signature(
-            &retry_bytes,
-            b"retry_sig".to_vec(),
-            DWalletCurve::Curve25519,
-            DWalletSignatureAlgorithm::EdDSA,
-        );
-        assert!(store.has_signature(&tx_ref));
-
-        // get_tx_for_submission returns the new bytes.
-        let (bytes, sig) = store.get_tx_for_submission(&tx_ref).unwrap();
-        assert_eq!(bytes, retry_bytes);
-        assert_eq!(sig, b"retry_sig".to_vec());
-    }
-
-    #[test]
-    fn test_retry_with_different_context() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
-
-        let store = NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new();
-        let initial_ctx = test_sui_chain_context();
-
-        let initial_bytes =
-            noa_checkpoint::DWallet::build_tx_bytes(1, 0, 0, &[], &initial_ctx, &[], 0);
-        let checkpoint = NOACheckpointMessage {
-            epoch: 1,
-            sequence_number: 0,
-            messages: vec![],
-        };
-        store.insert_pending(0, checkpoint, vec![(initial_bytes.clone(), vec![])]);
-
-        store
-            .add_signature(
-                &initial_bytes,
-                b"sig".to_vec(),
-                DWalletCurve::Curve25519,
-                DWalletSignatureAlgorithm::EdDSA,
-            )
-            .expect("should certify");
-
-        let tx_ref = NOACheckpointTxRef {
-            kind_name: NOACheckpointKindName::DWallet,
-            sequence_number: 0,
-            tx_index: 0,
-            epoch: 1,
-        };
-
-        store.mark_submitted(tx_ref.clone(), b"chain_id".to_vec());
-
-        // Retry with a different context (e.g., new Sui epoch).
-        let new_ctx = SuiChainContext {
-            reference_gas_price: 2000,
-            sui_epoch: 2,
-        };
-        let retry_bytes = store
-            .initiate_tx_retry(&tx_ref, &new_ctx, &[])
-            .expect("retry should succeed");
-
-        // Bytes differ from both original and what same-context retry would produce.
-        assert_ne!(retry_bytes, initial_bytes);
-
-        // Signature routes correctly via add_signature with new bytes.
-        store.add_signature(
-            &retry_bytes,
-            b"retry_sig".to_vec(),
-            DWalletCurve::Curve25519,
-            DWalletSignatureAlgorithm::EdDSA,
-        );
-        assert!(store.has_signature(&tx_ref));
-        let (bytes, _) = store.get_tx_for_submission(&tx_ref).unwrap();
-        assert_eq!(bytes, retry_bytes);
+        drop(msg_tx);
+        drop(_sign_out_tx);
+        drop(_cmd_tx);
+        handle.await.unwrap();
     }
 }

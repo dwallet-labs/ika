@@ -6572,7 +6572,6 @@ dependencies = [
  "ika-protocol-config",
  "ika-sui-client",
  "ika-types",
- "indexmap 2.9.0",
  "itertools 0.14.0",
  "k256 0.14.0-pre.11",
  "lru 0.16.3",

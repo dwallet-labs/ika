@@ -632,7 +632,6 @@ impl ProtocolConfig {
             internal_eddsa_presign_pool_maximum_size: Some(30000),
             internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
             internal_taproot_presign_pool_maximum_size: Some(30000),
-
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);

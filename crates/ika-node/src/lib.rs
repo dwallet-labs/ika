@@ -149,13 +149,7 @@ use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
-use ika_core::noa_checkpoints::checkpoint_output::{
-    CompositeOutput, NotifyFinalizerOutput, SendNOACheckpointToStateSync,
-};
-use ika_core::noa_checkpoints::{
-    LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointCertifier, NOACheckpointFinalizer,
-    NOACheckpointLocalStore, NOACheckpointSubmitter,
-};
+use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointPipeline};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
@@ -167,7 +161,6 @@ use ika_core::system_checkpoints::{
     SendSystemCheckpointToStateSync, SubmitSystemCheckpointToConsensus, SystemCheckpointMetrics,
     SystemCheckpointService, SystemCheckpointStore,
 };
-use ika_network::state_sync::noa_sync::NOACheckpointSync;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
@@ -236,20 +229,14 @@ struct NOACheckpointComponents {
             ika_types::noa_checkpoint::SuiChainContext,
         )>,
     >,
-    /// DWallet NOA checkpoint store for finalization queries.
-    dwallet_noa_store:
-        Arc<ika_core::noa_checkpoints::NOACheckpointLocalStore<ika_types::noa_checkpoint::DWallet>>,
-    /// System NOA checkpoint store for finalization queries.
-    system_noa_store:
-        Arc<ika_core::noa_checkpoints::NOACheckpointLocalStore<ika_types::noa_checkpoint::System>>,
-    /// Receiver for NOA checkpoint observations from finalizers to MPC service.
+    /// Receiver for NOA checkpoint observations from pipelines to MPC service.
     noa_observation_receiver:
         tokio::sync::mpsc::UnboundedReceiver<ika_types::noa_checkpoint::NOACheckpointTxObservation>,
-    /// Command sender for DWallet NOA checkpoint finalizer.
+    /// Command sender for DWallet NOA checkpoint pipeline.
     noa_dwallet_command_sender: tokio::sync::mpsc::Sender<
         ika_types::noa_checkpoint::NOACheckpointCommand<ika_types::noa_checkpoint::SuiDestination>,
     >,
-    /// Command sender for System NOA checkpoint finalizer.
+    /// Command sender for System NOA checkpoint pipeline.
     noa_system_command_sender: tokio::sync::mpsc::Sender<
         ika_types::noa_checkpoint::NOACheckpointCommand<ika_types::noa_checkpoint::SuiDestination>,
     >,
@@ -1018,13 +1005,11 @@ impl IkaNode {
         // has other conditions (BLS checkpoints, consensus, etc.) that take longer.
         noa_all_finalized.store(true, std::sync::atomic::Ordering::Release);
 
-        // Start NOA checkpoint certifier tasks and get stores/sender for builder wiring.
+        // Start NOA checkpoint pipeline tasks and get senders for MPC service wiring.
         let NOACheckpointComponents {
             tasks: noa_checkpoint_tasks,
             noa_dwallet_checkpoint_sender,
             noa_system_checkpoint_sender,
-            dwallet_noa_store: _,
-            system_noa_store: _,
             noa_observation_receiver,
             noa_dwallet_command_sender,
             noa_system_command_sender,
@@ -1320,10 +1305,8 @@ impl IkaNode {
         use ika_types::noa_checkpoint;
 
         let mut tasks = JoinSet::new();
-        let dwallet_noa_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::DWallet>::new());
-        let system_noa_store = Arc::new(NOACheckpointLocalStore::<noa_checkpoint::System>::new());
 
-        // Channels for observation/command flow between finalizers and MPC service.
+        // Channels for observation/command flow between pipelines and MPC service.
         let (obs_tx, obs_rx) =
             tokio::sync::mpsc::unbounded_channel::<noa_checkpoint::NOACheckpointTxObservation>();
         let (dwallet_cmd_tx, dwallet_cmd_rx) = tokio::sync::mpsc::channel::<
@@ -1340,176 +1323,86 @@ impl IkaNode {
                 tasks,
                 noa_dwallet_checkpoint_sender: None,
                 noa_system_checkpoint_sender: None,
-                dwallet_noa_store,
-                system_noa_store,
                 noa_observation_receiver: obs_rx,
                 noa_dwallet_command_sender: dwallet_cmd_tx,
                 noa_system_command_sender: system_cmd_tx,
             };
         }
 
-        info!("Starting NOA checkpoint certifier tasks");
+        info!("Starting NOA checkpoint pipeline tasks");
 
-        // Create state sync components for both DWallet and System NOA checkpoints.
-        let (dwallet_sync_handle, dwallet_sync) =
-            NOACheckpointSync::<noa_checkpoint::DWallet>::new();
-        tasks.spawn(dwallet_sync.run());
+        let epoch = epoch_store.epoch();
 
-        let (system_sync_handle, system_sync) = NOACheckpointSync::<noa_checkpoint::System>::new();
-        tasks.spawn(system_sync.run());
-
-        // Bounded channels for broadcasting sign outputs to per-kind certifiers.
+        // Bounded channels for broadcasting sign outputs to per-kind pipelines.
         let (dwallet_output_tx, dwallet_output_rx) =
             tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
         let (system_output_tx, system_output_rx) =
             tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(256);
 
-        // Broadcast task: sends each sign output to both certifiers.
+        // Broadcast task: sends each sign output to both pipelines.
         tasks.spawn(async move {
             while let Some(output) = noa_sign_output_receiver.recv().await {
                 if let Err(e) = dwallet_output_tx.send(output.clone()).await {
-                    error!("Failed to broadcast NOA sign output to DWallet certifier: {e}",);
+                    error!("Failed to broadcast NOA sign output to DWallet pipeline: {e}");
                 }
                 if let Err(e) = system_output_tx.send(output).await {
-                    error!("Failed to broadcast NOA sign output to System certifier: {e}",);
+                    error!("Failed to broadcast NOA sign output to System pipeline: {e}");
                 }
             }
         });
 
-        // Create certified-checkpoint notification channels (finalizer ← certifier).
-        let (dwallet_cert_notify_tx, dwallet_cert_notify_rx) =
-            tokio::sync::mpsc::channel::<u64>(256);
-        let (system_cert_notify_tx, system_cert_notify_rx) = tokio::sync::mpsc::channel::<u64>(256);
-
-        // DWallet certifier with composite output: state sync + finalizer notification.
-        let dwallet_certified_output: Box<
-            dyn ika_core::noa_checkpoints::checkpoint_output::CertifiedNOACheckpointOutput<
-                    noa_checkpoint::DWallet,
-                >,
-        > = Box::new(CompositeOutput::<noa_checkpoint::DWallet>::new(vec![
-            Box::new(
-                SendNOACheckpointToStateSync::<noa_checkpoint::DWallet>::new(dwallet_sync_handle),
-            ),
-            Box::new(NotifyFinalizerOutput::new(dwallet_cert_notify_tx)),
-        ]));
-        let dwallet_certifier = NOACheckpointCertifier::<noa_checkpoint::DWallet>::new(
-            dwallet_noa_store.clone(),
-            dwallet_output_rx,
-            dwallet_certified_output,
-        );
-        tasks.spawn(dwallet_certifier.run());
-
-        // System certifier with composite output: state sync + finalizer notification.
-        let system_certified_output: Box<
-            dyn ika_core::noa_checkpoints::checkpoint_output::CertifiedNOACheckpointOutput<
-                    noa_checkpoint::System,
-                >,
-        > = Box::new(CompositeOutput::<noa_checkpoint::System>::new(vec![
-            Box::new(SendNOACheckpointToStateSync::<noa_checkpoint::System>::new(
-                system_sync_handle,
-            )),
-            Box::new(NotifyFinalizerOutput::new(system_cert_notify_tx)),
-        ]));
-        let system_certifier = NOACheckpointCertifier::<noa_checkpoint::System>::new(
-            system_noa_store.clone(),
-            system_output_rx,
-            system_certified_output,
-        );
-        tasks.spawn(system_certifier.run());
-
-        // Create bounded channels for NOA checkpoint submitter tasks.
-        let epoch = epoch_store.epoch();
-
+        // Message channels from MPC service to pipelines.
         let (noa_dwallet_tx, noa_dwallet_rx) = tokio::sync::mpsc::channel::<(
             Vec<ika_types::message::DWalletCheckpointMessageKind>,
             ika_types::noa_checkpoint::SuiChainContext,
         )>(256);
-        let dwallet_submitter = NOACheckpointSubmitter::<noa_checkpoint::DWallet>::new(
-            noa_dwallet_rx,
-            noa_sign_request_sender.clone(),
-            dwallet_noa_store.clone(),
-            epoch,
-            vec![],
-        );
-        tasks.spawn(dwallet_submitter.run());
-
         let (noa_system_tx, noa_system_rx) = tokio::sync::mpsc::channel::<(
             Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
             ika_types::noa_checkpoint::SuiChainContext,
         )>(256);
-        let system_submitter = NOACheckpointSubmitter::<noa_checkpoint::System>::new(
-            noa_system_rx,
-            noa_sign_request_sender.clone(),
-            system_noa_store.clone(),
-            epoch,
-            vec![],
-        );
-        tasks.spawn(system_submitter.run());
 
-        // DWallet finalizer.
+        // Chain submitters.
         warn!(
             "Using LogOnlyChainSubmitter — NOA checkpoint chain submission is a no-op. \
                Replace with actual chain submitter for production."
         );
         let dwallet_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::DWallet>> =
             Arc::new(LogOnlyChainSubmitter);
-        let dwallet_finalizer = NOACheckpointFinalizer::<noa_checkpoint::DWallet>::new(
-            dwallet_noa_store.clone(),
-            dwallet_chain_submitter,
-            noa_sign_request_sender.clone(),
-            epoch,
-            dwallet_cert_notify_rx,
-            obs_tx.clone(),
-            dwallet_cmd_rx,
-            vec![],
-        );
-
-        // System finalizer.
         let system_chain_submitter: Arc<dyn NOAChainSubmitter<noa_checkpoint::System>> =
             Arc::new(LogOnlyChainSubmitter);
-        let system_finalizer = NOACheckpointFinalizer::<noa_checkpoint::System>::new(
-            system_noa_store.clone(),
-            system_chain_submitter,
+
+        // DWallet pipeline.
+        let dwallet_pipeline = NOACheckpointPipeline::<noa_checkpoint::DWallet>::new(
+            noa_dwallet_rx,
+            dwallet_output_rx,
+            dwallet_cmd_rx,
             noa_sign_request_sender.clone(),
+            obs_tx.clone(),
+            dwallet_chain_submitter,
             epoch,
-            system_cert_notify_rx,
-            obs_tx,
-            system_cmd_rx,
             vec![],
+            noa_all_finalized.clone(),
         );
+        tasks.spawn(dwallet_pipeline.run());
 
-        // Spawn finalizer tasks with the shared finalization flag.
-        let dwallet_store_for_flag = dwallet_noa_store.clone();
-        let system_store_for_flag = system_noa_store.clone();
-        let flag = noa_all_finalized;
-        tasks.spawn(async move {
-            dwallet_finalizer.run().await;
-        });
-        tasks.spawn(async move {
-            system_finalizer.run().await;
-        });
-
-        // Spawn a lightweight task that periodically updates the shared finalization flag.
-        tasks.spawn(async move {
-            loop {
-                let dwallet_done = dwallet_store_for_flag.has_no_finalization_entries()
-                    || dwallet_store_for_flag.all_finalized();
-                let system_done = system_store_for_flag.has_no_finalization_entries()
-                    || system_store_for_flag.all_finalized();
-                flag.store(
-                    dwallet_done && system_done,
-                    std::sync::atomic::Ordering::Release,
-                );
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        });
+        // System pipeline.
+        let system_pipeline = NOACheckpointPipeline::<noa_checkpoint::System>::new(
+            noa_system_rx,
+            system_output_rx,
+            system_cmd_rx,
+            noa_sign_request_sender.clone(),
+            obs_tx,
+            system_chain_submitter,
+            epoch,
+            vec![],
+            noa_all_finalized,
+        );
+        tasks.spawn(system_pipeline.run());
 
         NOACheckpointComponents {
             tasks,
             noa_dwallet_checkpoint_sender: Some(noa_dwallet_tx),
             noa_system_checkpoint_sender: Some(noa_system_tx),
-            dwallet_noa_store,
-            system_noa_store,
             noa_observation_receiver: obs_rx,
             noa_dwallet_command_sender: dwallet_cmd_tx,
             noa_system_command_sender: system_cmd_tx,

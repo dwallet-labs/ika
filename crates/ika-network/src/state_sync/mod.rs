@@ -73,8 +73,6 @@ use tokio::{
 };
 use tracing::{debug, info, instrument, trace, warn};
 
-pub mod noa_sync;
-
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.StateSync.rs"));
 }
