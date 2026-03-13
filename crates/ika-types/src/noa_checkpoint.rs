@@ -106,8 +106,8 @@ impl ChainDestination for SuiDestination {
 /// serialization-stable identification instead of raw strings.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NOACheckpointKindName {
-    DWallet,
-    System,
+    SuiDWallet,
+    SuiSystem,
 }
 
 /// Defines a kind of NOA-signed checkpoint (e.g., DWallet or System).
@@ -160,23 +160,21 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
 
 // === Marker types implementing NOACheckpointKind ===
 
-// FIXME: choose better name e.g. SuiDWalletCheckpointKind
-/// DWallet checkpoint kind — carries MPC session results.
+/// Sui DWallet checkpoint kind — carries MPC session results.
 #[derive(Clone, Debug)]
-pub struct DWallet;
+pub struct SuiDWallet;
 
-// FIXME: choose better name like SuiSystemCheckpointKind
-/// System checkpoint kind — carries governance/config updates.
+/// Sui System checkpoint kind — carries governance/config updates.
 #[derive(Clone, Debug)]
-pub struct System;
+pub struct SuiSystem;
 
-impl NOACheckpointKind for DWallet {
+impl NOACheckpointKind for SuiDWallet {
     type MessageKind = DWalletCheckpointMessageKind;
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_dwallet_checkpoint";
 
     fn kind_name() -> NOACheckpointKindName {
-        NOACheckpointKindName::DWallet
+        NOACheckpointKindName::SuiDWallet
     }
 
     fn curve() -> DWalletCurve {
@@ -212,13 +210,13 @@ impl NOACheckpointKind for DWallet {
     }
 }
 
-impl NOACheckpointKind for System {
+impl NOACheckpointKind for SuiSystem {
     type MessageKind = SystemCheckpointMessageKind;
     type Destination = SuiDestination;
     const NAME: &'static str = "noa_system_checkpoint";
 
     fn kind_name() -> NOACheckpointKindName {
-        NOACheckpointKindName::System
+        NOACheckpointKindName::SuiSystem
     }
 
     fn curve() -> DWalletCurve {
@@ -338,7 +336,7 @@ mod tests {
             reference_gas_price: 1000,
             sui_epoch: 1,
         };
-        let bytes = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
+        let bytes = SuiDWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
         assert!(!bytes.is_empty());
 
         let decoded: (u64, u64, u32, Vec<DWalletCheckpointMessageKind>, u32) =
@@ -352,7 +350,7 @@ mod tests {
             reference_gas_price: 1000,
             sui_epoch: 1,
         };
-        let bytes = System::build_tx_bytes(2, 5, 1, &[], &ctx, &[], 3);
+        let bytes = SuiSystem::build_tx_bytes(2, 5, 1, &[], &ctx, &[], 3);
         assert!(!bytes.is_empty());
 
         let decoded: (u64, u64, u32, Vec<SystemCheckpointMessageKind>, u32) =
@@ -366,8 +364,8 @@ mod tests {
             reference_gas_price: 1000,
             sui_epoch: 1,
         };
-        let first = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
-        let retry = DWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 1);
+        let first = SuiDWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 0);
+        let retry = SuiDWallet::build_tx_bytes(1, 0, 0, &[], &ctx, &[], 1);
         assert_ne!(
             first, retry,
             "different retry_round should produce different bytes"

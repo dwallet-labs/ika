@@ -126,9 +126,9 @@ pub struct DWalletMPCService {
     /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
     network_owned_address_sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
     /// DWallet checkpoint handler, driven directly by the service.
-    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::DWallet>>,
+    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWallet>>,
     /// System checkpoint handler, driven directly by the service.
-    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::System>>,
+    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystem>>,
 }
 
 impl DWalletMPCService {
@@ -153,8 +153,8 @@ impl DWalletMPCService {
         network_owned_address_sign_output_receiver: UnboundedReceiver<
             NetworkOwnedAddressSignOutput,
         >,
-        dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::DWallet>>,
-        system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::System>>,
+        dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWallet>>,
+        system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystem>>,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -599,14 +599,14 @@ impl DWalletMPCService {
         for tx_ref in &agreed_status.newly_finalized_tx_refs {
             let cmd = NOACheckpointCommand::MarkFinalized(tx_ref.clone());
             match tx_ref.kind_name {
-                NOACheckpointKindName::DWallet => {
+                NOACheckpointKindName::SuiDWallet => {
                     if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
                         let requests = handler.handle_command(cmd);
                         self.pending_network_owned_address_sign_requests
                             .extend(requests);
                     }
                 }
-                NOACheckpointKindName::System => {
+                NOACheckpointKindName::SuiSystem => {
                     if let Some(ref mut handler) = self.system_checkpoint_handler {
                         let requests = handler.handle_command(cmd);
                         self.pending_network_owned_address_sign_requests
@@ -622,14 +622,14 @@ impl DWalletMPCService {
                     context: ctx.clone(),
                 };
                 match tx_ref.kind_name {
-                    NOACheckpointKindName::DWallet => {
+                    NOACheckpointKindName::SuiDWallet => {
                         if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
                             let requests = handler.handle_command(cmd);
                             self.pending_network_owned_address_sign_requests
                                 .extend(requests);
                         }
                     }
-                    NOACheckpointKindName::System => {
+                    NOACheckpointKindName::SuiSystem => {
                         if let Some(ref mut handler) = self.system_checkpoint_handler {
                             let requests = handler.handle_command(cmd);
                             self.pending_network_owned_address_sign_requests
