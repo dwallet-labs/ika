@@ -73,7 +73,7 @@ fn compute_chain_context<C: CounterpartyChain>(
     {
         info!(
             consensus_round,
-            chain = C::CHAIN_NAME,
+            chain = %C::KIND,
             "Chain context agreed upon"
         );
         *current_context = Some(context);

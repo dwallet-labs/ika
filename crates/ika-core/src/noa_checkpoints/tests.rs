@@ -12,7 +12,8 @@ mod tests {
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
     use ika_types::noa_checkpoint::{
-        self, NOACheckpointKind, NOACheckpointKindName, NOACheckpointMessage, SuiChainContext,
+        self, CounterpartyChain, NOACheckpointKind, NOACheckpointKindName, NOACheckpointMessage,
+        SuiChainContext,
     };
 
     use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
@@ -311,14 +312,17 @@ mod tests {
         assert_eq!(first_requests.len(), 1, "should have 1 sign request");
         assert_eq!(second_requests.len(), 1, "should have 1 sign request");
 
-        assert_eq!(first_requests[0].curve, noa_checkpoint::SuiDWallet::CURVE);
+        assert_eq!(
+            first_requests[0].curve,
+            noa_checkpoint::SuiCounterpartyChain::CURVE
+        );
         assert_eq!(
             first_requests[0].signature_algorithm,
-            noa_checkpoint::SuiDWallet::SIGNATURE_ALGORITHM
+            noa_checkpoint::SuiCounterpartyChain::SIGNATURE_ALGORITHM
         );
         assert_eq!(
             first_requests[0].hash_scheme,
-            noa_checkpoint::SuiDWallet::HASH_SCHEME
+            noa_checkpoint::SuiCounterpartyChain::HASH_SCHEME
         );
 
         // Messages should be different (different sequence numbers → different signable bytes).
@@ -398,7 +402,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
 
         let req = &requests[0];
-        assert_eq!(req.curve, noa_checkpoint::SuiSystem::CURVE);
+        assert_eq!(req.curve, noa_checkpoint::SuiCounterpartyChain::CURVE);
 
         handler
             .handle_sign_output(NetworkOwnedAddressSignOutput {

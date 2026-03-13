@@ -14,7 +14,10 @@ use std::hash::Hash;
 
 /// Identifies which counterparty chain a session belongs to.
 /// Events come from this chain, checkpoint results go back to it.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum CounterpartyChainKind {
     Sui,
 }
@@ -25,6 +28,15 @@ pub enum CounterpartyChainKind {
 pub trait CounterpartyChain: Clone + Debug + Send + Sync + 'static {
     /// Which variant of `CounterpartyChainKind` this implementor corresponds to.
     const KIND: CounterpartyChainKind;
+
+    /// The curve used for NOA MPC signing on this chain.
+    const CURVE: DWalletCurve;
+
+    /// The signature algorithm for NOA signing on this chain.
+    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm;
+
+    /// The hash scheme for NOA signing on this chain.
+    const HASH_SCHEME: DWalletHashScheme;
 
     /// Chain context needed at runtime to build signable transaction bytes.
     type Context: Clone + Debug + Send + Sync + 'static;
@@ -40,9 +52,6 @@ pub trait CounterpartyChain: Clone + Debug + Send + Sync + 'static {
         + Send
         + Sync
         + 'static;
-
-    /// Human-readable chain name (e.g., "sui", "solana").
-    const CHAIN_NAME: &'static str;
 
     /// Compute chain context from all validators' latest observations.
     ///
@@ -77,9 +86,11 @@ pub struct SuiChainObservation {
 
 impl CounterpartyChain for SuiCounterpartyChain {
     const KIND: CounterpartyChainKind = CounterpartyChainKind::Sui;
+    const CURVE: DWalletCurve = DWalletCurve::Curve25519;
+    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm = DWalletSignatureAlgorithm::EdDSA;
+    const HASH_SCHEME: DWalletHashScheme = DWalletHashScheme::SHA512;
     type Context = SuiChainContext;
     type Observation = SuiChainObservation;
-    const CHAIN_NAME: &'static str = "sui";
 
     fn context_from_observations(
         observations: &HashMap<u16, SuiChainObservation>,
@@ -143,15 +154,6 @@ pub trait NOACheckpointKind: Clone + Debug + Send + Sync + 'static {
     /// Typed identifier for this checkpoint kind, used in `NOACheckpointTxRef`.
     const KIND_NAME: NOACheckpointKindName;
 
-    /// The curve used for NOA MPC signing.
-    const CURVE: DWalletCurve;
-
-    /// The signature algorithm for NOA signing.
-    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm;
-
-    /// The hash scheme for NOA signing.
-    const HASH_SCHEME: DWalletHashScheme;
-
     /// Split checkpoint messages into per-tx groups.
     /// Pure function of messages + size limits.
     fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>>;
@@ -185,9 +187,6 @@ impl NOACheckpointKind for SuiDWallet {
     const NAME: &'static str = "noa_dwallet_checkpoint";
 
     const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiDWallet;
-    const CURVE: DWalletCurve = DWalletCurve::Curve25519;
-    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm = DWalletSignatureAlgorithm::EdDSA;
-    const HASH_SCHEME: DWalletHashScheme = DWalletHashScheme::SHA512;
 
     fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
         // Single tx for now; future: split by 128KB limit.
@@ -216,9 +215,6 @@ impl NOACheckpointKind for SuiSystem {
     const NAME: &'static str = "noa_system_checkpoint";
 
     const KIND_NAME: NOACheckpointKindName = NOACheckpointKindName::SuiSystem;
-    const CURVE: DWalletCurve = DWalletCurve::Curve25519;
-    const SIGNATURE_ALGORITHM: DWalletSignatureAlgorithm = DWalletSignatureAlgorithm::EdDSA;
-    const HASH_SCHEME: DWalletHashScheme = DWalletHashScheme::SHA512;
 
     fn split_messages(messages: &[Self::MessageKind]) -> Vec<Vec<Self::MessageKind>> {
         // Single tx for now; future: split by 128KB limit.

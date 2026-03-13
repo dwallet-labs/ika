@@ -498,9 +498,9 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
             .into_iter()
             .map(|tx_bytes| NetworkOwnedAddressSignRequest {
                 message: tx_bytes,
-                curve: K::CURVE,
-                signature_algorithm: K::SIGNATURE_ALGORITHM,
-                hash_scheme: K::HASH_SCHEME,
+                curve: <K::Counterparty as CounterpartyChain>::CURVE,
+                signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
+                hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
             })
             .collect()
     }
@@ -716,9 +716,9 @@ impl<K: NOACheckpointKind> NOACheckpointHandler<K> {
 
         Some(NetworkOwnedAddressSignRequest {
             message: tx_bytes,
-            curve: K::CURVE,
-            signature_algorithm: K::SIGNATURE_ALGORITHM,
-            hash_scheme: K::HASH_SCHEME,
+            curve: <K::Counterparty as CounterpartyChain>::CURVE,
+            signature_algorithm: <K::Counterparty as CounterpartyChain>::SIGNATURE_ALGORITHM,
+            hash_scheme: <K::Counterparty as CounterpartyChain>::HASH_SCHEME,
         })
     }
 
