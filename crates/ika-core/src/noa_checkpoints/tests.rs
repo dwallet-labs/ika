@@ -13,12 +13,13 @@ mod tests {
     use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
     use ika_types::noa_checkpoint::{
         self, CounterpartyChain, NOACheckpointKind, NOACheckpointKindName, NOACheckpointMessage,
-        SuiChainContext,
+        NOACheckpointTxRef, NOACheckpointTxStatus, SuiChainContext,
     };
 
     use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
     use crate::noa_checkpoints::{
-        LogOnlyChainSubmitter, NOACheckpointHandler, NOACheckpointLocalStore,
+        LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler, NOACheckpointLocalStore,
+        TxExecutionStatus,
     };
 
     fn test_session_id() -> SessionIdentifier {
@@ -422,8 +423,6 @@ mod tests {
 
     #[test]
     fn test_finalization_tracking() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -483,8 +482,6 @@ mod tests {
 
     #[test]
     fn test_all_finalized_multiple_txs() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
@@ -525,8 +522,6 @@ mod tests {
 
     #[test]
     fn test_epoch_change_blocked_until_finalized() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiSystemCheckpoint>::new();
 
         // No entries = no finalization entries, should not block.
@@ -560,8 +555,6 @@ mod tests {
 
     #[test]
     fn test_finalization_mark_unknown_ref_is_noop() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let unknown_ref = NOACheckpointTxRef {
@@ -583,8 +576,6 @@ mod tests {
 
     #[test]
     fn test_retry_pending_status() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -638,26 +629,19 @@ mod tests {
         assert!(store.all_finalized());
     }
 
-    #[test]
-    fn test_check_tx_status_tri_state() {
-        use crate::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, TxExecutionStatus};
-
+    #[tokio::test]
+    async fn test_check_tx_status_tri_state() {
         let submitter = LogOnlyChainSubmitter;
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let status = rt.block_on(async {
-            <LogOnlyChainSubmitter as NOAChainSubmitter<noa_checkpoint::SuiDWalletCheckpoint>>::check_tx_status(
-                &submitter, b"any",
-            )
-            .await
-            .unwrap()
-        });
+        let status = <LogOnlyChainSubmitter as NOAChainSubmitter<
+            noa_checkpoint::SuiDWalletCheckpoint,
+        >>::check_tx_status(&submitter, b"any")
+        .await
+        .unwrap();
         assert!(matches!(status, TxExecutionStatus::Executed));
     }
 
     #[test]
     fn test_initiate_retry_reregisters_pending() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         // Insert a checkpoint and certify it.
@@ -719,8 +703,6 @@ mod tests {
 
     #[test]
     fn test_retry_round_persisted_in_store() {
-        use ika_types::noa_checkpoint::NOACheckpointTxRef;
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         let checkpoint = NOACheckpointMessage {
@@ -765,8 +747,6 @@ mod tests {
 
     #[test]
     fn test_partial_finalization_retry() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
 
         // 3-tx checkpoint.
@@ -860,8 +840,6 @@ mod tests {
 
     #[test]
     fn test_confirmed_locally_skips_failure_quorum_check() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -901,8 +879,6 @@ mod tests {
 
     #[test]
     fn test_submit_failed_status() {
-        use ika_types::noa_checkpoint::{NOACheckpointTxRef, NOACheckpointTxStatus};
-
         let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
         let checkpoint = NOACheckpointMessage {
             epoch: 1,
@@ -1005,5 +981,102 @@ mod tests {
             flag.load(Ordering::Acquire),
             "flag should be true before any chain submission"
         );
+    }
+
+    // =========================================================================
+    // tx_bytes collision tests
+    // =========================================================================
+
+    #[test]
+    fn test_duplicate_tx_bytes_second_insert_overwrites_first() {
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
+
+        // Insert checkpoint A at sequence 0 with tx_bytes "collision".
+        let checkpoint_a = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 0,
+            messages: vec![],
+        };
+        store.insert_pending(0, checkpoint_a, vec![(b"collision".to_vec(), vec![])]);
+
+        // Insert checkpoint B at sequence 1 with the same tx_bytes "collision".
+        // This overwrites the tx_to_seq mapping: "collision" → (1, 0) instead of (0, 0).
+        let checkpoint_b = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 1,
+            messages: vec![],
+        };
+        store.insert_pending(1, checkpoint_b, vec![(b"collision".to_vec(), vec![])]);
+
+        // Adding a signature for "collision" routes to checkpoint B (sequence 1),
+        // because the second insert_pending overwrote the tx_to_seq mapping.
+        let certified = store.add_signature(
+            b"collision",
+            b"sig".to_vec(),
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        );
+        assert!(certified.is_some());
+        assert_eq!(
+            certified.unwrap().checkpoint.sequence_number,
+            1,
+            "signature should route to the last-inserted checkpoint (B)"
+        );
+
+        // Checkpoint A is orphaned: no tx_to_seq entry points to it,
+        // so it can never receive a signature through add_signature.
+        // A second call with the same bytes returns None (tx_to_seq was cleaned up).
+        assert!(
+            store
+                .add_signature(
+                    b"collision",
+                    b"sig_a".to_vec(),
+                    DWalletCurve::Curve25519,
+                    DWalletSignatureAlgorithm::EdDSA,
+                )
+                .is_none(),
+            "checkpoint A is orphaned and unreachable"
+        );
+
+        // Checkpoint A entry still exists but has no signature.
+        assert!(store.get_certified(0).is_none());
+    }
+
+    #[test]
+    fn test_no_collision_with_distinct_tx_bytes() {
+        let mut store = NOACheckpointLocalStore::<noa_checkpoint::SuiDWalletCheckpoint>::new();
+
+        let checkpoint_a = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 0,
+            messages: vec![],
+        };
+        store.insert_pending(0, checkpoint_a, vec![(b"tx_a".to_vec(), vec![])]);
+
+        let checkpoint_b = NOACheckpointMessage {
+            epoch: 1,
+            sequence_number: 1,
+            messages: vec![],
+        };
+        store.insert_pending(1, checkpoint_b, vec![(b"tx_b".to_vec(), vec![])]);
+
+        // Both can be independently signed and certified.
+        let cert_a = store.add_signature(
+            b"tx_a",
+            b"sig_a".to_vec(),
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        );
+        let cert_b = store.add_signature(
+            b"tx_b",
+            b"sig_b".to_vec(),
+            DWalletCurve::Curve25519,
+            DWalletSignatureAlgorithm::EdDSA,
+        );
+
+        assert!(cert_a.is_some());
+        assert!(cert_b.is_some());
+        assert_eq!(cert_a.unwrap().checkpoint.sequence_number, 0);
+        assert_eq!(cert_b.unwrap().checkpoint.sequence_number, 1);
     }
 }

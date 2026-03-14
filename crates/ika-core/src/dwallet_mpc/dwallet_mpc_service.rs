@@ -54,8 +54,8 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
 use ika_types::noa_checkpoint::{
-    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
-    SuiChainObservation,
+    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointResolution,
+    NOACheckpointTxObservation, SuiChainContext, SuiChainObservation,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -654,8 +654,6 @@ impl DWalletMPCService {
         &mut self,
         agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
     ) {
-        use ika_types::noa_checkpoint::NOACheckpointResolution;
-
         for tx_ref in &agreed_status.newly_finalized_tx_refs {
             let resolution = NOACheckpointResolution::Finalized(tx_ref.clone());
             self.route_resolution(resolution, tx_ref.kind_name);
@@ -1972,7 +1970,7 @@ impl DWalletMPCService {
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
                     DWalletImportedKeyVerificationOutput {
-                        dwallet_id: dwallet_id.to_vec().clone(),
+                        dwallet_id: dwallet_id.to_vec(),
                         public_output: output,
                         encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),

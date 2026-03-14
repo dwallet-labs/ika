@@ -35,7 +35,8 @@ pub trait NOAChainSubmitter<K: NOACheckpointKind>: Send + Sync + 'static {
 
 /// No-op chain submitter that logs operations and always reports execution success.
 /// Used as a placeholder until actual chain submission is implemented.
-// TODO: delete it once we have a real implementation
+// TODO(noa-checkpoints): Remove LogOnlyChainSubmitter once SuiChainSubmitter is implemented
+// and wired into the NOA checkpoint pipeline.
 pub struct LogOnlyChainSubmitter;
 
 #[async_trait]

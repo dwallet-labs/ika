@@ -7,6 +7,7 @@ use ika_types::noa_checkpoint::{
     CertifiedNOACheckpointMessage, CounterpartyChain, NOACheckpointKind, NOACheckpointMessage,
     NOACheckpointTxRef, NOACheckpointTxStatus,
 };
+use tracing::{error, warn};
 
 // === NOACheckpointLocalStore ===
 
@@ -174,21 +175,29 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     /// Record that a transaction has been submitted to the chain.
     pub fn mark_submitted(&mut self, tx_ref: &NOACheckpointTxRef, chain_tx_id: Vec<u8>) {
         let Some(entry) = self.entries.get_mut(&tx_ref.sequence_number) else {
+            warn!(?tx_ref, "mark_submitted: unknown tx_ref, ignoring");
             return;
         };
         let Some(tx_state) = entry.transactions.get_mut(tx_ref.tx_index as usize) else {
+            warn!(?tx_ref, "mark_submitted: unknown tx_index, ignoring");
             return;
         };
-        debug_assert!(
-            matches!(
-                tx_state.finalization_status,
-                None | Some(NOACheckpointTxStatus::RetryPending)
-                    | Some(NOACheckpointTxStatus::SubmitFailed)
-            ),
-            "mark_submitted: unexpected current status {:?} for tx_ref {:?}",
+        if !matches!(
             tx_state.finalization_status,
-            tx_ref,
-        );
+            None | Some(NOACheckpointTxStatus::RetryPending)
+                | Some(NOACheckpointTxStatus::SubmitFailed)
+        ) {
+            error!(
+                current_status = ?tx_state.finalization_status,
+                ?tx_ref,
+                should_never_happen = true,
+                "mark_submitted: unexpected status transition",
+            );
+            panic!(
+                "mark_submitted: unexpected status {:?} for tx_ref {:?}",
+                tx_state.finalization_status, tx_ref
+            );
+        }
         tx_state.finalization_status = Some(NOACheckpointTxStatus::Pending);
         tx_state.chain_tx_id = Some(chain_tx_id);
     }
@@ -196,20 +205,28 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     /// Record that a transaction submission to the chain failed.
     pub fn mark_submit_failed(&mut self, tx_ref: &NOACheckpointTxRef) {
         let Some(entry) = self.entries.get_mut(&tx_ref.sequence_number) else {
+            warn!(?tx_ref, "mark_submit_failed: unknown tx_ref, ignoring");
             return;
         };
         let Some(tx_state) = entry.transactions.get_mut(tx_ref.tx_index as usize) else {
+            warn!(?tx_ref, "mark_submit_failed: unknown tx_index, ignoring");
             return;
         };
-        debug_assert!(
-            matches!(
-                tx_state.finalization_status,
-                None | Some(NOACheckpointTxStatus::SubmitFailed)
-            ),
-            "mark_submit_failed: unexpected current status {:?} for tx_ref {:?}",
+        if !matches!(
             tx_state.finalization_status,
-            tx_ref,
-        );
+            None | Some(NOACheckpointTxStatus::SubmitFailed)
+        ) {
+            error!(
+                current_status = ?tx_state.finalization_status,
+                ?tx_ref,
+                should_never_happen = true,
+                "mark_submit_failed: unexpected status transition",
+            );
+            panic!(
+                "mark_submit_failed: unexpected status {:?} for tx_ref {:?}",
+                tx_state.finalization_status, tx_ref
+            );
+        }
         tx_state.finalization_status = Some(NOACheckpointTxStatus::SubmitFailed);
     }
 
@@ -220,16 +237,24 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             .get_mut(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_mut(tx_ref.tx_index as usize))
         {
-            debug_assert!(
-                matches!(
-                    state.finalization_status,
-                    Some(NOACheckpointTxStatus::Pending)
-                ),
-                "mark_confirmed_locally: unexpected current status {:?} for tx_ref {:?}",
+            if !matches!(
                 state.finalization_status,
-                tx_ref,
-            );
+                Some(NOACheckpointTxStatus::Pending)
+            ) {
+                error!(
+                    current_status = ?state.finalization_status,
+                    ?tx_ref,
+                    should_never_happen = true,
+                    "mark_confirmed_locally: unexpected status transition",
+                );
+                panic!(
+                    "mark_confirmed_locally: unexpected status {:?} for tx_ref {:?}",
+                    state.finalization_status, tx_ref
+                );
+            }
             state.finalization_status = Some(NOACheckpointTxStatus::ConfirmedLocally);
+        } else {
+            warn!(?tx_ref, "mark_confirmed_locally: unknown tx_ref, ignoring");
         }
     }
 
@@ -240,19 +265,27 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             .get_mut(&tx_ref.sequence_number)
             .and_then(|e| e.transactions.get_mut(tx_ref.tx_index as usize))
         {
-            debug_assert!(
-                matches!(
-                    state.finalization_status,
-                    Some(NOACheckpointTxStatus::Pending)
-                        | Some(NOACheckpointTxStatus::ConfirmedLocally)
-                        | Some(NOACheckpointTxStatus::RetryPending)
-                        | Some(NOACheckpointTxStatus::SubmitFailed)
-                ),
-                "mark_finalized: unexpected current status {:?} for tx_ref {:?}",
+            if !matches!(
                 state.finalization_status,
-                tx_ref,
-            );
+                Some(NOACheckpointTxStatus::Pending)
+                    | Some(NOACheckpointTxStatus::ConfirmedLocally)
+                    | Some(NOACheckpointTxStatus::RetryPending)
+                    | Some(NOACheckpointTxStatus::SubmitFailed)
+            ) {
+                error!(
+                    current_status = ?state.finalization_status,
+                    ?tx_ref,
+                    should_never_happen = true,
+                    "mark_finalized: unexpected status transition",
+                );
+                panic!(
+                    "mark_finalized: unexpected status {:?} for tx_ref {:?}",
+                    state.finalization_status, tx_ref
+                );
+            }
             state.finalization_status = Some(NOACheckpointTxStatus::Finalized);
+        } else {
+            warn!(?tx_ref, "mark_finalized: unknown tx_ref, ignoring");
         }
     }
 
@@ -267,14 +300,13 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
     /// Check if all tracked transactions are finalized.
     /// Returns true when every tracked tx (not just submitted ones) is Finalized.
     pub fn all_finalized(&self) -> bool {
-        let mut count = 0usize;
-        let all = self
-            .entries
-            .values()
-            .flat_map(|e| e.transactions.iter())
-            .inspect(|_| count += 1)
-            .all(|t| t.finalization_status.as_ref() == Some(&NOACheckpointTxStatus::Finalized));
-        count > 0 && all
+        let has_txs = self.entries.values().any(|e| !e.transactions.is_empty());
+        has_txs
+            && self
+                .entries
+                .values()
+                .flat_map(|e| e.transactions.iter())
+                .all(|t| t.finalization_status.as_ref() == Some(&NOACheckpointTxStatus::Finalized))
     }
 
     /// Returns true if no finalization entries have been registered.
@@ -328,15 +360,21 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
         let tx_index = tx_ref.tx_index as usize;
         let tx_state = entry.transactions.get_mut(tx_index)?;
         let old_tx_bytes = tx_state.current_tx_bytes.clone();
-        debug_assert!(
-            matches!(
-                tx_state.finalization_status,
-                Some(NOACheckpointTxStatus::Pending) | Some(NOACheckpointTxStatus::SubmitFailed)
-            ),
-            "initiate_tx_retry: unexpected current status {:?} for tx_ref {:?}",
+        if !matches!(
             tx_state.finalization_status,
-            tx_ref,
-        );
+            Some(NOACheckpointTxStatus::Pending) | Some(NOACheckpointTxStatus::SubmitFailed)
+        ) {
+            error!(
+                current_status = ?tx_state.finalization_status,
+                ?tx_ref,
+                should_never_happen = true,
+                "initiate_tx_retry: unexpected status transition",
+            );
+            panic!(
+                "initiate_tx_retry: unexpected status {:?} for tx_ref {:?}",
+                tx_state.finalization_status, tx_ref
+            );
+        }
         tx_state.finalization_status = Some(NOACheckpointTxStatus::RetryPending);
         tx_state.chain_tx_id = None;
         tx_state.signature = None;
@@ -397,6 +435,8 @@ impl<K: NOACheckpointKind> NOACheckpointLocalStore<K> {
             .and_then(|e| e.transactions.get_mut(tx_ref.tx_index as usize))
         {
             state.voted_failed = true;
+        } else {
+            warn!(?tx_ref, "set_voted_failed: unknown tx_ref, ignoring");
         }
     }
 
