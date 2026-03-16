@@ -18,6 +18,7 @@ Skills work with 40+ AI coding agents including **Claude Code**, **Cursor**, **C
 
 | Skill | Description |
 |---|---|
+| **ika-cli** | Using the Ika CLI for dWallet operations, validator management, system deployment, and network administration |
 | **ika-sdk** | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle |
 | **ika-move** | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns |
 | **ika-operator** | Operating Ika network nodes — validator setup, fullnode/notifier configuration, monitoring, recovery |
@@ -35,6 +36,7 @@ npx skills add dwallet-labs/ika
 ### Specific Skill
 
 ```bash
+npx skills add dwallet-labs/ika -s ika-cli
 npx skills add dwallet-labs/ika -s ika-sdk
 npx skills add dwallet-labs/ika -s ika-move
 npx skills add dwallet-labs/ika -s ika-operator
@@ -53,6 +55,17 @@ The skills CLI automatically detects which AI agents you have installed and prom
 </Info>
 
 ## What Each Skill Provides
+
+### ika-cli
+
+Everything needed to use the Ika command-line interface:
+
+- **Installation** — Homebrew (`brew install dwallet-labs/ika/ika`), pre-built binaries, building from source
+- **dWallet operations** — Create, sign, presign, future-sign, import, encryption key management
+- **Validator management** — Registration, committee operations, metadata updates
+- **Configuration** — Environment setup, contract address fetching, multi-network support
+- **JSON output** — Structured output for scripting and automation
+- **Shell completions** — Bash, Zsh, and Fish
 
 ### ika-sdk
 
