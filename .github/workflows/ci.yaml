@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   RUSTDOCFLAGS: -Dwarnings
@@ -18,6 +18,10 @@ env:
   rust_stable: 1.94
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_LOG: error
 
 jobs:
   build:
@@ -32,17 +36,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: Setup SSH for manual git
-        if: env.GH_DEPLOY_KEY
-        run: |
-          mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-      - name: Globally rewrite any GitHub HTTPS to SSH
-        if: env.GH_DEPLOY_KEY
-        run: |
-          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
 
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
@@ -55,7 +52,7 @@ jobs:
       - name: Build
         run: |
           # Install build dependencies
-          apt-get update && apt-get install -y cmake clang pkg-config libssl-dev
+          sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
           RUSTFLAGS="-D warnings" cargo build --bin ika --target x86_64-unknown-linux-gnu
 
   fmt:
@@ -64,19 +61,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-      - name: Setup SSH for manual git
-        run: |
-          mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-      - name: Globally rewrite any GitHub HTTPS to SSH
-        run: |
-          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
-      - name: Install Rust 1.90
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.90
+          toolchain: ${{ env.rust_stable }}
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Fmt Check
@@ -84,6 +78,7 @@ jobs:
       - name: Fmt Check - Wasm
         run: cargo fmt -- --check
         working-directory: sdk/ika-wasm
+
   clippy:
     if: github.event_name == 'push'
     name: Clippy
@@ -92,26 +87,19 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: Setup SSH for manual git
-        if: env.GH_DEPLOY_KEY
-        run: |
-          mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-      - name: Globally rewrite any GitHub HTTPS to SSH
-        if: env.GH_DEPLOY_KEY
-        run: |
-          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
 
-      - name: Install Rust 1.90
+      - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.90
+          toolchain: ${{ env.rust_stable }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run Clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   cargo-check:
     name: Cargo Test Check
@@ -120,17 +108,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: Setup SSH for manual git
-        if: env.GH_DEPLOY_KEY
-        run: |
-          mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
-      - name: Globally rewrite any GitHub HTTPS to SSH
-        if: env.GH_DEPLOY_KEY
-        run: |
-          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
 
       - name: Install Rust ${{ env.rust_stable }}
         uses: dtolnay/rust-toolchain@stable
