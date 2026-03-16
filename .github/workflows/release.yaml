@@ -436,3 +436,37 @@ jobs:
             --title "$VERSION" \
             --generate-notes \
             ika-${VERSION}-*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Update Homebrew formula for ika CLI
+  # Requires: dwallet-labs/homebrew-ika tap repo with ika.rb formula
+  # Requires: HOMEBREW_GH_FORMULA_BUMP secret (PAT with public_repo,workflow)
+  # ---------------------------------------------------------------------------
+  update-homebrew-formula:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    needs: [version, release]
+    if: needs.version.outputs.is_release == 'true'
+    steps:
+      - name: Extract version
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          NETWORK="${{ needs.version.outputs.network }}"
+          TAG="release/${NETWORK}-${VERSION}"
+          echo "ika_tag=${TAG}" >> "$GITHUB_ENV"
+          echo "ika_version=${VERSION}" >> "$GITHUB_ENV"
+
+      - uses: mislav/bump-homebrew-formula-action@v3
+        with:
+          formula-name: ika
+          homebrew-tap: dwallet-labs/homebrew-ika
+          create-pullrequest: true
+          tag-name: "${{ env.ika_tag }}"
+          download-url: "https://github.com/dwallet-labs/ika/releases/download/v${{ env.ika_version }}/ika-v${{ env.ika_version }}-macos-arm64.tar.gz"
+          commit-message: |
+            ika ${{ env.ika_version }}
+
+            Created by https://github.com/mislav/bump-homebrew-formula-action
+            From release: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_GH_FORMULA_BUMP }}
