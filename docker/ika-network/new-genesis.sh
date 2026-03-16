@@ -2,7 +2,7 @@
 # Copyright (c) Mysten Labs, Inc.
 # SPDX-License-Identifier: BSD-3-Clause-Clear
 #
-# assumes ika cli installed (brew install ika or cargo build --bin ika)
+# assumes ika cli installed (brew install dwallet-labs/ika/ika or cargo build --bin ika)
 
 cd genesis
 python3 -m venv .venv

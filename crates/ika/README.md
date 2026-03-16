@@ -5,8 +5,8 @@ Command-line interface for the Ika decentralized MPC signing network on Sui.
 ## Install
 
 ```bash
-# Homebrew
-brew install ika
+# Homebrew (macOS/Linux)
+brew install dwallet-labs/ika/ika
 
 # From source
 cargo build --release --bin ika
