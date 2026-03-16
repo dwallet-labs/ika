@@ -1,6 +1,21 @@
 ---
 name: ika-sdk
+version: 1.0.0
 description: Guide for building with the Ika TypeScript SDK (@ika.xyz/sdk) on Mysten Sui v2. Use when creating dWallets, signing cross-chain transactions, managing encryption keys, or integrating with the Ika network from TypeScript/JavaScript. Triggers on tasks involving @ika.xyz/sdk, dWallet operations, IkaClient, IkaTransaction, or Ika cross-chain signing.
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - node
+    emoji: "⚡"
+    homepage: "https://ika.xyz"
+    tags:
+      - typescript
+      - sdk
+      - dwallet
+      - sui
+      - cross-chain
+      - signing
 ---
 
 # Ika TypeScript SDK

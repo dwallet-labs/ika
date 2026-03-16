@@ -1,0 +1,181 @@
+---
+id: cli
+title: Ika CLI
+description: Install and use the Ika command-line interface for dWallet operations, validator management, and system administration.
+sidebar_position: 1
+sidebar_label: Getting Started
+---
+
+import { Info, Note } from '@/components/InfoBox';
+import Prerequisites from '@/components/Prerequisites';
+
+# Ika CLI
+
+The Ika CLI is the primary tool for interacting with the Ika network. It supports dWallet creation and signing, validator operations, system deployment, and configuration management.
+
+## Installation
+
+<Prerequisites
+	items={[
+		{
+			name: 'Sui CLI',
+			description: 'Required for key management and on-chain operations',
+			link: {
+				url: 'https://docs.sui.io/guides/developer/getting-started/sui-install',
+				text: 'Sui Documentation',
+			},
+			methods: [
+				{
+					name: 'Homebrew',
+					description: 'Recommended for macOS and Linux users',
+					command: 'brew install sui',
+				},
+				{
+					name: 'Cargo',
+					description: 'Install from source (all platforms)',
+					command:
+						'cargo install --locked --git https://github.com/MystenLabs/sui.git --branch mainnet sui',
+				},
+			],
+		},
+	]}
+/>
+
+### Install via Homebrew
+
+```bash
+brew install ika
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/dwallet-labs/ika.git
+cd ika
+cargo build --release --bin ika
+```
+
+The binary will be at `target/release/ika`.
+
+### Download Pre-built Binaries
+
+Pre-built binaries are available from [GitHub Releases](https://github.com/dwallet-labs/ika/releases) for:
+
+- Linux x64 and ARM64
+- macOS x64 and ARM64
+
+## Initial Configuration
+
+After installation, initialize the CLI config to fetch deployed contract addresses:
+
+```bash
+ika config init
+```
+
+This fetches the current mainnet and testnet contract addresses from GitHub, writes `~/.ika/ika_sui_config.yaml`, and creates Sui CLI environments (`ika-testnet`, `ika-mainnet`) pointing to the correct RPC URLs.
+
+Then switch to the desired environment:
+
+```bash
+sui client switch --env ika-testnet
+```
+
+To re-fetch the latest contract addresses after upgrades:
+
+```bash
+ika config sync
+```
+
+## Global Flags
+
+All commands support these flags:
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output results as JSON (machine-parseable) |
+| `--client.config <PATH>` | Custom Sui client config path |
+| `--ika-config <PATH>` | Custom Ika network config path |
+| `--gas-budget <MIST>` | Override default gas budget |
+| `-y, --yes` | Skip confirmation prompts |
+| `-q, --quiet` | Suppress human-readable output (JSON still printed with `--json -q`) |
+
+## Command Overview
+
+```
+ika
+├── dwallet                    # dWallet operations (create, sign, presign, import, ...)
+├── validator                  # Validator operations (30+ subcommands)
+├── config                     # Configuration management
+├── start                      # Start local Ika network
+├── network                    # Display network info
+└── completion                 # Shell completions (bash/zsh/fish)
+```
+
+## Quick Start
+
+### Create a dWallet and Sign
+
+```bash
+# 1. Register an encryption key (derives from active Sui address by default)
+ika dwallet register-encryption-key --curve secp256k1
+
+# 2. Create a dWallet (IKA/SUI coins auto-detected from wallet)
+ika dwallet create \
+  --curve secp256k1 \
+  --output-secret ./my_secret.bin
+
+# 3. Request a presign
+ika dwallet presign \
+  --dwallet-id <DWALLET_ID> \
+  --signature-algorithm 0
+
+# 4. Sign a message (wait for result)
+ika dwallet sign \
+  --dwallet-cap-id <CAP_ID> \
+  --dwallet-id <DWALLET_ID> \
+  --message <HEX_MESSAGE> \
+  --signature-algorithm 0 \
+  --hash-scheme 0 \
+  --secret-share ./my_secret.bin \
+  --presign-cap-id <PRESIGN_CAP_ID> \
+  --wait
+```
+
+<Info title="Auto-detection">
+IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
+</Info>
+
+### Key Management
+
+Ika delegates key management to the Sui CLI:
+
+```bash
+sui keytool generate ed25519    # Generate new keypair
+sui keytool list                # List known keys
+sui keytool import <MNEMONIC>   # Import from mnemonic
+```
+
+dWallet encryption keys are derived stateless from the active Sui keystore address (no local file storage). The CLI uses `keccak256(keypair_bytes || index)` to derive a 32-byte seed, then hashes with domain separators to produce class-groups and Ed25519 keys. Use `--seed-file <PATH>` for raw 32-byte seed, `--address <ADDR>` for a specific keystore address, or `--encryption-key-index <N>` for multiple keys per address. Pass `--legacy-hash` for keys registered before the V2 hash fix (only affects non-SECP256K1 curves).
+
+## Shell Completions
+
+```bash
+# Bash
+ika completion bash > /etc/bash_completion.d/ika
+
+# Zsh
+ika completion zsh > "${fpath[1]}/_ika"
+
+# Fish
+ika completion fish > ~/.config/fish/completions/ika.fish
+```
+
+## JSON Output
+
+All commands support `--json` for structured output suitable for scripting:
+
+```bash
+ika dwallet create --curve secp256k1 --json
+```
+
+On errors, JSON mode returns `{"error": "description"}` with exit code 1.

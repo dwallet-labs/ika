@@ -1,0 +1,103 @@
+name: Publish Skills to ClawHub
+
+on:
+  # Auto-trigger after a release is published
+  release:
+    types: [published]
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override version (default: latest release tag)'
+        required: false
+        type: string
+
+jobs:
+  publish-skills:
+    name: Publish Skills
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"  # strip leading v
+          else
+            # Fallback: read from Cargo.toml
+            VERSION=$(grep -m1 '^version' crates/ika/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Skill version: $VERSION"
+
+      - name: Update skill versions in SKILL.md files
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          for skill_dir in skills/*/; do
+            SKILL_FILE="$skill_dir/SKILL.md"
+            if [ -f "$SKILL_FILE" ]; then
+              sed -i "s/^version: .*/version: $VERSION/" "$SKILL_FILE"
+              echo "Updated $SKILL_FILE to version $VERSION"
+            fi
+          done
+
+      - name: Authenticate with ClawHub
+        run: clawhub login --token "${{ secrets.CLAWHUB_TOKEN }}"
+
+      - name: Publish skills
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          FAILED=0
+
+          for skill_dir in skills/*/; do
+            SKILL_FILE="$skill_dir/SKILL.md"
+            [ -f "$SKILL_FILE" ] || continue
+
+            # Extract slug from frontmatter name field
+            SLUG=$(grep -m1 '^name:' "$SKILL_FILE" | sed 's/name: *//')
+            # Extract display name: capitalize and replace dashes
+            DISPLAY_NAME=$(echo "$SLUG" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
+
+            echo "Publishing $SLUG v$VERSION from $skill_dir..."
+            if clawhub publish "$skill_dir" \
+              --slug "$SLUG" \
+              --name "$DISPLAY_NAME" \
+              --version "$VERSION" \
+              --changelog "Release v$VERSION" \
+              --tags "latest"; then
+              echo "  ✓ $SLUG published"
+            else
+              echo "  ✗ $SLUG failed"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "ERROR: $FAILED skill(s) failed to publish"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Skills Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version: \`${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for skill_dir in skills/*/; do
+            SLUG=$(basename "$skill_dir")
+            echo "- \`$SLUG\`" >> "$GITHUB_STEP_SUMMARY"
+          done

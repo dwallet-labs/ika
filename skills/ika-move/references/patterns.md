@@ -376,7 +376,7 @@ public struct ImportedWallet has key, store {
 public fun import_wallet(
     coordinator: &mut DWalletCoordinator,
     initial_ika: Coin<IKA>, initial_sui: Coin<SUI>,
-    enc_key_id: ID,
+    encryption_key_id: ID,
     centralized_party_message: vector<u8>,
     encrypted_share_and_proof: vector<u8>,
     encryption_key_address: address,
@@ -389,7 +389,7 @@ public fun import_wallet(
     let mut sui = initial_sui;
     let session = coordinator.register_session_identifier(session_bytes, ctx);
     let imported_cap = coordinator.request_imported_key_dwallet_verification(
-        enc_key_id, 0, centralized_party_message,
+        encryption_key_id, 0, centralized_party_message,
         encrypted_share_and_proof, encryption_key_address,
         user_public_output, signer_public_key,
         session, &mut ika, &mut sui, ctx,
@@ -398,7 +398,7 @@ public fun import_wallet(
         id: object::new(ctx), imported_dwallet_cap: imported_cap,
         presigns: vector::empty(),
         ika_balance: ika.into_balance(), sui_balance: sui.into_balance(),
-        dwallet_network_encryption_key_id: enc_key_id,
+        dwallet_network_encryption_key_id: encryption_key_id,
     };
     transfer::public_share_object(wallet);
 }

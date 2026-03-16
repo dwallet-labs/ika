@@ -119,6 +119,7 @@ bytes = { version = "1.5.0", features = ["serde"] }
 cached = "0.43.0"
 chrono = { version = "0.4.39", features = ["clock", "serde"] }
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
+clap_complete = "4.4"
 const-str = "1.0.0"
 colored = "3.0.0"
 count-min-sketch = "0.1.7"
@@ -186,6 +187,7 @@ rand = "0.9"
 rand_chacha = "0.9"
 prost = "0.14.3"
 prost-build = "0.14.3"
+prost-types = "0.14.3"
 rayon = "1.11.0"
 protobuf = { version = "3.7", features = ["with-bytes"] }
 regex = "1.7.1"
@@ -319,6 +321,7 @@ consensus-types = { git = "https://github.com/MystenLabs/sui", tag = "testnet-v1
 
 ### Workspace Members ###
 dwallet-rng = { path = "crates/dwallet-rng" }
+dwallet-mpc-centralized-party = { path = "crates/dwallet-mpc-centralized-party" }
 dwallet-mpc-types = { path = "crates/dwallet-mpc-types"}
 dwallet-classgroups-types = { path = "crates/dwallet-classgroups-types"}
 ika = { path = "crates/ika" }

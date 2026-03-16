@@ -1,6 +1,21 @@
 ---
 name: ika-move
+version: 1.0.0
 description: Guide for integrating Ika dWallet 2PC-MPC protocol into Sui Move contracts. Use when building Move contracts that need cross-chain signing, dWallet creation, presigning, signing, future signing, key importing, or any Ika on-chain integration. Triggers on Move/Sui contract tasks involving dWallets, cross-chain signing, or Ika protocol operations.
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - sui
+    emoji: "📜"
+    homepage: "https://ika.xyz"
+    tags:
+      - move
+      - sui
+      - dwallet
+      - smart-contracts
+      - cross-chain
+      - mpc
 ---
 
 # Ika Move Integration
@@ -434,7 +449,7 @@ public struct Proposal has store {
 public fun create(
     coordinator: &mut DWalletCoordinator,
     mut ika: Coin<IKA>, mut sui: Coin<SUI>,
-    enc_key_id: ID,
+    encryption_key_id: ID,
     dkg_msg: vector<u8>, user_output: vector<u8>, user_share: vector<u8>,
     session_bytes: vector<u8>,
     members: vector<address>, threshold: u64,
@@ -442,7 +457,7 @@ public fun create(
 ) {
     let session = coordinator.register_session_identifier(session_bytes, ctx);
     let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_key_share(
-        enc_key_id, SECP256K1, dkg_msg, user_output, user_share,
+        encryption_key_id, SECP256K1, dkg_msg, user_output, user_share,
         option::none(), session, &mut ika, &mut sui, ctx,
     );
 
@@ -451,7 +466,7 @@ public fun create(
         members, approval_threshold: threshold,
         proposals: table::new(ctx), next_id: 0,
         ika_balance: ika.into_balance(), sui_balance: sui.into_balance(),
-        dwallet_network_encryption_key_id: enc_key_id,
+        dwallet_network_encryption_key_id: encryption_key_id,
     };
     transfer::public_share_object(treasury);
 }
