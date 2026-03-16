@@ -1,7 +1,8 @@
 use crate::crypto::{AuthorityName, keccak256_digest};
 use crate::message::DWalletCheckpointMessageKind;
+use crate::noa_checkpoint::{NOACheckpointTxObservation, SuiChainObservation};
 use anyhow::anyhow;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use move_core_types::account_address::AccountAddress;
 use move_core_types::ident_str;
 use move_core_types::identifier::IdentStr;
@@ -88,9 +89,11 @@ pub enum DWalletInternalMPCOutputKind {
     },
     NetworkOwnedAddressSign {
         output: Vec<u8>,
-        sequence_number: u64,
+        session_identifier: SessionIdentifier,
+        message: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: DWalletHashScheme,
     },
 }
 
@@ -128,6 +131,12 @@ pub struct InternalSessionsStatusUpdate {
     pub global_presign_requests: Vec<GlobalPresignRequest>,
     /// Network encryption key data this validator has loaded from Sui.
     pub network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
+    /// This validator's locally observed Sui chain state for context agreement.
+    pub sui_chain_observation: Option<SuiChainObservation>,
+    /// NOA checkpoint tx observations (finalized/failed) from this validator.
+    /// Piggybacked here so quorum resolution happens in the same consensus round
+    /// as chain context agreement.
+    pub noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
 }
 
 impl InternalSessionsStatusUpdate {
@@ -137,6 +146,8 @@ impl InternalSessionsStatusUpdate {
         is_idle: bool,
         global_presign_requests: Vec<GlobalPresignRequest>,
         network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
+        sui_chain_observation: Option<SuiChainObservation>,
+        noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
     ) -> Self {
         use rand::RngCore;
         let mut nonce = [0u8; 32];
@@ -147,6 +158,8 @@ impl InternalSessionsStatusUpdate {
             is_idle,
             global_presign_requests,
             network_key_data,
+            sui_chain_observation,
+            noa_checkpoint_observations,
         }
     }
 }

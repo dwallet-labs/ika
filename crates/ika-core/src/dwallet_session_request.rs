@@ -7,6 +7,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 };
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use merlin::Transcript;
 use std::cmp::Ordering;
 use std::fmt;
@@ -14,10 +15,13 @@ use sui_types::base_types::ObjectID;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
+    /// Which counterparty chain this session belongs to. `None` for internal sessions
+    /// (InternalPresign, NetworkOwnedAddressSign) that are chain-agnostic.
+    pub counterparty_chain: Option<CounterpartyChainKind>,
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
-    pub session_sequence_number: u64,
+    pub session_sequence_number: Option<u64>,
     pub(crate) protocol_data: ProtocolData,
     pub epoch: u64,
     pub requires_network_key_data: bool,
@@ -61,7 +65,7 @@ impl DWalletSessionRequest {
         let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
             [0; SessionIdentifier::LENGTH];
         transcript.challenge_bytes(
-            b"session idetnifier preimage",
+            b"session identifier preimage",
             &mut session_identifier_preimage,
         );
 
@@ -75,9 +79,10 @@ impl DWalletSessionRequest {
         );
 
         Self {
+            counterparty_chain: None,
             session_type,
             session_identifier,
-            session_sequence_number,
+            session_sequence_number: Some(session_sequence_number),
             protocol_data,
             epoch,
             requires_network_key_data: true,
@@ -92,7 +97,6 @@ impl DWalletSessionRequest {
     /// sequence number, ensuring all validators create the same session.
     pub fn new_network_owned_address_sign(
         epoch: u64,
-        sequence_number: u64,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
@@ -104,15 +108,13 @@ impl DWalletSessionRequest {
         let mut transcript =
             Transcript::new(b"NetworkOwnedAddressSign session identifier preimage");
         transcript.append_message(b"epoch", &epoch.to_be_bytes());
-        transcript.append_message(
-            b"checkpoint sequence number",
-            &sequence_number.to_be_bytes(),
-        );
+        transcript.append_message(b"message", &message);
         transcript.append_message(b"curve", curve.to_string().as_bytes());
         transcript.append_message(
             b"signature algorithm",
             signature_algorithm.to_string().as_bytes(),
         );
+        transcript.append_message(b"hash scheme", hash_scheme.to_string().as_bytes());
         transcript.append_message(
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
@@ -140,9 +142,10 @@ impl DWalletSessionRequest {
         );
 
         Self {
+            counterparty_chain: None,
             session_type,
             session_identifier,
-            session_sequence_number: sequence_number,
+            session_sequence_number: None,
             protocol_data,
             epoch,
             requires_network_key_data: true,

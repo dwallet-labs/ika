@@ -7,6 +7,7 @@ mod message_before_event;
 mod missing_network_key;
 mod network_dkg;
 mod network_owned_address_sign;
+mod noa_checkpoint;
 mod presign_consensus;
 mod session;
 mod sign;

@@ -3,7 +3,7 @@
 
 use ika_types::sui::EpochStartSystemTrait;
 mod dwallet_checkpoint_metrics;
-mod dwallet_checkpoint_output;
+pub mod dwallet_checkpoint_output;
 
 use std::collections::HashMap;
 
@@ -1142,7 +1142,7 @@ impl DWalletCheckpointService {
         checkpoint_store: Arc<DWalletCheckpointStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         checkpoint_output: Box<dyn DWalletCheckpointOutput>,
-        certified_checkpoint_output: Box<dyn CertifiedDWalletCheckpointMessageOutput>,
+        certified_checkpoint_output: Option<Box<dyn CertifiedDWalletCheckpointMessageOutput>>,
         metrics: Arc<DWalletCheckpointMetrics>,
         max_messages_per_checkpoint: usize,
         max_checkpoint_size_bytes: usize,
@@ -1171,16 +1171,18 @@ impl DWalletCheckpointService {
         );
         tasks.spawn(monitored_future!(builder.run()));
 
-        let aggregator = DWalletCheckpointAggregator::new(
-            checkpoint_store.clone(),
-            epoch_store.clone(),
-            notify_aggregator.clone(),
-            certified_checkpoint_output,
-            previous_epoch_last_checkpoint_sequence_number,
-            state.clone(),
-            metrics.clone(),
-        );
-        tasks.spawn(monitored_future!(aggregator.run()));
+        if let Some(certified_checkpoint_output) = certified_checkpoint_output {
+            let aggregator = DWalletCheckpointAggregator::new(
+                checkpoint_store.clone(),
+                epoch_store.clone(),
+                notify_aggregator.clone(),
+                certified_checkpoint_output,
+                previous_epoch_last_checkpoint_sequence_number,
+                state.clone(),
+                metrics.clone(),
+            );
+            tasks.spawn(monitored_future!(aggregator.run()));
+        }
 
         let last_signature_index = epoch_store
             .get_last_dwallet_checkpoint_signature_index()

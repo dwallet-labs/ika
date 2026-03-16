@@ -3,7 +3,7 @@
 
 use ika_types::sui::EpochStartSystemTrait;
 mod system_checkpoint_metrics;
-mod system_checkpoint_output;
+pub mod system_checkpoint_output;
 
 use std::collections::HashMap;
 
@@ -1133,7 +1133,7 @@ impl SystemCheckpointService {
         system_checkpoint_store: Arc<SystemCheckpointStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         system_checkpoint_output: Box<dyn SystemCheckpointOutput>,
-        certified_system_checkpoint_output: Box<dyn CertifiedSystemCheckpointOutput>,
+        certified_system_checkpoint_output: Option<Box<dyn CertifiedSystemCheckpointOutput>>,
         metrics: Arc<SystemCheckpointMetrics>,
         max_messages_per_system_checkpoint: usize,
         max_system_checkpoint_size_bytes: usize,
@@ -1162,16 +1162,18 @@ impl SystemCheckpointService {
         );
         tasks.spawn(monitored_future!(builder.run()));
 
-        let aggregator = SystemCheckpointAggregator::new(
-            system_checkpoint_store.clone(),
-            epoch_store.clone(),
-            notify_aggregator.clone(),
-            certified_system_checkpoint_output,
-            previous_epoch_last_checkpoint_sequence_number,
-            state.clone(),
-            metrics.clone(),
-        );
-        tasks.spawn(monitored_future!(aggregator.run()));
+        if let Some(certified_system_checkpoint_output) = certified_system_checkpoint_output {
+            let aggregator = SystemCheckpointAggregator::new(
+                system_checkpoint_store.clone(),
+                epoch_store.clone(),
+                notify_aggregator.clone(),
+                certified_system_checkpoint_output,
+                previous_epoch_last_checkpoint_sequence_number,
+                state.clone(),
+                metrics.clone(),
+            );
+            tasks.spawn(monitored_future!(aggregator.run()));
+        }
 
         let last_signature_index = epoch_store
             .get_last_system_checkpoint_signature_index()

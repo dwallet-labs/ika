@@ -11,6 +11,7 @@ use ika_types::messages_dwallet_mpc::{
     DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
     SessionIdentifier,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use sui_types::base_types::ObjectID;
@@ -45,6 +46,10 @@ pub(crate) struct DWalletSession {
     pub(super) session_identifier: SessionIdentifier,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) party_id: PartyID,
+
+    /// Which counterparty chain this session belongs to. `None` for internal sessions or
+    /// sessions created before the request arrives (WaitingForSessionRequest).
+    pub(super) counterparty_chain: Option<CounterpartyChainKind>,
 
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
@@ -112,6 +117,7 @@ impl DWalletSession {
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
+        counterparty_chain: Option<CounterpartyChainKind>,
         computation_type: SessionComputationType,
     ) -> Self {
         Self {
@@ -119,6 +125,7 @@ impl DWalletSession {
             outputs_by_consensus_round: HashMap::new(),
             session_identifier,
             party_id,
+            counterparty_chain,
             validator_name,
             computation_type,
         }
@@ -526,9 +533,18 @@ impl DWalletMPCManager {
         if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
             request.protocol_data.is_global_presign()
         {
+            if request.session_sequence_number.is_none() {
+                error!(
+                    should_never_happen = true,
+                    session_identifier = ?request.session_identifier,
+                    "internal presign session missing session_sequence_number",
+                );
+            }
             let global_presign_request = GlobalPresignRequest {
                 session_identifier: request.session_identifier,
-                session_sequence_number: request.session_sequence_number,
+                session_sequence_number: request
+                    .session_sequence_number
+                    .expect("internal presign sessions always have a session sequence number"),
                 presign_id,
                 curve,
                 signature_algorithm,
@@ -555,6 +571,7 @@ impl DWalletMPCManager {
 
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
+            session.counterparty_chain = request.counterparty_chain;
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -570,7 +587,12 @@ impl DWalletMPCManager {
                 session.computation_type = new_type;
             }
         } else {
-            self.new_session(&session_identifier, status.clone(), new_type);
+            self.new_session(
+                &session_identifier,
+                status.clone(),
+                request.counterparty_chain,
+                new_type,
+            );
         }
         Some(status)
     }

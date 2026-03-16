@@ -16,7 +16,6 @@ use tracing::error;
 /// Sent to the MPC service to initiate a sign session using the internal presign pool.
 #[derive(Debug, Clone)]
 pub struct NetworkOwnedAddressSignRequest {
-    pub sequence_number: u64,
     pub message: Vec<u8>,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
@@ -27,10 +26,12 @@ pub struct NetworkOwnedAddressSignRequest {
 /// Sent to the network-owned-address sign output channel for consumers.
 #[derive(Debug, Clone)]
 pub struct NetworkOwnedAddressSignOutput {
-    pub sequence_number: u64,
+    pub session_identifier: ika_types::messages_dwallet_mpc::SessionIdentifier,
+    pub message: Vec<u8>,
     pub signature: Vec<u8>,
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
+    pub hash_scheme: DWalletHashScheme,
 }
 
 pub mod dwallet_mpc_service;

@@ -7,6 +7,7 @@ use crate::request_protocol_data::ProtocolData;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::ObjectID;
 
 #[tokio::test]
@@ -54,9 +55,10 @@ async fn test_handle_mpc_request_with_invalid_protocol_data_returns_failed() {
         let mpc_manager = service.dwallet_mpc_manager_mut();
         // Create a request with invalid protocol data that will cause deserialization to fail
         let request = DWalletSessionRequest {
+            counterparty_chain: Some(CounterpartyChainKind::Sui),
             session_type: SessionType::User,
             session_identifier: SessionIdentifier::new(SessionType::User, [3u8; 32]),
-            session_sequence_number: 3,
+            session_sequence_number: Some(3),
             protocol_data: ProtocolData::ImportedKeyVerification {
                 data: crate::request_protocol_data::ImportedKeyVerificationData {
                     curve: DWalletCurve::Secp256k1,

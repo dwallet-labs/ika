@@ -167,3 +167,4 @@ cd sdk/typescript && pnpm test
 - **Sui dependency pinned**: Uses `mainnet-v1.51.5` tag for all Sui dependencies
 - **WASM excluded**: `sdk/ika-wasm` is excluded from workspace (separate build)
 - **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing
+- **NOA checkpoints not live**: The NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`) is under active development and not yet deployed. No backward compatibility constraints on serialization formats or type names

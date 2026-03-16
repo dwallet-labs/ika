@@ -24,6 +24,7 @@ use crate::dwallet_mpc::party_ids_to_authority_names;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
+use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
@@ -31,11 +32,12 @@ use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
 #[cfg(any(test, feature = "test-utils"))]
 use dwallet_rng::RootSeed;
+use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::message::{
     DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
@@ -48,6 +50,12 @@ use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
     DWalletNetworkEncryptionKeyState, GlobalPresignRequest, InternalSessionsStatusUpdate,
     SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+};
+use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
+use ika_types::noa_checkpoint;
+use ika_types::noa_checkpoint::{
+    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointResolution,
+    NOACheckpointTxObservation, SuiChainContext, SuiChainObservation,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -75,7 +83,7 @@ pub struct DWalletMPCService {
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
     dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
     state: Arc<dyn AuthorityStateTrait>,
-    dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+    dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
     dwallet_mpc_manager: DWalletMPCManager,
     exit: Receiver<()>,
     end_of_publish: bool,
@@ -102,15 +110,36 @@ pub struct DWalletMPCService {
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
+    /// Set of message hashes that have already been submitted for signing.
+    /// Uses 32-byte Blake2b digests instead of full messages to bound memory.
+    submitted_noa_sign_messages: HashSet<[u8; 32]>,
+    /// Last sent Sui chain observation, to avoid sending duplicate updates.
+    last_sent_sui_chain_observation: Option<SuiChainObservation>,
+    /// Persistent context from the latest consensus-agreed Sui chain observation.
+    /// `None` until the first quorum agreement on Sui chain context.
+    current_agreed_sui_chain_context: Option<SuiChainContext>,
+    /// Buffered dwallet checkpoint messages waiting for context agreement.
+    buffered_noa_dwallet_messages: Vec<Vec<DWalletCheckpointMessageKind>>,
+    /// Buffered system checkpoint messages waiting for context agreement.
+    buffered_noa_system_messages: Vec<Vec<SystemCheckpointMessageKind>>,
+    /// Buffered NOA checkpoint observations to include in the next status update.
+    buffered_noa_observations: Vec<NOACheckpointTxObservation>,
+    /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
+    network_owned_address_sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+    /// DWallet checkpoint handler, driven directly by the service.
+    dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>>,
+    /// System checkpoint handler, driven directly by the service.
+    system_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
 }
 
 impl DWalletMPCService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         exit: Receiver<()>,
         consensus_adapter: Arc<dyn DWalletMPCSubmitToConsensus>,
         node_config: NodeConfig,
-        dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
         state: Arc<AuthorityState>,
         sui_data_receivers: SuiDataReceivers,
@@ -122,6 +151,15 @@ impl DWalletMPCService {
             NetworkOwnedAddressSignRequest,
         >,
         network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+        network_owned_address_sign_output_receiver: UnboundedReceiver<
+            NetworkOwnedAddressSignOutput,
+        >,
+        dwallet_checkpoint_handler: Option<
+            NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>,
+        >,
+        system_checkpoint_handler: Option<
+            NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>,
+        >,
     ) -> Self {
         let network_dkg_third_round_delay = protocol_config.network_dkg_third_round_delay();
 
@@ -177,6 +215,15 @@ impl DWalletMPCService {
             sent_network_key_ids: HashSet::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            submitted_noa_sign_messages: HashSet::new(),
+            last_sent_sui_chain_observation: None,
+            current_agreed_sui_chain_context: None,
+            buffered_noa_dwallet_messages: Vec::new(),
+            buffered_noa_system_messages: Vec::new(),
+            buffered_noa_observations: Vec::new(),
+            network_owned_address_sign_output_receiver,
+            dwallet_checkpoint_handler,
+            system_checkpoint_handler,
         }
     }
 
@@ -188,7 +235,7 @@ impl DWalletMPCService {
         seed: RootSeed,
         dwallet_submit_to_consensus: Arc<dyn DWalletMPCSubmitToConsensus>,
         authority_state: Arc<dyn AuthorityStateTrait>,
-        checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
+        checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
         authority_name: AuthorityName,
         committee: Committee,
         sui_data_receivers: SuiDataReceivers,
@@ -242,6 +289,15 @@ impl DWalletMPCService {
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            submitted_noa_sign_messages: HashSet::new(),
+            last_sent_sui_chain_observation: None,
+            current_agreed_sui_chain_context: None,
+            buffered_noa_dwallet_messages: Vec::new(),
+            buffered_noa_system_messages: Vec::new(),
+            buffered_noa_observations: Vec::new(),
+            network_owned_address_sign_output_receiver: tokio::sync::mpsc::unbounded_channel().1,
+            dwallet_checkpoint_handler: None,
+            system_checkpoint_handler: None,
         };
 
         (
@@ -287,6 +343,35 @@ impl DWalletMPCService {
             .dwallet_mpc_manager
             .cryptographic_computations_orchestrator
             .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+    }
+
+    /// Wire up NOA checkpoint handlers for testing.
+    ///
+    /// `new_for_testing` creates a disconnected sign-output receiver (the connected one
+    /// is returned externally). This method replaces *both* the manager's sender and the
+    /// service's receiver with a fresh connected pair, then installs the handler(s).
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn setup_noa_checkpoint_handlers_for_testing(
+        &mut self,
+        dwallet_handler: NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>,
+        system_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
+    ) {
+        let (sender, receiver) =
+            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+        self.dwallet_mpc_manager
+            .network_owned_address_sign_output_sender = sender;
+        self.network_owned_address_sign_output_receiver = receiver;
+        self.dwallet_checkpoint_handler = Some(dwallet_handler);
+        self.system_checkpoint_handler = system_handler;
+    }
+
+    /// Set the agreed Sui chain context for testing, bypassing the consensus
+    /// observation agreement flow that isn't wired in `new_for_testing`.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
+    pub(crate) fn set_agreed_sui_chain_context_for_testing(&mut self, context: SuiChainContext) {
+        self.current_agreed_sui_chain_context = Some(context);
     }
 
     async fn sync_last_session_to_complete_in_current_epoch(&mut self) {
@@ -383,6 +468,8 @@ impl DWalletMPCService {
         let newly_instantiated_network_key_ids = self.process_consensus_rounds_from_storage().await;
 
         self.process_cryptographic_computations().await;
+        self.handle_noa_sign_outputs().await;
+        self.poll_noa_chain_status().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
 
@@ -393,10 +480,20 @@ impl DWalletMPCService {
     /// Drains the channel into a pending buffer, then instantiates sessions
     /// for requests whose network key is already available.
     fn process_network_owned_address_sign_requests(&mut self) {
-        // Drain the receiver into the shared pending buffer.
+        // Drain the receiver into the shared pending buffer, deduplicating by message.
         while let Ok(request) = self.network_owned_address_sign_requests_receiver.try_recv() {
+            let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
+            if self.submitted_noa_sign_messages.contains(&message_hash) {
+                error!(
+                    should_never_happen =? true,
+                    message_len = request.message.len(),
+                    curve = ?request.curve,
+                    algorithm = ?request.signature_algorithm,
+                    "Skipping duplicate network-owned-address sign request"
+                );
+                continue;
+            }
             info!(
-                sequence_number = request.sequence_number,
                 message_len = request.message.len(),
                 curve = ?request.curve,
                 algorithm = ?request.signature_algorithm,
@@ -410,6 +507,7 @@ impl DWalletMPCService {
             return;
         }
 
+        let mut newly_submitted: Vec<[u8; 32]> = Vec::new();
         self.pending_network_owned_address_sign_requests
             .retain(|request| {
                 if !self
@@ -430,14 +528,17 @@ impl DWalletMPCService {
                 let instantiated = self
                     .dwallet_mpc_manager
                     .instantiate_network_owned_address_sign_session(
-                        request.sequence_number,
                         request.message.clone(),
                         request.curve,
                         request.signature_algorithm,
                         request.hash_scheme,
                     );
+                if instantiated {
+                    newly_submitted.push(DefaultHash::digest(&request.message).into());
+                }
                 !instantiated // keep in buffer if instantiation failed
             });
+        self.submitted_noa_sign_messages.extend(newly_submitted);
     }
 
     /// Send status update to consensus if there are unsent presign requests,
@@ -468,12 +569,24 @@ impl DWalletMPCService {
                 .collect()
         };
 
+        // FIXME(noa-checkpoints): Without a real SuiChainObservation, the entire NOA
+        // checkpoint flow is non-functional — messages buffer indefinitely because
+        // `current_agreed_sui_chain_context` never becomes Some. Wire up SuiSyncer.
+        let sui_chain_observation: Option<SuiChainObservation> = None;
+
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
         let has_new_key_data = !new_key_data.is_empty();
+        let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
+        let has_noa_observations = !self.buffered_noa_observations.is_empty();
 
-        if !has_unsent_requests && !idle_status_changed && !has_new_key_data {
+        if !has_unsent_requests
+            && !idle_status_changed
+            && !has_new_key_data
+            && !observation_changed
+            && !has_noa_observations
+        {
             return;
         }
 
@@ -482,6 +595,8 @@ impl DWalletMPCService {
             is_idle,
             unsent_presign_requests,
             new_key_data.clone(),
+            sui_chain_observation.clone(),
+            self.buffered_noa_observations.clone(),
         );
 
         let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
@@ -502,6 +617,84 @@ impl DWalletMPCService {
             for key_data in &new_key_data {
                 self.sent_network_key_ids.insert(key_data.id);
             }
+            self.last_sent_sui_chain_observation = sui_chain_observation;
+            self.buffered_noa_observations.clear();
+        }
+    }
+
+    /// Route a single NOA checkpoint resolution to the appropriate handler.
+    fn route_resolution(
+        &mut self,
+        resolution: ika_types::noa_checkpoint::NOACheckpointResolution<
+            ika_types::noa_checkpoint::SuiCounterpartyChain,
+        >,
+        kind_name: NOACheckpointKindName,
+    ) {
+        match kind_name {
+            NOACheckpointKindName::SuiDWallet => {
+                if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                    let requests = handler.handle_resolution(resolution);
+                    self.pending_network_owned_address_sign_requests
+                        .extend(requests);
+                }
+            }
+            NOACheckpointKindName::SuiSystem => {
+                if let Some(ref mut handler) = self.system_checkpoint_handler {
+                    let requests = handler.handle_resolution(resolution);
+                    self.pending_network_owned_address_sign_requests
+                        .extend(requests);
+                }
+            }
+        }
+    }
+
+    /// Dispatch NOA checkpoint resolutions directly to the appropriate handler
+    /// based on the quorum results from the current consensus round.
+    fn dispatch_noa_resolutions(
+        &mut self,
+        agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
+    ) {
+        for tx_ref in &agreed_status.newly_finalized_tx_refs {
+            let resolution = NOACheckpointResolution::Finalized(tx_ref.clone());
+            self.route_resolution(resolution, tx_ref.kind_name);
+        }
+        for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
+            if let Some(ctx) = &self.current_agreed_sui_chain_context {
+                let resolution = NOACheckpointResolution::RetryWithContext {
+                    tx_ref: tx_ref.clone(),
+                    context: ctx.clone(),
+                };
+                self.route_resolution(resolution, tx_ref.kind_name);
+            }
+        }
+    }
+
+    /// Drain sign outputs from MPC manager and route to both NOA checkpoint handlers.
+    /// Each handler's `add_signature` silently ignores outputs for tx bytes it doesn't
+    /// own (returns `None`), so broadcasting is correct. The `debug!` log in `add_signature`
+    /// is the only side-effect of sending to the wrong handler.
+    async fn handle_noa_sign_outputs(&mut self) {
+        while let Ok(output) = self.network_owned_address_sign_output_receiver.try_recv() {
+            if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                handler.handle_sign_output(output.clone()).await;
+            }
+            if let Some(ref mut handler) = self.system_checkpoint_handler {
+                handler.handle_sign_output(output).await;
+            }
+        }
+    }
+
+    /// Poll chain status for all NOA checkpoint handlers and collect observations.
+    async fn poll_noa_chain_status(&mut self) {
+        if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+            let observations = handler.poll_chain_status().await;
+            self.buffered_noa_observations.extend(observations);
+            handler.update_finalized_flag();
+        }
+        if let Some(ref mut handler) = self.system_checkpoint_handler {
+            let observations = handler.poll_chain_status().await;
+            self.buffered_noa_observations.extend(observations);
+            handler.update_finalized_flag();
         }
     }
 
@@ -723,6 +916,32 @@ impl DWalletMPCService {
                 }
             };
 
+            let verified_system_checkpoint_messages = self
+                .epoch_store
+                .next_verified_system_checkpoint_message(self.last_read_consensus_round);
+            let verified_system_checkpoint_messages = match verified_system_checkpoint_messages {
+                Ok(Some((round, messages))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?mpc_messages_consensus_round,
+                            ?round,
+                            "consensus round mismatch for verified system checkpoint messages"
+                        );
+                        panic!("consensus round mismatch for verified system checkpoint messages");
+                    }
+                    messages
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(
+                        error=?e,
+                        last_read_consensus_round=self.last_read_consensus_round,
+                        "failed to load verified system checkpoint messages from the local DB"
+                    );
+                    panic!("failed to load verified system checkpoint messages from the local DB");
+                }
+            };
+
             let status_updates = self
                 .epoch_store
                 .next_internal_sessions_status_update(self.last_read_consensus_round);
@@ -784,6 +1003,13 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_status_updates(consensus_round, status_updates)
             {
+                // Update persistent context from consensus agreement.
+                self.current_agreed_sui_chain_context =
+                    agreed_status.agreed_sui_chain_context.clone();
+
+                // Dispatch NOA checkpoint resolutions to finalizers.
+                self.dispatch_noa_resolutions(&agreed_status);
+
                 // Take only the requests we haven't agreed on yet, and haven't processed.
                 let new_global_presign_requests: Vec<_> = agreed_status
                     .global_presign_requests
@@ -941,22 +1167,33 @@ impl DWalletMPCService {
                 Vec::new()
             };
 
-            // Take back the external outputs' internal checkpoint messages
-            let mut checkpoint_messages: Vec<_> = agreed_external_mpc_outputs
-                .into_iter()
-                .flat_map(|output| match output {
-                    DWalletMPCOutputKind::External { output } => output,
-                    _ => vec![],
-                })
-                .chain(global_presign_checkpoint_messages)
-                .collect();
+            // Group checkpoint messages by chain.
+            let mut messages_by_chain: HashMap<
+                CounterpartyChainKind,
+                Vec<DWalletCheckpointMessageKind>,
+            > = HashMap::new();
 
-            // Add messages from the consensus output such as EndOfPublish.
-            checkpoint_messages.extend(verified_dwallet_checkpoint_messages);
+            for (output, counterparty_chain) in agreed_external_mpc_outputs {
+                if let DWalletMPCOutputKind::External { output } = output {
+                    let chain = counterparty_chain.unwrap_or(CounterpartyChainKind::Sui);
+                    messages_by_chain.entry(chain).or_default().extend(output);
+                }
+            }
 
+            // Global presign and verified messages are Sui for now.
+            let sui_messages = messages_by_chain
+                .entry(CounterpartyChainKind::Sui)
+                .or_default();
+            sui_messages.extend(global_presign_checkpoint_messages);
+            sui_messages.extend(verified_dwallet_checkpoint_messages);
+
+            // EndOfPublish detection — always on Sui messages.
+            let sui_checkpoint_messages = messages_by_chain
+                .get(&CounterpartyChainKind::Sui)
+                .map(|m| m.as_slice())
+                .unwrap_or(&[]);
             if !self.end_of_publish {
-                let final_round = checkpoint_messages
-                    .iter()
+                let final_round = sui_checkpoint_messages
                     .last()
                     .is_some_and(|msg| matches!(msg, DWalletCheckpointMessageKind::EndOfPublish));
                 if final_round {
@@ -970,45 +1207,105 @@ impl DWalletMPCService {
                     );
                 }
 
-                if !checkpoint_messages.is_empty() {
-                    let pending_checkpoint =
-                        PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
-                            messages: checkpoint_messages.clone(),
-                            details: PendingDWalletCheckpointInfo {
-                                checkpoint_height: consensus_round,
-                            },
-                        });
-                    if let Err(e) = self
-                        .epoch_store
-                        .insert_pending_dwallet_checkpoint(pending_checkpoint)
-                    {
-                        error!(
-                                error=?e,
-                                ?consensus_round,
-                                ?checkpoint_messages,
-                                "failed to insert pending checkpoint into the local DB"
-                        );
-
-                        panic!("failed to insert pending checkpoint into the local DB");
-                    };
-
-                    debug!(
-                        ?consensus_round,
-                        "Notifying checkpoint service about new pending checkpoint(s)",
-                    );
-                    // Only after batch is written, notify checkpoint service to start building any new
-                    // pending checkpoints.
-                    if let Err(e) = self.dwallet_checkpoint_service.notify_checkpoint() {
-                        error!(
-                            error=?e,
-                            ?consensus_round,
-                            "failed to notify checkpoint service about new pending checkpoint(s)"
-                        );
-
-                        panic!(
-                            "failed to notify checkpoint service about new pending checkpoint(s)"
-                        );
+                for (chain, checkpoint_messages) in &mut messages_by_chain {
+                    if checkpoint_messages.is_empty() {
+                        continue;
                     }
+
+                    // BLS checkpoint path (Sui only for now).
+                    if *chain == CounterpartyChainKind::Sui
+                        && self.protocol_config.bls_checkpoints()
+                    {
+                        let pending_checkpoint =
+                            PendingDWalletCheckpoint::V1(PendingDWalletCheckpointV1 {
+                                messages: checkpoint_messages.clone(),
+                                details: PendingDWalletCheckpointInfo {
+                                    checkpoint_height: consensus_round,
+                                },
+                            });
+                        if let Err(e) = self
+                            .epoch_store
+                            .insert_pending_dwallet_checkpoint(pending_checkpoint)
+                        {
+                            error!(
+                                    error=?e,
+                                    ?consensus_round,
+                                    ?checkpoint_messages,
+                                    "failed to insert pending checkpoint into the local DB"
+                            );
+
+                            panic!("failed to insert pending checkpoint into the local DB");
+                        };
+
+                        debug!(
+                            ?consensus_round,
+                            "Notifying checkpoint service about new pending checkpoint(s)",
+                        );
+                        if let Some(ref service) = self.dwallet_checkpoint_service {
+                            if let Err(e) = service.notify_checkpoint() {
+                                error!(
+                                    error=?e,
+                                    ?consensus_round,
+                                    "failed to notify checkpoint service about new pending checkpoint(s)"
+                                );
+
+                                panic!(
+                                    "failed to notify checkpoint service about new pending checkpoint(s)"
+                                );
+                            }
+                        }
+                    }
+
+                    // NOA checkpoint routing by chain.
+                    if let Some(ref ctx) = self.current_agreed_sui_chain_context {
+                        match chain {
+                            CounterpartyChainKind::Sui => {
+                                if let Some(ref mut handler) = self.dwallet_checkpoint_handler {
+                                    for buffered in self.buffered_noa_dwallet_messages.drain(..) {
+                                        let requests =
+                                            handler.handle_new_checkpoint(buffered, ctx.clone());
+                                        self.pending_network_owned_address_sign_requests
+                                            .extend(requests);
+                                    }
+                                    let requests = handler.handle_new_checkpoint(
+                                        std::mem::take(checkpoint_messages),
+                                        ctx.clone(),
+                                    );
+                                    self.pending_network_owned_address_sign_requests
+                                        .extend(requests);
+                                }
+                            }
+                        }
+                    } else {
+                        match chain {
+                            CounterpartyChainKind::Sui => {
+                                self.buffered_noa_dwallet_messages
+                                    .push(std::mem::take(checkpoint_messages));
+                            }
+                        }
+                    }
+                }
+
+                // System checkpoint messages — always Sui, independent of MPC session chains.
+                if let Some(ref ctx) = self.current_agreed_sui_chain_context {
+                    if let Some(ref mut handler) = self.system_checkpoint_handler {
+                        for buffered in self.buffered_noa_system_messages.drain(..) {
+                            let requests = handler.handle_new_checkpoint(buffered, ctx.clone());
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
+                        }
+                        if !verified_system_checkpoint_messages.is_empty() {
+                            let requests = handler.handle_new_checkpoint(
+                                verified_system_checkpoint_messages,
+                                ctx.clone(),
+                            );
+                            self.pending_network_owned_address_sign_requests
+                                .extend(requests);
+                        }
+                    }
+                } else if !verified_system_checkpoint_messages.is_empty() {
+                    self.buffered_noa_system_messages
+                        .push(verified_system_checkpoint_messages);
                 }
 
                 if let Err(e) = self
@@ -1265,18 +1562,29 @@ impl DWalletMPCService {
                 ProtocolData::InternalPresign {
                     data,
                     dwallet_network_encryption_key_id,
-                } => Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
-                    self.name,
-                    session_identifier,
-                    DWalletInternalMPCOutputKind::InternalPresign {
-                        output,
-                        curve: data.curve,
-                        signature_algorithm: data.signature_algorithm,
-                        session_sequence_number: session_request.session_sequence_number,
-                        dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
-                    },
-                    malicious_authorities,
-                )),
+                } => {
+                    if session_request.session_sequence_number.is_none() {
+                        error!(
+                            should_never_happen = true,
+                            ?session_identifier,
+                            "internal presign session missing session_sequence_number",
+                        );
+                    }
+                    Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
+                        self.name,
+                        session_identifier,
+                        DWalletInternalMPCOutputKind::InternalPresign {
+                            output,
+                            curve: data.curve,
+                            signature_algorithm: data.signature_algorithm,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .expect("internal presign sessions always have a session sequence number"),
+                            dwallet_network_encryption_key_id: *dwallet_network_encryption_key_id,
+                        },
+                        malicious_authorities,
+                    ))
+                }
                 _ => {
                     error!(
                         should_never_happen =? true,
@@ -1288,15 +1596,17 @@ impl DWalletMPCService {
                 }
             },
             SessionType::NetworkOwnedAddressSign => match &session_request.protocol_data {
-                ProtocolData::NetworkOwnedAddressSign { data, .. } => {
+                ProtocolData::NetworkOwnedAddressSign { data, message, .. } => {
                     Some(ConsensusTransaction::new_dwallet_internal_mpc_output(
                         self.name,
                         session_identifier,
                         DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                             output,
-                            sequence_number: session_request.session_sequence_number,
+                            session_identifier,
+                            message: message.clone(),
                             curve: data.curve,
                             signature_algorithm: data.signature_algorithm,
+                            hash_scheme: data.hash_scheme.into(),
                         },
                         malicious_authorities,
                     ))
@@ -1356,7 +1666,7 @@ impl DWalletMPCService {
                     sign_id: None,
                     signature: vec![],
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
                 vec![tx]
             }
@@ -1377,11 +1687,23 @@ impl DWalletMPCService {
                         sign_id: None,
                         signature: vec![],
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     })
                 } else {
                     let (dwallet_dkg_output, signature): (Vec<u8>, Vec<u8>) =
-                        bcs::from_bytes(&output).expect("invalid dwallet dkg + sign output format");
+                        match bcs::from_bytes(&output) {
+                            Ok(parsed) => parsed,
+                            Err(e) => {
+                                error!(
+                                    error = ?e,
+                                    should_never_happen = true,
+                                    "Failed to deserialize dwallet dkg + sign output"
+                                );
+                                return vec![];
+                            }
+                        };
                     DWalletCheckpointMessageKind::RespondDWalletDKGOutput(DWalletDKGOutput {
                         output: dwallet_dkg_output,
                         dwallet_id: dwallet_id.to_vec(),
@@ -1395,7 +1717,9 @@ impl DWalletMPCService {
                         sign_id: Some(data.sign_id.to_vec()),
                         signature,
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     })
                 };
                 vec![tx]
@@ -1417,7 +1741,7 @@ impl DWalletMPCService {
                     dwallet_id: dwallet_id.map(|id| id.to_vec()),
                     presign_id: presign_id.to_vec(),
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
 
                 vec![tx]
@@ -1441,7 +1765,7 @@ impl DWalletMPCService {
                     is_future_sign: *is_future_sign,
                     sign_id: sign_id.to_vec(),
                     rejected,
-                    session_sequence_number: session_request.session_sequence_number,
+                    session_sequence_number: session_request.session_sequence_number.unwrap_or(0),
                 });
 
                 vec![tx]
@@ -1457,7 +1781,9 @@ impl DWalletMPCService {
                         encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]
@@ -1474,7 +1800,9 @@ impl DWalletMPCService {
                             partial_centralized_signed_message_id:
                                 partial_centralized_signed_message_id.to_vec(),
                             rejected,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     );
                 vec![tx]
@@ -1522,7 +1850,9 @@ impl DWalletMPCService {
                         supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
@@ -1534,7 +1864,9 @@ impl DWalletMPCService {
                             supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     )
                 };
@@ -1586,7 +1918,9 @@ impl DWalletMPCService {
                         supported_curves: supported_curves.clone(),
                         is_last: true,
                         rejected: true,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     }]
                 } else {
                     Self::slice_public_output_into_messages(
@@ -1599,7 +1933,9 @@ impl DWalletMPCService {
                             supported_curves: supported_curves.clone(),
                             is_last,
                             rejected: false,
-                            session_sequence_number: session_request.session_sequence_number,
+                            session_sequence_number: session_request
+                                .session_sequence_number
+                                .unwrap_or(0),
                         },
                     )
                 };
@@ -1620,7 +1956,9 @@ impl DWalletMPCService {
                         dwallet_id: dwallet_id.to_vec(),
                         public_user_secret_key_shares: data.public_user_secret_key_shares.clone(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]
@@ -1632,12 +1970,14 @@ impl DWalletMPCService {
             } => {
                 let tx = DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(
                     DWalletImportedKeyVerificationOutput {
-                        dwallet_id: dwallet_id.to_vec().clone(),
+                        dwallet_id: dwallet_id.to_vec(),
                         public_output: output,
                         encrypted_user_secret_key_share_id: encrypted_user_secret_key_share_id
                             .to_vec(),
                         rejected,
-                        session_sequence_number: session_request.session_sequence_number,
+                        session_sequence_number: session_request
+                            .session_sequence_number
+                            .unwrap_or(0),
                     },
                 );
                 vec![tx]

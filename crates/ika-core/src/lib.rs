@@ -31,6 +31,7 @@ pub mod storage;
 pub mod system_checkpoints;
 
 pub mod dwallet_mpc;
+pub mod noa_checkpoints;
 pub mod sui_connector;
 
 mod dwallet_session_request;

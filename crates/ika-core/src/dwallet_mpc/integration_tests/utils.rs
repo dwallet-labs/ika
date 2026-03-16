@@ -22,6 +22,7 @@ use ika_types::messages_dwallet_mpc::{
     AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
     InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -39,6 +40,14 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     pub(crate) round_to_internal_outputs: Arc<Mutex<HashMap<Round, Vec<DWalletInternalMPCOutput>>>>,
     pub(crate) round_to_verified_checkpoint:
         Arc<Mutex<HashMap<Round, Vec<DWalletCheckpointMessageKind>>>>,
+    pub(crate) round_to_verified_system_checkpoint: Arc<
+        Mutex<
+            HashMap<
+                Round,
+                Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
+            >,
+        >,
+    >,
     pub(crate) round_to_status_updates:
         Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
@@ -107,6 +116,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_internal_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
@@ -167,6 +177,27 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
                 .map(|messages| (0, messages.clone())));
         }
         Ok(round_to_verified_checkpoint
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
+    }
+
+    fn next_verified_system_checkpoint_message(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<
+        Option<(
+            Round,
+            Vec<ika_types::messages_system_checkpoints::SystemCheckpointMessageKind>,
+        )>,
+    > {
+        let round_to_verified_system_checkpoint =
+            self.round_to_verified_system_checkpoint.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(round_to_verified_system_checkpoint
+                .get(&0)
+                .map(|messages| (0, messages.clone())));
+        }
+        Ok(round_to_verified_system_checkpoint
             .get(&(last_consensus_round.unwrap() + 1))
             .map(|messages| (last_consensus_round.unwrap() + 1, messages.clone())))
     }
@@ -492,7 +523,7 @@ fn create_dwallet_mpc_service(
         seed,
         dwallet_submit_to_consensus.clone(),
         Arc::new(TestingAuthorityState::new()),
-        checkpoint_notify.clone(),
+        Some(checkpoint_notify.clone()),
         *authority_name,
         committee.clone(),
         sui_data_receivers.clone(),
@@ -586,6 +617,13 @@ pub(crate) fn send_advance_results_between_parties(
             // The DWalletMPCService every round will have entries in all the round-specific DB tables.
             other_epoch_store
                 .round_to_verified_checkpoint
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default();
+
+            other_epoch_store
+                .round_to_verified_system_checkpoint
                 .lock()
                 .unwrap()
                 .entry(new_data_consensus_round)
@@ -694,6 +732,12 @@ pub(crate) fn send_advance_results_between_parties_excluding(
                 .extend(dwallet_outputs.clone());
             other_epoch_store
                 .round_to_verified_checkpoint
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default();
+            other_epoch_store
+                .round_to_verified_system_checkpoint
                 .lock()
                 .unwrap()
                 .entry(new_data_consensus_round)
@@ -1317,12 +1361,13 @@ pub(crate) fn send_configurable_start_network_dkg_event(
         .for_each(|(_, sui_data_sender)| {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DWalletSessionRequest {
+                    counterparty_chain: Some(CounterpartyChainKind::Sui),
                     session_type: SessionType::System,
                     session_identifier: SessionIdentifier::new(
                         SessionType::System,
                         session_identifier_preimage,
                     ),
-                    session_sequence_number,
+                    session_sequence_number: Some(session_sequence_number),
                     protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                         data: NetworkEncryptionKeyDkgData {},
                         dwallet_network_encryption_key_id: key_id,
@@ -1348,12 +1393,13 @@ pub(crate) fn send_start_dwallet_dkg_first_round_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::DWalletDKG {
                     data: DWalletDKGData {
                         curve: DWalletCurve::Secp256k1,
@@ -1389,12 +1435,13 @@ pub(crate) fn send_start_dwallet_dkg_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::DWalletDKG {
                     data: DWalletDKGData {
                         curve,

@@ -125,12 +125,10 @@ async fn network_owned_address_sign_flow(
 
     // Send a NetworkOwnedAddressSignRequest to all validators via the channel.
     let test_message = b"test message to sign internally".to_vec();
-    let sequence_number = 42u64;
 
     for sender in &test_state.network_owned_address_sign_request_senders {
         sender
             .send(NetworkOwnedAddressSignRequest {
-                sequence_number,
                 message: test_message.clone(),
                 curve,
                 signature_algorithm,
@@ -162,15 +160,15 @@ async fn network_owned_address_sign_flow(
     let sign_output = wait_for_network_owned_address_sign_output(&mut test_state).await;
 
     assert_eq!(
-        sign_output.sequence_number, sequence_number,
-        "output sequence number should match request"
+        sign_output.message, test_message,
+        "output message should match request"
     );
     assert!(
         !sign_output.signature.is_empty(),
         "signature should not be empty"
     );
     info!(
-        sequence_number = sign_output.sequence_number,
+        ?sign_output.session_identifier,
         signature_len = sign_output.signature.len(),
         "Received NetworkOwnedAddressSignOutput"
     );

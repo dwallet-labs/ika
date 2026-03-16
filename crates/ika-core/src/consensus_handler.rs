@@ -42,8 +42,8 @@ use tracing::{debug, error, instrument, trace_span, warn};
 
 pub struct ConsensusHandlerInitializer {
     state: Arc<AuthorityState>,
-    checkpoint_service: Arc<DWalletCheckpointService>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -52,8 +52,8 @@ pub struct ConsensusHandlerInitializer {
 impl ConsensusHandlerInitializer {
     pub fn new(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -72,8 +72,8 @@ impl ConsensusHandlerInitializer {
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     ) -> Self {
         Self {
             state: state.clone(),
@@ -118,8 +118,8 @@ pub struct ConsensusHandler<C> {
     /// It is used for avoiding replaying already processed transactions,
     /// checking chain consistency, and accumulating per-epoch consensus output stats.
     last_consensus_stats: ExecutionIndicesWithStats,
-    checkpoint_service: Arc<C>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<C>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     /// Reputation scores used by consensus adapter that we update, forwarded from consensus
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     /// The consensus committee used to do stake computations for deciding set of low scoring authorities
@@ -138,8 +138,8 @@ const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
 impl<C> ConsensusHandler<C> {
     pub fn new(
         epoch_store: Arc<AuthorityPerEpochStore>,
-        checkpoint_service: Arc<C>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<C>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,

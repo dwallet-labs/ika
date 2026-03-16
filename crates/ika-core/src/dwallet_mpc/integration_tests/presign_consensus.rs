@@ -9,6 +9,7 @@ use crate::request_protocol_data::{PresignData, ProtocolData};
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::ObjectID;
 #[allow(unused_imports)]
 use sui_types::committee::EpochId;
@@ -289,12 +290,13 @@ fn send_global_presign_request_events_batch(
         .map(
             |(session_identifier_preimage, session_sequence_number, presign_id)| {
                 DWalletSessionRequest {
+                    counterparty_chain: Some(CounterpartyChainKind::Sui),
                     session_type: SessionType::User,
                     session_identifier: SessionIdentifier::new(
                         SessionType::User,
                         *session_identifier_preimage,
                     ),
-                    session_sequence_number: *session_sequence_number,
+                    session_sequence_number: Some(*session_sequence_number),
                     protocol_data: ProtocolData::Presign {
                         data: PresignData {
                             curve,
@@ -335,12 +337,13 @@ fn send_global_presign_request_to_some(
         if validators.contains(&i) {
             let _ = sui_data_sender.uncompleted_events_sender.send((
                 vec![DWalletSessionRequest {
+                    counterparty_chain: Some(CounterpartyChainKind::Sui),
                     session_type: SessionType::User,
                     session_identifier: SessionIdentifier::new(
                         SessionType::User,
                         session_identifier_preimage,
                     ),
-                    session_sequence_number,
+                    session_sequence_number: Some(session_sequence_number),
                     protocol_data: ProtocolData::Presign {
                         data: PresignData {
                             curve: DWalletCurve::Secp256k1,

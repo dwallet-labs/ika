@@ -39,6 +39,7 @@ use ika_types::messages_dwallet_mpc::{
     InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
 };
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -47,7 +48,37 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
+use ika_types::noa_checkpoint::{
+    CounterpartyChain, NOACheckpointTxObservation, NOACheckpointTxRef, SuiChainContext,
+    SuiChainObservation, SuiCounterpartyChain,
+};
+
 use crate::dwallet_mpc::NetworkOwnedAddressSignOutput;
+
+/// Compute the agreed chain context for any `CounterpartyChain` implementation.
+/// Updates `current_context` in place if a new context is agreed upon.
+fn compute_chain_context<C: CounterpartyChain>(
+    observations_by_party: &HashMap<PartyID, C::Observation>,
+    current_context: &mut Option<C::Context>,
+    access_structure: &WeightedThresholdAccessStructure,
+    consensus_round: u64,
+) {
+    let observations: HashMap<u16, C::Observation> = observations_by_party
+        .iter()
+        .map(|(party_id, obs)| (*party_id as u16, obs.clone()))
+        .collect();
+
+    if let Some(context) =
+        C::context_from_observations(&observations, current_context.as_ref(), access_structure)
+    {
+        info!(
+            consensus_round,
+            chain = %C::KIND,
+            "Chain context agreed upon"
+        );
+        *current_context = Some(context);
+    }
+}
 
 /// Result of majority voting on status updates.
 #[derive(Debug, Clone)]
@@ -58,6 +89,12 @@ pub struct AgreedStatusUpdate {
     pub global_presign_requests: Vec<GlobalPresignRequest>,
     /// Network key data that reached quorum agreement via weighted majority vote.
     pub agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    /// The most recently consensus-agreed Sui chain context.
+    pub agreed_sui_chain_context: Option<SuiChainContext>,
+    /// NOA checkpoint tx_refs that reached 2f+1 finalization quorum this round.
+    pub newly_finalized_tx_refs: Vec<NOACheckpointTxRef>,
+    /// NOA checkpoint (tx_ref, retry_round) pairs that reached 2f+1 failure quorum this round.
+    pub newly_failed_tx_refs: Vec<(NOACheckpointTxRef, u32)>,
 }
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -164,7 +201,23 @@ pub(crate) struct DWalletMPCManager {
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
-    network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+    pub(crate) network_owned_address_sign_output_sender:
+        UnboundedSender<NetworkOwnedAddressSignOutput>,
+
+    /// Each validator's latest Sui chain observation, keyed by party ID.
+    /// Updated every time a status update with an observation is received.
+    sui_chain_observations_by_party: HashMap<PartyID, SuiChainObservation>,
+    /// The most recently consensus-agreed Sui chain context (None at startup).
+    agreed_sui_chain_context: Option<SuiChainContext>,
+
+    /// NOA finalization observation votes: tx_ref → set of party IDs that observed finalization.
+    noa_finalization_observations: HashMap<NOACheckpointTxRef, HashSet<PartyID>>,
+    /// NOA failure observation votes: (tx_ref, retry_round) → set of party IDs.
+    noa_failure_observations: HashMap<(NOACheckpointTxRef, u32), HashSet<PartyID>>,
+    /// tx_refs that have already reached finalization quorum (prevents duplicate commands).
+    finalized_tx_refs: HashSet<NOACheckpointTxRef>,
+    /// (tx_ref, retry_round) pairs that have already reached failure quorum.
+    failed_tx_ref_rounds: HashSet<(NOACheckpointTxRef, u32)>,
 }
 
 impl DWalletMPCManager {
@@ -269,6 +322,12 @@ impl DWalletMPCManager {
             completed_internal_presign_sessions: HashMap::new(),
             epoch_store,
             network_owned_address_sign_output_sender,
+            sui_chain_observations_by_party: HashMap::new(),
+            agreed_sui_chain_context: None,
+            noa_finalization_observations: HashMap::new(),
+            noa_failure_observations: HashMap::new(),
+            finalized_tx_refs: HashSet::new(),
+            failed_tx_ref_rounds: HashSet::new(),
         })
     }
 
@@ -296,12 +355,16 @@ impl DWalletMPCManager {
     }
 
     /// Handle the outputs of a given consensus round.
+    /// Returns each agreed output paired with the session's chain (if any),
+    /// plus the list of completed session identifiers.
     pub fn handle_consensus_round_outputs(
         &mut self,
         consensus_round: u64,
         outputs: Vec<DWalletMPCOutputReport>,
-    ) -> (Vec<DWalletMPCOutputKind>, Vec<SessionIdentifier>) {
-        // Not let's move to process MPC outputs for the current round.
+    ) -> (
+        Vec<(DWalletMPCOutputKind, Option<CounterpartyChainKind>)>,
+        Vec<SessionIdentifier>,
+    ) {
         let mut agreed_outputs = vec![];
         let mut completed_sessions = vec![];
         for output in &outputs {
@@ -311,8 +374,13 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Read counterparty_chain before completing (which removes session data).
+                    let counterparty_chain = self
+                        .sessions
+                        .get(&session_identifier)
+                        .and_then(|s| s.counterparty_chain);
                     self.complete_mpc_session(&session_identifier);
-                    agreed_outputs.push(output_result);
+                    agreed_outputs.push((output_result, counterparty_chain));
                     completed_sessions.push(session_identifier);
                     info!(
                         consensus_round,
@@ -353,6 +421,8 @@ impl DWalletMPCManager {
         status_updates: Vec<InternalSessionsStatusUpdate>,
     ) -> Option<AgreedStatusUpdate> {
         let mut agreed_presign_requests = Vec::new();
+        let mut newly_finalized = Vec::new();
+        let mut newly_failed = Vec::new();
 
         for status_update in status_updates {
             let sender_authority = status_update.authority;
@@ -414,6 +484,12 @@ impl DWalletMPCManager {
                 }
             }
 
+            // Store this validator's latest Sui chain observation.
+            if let Some(observation) = status_update.sui_chain_observation {
+                self.sui_chain_observations_by_party
+                    .insert(sender_party_id, observation);
+            }
+
             // Vote on network key data with inline is_authorized_subset check.
             for key_data in status_update.network_key_data {
                 let key_id = key_data.id;
@@ -441,7 +517,59 @@ impl DWalletMPCManager {
                     );
                 }
             }
+
+            // Process NOA checkpoint observations and resolve quorum.
+            for observation in status_update.noa_checkpoint_observations {
+                match observation {
+                    NOACheckpointTxObservation::Finalized(tx_ref) => {
+                        if self.finalized_tx_refs.contains(&tx_ref) {
+                            continue;
+                        }
+                        let parties = self
+                            .noa_finalization_observations
+                            .entry(tx_ref.clone())
+                            .or_default();
+                        parties.insert(sender_party_id);
+                        if self.access_structure.is_authorized_subset(parties).is_ok() {
+                            self.finalized_tx_refs.insert(tx_ref.clone());
+                            newly_finalized.push(tx_ref);
+                        }
+                    }
+                    NOACheckpointTxObservation::Failed(tx_ref, retry_round) => {
+                        if self.finalized_tx_refs.contains(&tx_ref) {
+                            continue;
+                        }
+                        let key = (tx_ref.clone(), retry_round);
+                        if self.failed_tx_ref_rounds.contains(&key) {
+                            continue;
+                        }
+                        let parties = self
+                            .noa_failure_observations
+                            .entry(key.clone())
+                            .or_default();
+                        parties.insert(sender_party_id);
+                        if self.access_structure.is_authorized_subset(parties).is_ok() {
+                            self.failed_tx_ref_rounds.insert(key);
+                            newly_failed.push((tx_ref, retry_round));
+                        }
+                    }
+                }
+            }
         }
+
+        // Finalization takes precedence: filter out failures for already-finalized tx_refs.
+        let newly_failed: Vec<_> = newly_failed
+            .into_iter()
+            .filter(|(tx_ref, _)| !self.finalized_tx_refs.contains(tx_ref))
+            .collect();
+
+        // Compute agreed chain context from accumulated observations.
+        compute_chain_context::<SuiCounterpartyChain>(
+            &self.sui_chain_observations_by_party,
+            &mut self.agreed_sui_chain_context,
+            &self.access_structure,
+            consensus_round,
+        );
 
         // Perform majority vote on idle status at the end of processing.
         let network_is_idle = self.compute_idle_status_majority_vote();
@@ -450,6 +578,9 @@ impl DWalletMPCManager {
             is_idle: network_is_idle,
             global_presign_requests: agreed_presign_requests,
             agreed_network_key_data: self.agreed_network_key_data.clone(),
+            agreed_sui_chain_context: self.agreed_sui_chain_context.clone(),
+            newly_finalized_tx_refs: newly_finalized,
+            newly_failed_tx_refs: newly_failed,
         })
     }
 
@@ -547,6 +678,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
+                    None, // chain unknown until request arrives
                     // only MPC sessions have messages.
                     SessionComputationType::MPC {
                         messages_by_consensus_round: HashMap::new(),
@@ -757,7 +889,7 @@ impl DWalletMPCManager {
             "instantiating new internal presign session",
         );
 
-        self.new_session(&session_identifier, status, session_computation_type);
+        self.new_session(&session_identifier, status, None, session_computation_type);
 
         self.next_internal_presign_sequence_number += 1;
     }
@@ -775,7 +907,6 @@ impl DWalletMPCManager {
     /// Returns `true` if the session was successfully instantiated, `false` on error.
     pub(super) fn instantiate_network_owned_address_sign_session(
         &mut self,
-        sequence_number: u64,
         message: Vec<u8>,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -786,14 +917,13 @@ impl DWalletMPCManager {
             self.network_owned_address_signing_network_encryption_key_id()
         else {
             error!(
-                sequence_number,
                 should_never_happen = true,
                 "No network-owned-address signing network key available — caller should check \
                  has_network_owned_address_signing_network_key() first"
             );
             return false;
         };
-        let hash_scheme: group::HashScheme = hash_scheme.into();
+        let hash_scheme_group: group::HashScheme = hash_scheme.into();
         let network_dkg_output_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
@@ -802,7 +932,6 @@ impl DWalletMPCManager {
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
-                    sequence_number,
                     error = ?e,
                     should_never_happen = true,
                     "Failed to get network encryption key data for network-owned-address sign session"
@@ -819,7 +948,6 @@ impl DWalletMPCManager {
             Ok(Some(pair)) => pair,
             Ok(None) => {
                 error!(
-                    sequence_number,
                     ?signature_algorithm,
                     should_never_happen = true,
                     "No presign available in pool — caller should check \
@@ -829,7 +957,6 @@ impl DWalletMPCManager {
             }
             Err(e) => {
                 error!(
-                    sequence_number,
                     ?signature_algorithm,
                     error = ?e,
                     should_never_happen = true,
@@ -846,7 +973,6 @@ impl DWalletMPCManager {
             .unwrap_or(false)
         {
             error!(
-                sequence_number,
                 ?presign_session_id,
                 should_never_happen = true,
                 "Presign has already been used — this should not happen"
@@ -857,7 +983,6 @@ impl DWalletMPCManager {
         // Mark the presign as used to prevent double-spending
         if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
             error!(
-                sequence_number,
                 ?presign_session_id,
                 error = ?e,
                 should_never_happen = true,
@@ -872,7 +997,6 @@ impl DWalletMPCManager {
             Ok(bytes) => bytes,
             Err(e) => {
                 error!(
-                    sequence_number,
                     error = ?e,
                     should_never_happen = true,
                     "Failed to wrap presign in VersionedPresignOutput for network-owned-address sign"
@@ -883,10 +1007,9 @@ impl DWalletMPCManager {
 
         let request = DWalletSessionRequest::new_network_owned_address_sign(
             self.epoch_id,
-            sequence_number,
             curve,
             signature_algorithm,
-            hash_scheme,
+            hash_scheme_group,
             dwallet_network_encryption_key_id,
             &network_dkg_output_bytes,
             message.clone(),
@@ -894,6 +1017,7 @@ impl DWalletMPCManager {
         );
 
         let session_identifier = request.session_identifier;
+
         let status = self.session_status_from_request(request, true);
 
         let session_computation_type = SessionComputationType::MPC {
@@ -901,7 +1025,6 @@ impl DWalletMPCManager {
         };
 
         info!(
-            sequence_number,
             ?curve,
             ?signature_algorithm,
             ?session_identifier,
@@ -909,7 +1032,7 @@ impl DWalletMPCManager {
             "instantiating network-owned-address sign session",
         );
 
-        self.new_session(&session_identifier, status, session_computation_type);
+        self.new_session(&session_identifier, status, None, session_computation_type);
         true
     }
 
@@ -1001,6 +1124,7 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         status: SessionStatus,
+        counterparty_chain: Option<CounterpartyChainKind>,
         session_computation_type: SessionComputationType,
     ) {
         info!(
@@ -1015,6 +1139,7 @@ impl DWalletMPCManager {
             status,
             *session_identifier,
             self.party_id,
+            counterparty_chain,
             session_computation_type,
         );
 
@@ -1064,7 +1189,16 @@ impl DWalletMPCManager {
                 // if they come before the last session to complete in the current epoch (at the current time).
                 let should_advance = match request.session_type {
                     SessionType::User => {
-                        request.session_sequence_number
+                        if request.session_sequence_number.is_none() {
+                            error!(
+                                should_never_happen = true,
+                                session_identifier = ?request.session_identifier,
+                                "User session missing session_sequence_number",
+                            );
+                        }
+                        request
+                            .session_sequence_number
+                            .expect("User sessions always have a session sequence number")
                             <= self.last_session_to_complete_in_current_epoch
                     }
                     SessionType::System => true,
@@ -1317,6 +1451,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     &session_identifier,
                     SessionStatus::WaitingForSessionRequest,
+                    None, // chain unknown until request arrives
                     session_computation_type.clone(),
                 );
                 // Safe to `unwrap()`: we just created the session.
@@ -1413,12 +1548,14 @@ impl DWalletMPCManager {
             }
             DWalletInternalMPCOutputKind::NetworkOwnedAddressSign {
                 output,
-                sequence_number,
+                session_identifier,
+                message,
                 curve,
                 signature_algorithm,
+                hash_scheme,
             } => {
                 info!(
-                    sequence_number,
+                    ?session_identifier,
                     ?curve,
                     ?signature_algorithm,
                     signature_length = output.len(),
@@ -1426,17 +1563,19 @@ impl DWalletMPCManager {
                     "Network-owned-address sign completed"
                 );
                 let sign_output = NetworkOwnedAddressSignOutput {
-                    sequence_number,
+                    session_identifier,
+                    message,
                     signature: output,
                     curve,
                     signature_algorithm,
+                    hash_scheme,
                 };
                 if let Err(e) = self
                     .network_owned_address_sign_output_sender
                     .send(sign_output)
                 {
                     error!(
-                        sequence_number,
+                        ?session_identifier,
                         error = ?e,
                         should_never_happen = true,
                         "Failed to send network-owned-address sign output to channel"
@@ -1612,6 +1751,7 @@ impl DWalletMPCManager {
                 self.new_session(
                     session_identifier,
                     SessionStatus::ComputationCompleted,
+                    None, // chain unknown until request arrives
                     session_type,
                 );
             }
