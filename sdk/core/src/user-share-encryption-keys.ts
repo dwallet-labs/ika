@@ -79,13 +79,18 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
  */
 export class UserShareEncryptionKeys {
 	/** Class-groups public encryption key (encrypts secret shares). */
-	encryptionKey: Uint8Array;
-	/** Class-groups private decryption key (decrypts secret shares). */
-	decryptionKey: Uint8Array;
+	readonly encryptionKey: Uint8Array;
+	/**
+	 * Class-groups private decryption key (decrypts secret shares).
+	 *
+	 * @security This is sensitive key material. Do not expose or log.
+	 * Use {@link decryptSecretShare} for decryption operations.
+	 */
+	readonly #decryptionKey: Uint8Array;
 	/** Ed25519 keypair used to sign encryption keys and dWallet outputs. */
 	#signingKeypair: Ed25519Keypair;
 	/** Curve these keys were generated for. */
-	curve: Curve;
+	readonly curve: Curve;
 	/**
 	 * `true` when the keys were derived with the legacy (buggy) hash that
 	 * always uses `0` as the curve byte.
@@ -106,7 +111,7 @@ export class UserShareEncryptionKeys {
 		legacyHash: boolean = false,
 	) {
 		this.encryptionKey = encryptionKey;
-		this.decryptionKey = decryptionKey;
+		this.#decryptionKey = decryptionKey;
 		this.#signingKeypair = signingKeypair;
 		this.curve = curve;
 		this.legacyHash = legacyHash;
@@ -252,6 +257,11 @@ export class UserShareEncryptionKeys {
 	 *
 	 * The output is suitable for persistent storage and can be restored
 	 * with {@link fromShareEncryptionKeysBytes}.
+	 *
+	 * @security The output contains **unencrypted secret key material**
+	 * (class-groups decryption key and Ed25519 signing key). Store the
+	 * result encrypted at rest — never persist to localStorage, logs,
+	 * or unencrypted databases.
 	 */
 	toShareEncryptionKeysBytes(): Uint8Array {
 		return this.#serializeShareEncryptionKeys();
@@ -324,7 +334,7 @@ export class UserShareEncryptionKeys {
 		return Uint8Array.from(
 			await decrypt_user_share(
 				fromCurveToNumber(this.curve),
-				this.decryptionKey,
+				this.#decryptionKey,
 				dWalletPublicOutput,
 				encryptedShareAndProof,
 				protocolPublicParameters,
@@ -390,7 +400,7 @@ export class UserShareEncryptionKeys {
 	#serializeShareEncryptionKeys() {
 		const fields = {
 			encryptionKey: this.encryptionKey,
-			decryptionKey: this.decryptionKey,
+			decryptionKey: this.#decryptionKey,
 			secretShareSigningSecretKey: this.#signingKeypair.getSecretKey(),
 			curve: fromCurveToNumber(this.curve),
 			legacyHash: this.legacyHash,

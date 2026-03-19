@@ -19,6 +19,7 @@ import {
 	centralized_and_decentralized_parties_dkg_output_match,
 	create_dkg_centralized_output_v2,
 	create_dkg_centralized_output_v1 as create_dkg_user_output,
+	create_imported_dwallet_centralized_step as create_imported_dwallet_user_output,
 	create_sign_centralized_party_message_with_centralized_party_dkg_output,
 	create_sign_centralized_party_message as create_sign_user_message,
 	encrypt_secret_share,
@@ -146,6 +147,50 @@ export async function encryptSecretShare(
 	);
 
 	return Uint8Array.from(encryptedUserShareAndProof);
+}
+
+/**
+ * Prepare verification data for importing an existing cryptographic key as a DWallet.
+ *
+ * This is the chain-agnostic version that takes raw bytes. Chain SDKs wrap this
+ * to provide address serialization and protocol parameter fetching.
+ *
+ * @param protocolPublicParameters - The protocol public parameters
+ * @param curve - The curve to use
+ * @param bytesToHash - The bytes to hash for session identifier generation
+ * @param senderAddressBytes - The sender address as raw bytes
+ * @param encryptionKey - The user's public encryption key
+ * @param privateKey - The existing private key to import
+ * @returns Promise resolving to verification data for the import process
+ */
+export async function prepareImportedKeyVerification(
+	protocolPublicParameters: Uint8Array,
+	curve: Curve,
+	bytesToHash: Uint8Array,
+	senderAddressBytes: Uint8Array,
+	encryptionKey: Uint8Array,
+	privateKey: Uint8Array,
+): Promise<ImportDWalletVerificationRequestInput> {
+	const [userSecretShare, userPublicOutput, userMessage] =
+		await create_imported_dwallet_user_output(
+			fromCurveToNumber(curve),
+			protocolPublicParameters,
+			sessionIdentifierDigest(bytesToHash, senderAddressBytes),
+			privateKey,
+		);
+
+	const encryptedUserShareAndProof = await encryptSecretShare(
+		curve,
+		userSecretShare,
+		encryptionKey,
+		protocolPublicParameters,
+	);
+
+	return {
+		userPublicOutput: Uint8Array.from(userPublicOutput),
+		userMessage: Uint8Array.from(userMessage),
+		encryptedUserShareAndProof: Uint8Array.from(encryptedUserShareAndProof),
+	};
 }
 
 /**
