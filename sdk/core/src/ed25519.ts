@@ -67,6 +67,9 @@ export class Ed25519Keypair {
 	/**
 	 * Returns the secret key as a hex-encoded string.
 	 * Can be passed to `fromSecretKey()` to restore the keypair.
+	 *
+	 * @security This returns raw secret key material. Only use for
+	 * serialization to encrypted storage. Never log or transmit.
 	 */
 	getSecretKey(): string {
 		return bytesToHex(this.#secretKey);

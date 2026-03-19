@@ -73,9 +73,16 @@ export function bytesToHex(bytes: Uint8Array): string {
  *
  * @param hex - The hex string to convert (with or without 0x prefix)
  * @returns The Uint8Array representation
+ * @throws {Error} If the string contains non-hex characters or has odd length
  */
 export function hexToBytes(hex: string): Uint8Array {
 	const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+	if (cleanHex.length % 2 !== 0) {
+		throw new Error(`Invalid hex string: odd length (${cleanHex.length})`);
+	}
+	if (cleanHex.length > 0 && !/^[0-9a-fA-F]+$/.test(cleanHex)) {
+		throw new Error('Invalid hex string: contains non-hex characters');
+	}
 	const bytes = new Uint8Array(cleanHex.length / 2);
 	for (let i = 0; i < cleanHex.length; i += 2) {
 		bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
