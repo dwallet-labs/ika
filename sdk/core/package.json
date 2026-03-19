@@ -1,0 +1,63 @@
+{
+	"name": "@ika.xyz/core",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"description": "Chain-agnostic core library for Ika dWallet 2PC-MPC protocol",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dwallet-labs/ika",
+		"directory": "sdk/core"
+	},
+	"homepage": "https://docs.ika.xyz/sdk",
+	"version": "0.1.0",
+	"license": "BSD-3-Clause-Clear",
+	"sideEffects": false,
+	"files": [
+		"CHANGELOG.md",
+		"dist"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"type": "commonjs",
+	"main": "./dist/cjs/index.js",
+	"module": "./dist/esm/index.js",
+	"types": "./dist/cjs/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/esm/index.js",
+			"require": "./dist/cjs/index.js"
+		}
+	},
+	"scripts": {
+		"build": "build-package",
+		"test": "vitest run",
+		"test:unit": "vitest run test/unit",
+		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
+		"prepublishOnly": "pnpm turbo build",
+		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
+		"prettier:fix": "prettier -w --ignore-unknown .",
+		"eslint:check": "eslint --max-warnings=0 .",
+		"eslint:fix": "pnpm run eslint:check --fix",
+		"lint": "pnpm run eslint:check && pnpm run prettier:check",
+		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix"
+	},
+	"bugs": {
+		"url": "https://github.com/dwallet-labs/ika/issues/new"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"devDependencies": {
+		"@ika.xyz/build-scripts": "workspace:*",
+		"@types/node": "^22.15.21",
+		"typescript": "^5.8.3",
+		"vitest": "3.2.4"
+	},
+	"dependencies": {
+		"@ika.xyz/ika-wasm": "workspace:*",
+		"@mysten/bcs": "^2.0.2",
+		"@noble/curves": "^2.0.1",
+		"@noble/hashes": "^2.0.1",
+		"@scure/base": "^2.0.0"
+	}
+}
