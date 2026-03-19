@@ -42,17 +42,11 @@ impl DWalletSessionRequest {
         network_dkg_output: &[u8],
     ) -> Self {
         let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
-        transcript.append_message(b"epoch", &epoch.to_be_bytes());
-        transcript.append_message(b"consensus round", &consensus_round.to_be_bytes());
-        transcript.append_message(
-            b"session sequence number",
-            &session_sequence_number.to_be_bytes(),
-        );
-        transcript.append_message(b"curve", curve.to_string().as_bytes());
-        transcript.append_message(
-            b"signature algorithm",
-            signature_algorithm.to_string().as_bytes(),
-        );
+        transcript.append_u64(b"epoch", epoch);
+        transcript.append_u64(b"consensus round", consensus_round);
+        transcript.append_u64(b"session sequence number", session_sequence_number);
+        transcript.append_u64(b"curve", curve as u64);
+        transcript.append_u64(b"signature algorithm", signature_algorithm as u64);
 
         transcript.append_message(
             b"network encryption key id",
@@ -107,14 +101,11 @@ impl DWalletSessionRequest {
     ) -> Self {
         let mut transcript =
             Transcript::new(b"NetworkOwnedAddressSign session identifier preimage");
-        transcript.append_message(b"epoch", &epoch.to_be_bytes());
+        transcript.append_u64(b"epoch", epoch);
         transcript.append_message(b"message", &message);
-        transcript.append_message(b"curve", curve.to_string().as_bytes());
-        transcript.append_message(
-            b"signature algorithm",
-            signature_algorithm.to_string().as_bytes(),
-        );
-        transcript.append_message(b"hash scheme", hash_scheme.to_string().as_bytes());
+        transcript.append_u64(b"curve", curve as u64);
+        transcript.append_u64(b"signature algorithm", signature_algorithm as u64);
+        transcript.append_u64(b"hash scheme", hash_scheme as u64);
         transcript.append_message(
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),

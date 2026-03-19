@@ -438,6 +438,9 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => {
             "internal_sessions_status_update"
         }
+        ConsensusTransactionKind::GlobalPresignRequest(_) => "global_presign_request",
+        ConsensusTransactionKind::NetworkKeyData(_) => "network_key_data",
+        ConsensusTransactionKind::NOAObservation(_) => "noa_observation",
     }
 }
 

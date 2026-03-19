@@ -145,7 +145,9 @@ use ika_core::dwallet_checkpoints::dwallet_checkpoint_output::{
     DWalletCheckpointOutput as DWalletCheckpointOutputTrait,
 };
 use ika_core::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
-use ika_core::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
+use ika_core::dwallet_mpc::dwallet_mpc_service::{
+    DWalletMPCService, NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+};
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
@@ -972,10 +974,14 @@ impl IkaNode {
         let (
             _network_owned_address_sign_request_sender,
             network_owned_address_sign_request_receiver,
-        ) = tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        ) = tokio::sync::mpsc::channel::<NetworkOwnedAddressSignRequest>(
+            NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+        );
         // Output channel: MPC service sends completed signatures here.
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(
+                NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+            );
 
         // Start as true: at epoch start there are no checkpoints to finalize.
         // The service loop will flip to false if checkpoints arrive.

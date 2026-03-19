@@ -60,7 +60,8 @@ use ika_types::messages_dwallet_checkpoint::{
     DWalletCheckpointMessage, DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use ika_types::messages_dwallet_mpc::{
-    AssignedPresign, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
+    AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
+    ConsensusNetworkKeyData, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
     IkaNetworkConfig, InternalSessionsStatusUpdate, SessionIdentifier,
 };
 use ika_types::messages_system_checkpoints::{
@@ -288,6 +289,24 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>>;
 
+    /// Returns the next global presign requests after the given consensus round.
+    fn next_global_presign_request(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>>;
+
+    /// Returns the next network key data after the given consensus round.
+    fn next_network_key_data(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNetworkKeyData>)>>;
+
+    /// Returns the next NOA observations after the given consensus round.
+    fn next_noa_observation(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>>;
+
     /// Marks a presign as used so it cannot be reused.
     fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()>;
 
@@ -467,6 +486,51 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         }
     }
 
+    fn next_global_presign_request(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .global_presign_requests
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_network_key_data(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNetworkKeyData>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .network_key_data_messages
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_noa_observation(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .noa_observations
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
     fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
         let tables = self.tables()?;
         tables.mark_presign_as_used(presign_session_id)
@@ -580,8 +644,14 @@ pub enum ReconfigCertStatus {
     RejectAllTx,
 }
 
+/// Presign pool DB table type.
+/// Key: (network_encryption_key_id, session_sequence_number).
+/// Value: (session_identifier, list of serialized presign bytes).
+type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>;
+
 /// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
 #[derive(DBMapUtils)]
+#[allow(clippy::type_complexity)]
 pub struct AuthorityEpochTables {
     /// Track which transactions have been processed in handle_consensus_transaction. We must be
     /// sure to advance next_shared_object_versions exactly once for each transaction we receive from
@@ -690,6 +760,18 @@ pub struct AuthorityEpochTables {
     /// Internal sessions status updates by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     internal_sessions_status_updates: DBMap<Round, Vec<InternalSessionsStatusUpdate>>,
+
+    /// Global presign requests by consensus round.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    global_presign_requests: DBMap<Round, Vec<ConsensusGlobalPresignRequest>>,
+
+    /// Network key data messages by consensus round.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    network_key_data_messages: DBMap<Round, Vec<ConsensusNetworkKeyData>>,
+
+    /// NOA checkpoint observations by consensus round.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
 
     /// Tracks presigns that have been consumed for signing.
     /// Key: SessionIdentifier - the session ID of the presign session that created the presign
@@ -819,7 +901,7 @@ impl AuthorityEpochTables {
     fn presign_pool_table(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
-    ) -> &DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)> {
+    ) -> &PresignPoolTable {
         match signature_algorithm {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 &self.internal_presign_pool_ecdsa_secp256k1
@@ -848,16 +930,21 @@ impl AuthorityEpochTables {
         let num_presigns = presigns.len() as u64;
         let table = self.presign_pool_table(signature_algorithm);
         let key = (dwallet_network_encryption_key_id, session_sequence_number);
-        table.insert(&key, &(session_identifier, presigns))?;
 
-        // Update the size counter
         let size_key = (signature_algorithm, dwallet_network_encryption_key_id);
         let current_size = self
             .internal_presign_pool_sizes
             .get(&size_key)?
             .unwrap_or(0);
-        self.internal_presign_pool_sizes
-            .insert(&size_key, &(current_size + num_presigns))?;
+
+        // Batch both writes atomically to prevent size counter drift.
+        let mut batch = table.batch();
+        batch.insert_batch(table, [(&key, &(session_identifier, presigns))])?;
+        batch.insert_batch(
+            &self.internal_presign_pool_sizes,
+            [(&size_key, &(current_size + num_presigns))],
+        )?;
+        batch.write()?;
 
         Ok(())
     }
@@ -884,6 +971,23 @@ impl AuthorityEpochTables {
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
+        let Some((batch, session_identifier, presign)) =
+            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        else {
+            return Ok(None);
+        };
+        batch.write()?;
+        Ok(Some((session_identifier, presign)))
+    }
+
+    /// Prepares a presign pop without committing, returning the uncommitted batch.
+    /// Callers can extend the batch with additional operations before committing,
+    /// ensuring atomicity across the pop and any follow-up writes (e.g. `assign_presign`).
+    fn prepare_pop_presign(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+    ) -> IkaResult<Option<(DBBatch, SessionIdentifier, Vec<u8>)>> {
         let table = self.presign_pool_table(signature_algorithm);
 
         // Get the first entry for this network encryption key ID.
@@ -902,32 +1006,61 @@ impl AuthorityEpochTables {
         let (key, (session_identifier, mut presigns)) = entry_result?;
 
         if presigns.is_empty() {
-            // This shouldn't happen, but handle it gracefully
-            table.remove(&key)?;
+            // This shouldn't happen, but handle it gracefully: remove the
+            // corrupted entry and decrement the size counter atomically.
+            warn!(
+                ?signature_algorithm,
+                ?dwallet_network_encryption_key_id,
+                "prepare_pop_presign: found entry with empty presigns vec, removing"
+            );
+            let size_key = (signature_algorithm, dwallet_network_encryption_key_id);
+            let current_size = self
+                .internal_presign_pool_sizes
+                .get(&size_key)?
+                .unwrap_or(0);
+            let mut batch = table.batch();
+            batch.delete_batch(table, [&key])?;
+            if current_size > 0 {
+                batch.insert_batch(
+                    &self.internal_presign_pool_sizes,
+                    [(&size_key, &(current_size - 1))],
+                )?;
+            }
+            batch.write()?;
             return Ok(None);
         }
 
         // Remove the first presign from the vec
         let presign = presigns.remove(0);
 
-        if presigns.is_empty() {
-            // No more presigns for this session, remove the entry
-            table.remove(&key)?;
-        } else {
-            // Update the entry with remaining presigns
-            table.insert(&key, &(session_identifier, presigns))?;
-        }
-
-        // Decrement the size counter
+        // Read size counter before batch
         let size_key = (signature_algorithm, dwallet_network_encryption_key_id);
         let current_size = self
             .internal_presign_pool_sizes
             .get(&size_key)?
-            .unwrap_or(1);
-        self.internal_presign_pool_sizes
-            .insert(&size_key, &(current_size.saturating_sub(1)))?;
+            .unwrap_or(0);
+        if current_size == 0 {
+            warn!(
+                ?signature_algorithm,
+                ?dwallet_network_encryption_key_id,
+                "pop_presign: size counter missing or zero but presign existed in pool"
+            );
+        }
 
-        Ok(Some((session_identifier, presign)))
+        // Batch all writes: pool update/remove + size counter decrement.
+        // The batch is NOT committed here — the caller decides when to write.
+        let mut batch = table.batch();
+        if presigns.is_empty() {
+            batch.delete_batch(table, [&key])?;
+        } else {
+            batch.insert_batch(table, [(&key, &(session_identifier, presigns))])?;
+        }
+        batch.insert_batch(
+            &self.internal_presign_pool_sizes,
+            [(&size_key, &(current_size.saturating_sub(1)))],
+        )?;
+
+        Ok(Some((batch, session_identifier, presign)))
     }
 
     /// Marks a presign as used so it cannot be reused.
@@ -957,8 +1090,8 @@ impl AuthorityEpochTables {
         }
     }
 
-    /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
-    /// This is used for external presign requests.
+    /// Assigns a presign to a user by atomically moving it from the internal pool to the
+    /// assigned pool. Uses a single batch write to ensure the presign is never lost.
     pub fn assign_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -967,14 +1100,12 @@ impl AuthorityEpochTables {
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
     ) -> IkaResult<Option<SessionIdentifier>> {
-        // Pop a presign from the internal pool
-        let Some((session_identifier, presign)) =
-            self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
+        let Some((mut batch, session_identifier, presign)) =
+            self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
         else {
             return Ok(None);
         };
 
-        // Create the assigned presign
         let assigned_presign = AssignedPresign {
             session_identifier,
             presign,
@@ -983,9 +1114,10 @@ impl AuthorityEpochTables {
             assigned_epoch: current_epoch,
         };
 
-        // Store it in the assigned pool
-        let table = self.assigned_presign_pool_table(signature_algorithm);
-        table.insert(&session_identifier, &assigned_presign)?;
+        // Extend the pop batch with the assigned pool insert, then commit atomically.
+        let assigned_table = self.assigned_presign_pool_table(signature_algorithm);
+        batch.insert_batch(assigned_table, [(&session_identifier, &assigned_presign)])?;
+        batch.write()?;
 
         Ok(Some(session_identifier))
     }
@@ -1527,6 +1659,42 @@ impl AuthorityPerEpochStore {
                     return None;
                 }
             }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::GlobalPresignRequest(msg),
+                ..
+            }) => {
+                if transaction.sender_authority() != msg.authority {
+                    warn!(
+                        "GlobalPresignRequest authority {} does not match its author from consensus {}",
+                        msg.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NetworkKeyData(msg),
+                ..
+            }) => {
+                if transaction.sender_authority() != msg.authority {
+                    warn!(
+                        "NetworkKeyData authority {} does not match its author from consensus {}",
+                        msg.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NOAObservation(msg),
+                ..
+            }) => {
+                if transaction.sender_authority() != msg.authority {
+                    warn!(
+                        "NOAObservation authority {} does not match its author from consensus {}",
+                        msg.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
         }
         Some(VerifiedSequencedConsensusTransaction(transaction))
     }
@@ -1790,6 +1958,9 @@ impl AuthorityPerEpochStore {
         output.set_internal_sessions_status_updates(Self::filter_internal_sessions_status_updates(
             transactions,
         ));
+        output.set_global_presign_requests(Self::filter_global_presign_requests(transactions));
+        output.set_network_key_data(Self::filter_network_key_data(transactions));
+        output.set_noa_observations(Self::filter_noa_observations(transactions));
 
         authority_metrics
             .consensus_handler_cancelled_transactions
@@ -1897,6 +2068,69 @@ impl AuthorityPerEpochStore {
             .collect()
     }
 
+    fn filter_global_presign_requests(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<ConsensusGlobalPresignRequest> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::GlobalPresignRequest(msg),
+                        ..
+                    }) => Some(msg.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn filter_network_key_data(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<ConsensusNetworkKeyData> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::NetworkKeyData(msg),
+                        ..
+                    }) => Some(msg.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn filter_noa_observations(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<ConsensusNOAObservation> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::NOAObservation(msg),
+                        ..
+                    }) => Some(msg.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     #[instrument(level = "trace", skip_all)]
     async fn process_consensus_transaction<C: DWalletCheckpointServiceNotify>(
         &self,
@@ -1935,18 +2169,30 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::GlobalPresignRequest(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NetworkKeyData(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::NOAObservation(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletCheckpointSignature(info),
                 ..
             }) => {
                 // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
                 // When only NOA checkpoints are active, BLS signature aggregation is skipped.
-                if self.protocol_config().bls_checkpoints() {
+                if self.protocol_config().bls_checkpoints()
+                    && let Some(service) = checkpoint_service
+                {
                     // We usually call notify_checkpoint_signature in IkaTxValidator, but that
                     // step can be skipped when a batch is already part of a certificate, so we
                     // must also notify here.
-                    if let Some(service) = checkpoint_service {
-                        service.notify_checkpoint_signature(self, info)?;
-                    }
+                    service.notify_checkpoint_signature(self, info)?;
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
@@ -1968,10 +2214,10 @@ impl AuthorityPerEpochStore {
                 ..
             }) => {
                 // Only process BLS checkpoint signatures when BLS checkpoints are enabled.
-                if self.protocol_config().bls_checkpoints() {
-                    if let Some(service) = system_checkpoint_service {
-                        service.notify_checkpoint_signature(self, data)?;
-                    }
+                if self.protocol_config().bls_checkpoints()
+                    && let Some(service) = system_checkpoint_service
+                {
+                    service.notify_checkpoint_signature(self, data)?;
                 }
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
@@ -2301,6 +2547,9 @@ pub(crate) struct ConsensusCommitOutput {
     dwallet_mpc_round_outputs: Vec<DWalletMPCOutput>,
     dwallet_internal_mpc_round_outputs: Vec<DWalletInternalMPCOutput>,
     internal_sessions_status_updates: Vec<InternalSessionsStatusUpdate>,
+    global_presign_requests: Vec<ConsensusGlobalPresignRequest>,
+    network_key_data: Vec<ConsensusNetworkKeyData>,
+    noa_observations: Vec<ConsensusNOAObservation>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
     verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
@@ -2334,6 +2583,21 @@ impl ConsensusCommitOutput {
         new_value: Vec<InternalSessionsStatusUpdate>,
     ) {
         self.internal_sessions_status_updates = new_value;
+    }
+
+    pub(crate) fn set_global_presign_requests(
+        &mut self,
+        new_value: Vec<ConsensusGlobalPresignRequest>,
+    ) {
+        self.global_presign_requests = new_value;
+    }
+
+    pub(crate) fn set_network_key_data(&mut self, new_value: Vec<ConsensusNetworkKeyData>) {
+        self.network_key_data = new_value;
+    }
+
+    pub(crate) fn set_noa_observations(&mut self, new_value: Vec<ConsensusNOAObservation>) {
+        self.noa_observations = new_value;
     }
 
     fn record_verified_dwallet_checkpoint_messages(
@@ -2393,6 +2657,18 @@ impl ConsensusCommitOutput {
         batch.insert_batch(
             &tables.internal_sessions_status_updates,
             [(self.consensus_round, self.internal_sessions_status_updates)],
+        )?;
+        batch.insert_batch(
+            &tables.global_presign_requests,
+            [(self.consensus_round, self.global_presign_requests)],
+        )?;
+        batch.insert_batch(
+            &tables.network_key_data_messages,
+            [(self.consensus_round, self.network_key_data)],
+        )?;
+        batch.insert_batch(
+            &tables.noa_observations,
+            [(self.consensus_round, self.noa_observations)],
         )?;
         batch.insert_batch(
             &tables.verified_dwallet_checkpoint_messages,

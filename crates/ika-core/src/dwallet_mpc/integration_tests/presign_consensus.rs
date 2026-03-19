@@ -231,13 +231,11 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
         for checkpoint in pending.iter() {
             for message in checkpoint.messages() {
                 if let DWalletCheckpointMessageKind::RespondDWalletPresign(presign_output) = message
+                    && presign_output.presign_id == presign_id.to_vec()
+                    && !validators_with_output.contains(&i)
                 {
-                    if presign_output.presign_id == presign_id.to_vec()
-                        && !validators_with_output.contains(&i)
-                    {
-                        validators_with_output.push(i);
-                        info!("Validator {} has presign output", i);
-                    }
+                    validators_with_output.push(i);
+                    info!("Validator {} has presign output", i);
                 }
             }
         }

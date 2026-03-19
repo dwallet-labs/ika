@@ -54,8 +54,8 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
 use ika_types::noa_checkpoint::{
-    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointResolution,
-    NOACheckpointTxObservation, SuiChainContext, SuiChainObservation,
+    CounterpartyChainKind, NOACheckpointKindName, NOACheckpointTxObservation, SuiChainContext,
+    SuiChainObservation,
 };
 use ika_types::sui::EpochStartSystem;
 use ika_types::sui::{EpochStartSystemTrait, EpochStartValidatorInfoTrait};
@@ -68,7 +68,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 #[cfg(any(test, feature = "test-utils"))]
 use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
@@ -77,6 +76,8 @@ use tracing::{debug, error, info, warn};
 const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
+
+pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
 
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
@@ -106,7 +107,8 @@ pub struct DWalletMPCService {
     /// Tracks which network key IDs have already been sent through consensus.
     sent_network_key_ids: HashSet<ObjectID>,
     /// Receiver for network-owned-address sign requests.
-    network_owned_address_sign_requests_receiver: UnboundedReceiver<NetworkOwnedAddressSignRequest>,
+    network_owned_address_sign_requests_receiver:
+        tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
@@ -125,7 +127,8 @@ pub struct DWalletMPCService {
     /// Buffered NOA checkpoint observations to include in the next status update.
     buffered_noa_observations: Vec<NOACheckpointTxObservation>,
     /// Receiver for sign outputs from MPC manager to route to NOA checkpoint handlers.
-    network_owned_address_sign_output_receiver: UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+    network_owned_address_sign_output_receiver:
+        tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignOutput>,
     /// DWallet checkpoint handler, driven directly by the service.
     dwallet_checkpoint_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>>,
     /// System checkpoint handler, driven directly by the service.
@@ -147,11 +150,13 @@ impl DWalletMPCService {
         epoch_id: sui_types::base_types::EpochId,
         committee: Arc<Committee>,
         protocol_config: ProtocolConfig,
-        network_owned_address_sign_requests_receiver: UnboundedReceiver<
+        network_owned_address_sign_requests_receiver: tokio::sync::mpsc::Receiver<
             NetworkOwnedAddressSignRequest,
         >,
-        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
-        network_owned_address_sign_output_receiver: UnboundedReceiver<
+        network_owned_address_sign_output_sender: tokio::sync::mpsc::Sender<
+            NetworkOwnedAddressSignOutput,
+        >,
+        network_owned_address_sign_output_receiver: tokio::sync::mpsc::Receiver<
             NetworkOwnedAddressSignOutput,
         >,
         dwallet_checkpoint_handler: Option<
@@ -230,6 +235,7 @@ impl DWalletMPCService {
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::disallowed_methods)]
     pub(crate) fn new_for_testing(
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         seed: RootSeed,
@@ -241,16 +247,20 @@ impl DWalletMPCService {
         sui_data_receivers: SuiDataReceivers,
     ) -> (
         Self,
-        UnboundedSender<NetworkOwnedAddressSignRequest>,
-        UnboundedReceiver<NetworkOwnedAddressSignOutput>,
+        tokio::sync::mpsc::Sender<NetworkOwnedAddressSignRequest>,
+        tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignOutput>,
     ) {
         let (
             network_owned_address_sign_request_sender,
             network_owned_address_sign_request_receiver,
-        ) = tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignRequest>();
+        ) = tokio::sync::mpsc::channel::<NetworkOwnedAddressSignRequest>(
+            NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+        );
 
         let (network_owned_address_sign_output_sender, network_owned_address_sign_output_receiver) =
-            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+            tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(
+                NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+            );
 
         let service = DWalletMPCService {
             last_read_consensus_round: Some(0),
@@ -295,7 +305,10 @@ impl DWalletMPCService {
             buffered_noa_dwallet_messages: Vec::new(),
             buffered_noa_system_messages: Vec::new(),
             buffered_noa_observations: Vec::new(),
-            network_owned_address_sign_output_receiver: tokio::sync::mpsc::unbounded_channel().1,
+            network_owned_address_sign_output_receiver: tokio::sync::mpsc::channel(
+                NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+            )
+            .1,
             dwallet_checkpoint_handler: None,
             system_checkpoint_handler: None,
         };
@@ -330,19 +343,13 @@ impl DWalletMPCService {
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
-        self.last_read_consensus_round
+    pub(crate) fn pending_network_owned_address_sign_request_count(&self) -> usize {
+        self.pending_network_owned_address_sign_requests.len()
     }
 
-    /// Test helper: receive and process completed cryptographic computations
-    /// without running the full service loop. This is useful for cleaning up
-    /// the `currently_running_cryptographic_computations` set after tests.
     #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) fn receive_completed_computations(&mut self) {
-        let _ = self
-            .dwallet_mpc_manager
-            .cryptographic_computations_orchestrator
-            .receive_completed_computations(self.dwallet_mpc_metrics.clone());
+    pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
+        self.last_read_consensus_round
     }
 
     /// Wire up NOA checkpoint handlers for testing.
@@ -352,13 +359,15 @@ impl DWalletMPCService {
     /// service's receiver with a fresh connected pair, then installs the handler(s).
     #[cfg(any(test, feature = "test-utils"))]
     #[allow(dead_code)]
+    #[allow(clippy::disallowed_methods)]
     pub(crate) fn setup_noa_checkpoint_handlers_for_testing(
         &mut self,
         dwallet_handler: NOACheckpointHandler<noa_checkpoint::SuiDWalletCheckpoint>,
         system_handler: Option<NOACheckpointHandler<noa_checkpoint::SuiSystemCheckpoint>>,
     ) {
-        let (sender, receiver) =
-            tokio::sync::mpsc::unbounded_channel::<NetworkOwnedAddressSignOutput>();
+        let (sender, receiver) = tokio::sync::mpsc::channel::<NetworkOwnedAddressSignOutput>(
+            NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY,
+        );
         self.dwallet_mpc_manager
             .network_owned_address_sign_output_sender = sender;
         self.network_owned_address_sign_output_receiver = receiver;
@@ -541,8 +550,8 @@ impl DWalletMPCService {
         self.submitted_noa_sign_messages.extend(newly_submitted);
     }
 
-    /// Send status update to consensus if there are unsent presign requests,
-    /// idle status changed, or there is new network key data to send.
+    /// Send status update and individual consensus messages for presign requests,
+    /// network key data, and NOA observations.
     async fn send_status_update_to_consensus(&mut self, is_idle: bool) {
         let Some(consensus_round) = self.last_read_consensus_round else {
             return;
@@ -590,20 +599,47 @@ impl DWalletMPCService {
             return;
         }
 
-        let status_update = InternalSessionsStatusUpdate::new(
-            self.name,
-            is_idle,
-            unsent_presign_requests,
-            new_key_data.clone(),
-            sui_chain_observation.clone(),
-            self.buffered_noa_observations.clone(),
-        );
+        // Build a batch of consensus transactions.
+        let mut transactions = Vec::new();
 
-        let consensus_tx = ConsensusTransaction::new_internal_sessions_status_update(status_update);
+        // Slimmed status update (idle + chain observation) when those changed.
+        if idle_status_changed || observation_changed {
+            let status_update = InternalSessionsStatusUpdate::new(
+                self.name,
+                is_idle,
+                sui_chain_observation.clone(),
+            );
+            transactions.push(ConsensusTransaction::new_internal_sessions_status_update(
+                status_update,
+            ));
+        }
+
+        // One message per unsent presign request.
+        for request in &unsent_presign_requests {
+            transactions.push(ConsensusTransaction::new_global_presign_request(
+                self.name, *request,
+            ));
+        }
+
+        // One message per new network key.
+        for key_data in &new_key_data {
+            transactions.push(ConsensusTransaction::new_network_key_data(
+                self.name,
+                key_data.clone(),
+            ));
+        }
+
+        // One message per buffered NOA observation.
+        for obs in &self.buffered_noa_observations {
+            transactions.push(ConsensusTransaction::new_noa_observation(
+                self.name,
+                obs.clone(),
+            ));
+        }
 
         if let Err(e) = self
             .dwallet_submit_to_consensus
-            .submit_to_consensus(&[consensus_tx])
+            .submit_to_consensus(&transactions)
             .await
         {
             error!(
@@ -644,27 +680,6 @@ impl DWalletMPCService {
                     self.pending_network_owned_address_sign_requests
                         .extend(requests);
                 }
-            }
-        }
-    }
-
-    /// Dispatch NOA checkpoint resolutions directly to the appropriate handler
-    /// based on the quorum results from the current consensus round.
-    fn dispatch_noa_resolutions(
-        &mut self,
-        agreed_status: &crate::dwallet_mpc::mpc_manager::AgreedStatusUpdate,
-    ) {
-        for tx_ref in &agreed_status.newly_finalized_tx_refs {
-            let resolution = NOACheckpointResolution::Finalized(tx_ref.clone());
-            self.route_resolution(resolution, tx_ref.kind_name);
-        }
-        for (tx_ref, _) in &agreed_status.newly_failed_tx_refs {
-            if let Some(ctx) = &self.current_agreed_sui_chain_context {
-                let resolution = NOACheckpointResolution::RetryWithContext {
-                    tx_ref: tx_ref.clone(),
-                    context: ctx.clone(),
-                };
-                self.route_resolution(resolution, tx_ref.kind_name);
             }
         }
     }
@@ -878,7 +893,7 @@ impl DWalletMPCService {
                     error!(
                         error=?e,
                         last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load DWallet MPC outputs from the local DB"
+                        "failed to load internal DWallet MPC outputs from the local DB"
                     );
                     panic!("failed to load DWallet MPC outputs from the local DB");
                 }
@@ -942,14 +957,14 @@ impl DWalletMPCService {
                 }
             };
 
-            let status_updates = self
+            let status_updates = match self
                 .epoch_store
-                .next_internal_sessions_status_update(self.last_read_consensus_round);
-            let status_updates = match status_updates {
-                Ok(Some((status_updates_round, updates))) => {
-                    if status_updates_round != mpc_messages_consensus_round {
+                .next_internal_sessions_status_update(self.last_read_consensus_round)
+            {
+                Ok(Some((round, updates))) => {
+                    if round != mpc_messages_consensus_round {
                         error!(
-                            ?status_updates_round,
+                            ?round,
                             ?mpc_messages_consensus_round,
                             "status updates consensus round does not match MPC messages consensus round"
                         );
@@ -959,17 +974,76 @@ impl DWalletMPCService {
                     }
                     updates
                 }
-                Ok(None) => {
-                    // No status updates for this round - use empty list.
-                    Vec::new()
-                }
+                Ok(None) => Vec::new(),
                 Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load status updates from the local DB"
-                    );
+                    error!(error=?e, "failed to load status updates from the local DB");
                     panic!("failed to load status updates from the local DB");
+                }
+            };
+
+            let presign_request_messages = match self
+                .epoch_store
+                .next_global_presign_request(self.last_read_consensus_round)
+            {
+                Ok(Some((round, msgs))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?round,
+                            ?mpc_messages_consensus_round,
+                            "presign requests consensus round mismatch"
+                        );
+                        panic!("presign requests consensus round mismatch");
+                    }
+                    msgs
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(error=?e, "failed to load global presign requests from the local DB");
+                    panic!("failed to load global presign requests from the local DB");
+                }
+            };
+
+            let network_key_data_messages = match self
+                .epoch_store
+                .next_network_key_data(self.last_read_consensus_round)
+            {
+                Ok(Some((round, msgs))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?round,
+                            ?mpc_messages_consensus_round,
+                            "network key data consensus round mismatch"
+                        );
+                        panic!("network key data consensus round mismatch");
+                    }
+                    msgs
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(error=?e, "failed to load network key data from the local DB");
+                    panic!("failed to load network key data from the local DB");
+                }
+            };
+
+            let noa_observation_messages = match self
+                .epoch_store
+                .next_noa_observation(self.last_read_consensus_round)
+            {
+                Ok(Some((round, msgs))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?round,
+                            ?mpc_messages_consensus_round,
+                            "NOA observations consensus round mismatch"
+                        );
+                        panic!("NOA observations consensus round mismatch");
+                    }
+                    msgs
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(error=?e, "failed to load NOA observations from the local DB");
+                    panic!("failed to load NOA observations from the local DB");
                 }
             };
 
@@ -998,21 +1072,48 @@ impl DWalletMPCService {
                 panic!("consensus round must be in a ascending order");
             }
 
-            // 1. Process status updates FIRST to learn consensus-agreed key IDs.
-            if let Some(agreed_status) = self
+            // 1a. Handle idle status and chain observations.
+            let (is_idle, agreed_sui_chain_context) = self
                 .dwallet_mpc_manager
-                .handle_status_updates(consensus_round, status_updates)
+                .handle_idle_and_chain_updates(consensus_round, status_updates);
+
+            // 1b. Handle presign request messages.
+            let agreed_presign_requests = self
+                .dwallet_mpc_manager
+                .handle_presign_request_messages(consensus_round, presign_request_messages);
+
+            // 1c. Handle network key data messages.
+            self.dwallet_mpc_manager
+                .handle_network_key_data_messages(consensus_round, network_key_data_messages);
+
+            // 1d. Handle NOA observation messages.
+            let (newly_finalized_tx_refs, newly_failed_tx_refs) = self
+                .dwallet_mpc_manager
+                .handle_noa_observation_messages(consensus_round, noa_observation_messages);
+
+            // Update persistent context from consensus agreement.
+            self.current_agreed_sui_chain_context = agreed_sui_chain_context;
+
+            // Dispatch NOA checkpoint resolutions.
+            for tx_ref in &newly_finalized_tx_refs {
+                let resolution =
+                    ika_types::noa_checkpoint::NOACheckpointResolution::Finalized(tx_ref.clone());
+                self.route_resolution(resolution, tx_ref.kind_name);
+            }
+            for (tx_ref, _) in &newly_failed_tx_refs {
+                if let Some(ctx) = &self.current_agreed_sui_chain_context {
+                    let resolution =
+                        ika_types::noa_checkpoint::NOACheckpointResolution::RetryWithContext {
+                            tx_ref: tx_ref.clone(),
+                            context: ctx.clone(),
+                        };
+                    self.route_resolution(resolution, tx_ref.kind_name);
+                }
+            }
+
+            // Take only the requests we haven't agreed on yet, and haven't processed.
             {
-                // Update persistent context from consensus agreement.
-                self.current_agreed_sui_chain_context =
-                    agreed_status.agreed_sui_chain_context.clone();
-
-                // Dispatch NOA checkpoint resolutions to finalizers.
-                self.dispatch_noa_resolutions(&agreed_status);
-
-                // Take only the requests we haven't agreed on yet, and haven't processed.
-                let new_global_presign_requests: Vec<_> = agreed_status
-                    .global_presign_requests
+                let new_global_presign_requests: Vec<_> = agreed_presign_requests
                     .into_iter()
                     .filter(|request| !self.agreed_global_presign_requests_queue.contains(request))
                     .filter(|request| {
@@ -1023,17 +1124,15 @@ impl DWalletMPCService {
                     .sorted_by_key(|r| r.session_sequence_number)
                     .collect();
 
-                if self.network_is_idle != agreed_status.is_idle
-                    || !new_global_presign_requests.is_empty()
-                {
+                if self.network_is_idle != is_idle || !new_global_presign_requests.is_empty() {
                     info!(
                         consensus_round,
-                        is_idle = agreed_status.is_idle,
+                        is_idle,
                         number_of_new_global_presign_requests = new_global_presign_requests.len(),
                         "Agreed status changed"
                     );
 
-                    self.network_is_idle = agreed_status.is_idle;
+                    self.network_is_idle = is_idle;
                     self.agreed_global_presign_requests_queue
                         .extend(new_global_presign_requests);
                 }
@@ -1136,13 +1235,14 @@ impl DWalletMPCService {
                                     false
                                 }
                                 Err(e) => {
+                                    // Serialization of a valid presign output should never fail.
+                                    // If it does, the data is corrupted and retrying won't help.
                                     error!(
                                         error=?e,
-                                        should_never_happen =? true,
-                                        "failed to serialize presign output"
+                                        should_never_happen = true,
+                                        "failed to serialize presign output — data corruption"
                                     );
-                                    // Keep in queue for retry (return true)
-                                    true
+                                    panic!("failed to serialize presign output: {e:?}");
                                 }
                             }
                         }
@@ -1241,18 +1341,18 @@ impl DWalletMPCService {
                             ?consensus_round,
                             "Notifying checkpoint service about new pending checkpoint(s)",
                         );
-                        if let Some(ref service) = self.dwallet_checkpoint_service {
-                            if let Err(e) = service.notify_checkpoint() {
-                                error!(
-                                    error=?e,
-                                    ?consensus_round,
-                                    "failed to notify checkpoint service about new pending checkpoint(s)"
-                                );
+                        if let Some(ref service) = self.dwallet_checkpoint_service
+                            && let Err(e) = service.notify_checkpoint()
+                        {
+                            error!(
+                                error=?e,
+                                ?consensus_round,
+                                "failed to notify checkpoint service about new pending checkpoint(s)"
+                            );
 
-                                panic!(
-                                    "failed to notify checkpoint service about new pending checkpoint(s)"
-                                );
-                            }
+                            panic!(
+                                "failed to notify checkpoint service about new pending checkpoint(s)"
+                            );
                         }
                     }
 
@@ -1436,18 +1536,16 @@ impl DWalletMPCService {
                         public_output_value,
                         malicious_authorities,
                         rejected,
-                    ) {
-                        if let Err(err) = consensus_adapter
-                            .submit_to_consensus(&[consensus_message])
-                            .await
-                        {
-                            error!(
-                                ?session_identifier,
-                                validator=?validator_name,
-                                error=?err,
-                                "failed to submit an MPC output message to consensus",
-                            );
-                        }
+                    ) && let Err(err) = consensus_adapter
+                        .submit_to_consensus(&[consensus_message])
+                        .await
+                    {
+                        error!(
+                            ?session_identifier,
+                            validator=?validator_name,
+                            error=?err,
+                            "failed to submit an MPC output message to consensus",
+                        );
                     }
                 }
                 Err(err) => match request.session_type {
@@ -1521,18 +1619,16 @@ impl DWalletMPCService {
 
         if let Some(consensus_message) =
             self.new_dwallet_mpc_output(session_identifier, request, vec![], vec![], rejected)
-        {
-            if let Err(err) = consensus_adapter
+            && let Err(err) = consensus_adapter
                 .submit_to_consensus(&[consensus_message])
                 .await
-            {
-                error!(
-                    ?session_identifier,
-                    validator=?validator_name,
-                    error=?err,
-                    "failed to submit an MPC SessionFailed message to consensus"
-                );
-            }
+        {
+            error!(
+                ?session_identifier,
+                validator=?validator_name,
+                error=?err,
+                "failed to submit an MPC SessionFailed message to consensus"
+            );
         }
     }
 

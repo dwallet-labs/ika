@@ -13,7 +13,7 @@ use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, NetworkDecryptionKeyPublicOutputType,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
     public_key_from_centralized_dkg_output_by_curve,
@@ -365,13 +365,11 @@ pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
 
 /// Computes the DKG output and extracts the public key for a single curve.
 ///
-/// Uses a canonical signature algorithm for DKG session ID derivation (the first
-/// algorithm associated with the curve). The DKG output itself is curve-level
-/// and shared by all algorithms on the same curve.
+/// Computes the network-owned-address DKG for a given curve.
+/// The DKG output is curve-level and shared by all algorithms on the same curve.
 fn compute_network_owned_address_dkg_and_public_key(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
-    canonical_algorithm: DWalletSignatureAlgorithm,
     secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
     ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
@@ -389,7 +387,6 @@ fn compute_network_owned_address_dkg_and_public_key(
     let dkg_output = compute_network_owned_address_sign_dkg_output(
         network_key_id,
         curve,
-        canonical_algorithm,
         &protocol_pp,
         access_structure,
         party_id,
@@ -426,7 +423,6 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     let secp256k1 = compute_network_owned_address_dkg_and_public_key(
         network_key_id,
         DWalletCurve::Secp256k1,
-        DWalletSignatureAlgorithm::ECDSASecp256k1,
         secp256k1_protocol_public_parameters,
         secp256r1_protocol_public_parameters,
         ristretto_protocol_public_parameters,
@@ -437,7 +433,6 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     let secp256r1 = compute_network_owned_address_dkg_and_public_key(
         network_key_id,
         DWalletCurve::Secp256r1,
-        DWalletSignatureAlgorithm::ECDSASecp256r1,
         secp256k1_protocol_public_parameters,
         secp256r1_protocol_public_parameters,
         ristretto_protocol_public_parameters,
@@ -448,7 +443,6 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     let curve25519 = compute_network_owned_address_dkg_and_public_key(
         network_key_id,
         DWalletCurve::Curve25519,
-        DWalletSignatureAlgorithm::EdDSA,
         secp256k1_protocol_public_parameters,
         secp256r1_protocol_public_parameters,
         ristretto_protocol_public_parameters,
@@ -459,7 +453,6 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     let ristretto = compute_network_owned_address_dkg_and_public_key(
         network_key_id,
         DWalletCurve::Ristretto,
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
         secp256k1_protocol_public_parameters,
         secp256r1_protocol_public_parameters,
         ristretto_protocol_public_parameters,
