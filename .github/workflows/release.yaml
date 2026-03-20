@@ -439,8 +439,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
-  # Requires: HOMEBREW_TAP_DEPLOY_KEY secret (deploy key with write access
-  # to ika-xyz/homebrew-tap)
+  # to ika-xyz/homebrew-tap
   # ---------------------------------------------------------------------------
   update-homebrew-formula:
     name: Update Homebrew formula
@@ -451,7 +450,7 @@ jobs:
       - name: Setup SSH for tap repo
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
+          echo "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
           chmod 600 ~/.ssh/homebrew_deploy
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           cat >> ~/.ssh/config << 'EOF'
