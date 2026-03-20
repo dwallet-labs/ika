@@ -439,8 +439,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
-  # Requires: ika-xyz/homebrew-tap tap repo with ika.rb formula
-  # Requires: HOMEBREW_GH_FORMULA_BUMP secret (PAT with public_repo,workflow)
+  # Requires: HOMEBREW_TAP_DEPLOY_KEY secret (deploy key with write access
+  # to ika-xyz/homebrew-tap)
   # ---------------------------------------------------------------------------
   update-homebrew-formula:
     name: Update Homebrew formula
@@ -448,25 +448,54 @@ jobs:
     needs: [version, release]
     if: needs.version.outputs.is_release == 'true'
     steps:
-      - name: Extract version
+      - name: Setup SSH for tap repo
         run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
+          chmod 600 ~/.ssh/homebrew_deploy
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config << 'EOF'
+          Host github-tap
+            HostName github.com
+            IdentityFile ~/.ssh/homebrew_deploy
+            IdentitiesOnly yes
+          EOF
+
+      - name: Download release tarballs and compute checksums
+        run: |
+          set -e
           VERSION="${{ needs.version.outputs.version }}"
-          NETWORK="${{ needs.version.outputs.network }}"
-          TAG="release/${NETWORK}-${VERSION}"
-          echo "ika_tag=${TAG}" >> "$GITHUB_ENV"
-          echo "ika_version=${VERSION}" >> "$GITHUB_ENV"
+          BASE_URL="https://github.com/dwallet-labs/ika/releases/download/v${VERSION}"
 
-      - uses: mislav/bump-homebrew-formula-action@v3
-        with:
-          formula-name: ika
-          homebrew-tap: ika-xyz/homebrew-tap
-          create-pullrequest: true
-          tag-name: "${{ env.ika_tag }}"
-          download-url: "https://github.com/dwallet-labs/ika/releases/download/v${{ env.ika_version }}/ika-v${{ env.ika_version }}-macos-arm64.tar.gz"
-          commit-message: |
-            ika ${{ env.ika_version }}
+          for platform in macos-arm64 macos-x64 linux-arm64 linux-x64; do
+            URL="${BASE_URL}/ika-v${VERSION}-${platform}.tar.gz"
+            echo "Downloading ${platform}..."
+            SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+            echo "SHA256_$(echo $platform | tr '-' '_' | tr '[:lower:]' '[:upper:]')=$SHA" >> "$GITHUB_ENV"
+            echo "  ${platform}: ${SHA}"
+          done
 
-            Created by https://github.com/mislav/bump-homebrew-formula-action
-            From release: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_GH_FORMULA_BUMP }}
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Clone tap, update formula, and push
+        run: |
+          set -e
+          git clone git@github-tap:ika-xyz/homebrew-tap.git /tmp/tap
+          cd /tmp/tap
+
+          FORMULA="Formula/ika.rb"
+
+          # Update version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+
+          # Update sha256 for each platform
+          sed -i "s/sha256 \".*\" # macos-arm64/sha256 \"${SHA256_MACOS_ARM64}\" # macos-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # macos-x64/sha256 \"${SHA256_MACOS_X64}\" # macos-x64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-arm64/sha256 \"${SHA256_LINUX_ARM64}\" # linux-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-x64/sha256 \"${SHA256_LINUX_X64}\" # linux-x64/" "$FORMULA"
+
+          git config user.name "ika-release-bot"
+          git config user.email "noreply@ika.xyz"
+          git add "$FORMULA"
+          git commit -m "ika ${VERSION}"
+          git push
