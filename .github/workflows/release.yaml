@@ -445,7 +445,7 @@ jobs:
     name: Update Homebrew formula
     runs-on: ubuntu-latest
     needs: [version, release]
-    if: needs.version.outputs.is_release == 'true'
+    if: needs.version.outputs.is_release == 'true' && needs.version.outputs.network == 'mainnet'
     steps:
       - name: Setup SSH for tap repo
         run: |
