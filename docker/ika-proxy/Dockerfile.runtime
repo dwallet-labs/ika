@@ -1,0 +1,11 @@
+# Runtime-only image — expects pre-built binary in build context
+FROM debian:bookworm-slim
+
+# CA certificates and other dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/ika
+
+COPY ika-proxy /opt/ika/bin/ika-proxy

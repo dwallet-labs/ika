@@ -1,0 +1,511 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "release/*-*"
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "The network to build for (mainnet, testnet, devnet)"
+        required: true
+        type: choice
+        options:
+          - mainnet
+          - testnet
+          - devnet
+        default: devnet
+      version:
+        description: "Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed."
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  GCP_PROJECT: common-449616
+  GAR_LOCATION: us
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_LOG: error
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve version
+  # ---------------------------------------------------------------------------
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      docker_tag: ${{ steps.resolve.outputs.docker_tag }}
+      network: ${{ steps.resolve.outputs.network }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+      # Runner labels — change here to update all jobs
+      runner_linux: linux-32-runner
+      runner_macos_x64: macos-13
+      runner_macos_arm64: macos-latest
+      runner_windows: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Validate manual version has pre-release tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ inputs.version }}"
+          SEMVER_WITH_PRERELEASE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+
+          if [[ ! "$VERSION" =~ $SEMVER_WITH_PRERELEASE ]]; then
+            echo "::error::Manual version MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are reserved for tag-based releases."
+            exit 1
+          fi
+          echo "Manual version validated: $VERSION"
+
+      - name: Install cargo and jq
+        if: github.event_name == 'push'
+        run: |
+          rustup default stable
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Parse and validate tag
+        if: github.event_name == 'push'
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/release/}"
+          NETWORK="${TAG%%-*}"
+          VERSION="${TAG#*-}"
+
+          if [[ "$NETWORK" != "mainnet" && "$NETWORK" != "testnet" && "$NETWORK" != "devnet" ]]; then
+            echo "::error::Invalid network '$NETWORK' in tag. Must be mainnet, testnet, or devnet. Tag format: release/{network}-{version}"
+            exit 1
+          fi
+
+          CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "ika-node") | .version')
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag version ($VERSION) does not match Cargo.toml workspace version ($CARGO_VERSION). Update Cargo.toml first."
+            exit 1
+          fi
+
+          echo "network=$NETWORK" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ inputs.version }}"
+            NETWORK="${{ inputs.network }}"
+            IS_RELEASE="false"
+          else
+            RAW="${{ steps.tag.outputs.version }}"
+            NETWORK="${{ steps.tag.outputs.network }}"
+            IS_RELEASE="true"
+          fi
+
+          DOCKER_TAG=$(echo "$RAW" | tr '+' '-')
+
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
+          echo "docker_tag=$DOCKER_TAG" >> "$GITHUB_OUTPUT"
+          echo "network=$NETWORK" >> "$GITHUB_OUTPUT"
+          echo "is_release=$IS_RELEASE" >> "$GITHUB_OUTPUT"
+
+          echo "Version: $RAW  Docker tag: $DOCKER_TAG  Network: $NETWORK  Release: $IS_RELEASE"
+
+  # ---------------------------------------------------------------------------
+  # Build Linux binaries in Docker (reproducible, glibc-compatible)
+  # Both x64 and arm64 use the same Dockerfile with different TARGET args
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: Build linux-${{ matrix.arch }}
+    needs: version
+    runs-on: ${{ needs.version.outputs.runner_linux }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-unknown-linux-gnu
+            bins: "ika ika-validator ika-fullnode ika-notifier ika-proxy"
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            bins: "ika ika-validator ika-fullnode ika-notifier"
+    steps:
+      - name: Node cleanup
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Build binaries in Docker
+        run: |
+          set -e
+          GIT_REVISION="$(git describe --always --abbrev=12 --dirty --exclude '*')"
+
+          docker build \
+            -f docker/builder/Dockerfile \
+            --build-arg TARGET=${{ matrix.target }} \
+            --build-arg BINS="${{ matrix.bins }}" \
+            --build-arg GIT_REVISION="$GIT_REVISION" \
+            --build-arg GH_DEPLOY_KEY="${{ secrets.GH_DEPLOY_KEY }}" \
+            --output type=local,dest=out \
+            .
+
+          ls -lh out/
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # macOS and Windows builds
+  # ---------------------------------------------------------------------------
+  build-desktop:
+    name: Build ${{ matrix.os_name }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel (x86_64)
+          - runner: ${{ needs.version.outputs.runner_macos_x64 }}
+            os_name: macos-x64
+            target: x86_64-apple-darwin
+          # macOS Apple Silicon (M1/M2/M3)
+          - runner: ${{ needs.version.outputs.runner_macos_arm64 }}
+            os_name: macos-arm64
+            target: aarch64-apple-darwin
+          # Windows x64
+          - runner: ${{ needs.version.outputs.runner_windows }}
+            os_name: windows-x64
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup SSH (unix)
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Setup SSH (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.94"
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build ika CLI
+        shell: bash
+        run: cargo build --release --bin ika --target ${{ matrix.target }}
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/release/ika${{ matrix.ext }}" "out/ika${{ matrix.ext }}"
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.os_name }}
+          path: out/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Package Docker images (pre-built x64 binaries — no Rust compilation)
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker (${{ matrix.image }})
+    needs: [version, build-linux]
+    runs-on: ${{ needs.version.outputs.runner_linux }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ika-validator
+            registry: us-docker.pkg.dev/common-449616/ika-common-public-containers
+            dockerfile: docker/ika-node/Dockerfile.runtime
+            binary: ika-validator
+          - image: ika-fullnode
+            registry: us-docker.pkg.dev/common-449616/ika-common-public-containers
+            dockerfile: docker/ika-node/Dockerfile.runtime
+            binary: ika-fullnode
+          - image: ika-notifier
+            registry: us-docker.pkg.dev/common-449616/ika-common-public-containers
+            dockerfile: docker/ika-node/Dockerfile.runtime
+            binary: ika-notifier
+          - image: ika-proxy
+            registry: us-docker.pkg.dev/common-449616/ika-common-containers
+            dockerfile: docker/ika-proxy/Dockerfile.runtime
+            binary: ika-proxy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download x64 binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: linux-x64
+          path: binaries/
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: "${{ secrets.GAR_KEY }}"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-docker.pkg.dev
+
+      - name: Build and push Docker image
+        run: |
+          set -e
+
+          DOCKER_TAG="${{ matrix.registry }}/${{ matrix.image }}:${{ needs.version.outputs.network }}-v${{ needs.version.outputs.docker_tag }}"
+          GIT_REVISION="$(git describe --always --abbrev=12 --dirty --exclude '*')"
+          BUILD_DATE="$(date -u +'%Y-%m-%d')"
+
+          echo "Building Docker image: ${DOCKER_TAG}"
+          docker build \
+            -f "${{ matrix.dockerfile }}" \
+            --build-arg BUILD_DATE="$BUILD_DATE" \
+            --build-arg GIT_REVISION="$GIT_REVISION" \
+            --build-arg BIN="${{ matrix.binary }}" \
+            --tag "${DOCKER_TAG}" \
+            binaries/
+
+          echo "Pushing Docker image: ${DOCKER_TAG}"
+          docker push "${DOCKER_TAG}"
+
+          echo "Successfully built and pushed: ${DOCKER_TAG}"
+
+  # ---------------------------------------------------------------------------
+  # Upload binaries to GCP Artifact Registry
+  # ---------------------------------------------------------------------------
+  upload-binaries:
+    name: Upload to GCP (${{ matrix.platform }})
+    needs: [version, build-linux, build-desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64]
+    env:
+      GAR_REPOSITORY: ika-common-public-binaries
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.platform }}
+          path: artifacts/${{ matrix.platform }}/
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: "${{ secrets.GAR_KEY }}"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Upload to GCP Artifact Registry
+        run: |
+          NETWORK="${{ needs.version.outputs.network }}"
+          VERSION="${{ needs.version.outputs.docker_tag }}"
+          gcloud artifacts generic upload \
+            --project="${GCP_PROJECT}" \
+            --location="${GAR_LOCATION}" \
+            --repository="${GAR_REPOSITORY}" \
+            --package="${{ matrix.platform }}" \
+            --version="${NETWORK}-v${VERSION}" \
+            --source-directory="artifacts/${{ matrix.platform }}"
+
+  # ---------------------------------------------------------------------------
+  # Build summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [version, build-linux, build-desktop]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      - name: Create build summary
+        run: |
+          echo "## Release v${{ needs.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Binary | Platform | Size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|----------|------|" >> "$GITHUB_STEP_SUMMARY"
+          shopt -s nullglob
+          for dir in artifacts/*/; do
+            platform="$(basename "$dir")"
+            for file in "$dir"*; do
+              if [ -f "$file" ]; then
+                bin="$(basename "$file")"
+                size="$(du -h "$file" | cut -f1)"
+                echo "| $bin | $platform | $size |" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done
+          done
+
+  # ---------------------------------------------------------------------------
+  # Draft GitHub release (tag pushes only)
+  # ---------------------------------------------------------------------------
+  release:
+    name: Draft GitHub Release
+    runs-on: ubuntu-latest
+    needs: [version, docker, upload-binaries]
+    if: needs.version.outputs.is_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      - name: Package release assets
+        run: |
+          VERSION="v${{ needs.version.outputs.version }}"
+          for dir in artifacts/*/; do
+            platform="$(basename "$dir")"
+            tar -czvf "ika-${VERSION}-${platform}.tar.gz" -C "$dir" .
+          done
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ needs.version.outputs.version }}"
+          gh release create "$VERSION" \
+            --draft \
+            --title "$VERSION" \
+            --generate-notes \
+            ika-${VERSION}-*.tar.gz
+
+  # ---------------------------------------------------------------------------
+  # Update Homebrew formula for ika CLI
+  # to ika-xyz/homebrew-tap
+  # ---------------------------------------------------------------------------
+  update-homebrew-formula:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    needs: [version, release]
+    if: needs.version.outputs.is_release == 'true'
+    steps:
+      - name: Setup SSH for tap repo
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
+          chmod 600 ~/.ssh/homebrew_deploy
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config << 'EOF'
+          Host github-tap
+            HostName github.com
+            IdentityFile ~/.ssh/homebrew_deploy
+            IdentitiesOnly yes
+          EOF
+
+      - name: Download release assets and compute checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          VERSION="${{ needs.version.outputs.version }}"
+
+          # gh can download from draft releases with GITHUB_TOKEN
+          mkdir -p /tmp/release-assets
+          gh release download "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --dir /tmp/release-assets \
+            --pattern "ika-v${VERSION}-*.tar.gz"
+
+          for platform in macos-arm64 macos-x64 linux-arm64 linux-x64; do
+            FILE="/tmp/release-assets/ika-v${VERSION}-${platform}.tar.gz"
+            if [ ! -f "$FILE" ]; then
+              echo "::error::Release asset not found: ${FILE}"
+              exit 1
+            fi
+            SHA=$(sha256sum "$FILE" | cut -d' ' -f1)
+            echo "SHA256_$(echo $platform | tr '-' '_' | tr '[:lower:]' '[:upper:]')=$SHA" >> "$GITHUB_ENV"
+            echo "  ${platform}: ${SHA}"
+          done
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Clone tap, update formula, and push
+        run: |
+          set -e
+          git clone git@github-tap:ika-xyz/homebrew-tap.git /tmp/tap
+          cd /tmp/tap
+
+          FORMULA="Formula/ika.rb"
+
+          # Update version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA"
+
+          # Update sha256 for each platform
+          sed -i "s/sha256 \".*\" # macos-arm64/sha256 \"${SHA256_MACOS_ARM64}\" # macos-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # macos-x64/sha256 \"${SHA256_MACOS_X64}\" # macos-x64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-arm64/sha256 \"${SHA256_LINUX_ARM64}\" # linux-arm64/" "$FORMULA"
+          sed -i "s/sha256 \".*\" # linux-x64/sha256 \"${SHA256_LINUX_X64}\" # linux-x64/" "$FORMULA"
+
+          git config user.name "ika-release-bot"
+          git config user.email "ika-release-bot@dwalletlabs.com"
+          git add "$FORMULA"
+          git commit -m "ika ${VERSION}"
+          git push
