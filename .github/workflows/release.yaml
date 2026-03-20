@@ -450,7 +450,7 @@ jobs:
       - name: Setup SSH for tap repo
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.GH_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
+          echo "${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}" > ~/.ssh/homebrew_deploy
           chmod 600 ~/.ssh/homebrew_deploy
           ssh-keyscan github.com >> ~/.ssh/known_hosts
           cat >> ~/.ssh/config << 'EOF'
