@@ -461,16 +461,27 @@ jobs:
             IdentitiesOnly yes
           EOF
 
-      - name: Download release tarballs and compute checksums
+      - name: Download release assets and compute checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           VERSION="${{ needs.version.outputs.version }}"
-          BASE_URL="https://github.com/dwallet-labs/ika/releases/download/v${VERSION}"
+
+          # gh can download from draft releases with GITHUB_TOKEN
+          mkdir -p /tmp/release-assets
+          gh release download "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --dir /tmp/release-assets \
+            --pattern "ika-v${VERSION}-*.tar.gz"
 
           for platform in macos-arm64 macos-x64 linux-arm64 linux-x64; do
-            URL="${BASE_URL}/ika-v${VERSION}-${platform}.tar.gz"
-            echo "Downloading ${platform}..."
-            SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+            FILE="/tmp/release-assets/ika-v${VERSION}-${platform}.tar.gz"
+            if [ ! -f "$FILE" ]; then
+              echo "::error::Release asset not found: ${FILE}"
+              exit 1
+            fi
+            SHA=$(sha256sum "$FILE" | cut -d' ' -f1)
             echo "SHA256_$(echo $platform | tr '-' '_' | tr '[:lower:]' '[:upper:]')=$SHA" >> "$GITHUB_ENV"
             echo "  ${platform}: ${SHA}"
           done
