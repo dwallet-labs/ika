@@ -495,7 +495,7 @@ jobs:
           sed -i "s/sha256 \".*\" # linux-x64/sha256 \"${SHA256_LINUX_X64}\" # linux-x64/" "$FORMULA"
 
           git config user.name "ika-release-bot"
-          git config user.email "dev@dwalletlabs.com"
+          git config user.email "ika-release-bot@dwalletlabs.com"
           git add "$FORMULA"
           git commit -m "ika ${VERSION}"
           git push
