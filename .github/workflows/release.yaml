@@ -439,7 +439,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Update Homebrew formula for ika CLI
-  # Requires: dwallet-labs/homebrew-ika tap repo with ika.rb formula
+  # Requires: ika-xyz/homebrew-tap tap repo with ika.rb formula
   # Requires: HOMEBREW_GH_FORMULA_BUMP secret (PAT with public_repo,workflow)
   # ---------------------------------------------------------------------------
   update-homebrew-formula:
@@ -459,7 +459,7 @@ jobs:
       - uses: mislav/bump-homebrew-formula-action@v3
         with:
           formula-name: ika
-          homebrew-tap: dwallet-labs/homebrew-ika
+          homebrew-tap: ika-xyz/homebrew-tap
           create-pullrequest: true
           tag-name: "${{ env.ika_tag }}"
           download-url: "https://github.com/dwallet-labs/ika/releases/download/v${{ env.ika_version }}/ika-v${{ env.ika_version }}-macos-arm64.tar.gz"
