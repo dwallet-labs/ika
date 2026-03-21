@@ -1,6 +1,6 @@
 ---
 name: ika-cli
-version: 1.0.0
+version: 1.0.1
 description: Guide for using the Ika CLI tool for dWallet operations, validator management, system deployment, and network administration. Use when performing CLI-based dWallet creation, signing, presigning, key management, validator operations, system initialization, or querying Ika network state via the terminal. Triggers on tasks involving `ika` CLI commands, dWallet CLI operations, Ika system deployment, or MCP tool integration with Ika.
 metadata:
   openclaw:
@@ -8,8 +8,8 @@ metadata:
       bins:
         - ika
         - sui
-    emoji: "🔐"
-    homepage: "https://ika.xyz"
+    emoji: '🔐'
+    homepage: 'https://ika.xyz'
     tags:
       - crypto
       - mpc
@@ -32,7 +32,7 @@ Command-line interface for the Ika decentralized MPC signing network on Sui.
 
 ```bash
 # Via Homebrew (macOS/Linux)
-brew install dwallet-labs/ika/ika
+brew install ika-xyz/tap/ika
 
 # Or download pre-built binary from GitHub Releases
 # https://github.com/dwallet-labs/ika/releases
@@ -48,14 +48,14 @@ Requires: Sui CLI (`sui keytool` for key management)
 
 All commands support these flags:
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output results as JSON (machine-parseable). Errors also output as JSON. |
-| `--client.config <PATH>` | Custom Sui client config path |
-| `--ika-config <PATH>` | Custom Ika network config path (default for all dwallet subcommands) |
-| `--gas-budget <MIST>` | Override default gas budget (default for all dwallet subcommands) |
-| `-y, --yes` | Skip confirmation prompts |
-| `-q, --quiet` | Suppress human-readable output (JSON still printed with `--json -q`) |
+| Flag                     | Description                                                             |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `--json`                 | Output results as JSON (machine-parseable). Errors also output as JSON. |
+| `--client.config <PATH>` | Custom Sui client config path                                           |
+| `--ika-config <PATH>`    | Custom Ika network config path (default for all dwallet subcommands)    |
+| `--gas-budget <MIST>`    | Override default gas budget (default for all dwallet subcommands)       |
+| `-y, --yes`              | Skip confirmation prompts                                               |
+| `-q, --quiet`            | Suppress human-readable output (JSON still printed with `--json -q`)    |
 
 ## Command Overview
 
@@ -93,6 +93,7 @@ ika
 ## Quick Start
 
 ### Create a dWallet
+
 ```bash
 # Register encryption key first (derives from active Sui address by default)
 ika dwallet register-encryption-key --curve secp256k1
@@ -119,6 +120,7 @@ ika dwallet sign \
 **Auto-detection:** IKA/SUI coins are auto-detected from the active wallet. Curve, DKG output, and presign output are auto-fetched from chain when `--dwallet-id` and `--presign-cap-id` are provided.
 
 ### Validator Operations
+
 ```bash
 # Create validator info
 ika validator make-validator-info <NAME> <DESC> <IMG_URL> <PROJECT_URL> <HOST> <GAS_PRICE> <ADDRESS>

@@ -6,7 +6,7 @@ Command-line interface for the Ika decentralized MPC signing network on Sui.
 
 ```bash
 # Homebrew (macOS/Linux)
-brew install dwallet-labs/ika/ika
+brew install ika-xyz/tap/ika
 
 # From source
 cargo build --release --bin ika
@@ -97,13 +97,13 @@ IKA/SUI coins are auto-detected from the active wallet. Curve, DKG output, and p
 
 ## Global Flags
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Structured JSON output |
-| `--client.config <PATH>` | Sui client config path |
-| `--ika-config <PATH>` | Ika network config path |
-| `--gas-budget <MIST>` | Override gas budget |
-| `-q, --quiet` | Suppress human-readable output |
+| Flag                     | Description                    |
+| ------------------------ | ------------------------------ |
+| `--json`                 | Structured JSON output         |
+| `--client.config <PATH>` | Sui client config path         |
+| `--ika-config <PATH>`    | Ika network config path        |
+| `--gas-budget <MIST>`    | Override gas budget            |
+| `-q, --quiet`            | Suppress human-readable output |
 
 ## Documentation
 

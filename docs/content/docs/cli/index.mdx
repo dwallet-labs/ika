@@ -44,7 +44,7 @@ The Ika CLI is the primary tool for interacting with the Ika network. It support
 ### Install via Homebrew
 
 ```bash
-brew install dwallet-labs/ika/ika
+brew install ika-xyz/tap/ika
 ```
 
 ### Build from Source
@@ -90,14 +90,14 @@ ika config sync
 
 All commands support these flags:
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output results as JSON (machine-parseable) |
-| `--client.config <PATH>` | Custom Sui client config path |
-| `--ika-config <PATH>` | Custom Ika network config path |
-| `--gas-budget <MIST>` | Override default gas budget |
-| `-y, --yes` | Skip confirmation prompts |
-| `-q, --quiet` | Suppress human-readable output (JSON still printed with `--json -q`) |
+| Flag                     | Description                                                          |
+| ------------------------ | -------------------------------------------------------------------- |
+| `--json`                 | Output results as JSON (machine-parseable)                           |
+| `--client.config <PATH>` | Custom Sui client config path                                        |
+| `--ika-config <PATH>`    | Custom Ika network config path                                       |
+| `--gas-budget <MIST>`    | Override default gas budget                                          |
+| `-y, --yes`              | Skip confirmation prompts                                            |
+| `-q, --quiet`            | Suppress human-readable output (JSON still printed with `--json -q`) |
 
 ## Command Overview
 
@@ -142,7 +142,8 @@ ika dwallet sign \
 ```
 
 <Info title="Auto-detection">
-IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
+	IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve
+	and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
 </Info>
 
 ### Key Management
