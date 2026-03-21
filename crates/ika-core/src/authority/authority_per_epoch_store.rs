@@ -17,7 +17,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sui_types::base_types::{EpochId, ObjectID};
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
 use typed_store::rocksdb::Options;
 
@@ -1008,7 +1008,8 @@ impl AuthorityEpochTables {
         if presigns.is_empty() {
             // This shouldn't happen, but handle it gracefully: remove the
             // corrupted entry and decrement the size counter atomically.
-            warn!(
+            error!(
+                should_never_happen = true,
                 ?signature_algorithm,
                 ?dwallet_network_encryption_key_id,
                 "prepare_pop_presign: found entry with empty presigns vec, removing"

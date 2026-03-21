@@ -333,21 +333,25 @@ impl DWalletMPCService {
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn number_of_consensus_rounds(&self) -> u64 {
         self.number_of_consensus_rounds
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn network_is_idle(&self) -> bool {
         self.network_is_idle
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn pending_network_owned_address_sign_request_count(&self) -> usize {
         self.pending_network_owned_address_sign_requests.len()
     }
 
     #[cfg(any(test, feature = "test-utils"))]
+    #[allow(dead_code)]
     pub(crate) fn last_read_consensus_round(&self) -> Option<Round> {
         self.last_read_consensus_round
     }
@@ -494,7 +498,7 @@ impl DWalletMPCService {
             let message_hash: [u8; 32] = DefaultHash::digest(&request.message).into();
             if self.submitted_noa_sign_messages.contains(&message_hash) {
                 error!(
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     message_len = request.message.len(),
                     curve = ?request.curve,
                     algorithm = ?request.signature_algorithm,
@@ -1063,7 +1067,7 @@ impl DWalletMPCService {
 
             if self.last_read_consensus_round >= Some(consensus_round) {
                 error!(
-                    should_never_happen=true,
+                    should_never_happen = true,
                     consensus_round,
                     last_read_consensus_round=?self.last_read_consensus_round,
                     "consensus round must be in a ascending order"
@@ -1253,7 +1257,7 @@ impl DWalletMPCService {
                         Err(e) => {
                             error!(
                                 error=?e,
-                                should_never_happen =? true,
+                                should_never_happen = true,
                                 "failed to pop presign from internal pool"
                             );
                             // Keep in queue for retry (return true)
@@ -1460,7 +1464,7 @@ impl DWalletMPCService {
 
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     ?session_identifier,
                     validator=?validator_name,
                     ?computation_result_data,
@@ -1551,7 +1555,7 @@ impl DWalletMPCService {
                 Err(err) => match request.session_type {
                     SessionType::InternalPresign | SessionType::NetworkOwnedAddressSign => {
                         error!(
-                            should_never_happen =? true,
+                            should_never_happen = true,
                             session_identifier=?session.session_identifier,
                             session_type=?request.session_type,
                             error=?err,
@@ -1683,7 +1687,7 @@ impl DWalletMPCService {
                 }
                 _ => {
                     error!(
-                        should_never_happen =? true,
+                        should_never_happen = true,
                         session_identifier=?session_identifier,
                         "mismatch between session type and protocol data during MPC output creation",
                     );
@@ -1709,7 +1713,7 @@ impl DWalletMPCService {
                 }
                 _ => {
                     error!(
-                        should_never_happen =? true,
+                        should_never_happen = true,
                         session_identifier=?session_identifier,
                         "mismatch between session type and protocol data during MPC output creation",
                     );
@@ -1822,7 +1826,7 @@ impl DWalletMPCService {
             }
             ProtocolData::InternalPresign { .. } => {
                 error!(
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "received an internal presign session for checkpointing"
                 );
                 vec![]
@@ -1844,7 +1848,7 @@ impl DWalletMPCService {
             }
             ProtocolData::NetworkOwnedAddressSign { .. } => {
                 error!(
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "received an network-owned-address sign session for checkpointing"
                 );
                 vec![]

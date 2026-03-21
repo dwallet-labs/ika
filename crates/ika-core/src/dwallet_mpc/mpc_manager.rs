@@ -415,7 +415,7 @@ impl DWalletMPCManager {
                 error!(
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "got a status update for an authority without party ID",
                 );
                 continue;
@@ -466,7 +466,7 @@ impl DWalletMPCManager {
                 error!(
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "got a presign request for an authority without party ID",
                 );
                 continue;
@@ -528,7 +528,7 @@ impl DWalletMPCManager {
                 error!(
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "got network key data for an authority without party ID",
                 );
                 continue;
@@ -580,7 +580,7 @@ impl DWalletMPCManager {
                 error!(
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen =? true,
+                    should_never_happen = true,
                     "got an NOA observation for an authority without party ID",
                 );
                 continue;
@@ -761,7 +761,7 @@ impl DWalletMPCManager {
             },
             Err(e) => {
                 if is_internal {
-                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
+                    error!(                        should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");
                 }
@@ -1225,7 +1225,7 @@ impl DWalletMPCManager {
                 } = &session.status
                 else {
                     error!(
-                        should_never_happen=true,
+                        should_never_happen = true,
                         session_identifier=?session.session_identifier,
                         "session is not active, cannot perform cryptographic computation",
                     );
