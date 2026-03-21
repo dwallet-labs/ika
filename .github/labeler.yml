@@ -1,3 +1,23 @@
-# Add 'Foo' to any changes within 'bar' folder or any subfolders
-'Type: Documentation':
-  - docs/content/**/*
+"Type: Documentation":
+  - changed-files:
+      - any-glob-to-any-file: "docs/content/**/*"
+
+"Area: Rust":
+  - changed-files:
+      - any-glob-to-any-file: "crates/**"
+
+"Area: Move":
+  - changed-files:
+      - any-glob-to-any-file: "contracts/**"
+
+"Area: SDK":
+  - changed-files:
+      - any-glob-to-any-file: "sdk/**"
+
+"Area: Docker":
+  - changed-files:
+      - any-glob-to-any-file: "docker/**"
+
+"Area: CI":
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"

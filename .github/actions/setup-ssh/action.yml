@@ -1,0 +1,25 @@
+name: Setup SSH for private dependencies
+description: Configure SSH key and rewrite HTTPS to SSH for private repos
+
+inputs:
+  deploy-key:
+    description: The SSH deploy key
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup SSH for manual git
+      if: inputs.deploy-key != ''
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        printf "%s" "${{ inputs.deploy-key }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+    - name: Globally rewrite any GitHub HTTPS to SSH
+      if: inputs.deploy-key != ''
+      shell: bash
+      run: |
+        git config --global url."git@github.com:dwallet-labs/cryptography-private".insteadOf "https://github.com/dwallet-labs/cryptography-private"
