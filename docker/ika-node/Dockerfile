@@ -1,7 +1,7 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.90-bullseye AS builder
+FROM rust:1.94-bookworm AS builder
 
 # Arguments
 ARG PROFILE=release

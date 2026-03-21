@@ -4,7 +4,7 @@
 # Usage:
 #   Linux x64 (default):  docker build --output type=local,dest=out .
 #   Linux arm64:          docker build --build-arg TARGET=aarch64-unknown-linux-gnu --output type=local,dest=out .
-FROM rust:1.90-bullseye AS builder
+FROM rust:1.94-bookworm AS builder
 
 ARG PROFILE=release
 ARG GIT_REVISION=unknown
