@@ -485,6 +485,123 @@ pub async fn request_presign_tx(
     execute_transaction(context, tx_data).await
 }
 
+/// Request multiple presigns for a dWallet in a single transaction.
+///
+/// Each presign gets its own session identifier. Returns one transaction with
+/// all presign caps transferred to the sender.
+#[allow(clippy::too_many_arguments)]
+pub async fn request_batch_presign_tx(
+    context: &mut WalletContext,
+    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
+    dwallet_id: ObjectID,
+    signature_algorithm: u32,
+    session_identifier_bytes_list: Vec<Vec<u8>>,
+    coins: PaymentCoinArgs,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let sender = context.active_address()?;
+
+    let coordinator = ptb.input(
+        get_dwallet_2pc_mpc_coordinator_call_arg(
+            context,
+            ika_dwallet_2pc_mpc_coordinator_object_id,
+        )
+        .await?,
+    )?;
+
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
+
+    for session_bytes in &session_identifier_bytes_list {
+        let session_id = register_session_identifier(
+            &mut ptb,
+            coordinator,
+            session_bytes,
+            ika_dwallet_2pc_mpc_package_id,
+        )?;
+
+        let presign_cap = request_presign(
+            &mut ptb,
+            coordinator,
+            dwallet_id,
+            signature_algorithm,
+            session_id,
+            ika_coin_arg,
+            sui_coin_arg,
+            ika_dwallet_2pc_mpc_package_id,
+        )?;
+
+        ptb.transfer_arg(sender, presign_cap);
+    }
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+    execute_transaction(context, tx_data).await
+}
+
+/// Request multiple global presigns in a single transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn request_batch_global_presign_tx(
+    context: &mut WalletContext,
+    ika_dwallet_2pc_mpc_package_id: ObjectID,
+    ika_dwallet_2pc_mpc_coordinator_object_id: ObjectID,
+    dwallet_network_encryption_key_id: ObjectID,
+    curve: u32,
+    signature_algorithm: u32,
+    session_identifier_bytes_list: Vec<Vec<u8>>,
+    coins: PaymentCoinArgs,
+    gas_budget: u64,
+) -> Result<SuiTransactionBlockResponse, Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let sender = context.active_address()?;
+
+    let coordinator = ptb.input(
+        get_dwallet_2pc_mpc_coordinator_call_arg(
+            context,
+            ika_dwallet_2pc_mpc_coordinator_object_id,
+        )
+        .await?,
+    )?;
+
+    let encryption_key_id_arg = ptb.input(CallArg::Pure(bcs::to_bytes(
+        &dwallet_network_encryption_key_id,
+    )?))?;
+    let curve_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&curve)?))?;
+    let sig_algo_arg = ptb.input(CallArg::Pure(bcs::to_bytes(&signature_algorithm)?))?;
+
+    let (ika_coin_arg, sui_coin_arg) = coins.resolve(&mut ptb, context).await?;
+
+    for session_bytes in &session_identifier_bytes_list {
+        let session_id = register_session_identifier(
+            &mut ptb,
+            coordinator,
+            session_bytes,
+            ika_dwallet_2pc_mpc_package_id,
+        )?;
+
+        let presign_cap = ptb.programmable_move_call(
+            ika_dwallet_2pc_mpc_package_id,
+            DWALLET_2PC_MPC_COORDINATOR_MODULE_NAME.into(),
+            REQUEST_GLOBAL_PRESIGN_FUNCTION_NAME.to_owned(),
+            vec![],
+            vec![
+                coordinator,
+                encryption_key_id_arg,
+                curve_arg,
+                sig_algo_arg,
+                session_id,
+                ika_coin_arg,
+                sui_coin_arg,
+            ],
+        );
+
+        ptb.transfer_arg(sender, presign_cap);
+    }
+
+    let tx_data = construct_unsigned_txn(context, sender, gas_budget, ptb).await?;
+    execute_transaction(context, tx_data).await
+}
+
 /// Request a global presign using network encryption key.
 #[allow(clippy::too_many_arguments)]
 pub async fn request_global_presign_tx(

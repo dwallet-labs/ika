@@ -100,6 +100,12 @@ pub enum IkaCommand {
         /// Start the network without a fullnode
         #[clap(long = "no-full-node")]
         no_full_node: bool,
+
+        /// Clean persisted node databases (authorities_db, consensus_db, full_node_db)
+        /// before starting. Keeps the network config (keys/addresses) but removes stale
+        /// state that prevents restart. Use this when a previous run was interrupted.
+        #[clap(long)]
+        clean: bool,
     },
     #[clap(name = "network")]
     Network {
@@ -219,7 +225,14 @@ impl IkaCommand {
                 sui_faucet_url,
                 no_full_node,
                 epoch_duration_ms,
+                clean,
             } => {
+                // Clean persisted DB directories if requested
+                if clean {
+                    let config_base = config_dir.clone().unwrap_or(ika_config_dir()?);
+                    clean_node_databases(&config_base);
+                }
+
                 let thread_builder = thread::Builder::new();
                 const SIXTEEN_MB: usize = 16777216;
                 let thread_builder = thread_builder.stack_size(SIXTEEN_MB);
@@ -308,6 +321,33 @@ impl IkaCommand {
                     crate::ika_commands::IkaCommand::augment_subcommands(clap::Command::new("ika"));
                 clap_complete::generate(shell, &mut app, "ika", &mut std::io::stdout());
                 Ok(())
+            }
+        }
+    }
+}
+
+/// Remove persisted node databases (authorities_db, consensus_db, full_node_db)
+/// while keeping the network config file intact. This allows restarting a local
+/// network with the same keys/addresses but fresh state.
+fn clean_node_databases(config_dir: &std::path::Path) {
+    use ika_config::{AUTHORITIES_DB_NAME, CONSENSUS_DB_NAME, FULL_NODE_DB_PATH};
+
+    let db_dirs = [AUTHORITIES_DB_NAME, CONSENSUS_DB_NAME, FULL_NODE_DB_PATH];
+    for dir_name in &db_dirs {
+        let dir_path = config_dir.join(dir_name);
+        if dir_path.exists() {
+            match std::fs::remove_dir_all(&dir_path) {
+                Ok(()) => {
+                    info!("Cleaned {}", dir_path.display());
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("[warn] Failed to clean {}: {e}", dir_path.display())
+                            .yellow()
+                            .bold()
+                    );
+                }
             }
         }
     }
