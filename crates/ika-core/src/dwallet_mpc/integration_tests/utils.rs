@@ -21,7 +21,8 @@ use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
     ConsensusNetworkKeyData, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    InternalSessionsStatusUpdate, SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
+    UserSecretKeyShareEventType,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
@@ -53,8 +54,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
             >,
         >,
     >,
-    pub(crate) round_to_status_updates:
-        Arc<Mutex<HashMap<Round, Vec<InternalSessionsStatusUpdate>>>>,
+    pub(crate) round_to_idle_status_updates: Arc<Mutex<HashMap<Round, Vec<IdleStatusUpdate>>>>,
+    pub(crate) round_to_sui_chain_observation_updates:
+        Arc<Mutex<HashMap<Round, Vec<SuiChainObservationUpdate>>>>,
     pub(crate) round_to_global_presign_requests:
         Arc<Mutex<HashMap<Round, Vec<ConsensusGlobalPresignRequest>>>>,
     pub(crate) round_to_network_key_data: Arc<Mutex<HashMap<Round, Vec<ConsensusNetworkKeyData>>>>,
@@ -124,7 +126,11 @@ impl TestingAuthorityPerEpochStore {
             round_to_internal_outputs: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_verified_system_checkpoint: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_idle_status_updates: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
+            round_to_sui_chain_observation_updates: Arc::new(Mutex::new(HashMap::from([(
+                0,
+                vec![],
+            )]))),
             round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_network_key_data: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
@@ -298,17 +304,28 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         }
     }
 
-    fn next_internal_sessions_status_update(
+    fn next_idle_status_update(
         &self,
         last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
-        let round_to_status_updates = self.round_to_status_updates.lock().unwrap();
+    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
+        let map = self.round_to_idle_status_updates.lock().unwrap();
         if last_consensus_round.is_none() {
-            return Ok(round_to_status_updates
-                .get(&0)
-                .map(|updates| (0, updates.clone())));
+            return Ok(map.get(&0).map(|updates| (0, updates.clone())));
         }
-        Ok(round_to_status_updates
+        Ok(map
+            .get(&(last_consensus_round.unwrap() + 1))
+            .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
+    }
+
+    fn next_sui_chain_observation_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
+        let map = self.round_to_sui_chain_observation_updates.lock().unwrap();
+        if last_consensus_round.is_none() {
+            return Ok(map.get(&0).map(|updates| (0, updates.clone())));
+        }
+        Ok(map
             .get(&(last_consensus_round.unwrap() + 1))
             .map(|updates| (last_consensus_round.unwrap() + 1, updates.clone())))
     }
@@ -631,14 +648,23 @@ pub(crate) fn send_advance_results_between_parties(
                 }
             })
             .collect();
-        let status_updates: Vec<_> = consensus_messages
+        let idle_status_updates: Vec<_> = consensus_messages
             .clone()
             .into_iter()
             .filter_map(|message| {
-                if let ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) =
-                    message.kind
-                {
-                    Some(status_update)
+                if let ConsensusTransactionKind::IdleStatusUpdate(update) = message.kind {
+                    Some(update)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let sui_chain_observation_updates: Vec<_> = consensus_messages
+            .clone()
+            .into_iter()
+            .filter_map(|message| {
+                if let ConsensusTransactionKind::SuiChainObservationUpdate(update) = message.kind {
+                    Some(update)
                 } else {
                     None
                 }
@@ -716,14 +742,22 @@ pub(crate) fn send_advance_results_between_parties(
                 .entry(new_data_consensus_round)
                 .or_default()
                 .extend(internal_outputs.clone());
-            // Distribute status updates to all parties
+            // Distribute idle status updates to all parties
             other_epoch_store
-                .round_to_status_updates
+                .round_to_idle_status_updates
                 .lock()
                 .unwrap()
                 .entry(new_data_consensus_round)
                 .or_default()
-                .extend(status_updates.clone());
+                .extend(idle_status_updates.clone());
+            // Distribute sui chain observation updates to all parties
+            other_epoch_store
+                .round_to_sui_chain_observation_updates
+                .lock()
+                .unwrap()
+                .entry(new_data_consensus_round)
+                .or_default()
+                .extend(sui_chain_observation_updates.clone());
             // Distribute presign requests to all parties
             other_epoch_store
                 .round_to_global_presign_requests
@@ -932,7 +966,8 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                         mpc_output.session_identifier.session_type() == SessionType::InternalPresign
                     }
                     ConsensusTransactionKind::DWalletInternalMPCOutput(_) => true,
-                    ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => true,
+                    ConsensusTransactionKind::IdleStatusUpdate(_) => true,
+                    ConsensusTransactionKind::SuiChainObservationUpdate(_) => true,
                     ConsensusTransactionKind::GlobalPresignRequest(_) => true,
                     ConsensusTransactionKind::NetworkKeyData(_) => true,
                     ConsensusTransactionKind::NOAObservation(_) => true,
@@ -946,7 +981,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
             party_newly_instantiated_network_key_ids[i] = new_key_ids;
 
             // Check if the party has produced MPC messages or outputs in THIS iteration.
-            // We filter for DWalletMPCMessage and DWalletMPCOutput because InternalSessionsStatusUpdate
+            // We filter for DWalletMPCMessage and DWalletMPCOutput because IdleStatusUpdate
             // can be produced when processing old sessions, not new ones.
             // IMPORTANT: We also filter OUT messages for InternalPresign sessions, as these are
             // background tasks that run asynchronously and should not count as "completion" for

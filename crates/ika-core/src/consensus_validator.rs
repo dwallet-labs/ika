@@ -80,7 +80,8 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::DWalletMPCMessage(..)
                 | ConsensusTransactionKind::DWalletMPCOutput(..)
                 | ConsensusTransactionKind::DWalletInternalMPCOutput(..)
-                | ConsensusTransactionKind::InternalSessionsStatusUpdate(..)
+                | ConsensusTransactionKind::IdleStatusUpdate(..)
+                | ConsensusTransactionKind::SuiChainObservationUpdate(..)
                 | ConsensusTransactionKind::GlobalPresignRequest(..)
                 | ConsensusTransactionKind::NetworkKeyData(..)
                 | ConsensusTransactionKind::NOAObservation(..) => {}

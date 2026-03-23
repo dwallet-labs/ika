@@ -37,8 +37,9 @@ use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
     Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
     DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
+    SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -390,46 +391,51 @@ impl DWalletMPCManager {
         (agreed_outputs, completed_sessions)
     }
 
-    /// Handle status updates for a consensus round.
+    /// Handle idle status and chain observation updates for a consensus round.
     ///
-    /// For each status update:
-    /// - Override the sender's idle status in `idle_status_by_party`
-    /// - For each presign request, add the sender to `presign_request_votes`
-    ///   and immediately check if majority is reached
+    /// For each idle status update, override the sender's idle status in `idle_status_by_party`.
+    /// For each chain observation update, store the sender's latest observation.
     ///
-    /// At the end, perform majority vote on idle status using `idle_status_by_party`.
-    /// Handle idle status and chain observation updates.
-    /// Always runs majority vote (even with empty input).
+    /// Always runs majority vote on idle status (even with empty input).
     /// Returns `(is_idle, Option<SuiChainContext>)`.
     pub fn handle_idle_and_chain_updates(
         &mut self,
         consensus_round: u64,
-        status_updates: Vec<InternalSessionsStatusUpdate>,
+        idle_updates: Vec<IdleStatusUpdate>,
+        chain_observations: Vec<SuiChainObservationUpdate>,
     ) -> (bool, Option<SuiChainContext>) {
-        for status_update in status_updates {
-            let sender_authority = status_update.authority;
-
+        for update in idle_updates {
             let Ok(sender_party_id) =
-                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+                authority_name_to_party_id_from_committee(&self.committee, &update.authority)
             else {
                 error!(
-                    sender_authority=?sender_authority,
+                    sender_authority=?update.authority,
                     consensus_round,
                     should_never_happen = true,
-                    "got a status update for an authority without party ID",
+                    "got an idle status update for an authority without party ID",
                 );
                 continue;
             };
 
-            // Override the idle status for this party.
             self.idle_status_by_party
-                .insert(sender_party_id, status_update.is_idle);
+                .insert(sender_party_id, update.is_idle);
+        }
 
-            // Store this validator's latest Sui chain observation.
-            if let Some(observation) = status_update.sui_chain_observation {
-                self.sui_chain_observations_by_party
-                    .insert(sender_party_id, observation);
-            }
+        for observation in chain_observations {
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &observation.authority)
+            else {
+                error!(
+                    sender_authority=?observation.authority,
+                    consensus_round,
+                    should_never_happen = true,
+                    "got a chain observation update for an authority without party ID",
+                );
+                continue;
+            };
+
+            self.sui_chain_observations_by_party
+                .insert(sender_party_id, observation.sui_chain_observation);
         }
 
         // Compute agreed chain context from accumulated observations.

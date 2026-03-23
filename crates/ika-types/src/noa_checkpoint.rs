@@ -298,8 +298,8 @@ pub struct NOACheckpointTxRef {
 }
 
 /// A single validator's observation of a checkpoint tx's on-chain status.
-/// Piggybacked on `InternalSessionsStatusUpdate` so that quorum resolution
-/// happens in the same consensus round as chain context agreement.
+/// Sent via `ConsensusNOAObservation` consensus messages for quorum resolution
+/// in the same consensus round as chain context agreement.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum NOACheckpointTxObservation {
     Finalized(NOACheckpointTxRef),

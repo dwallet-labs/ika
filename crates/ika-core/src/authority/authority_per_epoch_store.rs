@@ -62,7 +62,7 @@ use ika_types::messages_dwallet_checkpoint::{
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
     ConsensusNetworkKeyData, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    IkaNetworkConfig, InternalSessionsStatusUpdate, SessionIdentifier,
+    IdleStatusUpdate, IkaNetworkConfig, SessionIdentifier, SuiChainObservationUpdate,
 };
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -283,11 +283,17 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
     ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>>;
 
-    /// Returns the next internal sessions status update after the given consensus round.
-    fn next_internal_sessions_status_update(
+    /// Returns the next idle status updates after the given consensus round.
+    fn next_idle_status_update(
         &self,
         last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>>;
+    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>>;
+
+    /// Returns the next Sui chain observation updates after the given consensus round.
+    fn next_sui_chain_observation_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>>;
 
     /// Returns the next global presign requests after the given consensus round.
     fn next_global_presign_request(
@@ -471,13 +477,28 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         tables.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
     }
 
-    fn next_internal_sessions_status_update(
+    fn next_idle_status_update(
         &self,
         last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<InternalSessionsStatusUpdate>)>> {
+    ) -> IkaResult<Option<(Round, Vec<IdleStatusUpdate>)>> {
         let tables = self.tables()?;
         let mut iter = tables
-            .internal_sessions_status_updates
+            .idle_status_updates
+            .safe_iter_with_bounds(last_consensus_round, None);
+        if last_consensus_round.is_none() {
+            Ok(iter.next().transpose()?)
+        } else {
+            Ok(iter.nth(1).transpose()?)
+        }
+    }
+
+    fn next_sui_chain_observation_update(
+        &self,
+        last_consensus_round: Option<Round>,
+    ) -> IkaResult<Option<(Round, Vec<SuiChainObservationUpdate>)>> {
+        let tables = self.tables()?;
+        let mut iter = tables
+            .sui_chain_observation_updates
             .safe_iter_with_bounds(last_consensus_round, None);
         if last_consensus_round.is_none() {
             Ok(iter.next().transpose()?)
@@ -757,9 +778,13 @@ pub struct AuthorityEpochTables {
     /// Value is the count.
     internal_presign_pool_sizes: DBMap<(DWalletSignatureAlgorithm, ObjectID), u64>,
 
-    /// Internal sessions status updates by consensus round.
+    /// Idle status updates by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    internal_sessions_status_updates: DBMap<Round, Vec<InternalSessionsStatusUpdate>>,
+    idle_status_updates: DBMap<Round, Vec<IdleStatusUpdate>>,
+
+    /// Sui chain observation updates by consensus round.
+    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
+    sui_chain_observation_updates: DBMap<Round, Vec<SuiChainObservationUpdate>>,
 
     /// Global presign requests by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
@@ -1595,13 +1620,25 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+                kind: ConsensusTransactionKind::IdleStatusUpdate(update),
                 ..
             }) => {
-                if transaction.sender_authority() != status_update.authority {
+                if transaction.sender_authority() != update.authority {
                     warn!(
-                        "InternalSessionsStatusUpdate authority {} does not match its author from consensus {}",
-                        status_update.authority, transaction.certificate_author_index
+                        "IdleStatusUpdate authority {} does not match its author from consensus {}",
+                        update.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::SuiChainObservationUpdate(update),
+                ..
+            }) => {
+                if transaction.sender_authority() != update.authority {
+                    warn!(
+                        "SuiChainObservationUpdate authority {} does not match its author from consensus {}",
+                        update.authority, transaction.certificate_author_index
                     );
                     return None;
                 }
@@ -1956,7 +1993,8 @@ impl AuthorityPerEpochStore {
         output.set_dwallet_internal_mpc_round_outputs(Self::filter_dwallet_internal_mpc_outputs(
             transactions,
         ));
-        output.set_internal_sessions_status_updates(Self::filter_internal_sessions_status_updates(
+        output.set_idle_status_updates(Self::filter_idle_status_updates(transactions));
+        output.set_sui_chain_observation_updates(Self::filter_sui_chain_observation_updates(
             transactions,
         ));
         output.set_global_presign_requests(Self::filter_global_presign_requests(transactions));
@@ -2048,9 +2086,9 @@ impl AuthorityPerEpochStore {
             .collect()
     }
 
-    fn filter_internal_sessions_status_updates(
+    fn filter_idle_status_updates(
         transactions: &[VerifiedSequencedConsensusTransaction],
-    ) -> Vec<InternalSessionsStatusUpdate> {
+    ) -> Vec<IdleStatusUpdate> {
         transactions
             .iter()
             .filter_map(|transaction| {
@@ -2060,9 +2098,30 @@ impl AuthorityPerEpochStore {
                 }) = transaction;
                 match transaction {
                     SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                        kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+                        kind: ConsensusTransactionKind::IdleStatusUpdate(update),
                         ..
-                    }) => Some(status_update.clone()),
+                    }) => Some(update.clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn filter_sui_chain_observation_updates(
+        transactions: &[VerifiedSequencedConsensusTransaction],
+    ) -> Vec<SuiChainObservationUpdate> {
+        transactions
+            .iter()
+            .filter_map(|transaction| {
+                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
+                    transaction,
+                    ..
+                }) = transaction;
+                match transaction {
+                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                        kind: ConsensusTransactionKind::SuiChainObservationUpdate(update),
+                        ..
+                    }) => Some(update.clone()),
                     _ => None,
                 }
             })
@@ -2166,7 +2225,11 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(..),
+                kind: ConsensusTransactionKind::IdleStatusUpdate(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::SuiChainObservationUpdate(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -2547,7 +2610,8 @@ pub(crate) struct ConsensusCommitOutput {
     dwallet_mpc_round_messages: Vec<DWalletMPCMessage>,
     dwallet_mpc_round_outputs: Vec<DWalletMPCOutput>,
     dwallet_internal_mpc_round_outputs: Vec<DWalletInternalMPCOutput>,
-    internal_sessions_status_updates: Vec<InternalSessionsStatusUpdate>,
+    idle_status_updates: Vec<IdleStatusUpdate>,
+    sui_chain_observation_updates: Vec<SuiChainObservationUpdate>,
     global_presign_requests: Vec<ConsensusGlobalPresignRequest>,
     network_key_data: Vec<ConsensusNetworkKeyData>,
     noa_observations: Vec<ConsensusNOAObservation>,
@@ -2579,11 +2643,15 @@ impl ConsensusCommitOutput {
         self.dwallet_internal_mpc_round_outputs = new_value;
     }
 
-    pub(crate) fn set_internal_sessions_status_updates(
+    pub(crate) fn set_idle_status_updates(&mut self, new_value: Vec<IdleStatusUpdate>) {
+        self.idle_status_updates = new_value;
+    }
+
+    pub(crate) fn set_sui_chain_observation_updates(
         &mut self,
-        new_value: Vec<InternalSessionsStatusUpdate>,
+        new_value: Vec<SuiChainObservationUpdate>,
     ) {
-        self.internal_sessions_status_updates = new_value;
+        self.sui_chain_observation_updates = new_value;
     }
 
     pub(crate) fn set_global_presign_requests(
@@ -2656,8 +2724,12 @@ impl ConsensusCommitOutput {
             )],
         )?;
         batch.insert_batch(
-            &tables.internal_sessions_status_updates,
-            [(self.consensus_round, self.internal_sessions_status_updates)],
+            &tables.idle_status_updates,
+            [(self.consensus_round, self.idle_status_updates)],
+        )?;
+        batch.insert_batch(
+            &tables.sui_chain_observation_updates,
+            [(self.consensus_round, self.sui_chain_observation_updates)],
         )?;
         batch.insert_batch(
             &tables.global_presign_requests,

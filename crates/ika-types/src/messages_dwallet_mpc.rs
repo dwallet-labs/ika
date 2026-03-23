@@ -114,11 +114,10 @@ pub struct GlobalPresignRequest {
     pub dwallet_network_encryption_key_id: ObjectID,
 }
 
-/// Status update sent by each validator on each consensus round.
-/// Contains idle status and Sui chain observation for context agreement.
+/// Idle status update sent by a validator via consensus.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct InternalSessionsStatusUpdate {
-    /// The authority that sent this status update.
+pub struct IdleStatusUpdate {
+    /// The authority that sent this update.
     pub authority: AuthorityName,
     /// A random unique value used once, sampled each time anew,
     /// used to make this update unique, such that its key will be unique.
@@ -126,17 +125,11 @@ pub struct InternalSessionsStatusUpdate {
     /// Whether this validator is idle (has fewer sessions ready to execute
     /// than the idle session count threshold).
     pub is_idle: bool,
-    /// This validator's locally observed Sui chain state for context agreement.
-    pub sui_chain_observation: Option<SuiChainObservation>,
 }
 
-impl InternalSessionsStatusUpdate {
-    /// Creates a new `InternalSessionsStatusUpdate` with a freshly sampled random nonce.
-    pub fn new(
-        authority: AuthorityName,
-        is_idle: bool,
-        sui_chain_observation: Option<SuiChainObservation>,
-    ) -> Self {
+impl IdleStatusUpdate {
+    /// Creates a new `IdleStatusUpdate` with a freshly sampled random nonce.
+    pub fn new(authority: AuthorityName, is_idle: bool) -> Self {
         use rand::RngCore;
         let mut nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut nonce);
@@ -144,6 +137,32 @@ impl InternalSessionsStatusUpdate {
             authority,
             nonce,
             is_idle,
+        }
+    }
+}
+
+/// Sui chain observation update sent by a validator via consensus.
+/// Only sent when there is an actual observation to share.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SuiChainObservationUpdate {
+    /// The authority that sent this update.
+    pub authority: AuthorityName,
+    /// A random unique value used once, sampled each time anew,
+    /// used to make this update unique, such that its key will be unique.
+    pub nonce: [u8; 32],
+    /// This validator's locally observed Sui chain state for context agreement.
+    pub sui_chain_observation: SuiChainObservation,
+}
+
+impl SuiChainObservationUpdate {
+    /// Creates a new `SuiChainObservationUpdate` with a freshly sampled random nonce.
+    pub fn new(authority: AuthorityName, sui_chain_observation: SuiChainObservation) -> Self {
+        use rand::RngCore;
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        Self {
+            authority,
+            nonce,
             sui_chain_observation,
         }
     }

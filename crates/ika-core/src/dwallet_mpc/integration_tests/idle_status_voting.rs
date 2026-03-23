@@ -266,9 +266,9 @@ async fn test_validators_compute_idle_status_correctly() {
 /// that the service reads and processes them (not just the test harness).
 ///
 /// Verifies:
-/// 1. Each validator submits InternalSessionsStatusUpdate to consensus each round.
-/// 2. After distribution, each validator's epoch store has status updates from all others.
-/// 3. The service reads these via `next_internal_sessions_status_update` and processes them.
+/// 1. Each validator submits IdleStatusUpdate to consensus each round.
+/// 2. After distribution, each validator's epoch store has idle status updates from all others.
+/// 3. The service reads these via `next_idle_status_update` and processes them.
 #[tokio::test]
 #[cfg(test)]
 async fn test_status_updates_distributed_through_consensus() {
@@ -301,17 +301,17 @@ async fn test_status_updates_distributed_through_consensus() {
         test_state.consensus_round += 1;
 
         if round > 3 {
-            // After a few rounds, verify each epoch store has received status updates
+            // After a few rounds, verify each epoch store has received idle status updates
             for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-                let updates = epoch_store.round_to_status_updates.lock().unwrap();
+                let updates = epoch_store.round_to_idle_status_updates.lock().unwrap();
                 let total: usize = updates.values().map(|v| v.len()).sum();
                 info!(
-                    "Round {}: Validator {} has {} total status updates in epoch store",
+                    "Round {}: Validator {} has {} total idle status updates in epoch store",
                     round, i, total
                 );
                 assert!(
                     total > 0,
-                    "Validator {} should have received status updates by round {}",
+                    "Validator {} should have received idle status updates by round {}",
                     i,
                     round
                 );

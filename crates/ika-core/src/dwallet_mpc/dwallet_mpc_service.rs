@@ -48,8 +48,8 @@ use ika_types::message::{
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    DWalletNetworkEncryptionKeyState, GlobalPresignRequest, InternalSessionsStatusUpdate,
-    SessionIdentifier, SessionType, UserSecretKeyShareEventType,
+    DWalletNetworkEncryptionKeyState, GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier,
+    SessionType, SuiChainObservationUpdate, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
@@ -606,15 +606,17 @@ impl DWalletMPCService {
         // Build a batch of consensus transactions.
         let mut transactions = Vec::new();
 
-        // Slimmed status update (idle + chain observation) when those changed.
-        if idle_status_changed || observation_changed {
-            let status_update = InternalSessionsStatusUpdate::new(
-                self.name,
-                is_idle,
-                sui_chain_observation.clone(),
-            );
-            transactions.push(ConsensusTransaction::new_internal_sessions_status_update(
-                status_update,
+        // Idle status update when idle status changed.
+        if idle_status_changed {
+            transactions.push(ConsensusTransaction::new_idle_status_update(
+                IdleStatusUpdate::new(self.name, is_idle),
+            ));
+        }
+
+        // Sui chain observation update when the observation changed and is present.
+        if observation_changed && let Some(ref observation) = sui_chain_observation {
+            transactions.push(ConsensusTransaction::new_sui_chain_observation_update(
+                SuiChainObservationUpdate::new(self.name, observation.clone()),
             ));
         }
 
@@ -961,27 +963,51 @@ impl DWalletMPCService {
                 }
             };
 
-            let status_updates = match self
+            let idle_status_updates = match self
                 .epoch_store
-                .next_internal_sessions_status_update(self.last_read_consensus_round)
+                .next_idle_status_update(self.last_read_consensus_round)
             {
                 Ok(Some((round, updates))) => {
                     if round != mpc_messages_consensus_round {
                         error!(
                             ?round,
                             ?mpc_messages_consensus_round,
-                            "status updates consensus round does not match MPC messages consensus round"
+                            "idle status updates consensus round does not match MPC messages consensus round"
                         );
                         panic!(
-                            "status updates consensus round does not match MPC messages consensus round"
+                            "idle status updates consensus round does not match MPC messages consensus round"
                         );
                     }
                     updates
                 }
                 Ok(None) => Vec::new(),
                 Err(e) => {
-                    error!(error=?e, "failed to load status updates from the local DB");
-                    panic!("failed to load status updates from the local DB");
+                    error!(error=?e, "failed to load idle status updates from the local DB");
+                    panic!("failed to load idle status updates from the local DB");
+                }
+            };
+
+            let sui_chain_observation_updates = match self
+                .epoch_store
+                .next_sui_chain_observation_update(self.last_read_consensus_round)
+            {
+                Ok(Some((round, updates))) => {
+                    if round != mpc_messages_consensus_round {
+                        error!(
+                            ?round,
+                            ?mpc_messages_consensus_round,
+                            "sui chain observation updates consensus round does not match MPC messages consensus round"
+                        );
+                        panic!(
+                            "sui chain observation updates consensus round does not match MPC messages consensus round"
+                        );
+                    }
+                    updates
+                }
+                Ok(None) => Vec::new(),
+                Err(e) => {
+                    error!(error=?e, "failed to load sui chain observation updates from the local DB");
+                    panic!("failed to load sui chain observation updates from the local DB");
                 }
             };
 
@@ -1077,9 +1103,12 @@ impl DWalletMPCService {
             }
 
             // 1a. Handle idle status and chain observations.
-            let (is_idle, agreed_sui_chain_context) = self
-                .dwallet_mpc_manager
-                .handle_idle_and_chain_updates(consensus_round, status_updates);
+            let (is_idle, agreed_sui_chain_context) =
+                self.dwallet_mpc_manager.handle_idle_and_chain_updates(
+                    consensus_round,
+                    idle_status_updates,
+                    sui_chain_observation_updates,
+                );
 
             // 1b. Handle presign request messages.
             let agreed_presign_requests = self
