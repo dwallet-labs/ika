@@ -603,64 +603,78 @@ impl DWalletMPCService {
             return;
         }
 
-        // Build a batch of consensus transactions.
-        let mut transactions = Vec::new();
+        // Submit each transaction individually — the consensus adapter only accepts
+        // single-transaction submissions (submit_batch enforces len == 1).
 
         // Idle status update when idle status changed.
         if idle_status_changed {
-            transactions.push(ConsensusTransaction::new_idle_status_update(
-                IdleStatusUpdate::new(self.name, is_idle),
+            let tx = ConsensusTransaction::new_idle_status_update(IdleStatusUpdate::new(
+                self.name, is_idle,
             ));
+            if let Err(e) = self
+                .dwallet_submit_to_consensus
+                .submit_to_consensus(&[tx])
+                .await
+            {
+                error!(error = ?e, consensus_round, "Failed to submit idle status update");
+            } else {
+                self.last_sent_idle_status = Some(is_idle);
+            }
         }
 
         // Sui chain observation update when the observation changed and is present.
         if observation_changed && let Some(ref observation) = sui_chain_observation {
-            transactions.push(ConsensusTransaction::new_sui_chain_observation_update(
+            let tx = ConsensusTransaction::new_sui_chain_observation_update(
                 SuiChainObservationUpdate::new(self.name, observation.clone()),
-            ));
+            );
+            if let Err(e) = self
+                .dwallet_submit_to_consensus
+                .submit_to_consensus(&[tx])
+                .await
+            {
+                error!(error = ?e, consensus_round, "Failed to submit chain observation update");
+            } else {
+                self.last_sent_sui_chain_observation = sui_chain_observation.clone();
+            }
         }
 
         // One message per unsent presign request.
         for request in &unsent_presign_requests {
-            transactions.push(ConsensusTransaction::new_global_presign_request(
-                self.name, *request,
-            ));
+            let tx = ConsensusTransaction::new_global_presign_request(self.name, *request);
+            if let Err(e) = self
+                .dwallet_submit_to_consensus
+                .submit_to_consensus(&[tx])
+                .await
+            {
+                error!(error = ?e, consensus_round, "Failed to submit presign request");
+            }
         }
 
         // One message per new network key.
         for key_data in &new_key_data {
-            transactions.push(ConsensusTransaction::new_network_key_data(
-                self.name,
-                key_data.clone(),
-            ));
+            let tx = ConsensusTransaction::new_network_key_data(self.name, key_data.clone());
+            if let Err(e) = self
+                .dwallet_submit_to_consensus
+                .submit_to_consensus(&[tx])
+                .await
+            {
+                error!(error = ?e, consensus_round, "Failed to submit network key data");
+            } else {
+                self.sent_network_key_ids.insert(key_data.id);
+            }
         }
 
         // One message per buffered NOA observation.
-        for obs in &self.buffered_noa_observations {
-            transactions.push(ConsensusTransaction::new_noa_observation(
-                self.name,
-                obs.clone(),
-            ));
-        }
-
-        if let Err(e) = self
-            .dwallet_submit_to_consensus
-            .submit_to_consensus(&transactions)
-            .await
-        {
-            error!(
-                error = ?e,
-                consensus_round,
-                "Failed to submit status update to consensus"
-            );
-        } else {
-            // Update last sent values.
-            self.last_sent_idle_status = Some(is_idle);
-            for key_data in &new_key_data {
-                self.sent_network_key_ids.insert(key_data.id);
+        let noa_observations = std::mem::take(&mut self.buffered_noa_observations);
+        for obs in &noa_observations {
+            let tx = ConsensusTransaction::new_noa_observation(self.name, obs.clone());
+            if let Err(e) = self
+                .dwallet_submit_to_consensus
+                .submit_to_consensus(&[tx])
+                .await
+            {
+                error!(error = ?e, consensus_round, "Failed to submit NOA observation");
             }
-            self.last_sent_sui_chain_observation = sui_chain_observation;
-            self.buffered_noa_observations.clear();
         }
     }
 
