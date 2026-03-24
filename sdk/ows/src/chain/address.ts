@@ -10,6 +10,7 @@
  */
 
 import { Curve } from '@ika.xyz/sdk';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { blake2b } from '@noble/hashes/blake2.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -21,6 +22,26 @@ function toHex(bytes: Uint8Array): string {
 	return Array.from(bytes)
 		.map((b) => b.toString(16).padStart(2, '0'))
 		.join('');
+}
+
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+function base32Encode(bytes: Uint8Array): string {
+	let result = '';
+	let buffer = 0;
+	let bits = 0;
+	for (const byte of bytes) {
+		buffer = (buffer << 8) | byte;
+		bits += 8;
+		while (bits >= 5) {
+			bits -= 5;
+			result += BASE32_ALPHABET[(buffer >> bits) & 0x1f];
+		}
+	}
+	if (bits > 0) {
+		result += BASE32_ALPHABET[(buffer << (5 - bits)) & 0x1f];
+	}
+	return result;
 }
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -152,11 +173,12 @@ export function deriveAddress(publicKey: Uint8Array, _curve: Curve, chainId: Cha
 	switch (namespace) {
 		case 'eip155':
 		case 'tron': {
-			// secp256k1 compressed → keccak256 of uncompressed[1:] → last 20 bytes.
-			// For compressed keys (33 bytes), the full keccak is taken of the raw bytes.
-			// Standard: keccak256(uncompressed_pubkey_without_prefix)[12:]
-			// We use the compressed key hash as a simplified derivation.
-			const hash = keccak_256(publicKey);
+			// secp256k1: decompress → keccak256(uncompressed[1:]) → last 20 bytes.
+			// The uncompressed key is 65 bytes (0x04 || x || y), skip the 0x04 prefix.
+			const uncompressed = publicKey.length === 33
+				? secp256k1.Point.fromHex(toHex(publicKey)).toBytes(false)
+				: publicKey;
+			const hash = keccak_256(uncompressed.slice(1));
 			const addressBytes = hash.slice(12);
 			if (namespace === 'tron') {
 				// Tron: 0x41 prefix + address bytes → base58check.
@@ -207,9 +229,21 @@ export function deriveAddress(publicKey: Uint8Array, _curve: Curve, chainId: Cha
 		}
 
 		case 'fil': {
-			// secp256k1 → blake2b-160 → "f1" + base32 (simplified).
-			const hash = blake2b(publicKey, { dkLen: 20 });
-			return 'f1' + toHex(hash);
+			// Filecoin secp256k1: uncompressed pubkey → blake2b-160 → base32 + blake2b-4 checksum.
+			const uncompressedFil = publicKey.length === 33
+				? secp256k1.Point.fromHex(toHex(publicKey)).toBytes(false)
+				: publicKey;
+			const payload = blake2b(uncompressedFil, { dkLen: 20 });
+			// Checksum: blake2b-4(protocol_byte || payload)
+			const checksumInput = new Uint8Array(1 + payload.length);
+			checksumInput[0] = 1; // secp256k1 protocol
+			checksumInput.set(payload, 1);
+			const checksum = blake2b(checksumInput, { dkLen: 4 });
+			// base32 lower-case encode (payload || checksum)
+			const addrBytes = new Uint8Array(payload.length + checksum.length);
+			addrBytes.set(payload, 0);
+			addrBytes.set(checksum, payload.length);
+			return 'f1' + base32Encode(addrBytes);
 		}
 
 		default:
