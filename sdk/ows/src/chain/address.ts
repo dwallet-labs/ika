@@ -15,7 +15,7 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 
-import type { ChainId } from './types.js';
+import type { ChainId } from '../types.js';
 
 function toHex(bytes: Uint8Array): string {
 	return Array.from(bytes)

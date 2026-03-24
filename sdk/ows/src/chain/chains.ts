@@ -13,8 +13,8 @@
 
 import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 
-import { OWSError, OWSErrorCode } from './errors.js';
-import type { ChainId } from './types.js';
+import { OWSError, OWSErrorCode } from '../errors.js';
+import type { ChainId } from '../types.js';
 
 /** Resolved signing parameters for a given chain. */
 export interface ChainSigningParams {

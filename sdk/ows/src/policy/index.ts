@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /**
- * Policy engine — two-layer enforcement for SAWS.
+ * Local policy filters — advisory, agent-side pre-checks.
  *
- * ## Layer 1: Local Policies (agent-side)
+ * **IMPORTANT**: These are convenience filters, NOT a security boundary.
+ * They run in the agent's process and can be bypassed by modifying the
+ * agent's code. For enforceable policies, use the on-chain Policy Engine
+ * (see `contract/` and `PolicyEngineConfig`).
+ *
+ * ## Local Policies
  *
  * Evaluated in-process before signing requests reach the network.
+ * Useful for catching mistakes, rate limiting API abuse, and
+ * implementing business logic that doesn't need on-chain guarantees.
  * Two types:
  *
  * ### Declarative Rules
@@ -66,8 +73,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { OWSError, OWSErrorCode } from './errors.js';
-import type { ChainId } from './types.js';
+import { OWSError, OWSErrorCode } from '../errors.js';
+import type { ChainId } from '../types.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

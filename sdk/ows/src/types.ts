@@ -12,7 +12,7 @@ import type { Curve, Hash, IkaConfig, SignatureAlgorithm } from '@ika.xyz/sdk';
 export type ChainId = string;
 
 /** Wallet kind discriminant. */
-export type WalletKind = 'mnemonic' | 'dkg';
+export type WalletKind = 'mnemonic' | 'dkg' | 'imported_key';
 
 // ─── Vault Entry Types ───────────────────────────────────────────────────
 
@@ -61,13 +61,18 @@ export interface MnemonicVaultEntry extends IkaVaultEntryBase {
 	encryptionNonce: string;
 }
 
-/** Vault entry for a pure DKG dWallet (no mnemonic). */
+/** Vault entry for a pure DKG dWallet (no private key). */
 export interface DkgVaultEntry extends IkaVaultEntryBase {
 	kind: 'dkg';
 }
 
+/** Vault entry for an imported private key dWallet. */
+export interface ImportedKeyVaultEntry extends IkaVaultEntryBase {
+	kind: 'imported_key';
+}
+
 /** Discriminated union of all vault entry types. */
-export type IkaVaultEntry = MnemonicVaultEntry | DkgVaultEntry;
+export type IkaVaultEntry = MnemonicVaultEntry | DkgVaultEntry | ImportedKeyVaultEntry;
 
 // ─── Public Wallet Info ──────────────────────────────────────────────────
 
@@ -119,16 +124,6 @@ export interface IkaOWSProviderConfig {
 
 // ─── Operation Options ───────────────────────────────────────────────────
 
-/** Options for creating a mnemonic-backed wallet. */
-export interface CreateWalletOptions {
-	/** Cryptographic curve. Defaults to SECP256K1. */
-	curve?: Curve;
-	/** BIP-39 word count (12 or 24). */
-	words?: number;
-	/** MPC timeout override in ms. */
-	timeout?: number;
-}
-
 /** Options for creating a pure DKG wallet. */
 export interface CreateDWalletOptions {
 	/** Cryptographic curve. Defaults to SECP256K1. */
@@ -137,17 +132,7 @@ export interface CreateDWalletOptions {
 	timeout?: number;
 }
 
-/** Options for importing from mnemonic. */
-export interface ImportMnemonicOptions {
-	/** Cryptographic curve. Defaults to SECP256K1. */
-	curve?: Curve;
-	/** BIP-44 account index. Defaults to 0. */
-	index?: number;
-	/** MPC timeout override in ms. */
-	timeout?: number;
-}
-
-/** Options for importing from private key. */
+/** Options for importing a private key. */
 export interface ImportPrivateKeyOptions {
 	/** Cryptographic curve. Defaults to SECP256K1. */
 	curve?: Curve;

@@ -2,22 +2,16 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /**
- * @ika.xyz/ows — OWS-compatible wallet standard backed by Ika dWallet MPC signing.
- *
- * No dependency on @open-wallet-standard/core — everything implemented natively
- * with proper two-layer policy enforcement (local + on-chain).
+ * @ika.xyz/ows — Open Wallet Standard backed by Ika dWallet MPC signing.
  *
  * @packageDocumentation
  */
 
 // ─── Provider ────────────────────────────────────────────────────────────
-export { IkaOWSProvider } from './provider.js';
+export { IkaOWSProvider } from './client/provider.js';
 
-// ─── Mnemonic Utilities ──────────────────────────────────────────────────
-export { generateMnemonic, isValidMnemonic, deriveAddressFromMnemonic } from './mnemonic.js';
-
-// ─── Policy Engine ───────────────────────────────────────────────────────
-export { PolicyEngine } from './policy.js';
+// ─── Local Policy Filters ────────────────────────────────────────────────
+export { PolicyEngine } from './policy/index.js';
 export type {
 	PolicyFunction,
 	PolicyContext,
@@ -25,14 +19,14 @@ export type {
 	DeclarativePolicy,
 	DeclarativePolicyRules,
 	OnChainPolicy,
-} from './policy.js';
+} from './policy/index.js';
 
 // ─── Executor ────────────────────────────────────────────────────────────
-export { OWSExecutor } from './executor.js';
-export type { TxEvent, TxResult } from './executor.js';
+export { OWSExecutor } from './client/executor.js';
+export type { TxEvent, TxResult } from './client/executor.js';
 
 // ─── Presign Pool ────────────────────────────────────────────────────────
-export { PresignPool } from './presign-pool.js';
+export { PresignPool } from './client/presign-pool.js';
 
 // ─── Chain Mapping ───────────────────────────────────────────────────────
 export {
@@ -42,14 +36,21 @@ export {
 	getSupportedChains,
 	namespacesForCurve,
 	SUPPORTED_NAMESPACES,
-} from './chains.js';
-export type { ChainSigningParams } from './chains.js';
+} from './chain/chains.js';
+export type { ChainSigningParams } from './chain/chains.js';
 
 // ─── Address Derivation ──────────────────────────────────────────────────
-export { deriveAddress, deriveAccountsForCurve } from './address.js';
+export { deriveAddress, deriveAccountsForCurve } from './chain/address.js';
 
 // ─── Crypto Utilities ────────────────────────────────────────────────────
-export { encryptMnemonic, decryptMnemonic, derivePrivateKeyFromMnemonic } from './crypto.js';
+export {
+	hexToBytes,
+	bytesToHex,
+	ed25519SeedToPrivateKey,
+	generateMnemonic,
+	isValidMnemonic,
+	derivePrivateKeyFromMnemonic,
+} from './crypto/index.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 export type {
@@ -62,10 +63,9 @@ export type {
 	IkaVaultEntry,
 	MnemonicVaultEntry,
 	DkgVaultEntry,
+	ImportedKeyVaultEntry,
 	PresignPoolEntry,
-	CreateWalletOptions,
 	CreateDWalletOptions,
-	ImportMnemonicOptions,
 	ImportPrivateKeyOptions,
 	SignOptions,
 	PolicyEngineConfig,
@@ -86,8 +86,11 @@ export type {
 export * as policyEngineTx from './tx/policy-engine.js';
 
 // ─── REST Server ─────────────────────────────────────────────────────────
-export { handleRequest, startServer } from './server.js';
-export type { IkaOWSServerConfig, OWSRequest, OWSResponse } from './server.js';
+export { handleRequest, startServer } from './server/index.js';
+export type { IkaOWSServerConfig, OWSRequest, OWSResponse } from './server/index.js';
+
+// ─── Vault Backup ────────────────────────────────────────────────────────
+export { exportVault, importVault } from './vault/index.js';
 
 // ─── Errors ──────────────────────────────────────────────────────────────
 export { OWSError, OWSErrorCode } from './errors.js';

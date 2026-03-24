@@ -2,40 +2,61 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /**
- * Convert Ika SDK string enums to the u32 numbers expected by Move contracts.
+ * Curve/algorithm/hash to u32 conversion.
  *
- * These mappings mirror the internal conversion in the Ika SDK's
- * `hash-signature-validation.ts` module.
+ * These mappings are the authoritative values from the Ika SDK's
+ * internal `hash-signature-validation` module. They must match the
+ * Move coordinator's SupportConfig.
+ *
+ * The numbers are CONTEXTUAL:
+ * - signatureAlgorithm numbers are per-curve
+ * - hash numbers are per-curve-per-signatureAlgorithm
  */
 
-import type { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 
-const SIGNATURE_ALGORITHM_NUMBERS: Record<string, number> = {
-	ECDSASecp256k1: 0,
-	ECDSASecp256r1: 1,
-	Schnorr: 2,
-	EdDSA: 0,
-};
-
-const HASH_NUMBERS: Record<string, number> = {
-	SHA256: 0,
-	KECCAK256: 1,
-	DoubleSHA256: 2,
-	SHA512: 0,
-};
-
-export function signatureAlgorithmToNumber(algo: SignatureAlgorithm): number {
-	const num = SIGNATURE_ALGORITHM_NUMBERS[algo];
-	if (num === undefined) {
-		throw new Error(`Unknown signature algorithm: ${algo}`);
-	}
-	return num;
+interface AlgoNumbers {
+	signatureAlgorithmNumber: number;
+	hashNumber: number;
 }
 
-export function hashToNumber(hash: Hash): number {
-	const num = HASH_NUMBERS[hash];
-	if (num === undefined) {
-		throw new Error(`Unknown hash: ${hash}`);
-	}
-	return num;
+/**
+ * Config: curve → signatureAlgorithm → { sigNum, hashes: hash → hashNum }
+ *
+ * Source: ika SDK's CURVE_SIGNATURE_HASH_CONFIG
+ */
+const CONFIG: Record<string, Record<string, { sigNum: number; hashes: Record<string, number> }>> = {
+	SECP256K1: {
+		ECDSASecp256k1: { sigNum: 0, hashes: { KECCAK256: 0, SHA256: 1, DoubleSHA256: 2 } },
+		Taproot: { sigNum: 1, hashes: { SHA256: 0 } },
+	},
+	SECP256R1: {
+		ECDSASecp256r1: { sigNum: 0, hashes: { SHA256: 0 } },
+	},
+	ED25519: {
+		EdDSA: { sigNum: 0, hashes: { SHA512: 0 } },
+	},
+	RISTRETTO: {
+		SchnorrkelSubstrate: { sigNum: 0, hashes: { Merlin: 0 } },
+	},
+};
+
+export function fromCurveAndSignatureAlgorithmAndHashToNumbers(
+	curve: Curve,
+	signatureAlgorithm: SignatureAlgorithm,
+	hash: Hash,
+): AlgoNumbers {
+	const curveConfig = CONFIG[curve];
+	if (!curveConfig) throw new Error(`Unsupported curve: ${curve}`);
+
+	const algoConfig = curveConfig[signatureAlgorithm];
+	if (!algoConfig) throw new Error(`Unsupported algorithm ${signatureAlgorithm} for curve ${curve}`);
+
+	const hashNumber = algoConfig.hashes[hash];
+	if (hashNumber === undefined) throw new Error(`Unsupported hash ${hash} for ${curve}/${signatureAlgorithm}`);
+
+	return {
+		signatureAlgorithmNumber: algoConfig.sigNum,
+		hashNumber,
+	};
 }

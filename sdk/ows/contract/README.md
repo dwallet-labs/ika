@@ -1,5 +1,7 @@
 # OWS Policy Engine
 
+**Mainnet Package ID:** `0x9fd74e7ad831f13730ddb59072978eeb51b1eb840f97238d836b27953be52180`
+
 Composable, on-chain policy enforcement for Ika dWallets. The `DWalletCap` is custodied inside a shared `PolicyEngine` object — the agent cannot call `approve_message` directly. It must go through the engine, which requires a `PolicyReceipt<T>` from every registered rule before it releases a `MessageApproval`.
 
 Uses a Sui TransferPolicy-style composable rule system with OTW witnesses.

@@ -11,8 +11,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { OWSError, OWSErrorCode } from './errors.js';
-import type { IkaVaultEntry } from './types.js';
+import { OWSError, OWSErrorCode } from '../errors.js';
+import type { IkaVaultEntry } from '../types.js';
 
 const DEFAULT_VAULT_PATH = path.join(
 	process.env['HOME'] ?? process.env['USERPROFILE'] ?? '.',
@@ -105,4 +105,18 @@ export function updateVaultEntry(
 	const entry = loadVaultEntry(id, vaultPath);
 	const updated = updater(entry);
 	saveVaultEntry(updated, vaultPath);
+}
+
+/** Export all vault entries as a JSON string (for backup). */
+export function exportVault(vaultPath?: string): string {
+	return JSON.stringify(listVaultEntries(vaultPath), null, '\t');
+}
+
+/** Import vault entries from a JSON string (for restore). Overwrites existing entries with same ID. */
+export function importVault(json: string, vaultPath?: string): number {
+	const entries = JSON.parse(json) as IkaVaultEntry[];
+	for (const entry of entries) {
+		saveVaultEntry(entry, vaultPath);
+	}
+	return entries.length;
 }

@@ -8,11 +8,13 @@
  * Mirrors the OWS CLI structure with Ika-specific extensions:
  *   wallet, sign, presign, pay, mnemonic, policy, key
  */
+import * as fs from 'node:fs';
 
 import { Command } from 'commander';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
-import { generateMnemonic, deriveAddressFromMnemonic } from '../mnemonic.js';
-import type { IkaOWSProvider } from '../provider.js';
+import { IkaOWSProvider } from '../client/provider.js';
+import { startServer } from '../server/index.js';
 
 const program = new Command();
 
@@ -32,14 +34,11 @@ function getNetwork(): 'testnet' | 'mainnet' {
 }
 
 async function createProvider(): Promise<IkaOWSProvider> {
-	const { Ed25519Keypair } = await import('@mysten/sui/keypairs/ed25519');
-	const { IkaOWSProvider: Provider } = await import('../provider.js');
-
 	const hex = process.env['IKA_OWS_KEYPAIR'];
 	if (!hex) throw new Error('Set IKA_OWS_KEYPAIR env (hex-encoded ed25519 secret key, 32 bytes)');
 
 	const keypair = Ed25519Keypair.fromSecretKey(Buffer.from(hex, 'hex'));
-	const provider = new Provider({
+	const provider = new IkaOWSProvider({
 		network: getNetwork(),
 		keypair,
 		vaultPath: process.env['IKA_OWS_VAULT_PATH'],
@@ -54,64 +53,25 @@ const wallet = program.command('wallet').description('Wallet management');
 
 wallet
 	.command('create')
-	.description('Create a new mnemonic-backed wallet (imported into Ika for MPC signing)')
+	.description('Create a wallet by importing a private key into Ika MPC')
 	.requiredOption('--name <name>', 'Wallet name')
-	.option('--words <count>', 'BIP-39 word count', '12')
+	.requiredOption('--key <hex>', 'Private key (32 bytes hex)')
 	.option('--curve <curve>', 'Curve: SECP256K1, ED25519, SECP256R1', 'SECP256K1')
-	.option('--show-mnemonic', 'Display the generated mnemonic')
 	.action(async (opts) => {
-		const passphrase = process.env['IKA_OWS_PASSPHRASE'] ?? '';
 		const provider = await createProvider();
-		const w = await provider.createWallet(opts.name, passphrase, {
-			words: parseInt(opts.words),
-			curve: opts.curve,
-		});
+		const w = await provider.createWallet(opts.name, opts.key, { curve: opts.curve });
 		console.log(JSON.stringify(w, null, 2));
-		if (opts.showMnemonic) {
-			console.log(`\nMnemonic: ${provider.exportWallet(opts.name, passphrase)}`);
-		}
 	});
 
 wallet
 	.command('dkg')
-	.description('Create a pure MPC wallet via DKG (no mnemonic, maximum security)')
+	.description('Create a pure MPC wallet via DKG (no private key, maximum security)')
 	.requiredOption('--name <name>', 'Wallet name')
 	.option('--curve <curve>', 'Curve: SECP256K1, ED25519, SECP256R1', 'SECP256K1')
 	.action(async (opts) => {
 		const provider = await createProvider();
 		const w = await provider.createDWallet(opts.name, { curve: opts.curve });
 		console.log(JSON.stringify(w, null, 2));
-	});
-
-wallet
-	.command('import')
-	.description('Import wallet from mnemonic or private key')
-	.requiredOption('--name <name>', 'Wallet name')
-	.option('--mnemonic', 'Import from mnemonic')
-	.option('--private-key', 'Import from private key')
-	.option('--value <secret>', 'Mnemonic phrase or hex private key')
-	.option('--curve <curve>', 'Curve', 'SECP256K1')
-	.option('--index <n>', 'BIP-44 account index (mnemonic only)', '0')
-	.action(async (opts) => {
-		const provider = await createProvider();
-		const passphrase = process.env['IKA_OWS_PASSPHRASE'] ?? '';
-
-		if (opts.mnemonic) {
-			const mnemonic = opts.value ?? process.env['IKA_OWS_MNEMONIC'];
-			if (!mnemonic) throw new Error('Provide mnemonic via --value or IKA_OWS_MNEMONIC env');
-			const w = await provider.importWalletMnemonic(opts.name, mnemonic, passphrase, {
-				curve: opts.curve,
-				index: parseInt(opts.index),
-			});
-			console.log(JSON.stringify(w, null, 2));
-		} else if (opts.privateKey) {
-			const key = opts.value ?? process.env['IKA_OWS_PRIVATE_KEY'];
-			if (!key) throw new Error('Provide key via --value or IKA_OWS_PRIVATE_KEY env');
-			const w = await provider.importWalletPrivateKey(opts.name, key, { curve: opts.curve });
-			console.log(JSON.stringify(w, null, 2));
-		} else {
-			throw new Error('Specify --mnemonic or --private-key');
-		}
 	});
 
 wallet
@@ -189,12 +149,7 @@ sign
 	.option('--json', 'Output structured JSON')
 	.action(async (opts) => {
 		const provider = await createProvider();
-		const result = await provider.signMessage(
-			opts.wallet,
-			opts.chain,
-			opts.message,
-			opts.encoding,
-		);
+		const result = await provider.signMessage(opts.wallet, opts.chain, opts.message, opts.encoding);
 		console.log(opts.json ? JSON.stringify(result, null, 2) : result.signature);
 	});
 
@@ -225,16 +180,12 @@ presign
 	.option('--algorithm <algo>', 'Signature algorithm', 'ECDSASecp256k1')
 	.action(async (opts) => {
 		const provider = await createProvider();
-		console.log(
-			`Available: ${provider.availablePresigns(opts.wallet, opts.algorithm)}`,
-		);
+		console.log(`Available: ${provider.availablePresigns(opts.wallet, opts.algorithm)}`);
 	});
 
 // ─── pay (x402) ──────────────────────────────────────────────────────────
 
-const pay = program
-	.command('pay')
-	.description('x402 automatic payment handling');
+const pay = program.command('pay').description('x402 automatic payment handling');
 
 pay
 	.command('request')
@@ -302,48 +253,24 @@ pay
 		const body = await response.text();
 		if (opts.json) {
 			console.log(
-				JSON.stringify({
-					status: response.status,
-					headers: Object.fromEntries((response.headers as any).entries()),
-					body,
-				}, null, 2),
+				JSON.stringify(
+					{
+						status: response.status,
+						headers: Object.fromEntries((response.headers as any).entries()),
+						body,
+					},
+					null,
+					2,
+				),
 			);
 		} else {
 			console.log(body);
 		}
 	});
 
-// ─── mnemonic ────────────────────────────────────────────────────────────
-
-const mnemonic = program
-	.command('mnemonic')
-	.description('BIP-39 mnemonic utilities');
-
-mnemonic
-	.command('generate')
-	.description('Generate a BIP-39 mnemonic phrase')
-	.option('--words <count>', 'Word count: 12 or 24', '12')
-	.action((opts) => {
-		console.log(generateMnemonic(parseInt(opts.words)));
-	});
-
-mnemonic
-	.command('derive')
-	.description('Derive an address from a mnemonic for a given chain')
-	.requiredOption('--chain <chain>', 'Chain family: evm, solana, bitcoin, sui, cosmos, etc.')
-	.option('--mnemonic <phrase>', 'Mnemonic (or IKA_OWS_MNEMONIC env)')
-	.option('--index <n>', 'Account index', '0')
-	.action((opts) => {
-		const m = opts.mnemonic ?? process.env['IKA_OWS_MNEMONIC'];
-		if (!m) throw new Error('Provide mnemonic via --mnemonic or IKA_OWS_MNEMONIC env');
-		console.log(deriveAddressFromMnemonic(m, opts.chain, parseInt(opts.index)));
-	});
-
 // ─── policy ──────────────────────────────────────────────────────────────
 
-const policy = program
-	.command('policy')
-	.description('OWS policy management');
+const policy = program.command('policy').description('OWS policy management');
 
 policy
 	.command('create')
@@ -351,7 +278,6 @@ policy
 	.requiredOption('--name <name>', 'Policy name')
 	.requiredOption('--file <path>', 'JSON rules file')
 	.action(async (opts) => {
-		const fs = require('node:fs');
 		const provider = await createProvider();
 		const rules = JSON.parse(fs.readFileSync(opts.file, 'utf-8'));
 		const policy = provider.policies.createPolicy(opts.name, rules);
@@ -398,7 +324,6 @@ program
 		if (!apiKey) throw new Error('Set IKA_OWS_API_KEY env for Bearer token authentication');
 
 		const provider = await createProvider();
-		const { startServer } = await import('../server.js');
 		startServer({
 			provider,
 			apiKey,

@@ -30,6 +30,7 @@
 		}
 	},
 	"scripts": {
+		"codegen": "sui-ts-codegen generate",
 		"build": "build-package",
 		"test": "vitest run",
 		"test:watch": "vitest",
@@ -45,12 +46,14 @@
 	},
 	"devDependencies": {
 		"@ika.xyz/build-scripts": "workspace:*",
+		"@mysten/codegen": "^0.8.2",
 		"@types/node": "^22.15.21",
 		"typescript": "^5.8.3",
 		"vitest": "3.2.4"
 	},
 	"dependencies": {
 		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/bcs": "^2.0.3",
 		"@mysten/sui": "^2.5.0",
 		"@noble/ciphers": "^1.2.1",
 		"@noble/curves": "^2.0.1",

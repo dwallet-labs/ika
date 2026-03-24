@@ -36,9 +36,9 @@
 
 import * as http from 'node:http';
 
-import type { IkaOWSProvider } from './provider.js';
-import { OWSError } from './errors.js';
-import { hexToBytes } from './crypto.js';
+import { hexToBytes } from '../crypto/index.js';
+import { OWSError } from '../errors.js';
+import type { IkaOWSProvider } from '../client/provider.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -51,6 +51,8 @@ export interface IkaOWSServerConfig {
 	port?: number;
 	/** Hostname to bind to. Default: '127.0.0.1'. */
 	host?: string;
+	/** CORS origin. Default: '*'. Set to a specific origin in production. */
+	cors?: string;
 }
 
 export interface OWSRequest {
@@ -122,15 +124,10 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
 	}
 
 	if (path === '/wallets' && method === 'POST') {
-		const wallet = await provider.createWallet(
-			body.name as string,
-			body.passphrase as string,
-			{
-				curve: body.curve as any,
-				words: body.words as number | undefined,
-				timeout: body.timeout as number | undefined,
-			},
-		);
+		const wallet = await provider.createWallet(body.name as string, body.privateKey as string, {
+			curve: body.curve as any,
+			timeout: body.timeout as number | undefined,
+		});
 		return { status: 201, body: wallet };
 	}
 
@@ -139,32 +136,6 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
 			curve: body.curve as any,
 			timeout: body.timeout as number | undefined,
 		});
-		return { status: 201, body: wallet };
-	}
-
-	if (path === '/wallets/import/mnemonic' && method === 'POST') {
-		const wallet = await provider.importWalletMnemonic(
-			body.name as string,
-			body.mnemonic as string,
-			body.passphrase as string,
-			{
-				curve: body.curve as any,
-				index: body.index as number | undefined,
-				timeout: body.timeout as number | undefined,
-			},
-		);
-		return { status: 201, body: wallet };
-	}
-
-	if (path === '/wallets/import/private-key' && method === 'POST') {
-		const wallet = await provider.importWalletPrivateKey(
-			body.name as string,
-			body.privateKey as string,
-			{
-				curve: body.curve as any,
-				timeout: body.timeout as number | undefined,
-			},
-		);
 		return { status: 201, body: wallet };
 	}
 
@@ -196,9 +167,7 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
 				timeout: body.timeout as number | undefined,
 				interval: body.interval as number | undefined,
 				declaredValue: body.declaredValue as bigint | number | undefined,
-				declaredTarget: body.declaredTarget
-					? hexToBytes(body.declaredTarget as string)
-					: undefined,
+				declaredTarget: body.declaredTarget ? hexToBytes(body.declaredTarget as string) : undefined,
 			},
 		);
 		return { status: 200, body: result };
@@ -216,9 +185,7 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
 				timeout: body.timeout as number | undefined,
 				interval: body.interval as number | undefined,
 				declaredValue: body.declaredValue as bigint | number | undefined,
-				declaredTarget: body.declaredTarget
-					? hexToBytes(body.declaredTarget as string)
-					: undefined,
+				declaredTarget: body.declaredTarget ? hexToBytes(body.declaredTarget as string) : undefined,
 			},
 		);
 		return { status: 200, body: result };
@@ -237,7 +204,9 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
 
 	if (path === '/presigns/available' && method === 'GET') {
 		const wallet = (req.body.wallet ?? req.headers['x-wallet']) as string;
-		const algo = (req.body.signatureAlgorithm ?? req.headers['x-algorithm'] ?? 'ECDSASecp256k1') as string;
+		const algo = (req.body.signatureAlgorithm ??
+			req.headers['x-algorithm'] ??
+			'ECDSASecp256k1') as string;
 		const count = provider.availablePresigns(wallet, algo as any);
 		return { status: 200, body: { available: count } };
 	}
@@ -272,15 +241,44 @@ async function route(provider: IkaOWSProvider, req: OWSRequest): Promise<OWSResp
  * });
  * ```
  */
+/** Max request body size in bytes (1 MiB). */
+const MAX_BODY_SIZE = 1024 * 1024;
+
 export function startServer(config: IkaOWSServerConfig): http.Server {
 	const { provider, apiKey, port = 3420, host = '127.0.0.1' } = config;
 
 	const server = http.createServer(async (req, res) => {
+		// CORS headers.
+		res.setHeader('Access-Control-Allow-Origin', config.cors ?? '*');
+		res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+		res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+		if (req.method === 'OPTIONS') {
+			res.writeHead(204);
+			res.end();
+			return;
+		}
+
 		const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
 		const bodyChunks: Buffer[] = [];
+		let bodySize = 0;
+		let aborted = false;
 
-		req.on('data', (chunk: Buffer) => bodyChunks.push(chunk));
+		req.on('data', (chunk: Buffer) => {
+			bodySize += chunk.length;
+			if (bodySize > MAX_BODY_SIZE) {
+				aborted = true;
+				res.writeHead(413, { 'Content-Type': 'application/json' });
+				res.end(JSON.stringify({ error: 'Request body too large' }));
+				req.destroy();
+				return;
+			}
+			bodyChunks.push(chunk);
+		});
+
 		req.on('end', async () => {
+			if (aborted) return;
+
 			let body: Record<string, unknown> = {};
 			if (bodyChunks.length > 0) {
 				try {

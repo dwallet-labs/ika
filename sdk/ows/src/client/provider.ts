@@ -4,13 +4,18 @@
 /**
  * IkaOWSProvider — Open Wallet Standard implementation backed by Ika MPC signing.
  *
- * Implements the OWS-compatible interface using Ika's 2PC-MPC protocol for
- * all signing operations. No dependency on @open-wallet-standard/core —
- * everything is implemented natively with proper policy enforcement.
+ * Two ways to create wallets:
+ * 1. **Import private key** → `createWallet(name, privateKeyHex, { curve })`
+ *    The key is imported into Ika via the 2PC-MPC protocol. The raw key is
+ *    only used during import and never stored. Users handle their own key
+ *    derivation (HD, mnemonic, etc.) outside the SDK.
+ *
+ * 2. **DKG** → `createDWallet(name, { curve })`
+ *    No private key ever exists. Generated distributedly via MPC.
  *
  * @example
  * ```ts
- * import { IkaOWSProvider, generateMnemonic } from '@ika.xyz/ows';
+ * import { IkaOWSProvider } from '@ika.xyz/ows';
  * import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
  *
  * const provider = new IkaOWSProvider({
@@ -19,16 +24,15 @@
  * });
  * await provider.initialize();
  *
- * // Mnemonic wallet (OWS-compatible)
- * const wallet = await provider.createWallet('agent-wallet', 'passphrase');
+ * // Import a private key (secp256k1 for EVM/BTC/Cosmos)
+ * const wallet = await provider.createWallet('evm-wallet', privateKeyHex, {
+ *   curve: Curve.SECP256K1,
+ * });
  *
- * // Pre-fill presigns for fast signing
- * await provider.prefillPresigns('agent-wallet', 'ECDSASecp256k1', 5);
+ * // Sign
+ * const sig = await provider.signTransaction('evm-wallet', 'eip155:1', txHex);
  *
- * // Sign (uses presign pool automatically)
- * const sig = await provider.signTransaction('agent-wallet', 'eip155:1', txHex);
- *
- * // Pure MPC wallet (no mnemonic, maximum security)
+ * // Pure MPC wallet (no private key, maximum security)
  * const dWallet = await provider.createDWallet('mpc-wallet');
  * ```
  */
@@ -44,43 +48,47 @@ import {
 	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
 import type { Hash, IkaConfig, SignatureAlgorithm } from '@ika.xyz/sdk';
+import { bcs as suiBcs } from '@mysten/sui/bcs';
 import type { Keypair } from '@mysten/sui/cryptography';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import type { TransactionObjectArgument } from '@mysten/sui/transactions';
-import { Transaction } from '@mysten/sui/transactions';
+import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 
-import { deriveAccountsForCurve } from './address.js';
-import { resolveChainParams } from './chains.js';
+import { deriveAccountsForCurve } from '../chain/address.js';
+import { resolveChainParams } from '../chain/chains.js';
 import {
 	base64ToBytes,
-	bytesToBase64,
 	bytesToHex,
 	decryptMnemonic,
-	derivePrivateKeyFromMnemonic,
-	encryptMnemonic,
 	hexToBytes,
-} from './crypto.js';
-import { OWSError, OWSErrorCode } from './errors.js';
+} from '../crypto/index.js';
+import { OWSError, OWSErrorCode } from '../errors.js';
 import { OWSExecutor } from './executor.js';
-import { generateMnemonic } from './mnemonic.js';
-import { PolicyEngine } from './policy.js';
-import type { OnChainPolicy, PolicyFunction } from './policy.js';
+import { PolicyEngine } from '../policy/index.js';
+import type { OnChainPolicy, PolicyFunction } from '../policy/index.js';
 import { PresignPool } from './presign-pool.js';
-import { hashToNumber, signatureAlgorithmToNumber } from './tx/algo-numbers.js';
-import * as policyEngineTx from './tx/policy-engine.js';
+import { fromCurveAndSignatureAlgorithmAndHashToNumbers } from '../tx/algo-numbers.js';
+import {
+	allowedAlgorithms as allowedAlgorithmsGen,
+	expiry as expiryGen,
+	policyEngine as policyEngineGen,
+	rateLimit as rateLimitGen,
+	senderAllowlist as senderAllowlistGen,
+	spendingBudget as spendingBudgetGen,
+	targetFilter as targetFilterGen,
+	timeDelay as timeDelayGen,
+} from '../tx/policy-engine.js';
 import type {
 	ChainId,
 	CreateDWalletOptions,
-	CreateWalletOptions,
 	DkgVaultEntry,
 	IkaOWSProviderConfig,
+	ImportedKeyVaultEntry,
 	IkaVaultEntry,
 	IkaWalletInfo,
-	ImportMnemonicOptions,
 	ImportPrivateKeyOptions,
-	MnemonicVaultEntry,
 	PolicyAccessGrantResult,
 	PolicyEngineConfig,
 	PolicyEngineCreateResult,
@@ -88,13 +96,12 @@ import type {
 	RuleConfig,
 	SignOptions,
 	SignResult,
-} from './types.js';
-import { deleteVaultEntry, findVaultEntry, listVaultEntries, saveVaultEntry } from './vault.js';
+} from '../types.js';
+import { deleteVaultEntry, findVaultEntry, listVaultEntries, saveVaultEntry } from '../vault/index.js';
 
 // ─── Re-exports ─────────────────────────────────────────────────────────
 
-export { generateMnemonic, deriveAddressFromMnemonic, isValidMnemonic } from './mnemonic.js';
-export { PolicyEngine } from './policy.js';
+export { PolicyEngine } from '../policy/index.js';
 export type {
 	PolicyFunction,
 	PolicyContext,
@@ -102,7 +109,22 @@ export type {
 	OnChainPolicy,
 	DeclarativePolicy,
 	DeclarativePolicyRules,
-} from './policy.js';
+} from '../policy/index.js';
+
+/** Move struct names for each rule type (used in type arguments). */
+const RULE_TYPE_NAMES: Record<string, string> = {
+	rate_limit: 'RateLimit',
+	expiry: 'Expiry',
+	sender_allowlist: 'SenderAllowlist',
+	allowed_algorithms: 'AllowedAlgorithms',
+	spending_budget: 'SpendingBudget',
+	target_filter: 'TargetFilter',
+	time_delay: 'TimeDelay',
+};
+
+// ─── Logging ─────────────────────────────────────────────────────────────
+
+type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 
 // ─── Provider ────────────────────────────────────────────────────────────
 
@@ -130,8 +152,19 @@ export class IkaOWSProvider {
 		return this.#policyEngineConfigOverride ?? this.#policyEngineConfig;
 	}
 
+	/** Tracks whether the encryption key has been registered on-chain. */
+	#encryptionKeyRegistered = false;
+
 	/** Domain separator for encryption key derivation (must be 8 bytes). */
 	static readonly #ENC_KEY_DOMAIN = new TextEncoder().encode('IKA_OWS_');
+
+	#log(level: LogLevel, msg: string, data?: Record<string, unknown>): void {
+		if (level === 'debug' && !process.env.OWS_DEBUG) return;
+		const ts = new Date().toISOString();
+		const suffix = data ? ' ' + JSON.stringify(data) : '';
+		const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+		fn(`[OWS] ${ts} ${level.toUpperCase()} ${msg}${suffix}`);
+	}
 
 	constructor(config: IkaOWSProviderConfig) {
 		this.#keypair = config.keypair;
@@ -167,6 +200,7 @@ export class IkaOWSProvider {
 
 	/** Initialize the provider. Must be called before wallet or signing operations. */
 	async initialize(): Promise<void> {
+		this.#log('info', 'initialize: starting');
 		this.#ikaClient = new IkaClient({
 			config: this.#ikaConfig,
 			suiClient: this.#suiClient,
@@ -175,7 +209,6 @@ export class IkaOWSProvider {
 		this.#executor = new OWSExecutor(this.#suiClient, this.#keypair);
 		this.#presignPool = new PresignPool(
 			this.#ikaClient,
-			this.#suiClient,
 			this.#keypair,
 			this.#executor,
 			this.#ikaConfig,
@@ -188,120 +221,59 @@ export class IkaOWSProvider {
 		}
 
 		this.#initialized = true;
+		this.#log('info', 'initialize: complete');
 	}
 
-	// ─── Mnemonic Wallets (OWS-compatible) ───────────────────────────────
+	// ─── Imported Key Wallets ────────────────────────────────────────────
 
 	/**
-	 * Create a new mnemonic-backed wallet.
+	 * Create a wallet by importing a raw private key.
 	 *
-	 * Generates a BIP-39 mnemonic via OWS core, derives the private key,
-	 * imports it into Ika as an imported-key dWallet, and stores the
-	 * encrypted mnemonic in the vault.
+	 * The private key is imported into Ika as an imported-key dWallet.
+	 * After import, all signing is done via MPC — the raw key is never
+	 * stored and only used during the import protocol.
+	 *
+	 * **Private key format:**
+	 * - secp256k1/r1: 32 bytes hex (standard ECDSA private key)
+	 * - ed25519: 32 bytes hex (must be a valid canonical scalar < curve order L)
+	 *
+	 * For ed25519, if you're deriving from a mnemonic, do the derivation
+	 * yourself (e.g., SLIP-0010) and pass the result here. If deriving
+	 * from a seed, use SHA-512(seed)[0:32] reduced modulo L.
+	 *
+	 * @example
+	 * ```ts
+	 * // secp256k1 (EVM, Bitcoin, Cosmos)
+	 * const wallet = await provider.createWallet('my-wallet', privateKeyHex, {
+	 *   curve: Curve.SECP256K1,
+	 * });
+	 *
+	 * // ed25519 (Solana, Sui, TON)
+	 * const wallet = await provider.createWallet('sol-wallet', ed25519ScalarHex, {
+	 *   curve: Curve.ED25519,
+	 * });
+	 * ```
 	 */
 	async createWallet(
-		name: string,
-		passphrase: string,
-		options?: CreateWalletOptions,
-	): Promise<IkaWalletInfo> {
-		this.#assertInitialized();
-
-		const curve = options?.curve ?? Curve.SECP256K1;
-		const mnemonic = generateMnemonic(options?.words);
-		const privateKey = derivePrivateKeyFromMnemonic(mnemonic, curve, 0);
-
-		const ikaInfo = await this.#importKeyIntoIka(privateKey, curve, options?.timeout);
-		const { ciphertext, salt, nonce } = encryptMnemonic(mnemonic, passphrase);
-
-		const entry: MnemonicVaultEntry = {
-			owsVersion: 1,
-			provider: 'ika',
-			id: crypto.randomUUID(),
-			name,
-			kind: 'mnemonic',
-			encryptedMnemonic: bytesToBase64(ciphertext),
-			encryptionSalt: bytesToHex(salt),
-			encryptionNonce: bytesToHex(nonce),
-			dwalletId: ikaInfo.dwalletId,
-			dwalletCapId: ikaInfo.dwalletCapId,
-			curve,
-			userShareKeysHex: ikaInfo.userShareKeysHex,
-			encryptedUserSecretKeyShareId: ikaInfo.encryptedUserSecretKeyShareId,
-			publicKeyHex: ikaInfo.publicKeyHex,
-			networkEncryptionKeyId: ikaInfo.networkEncryptionKeyId,
-			createdAt: new Date().toISOString(),
-			presignIds: [],
-		};
-
-		saveVaultEntry(entry, this.#vaultPath);
-		return this.#entryToWalletInfo(entry);
-	}
-
-	/**
-	 * Import a wallet from a BIP-39 mnemonic.
-	 *
-	 * Derives the private key, imports it into Ika, and stores the
-	 * encrypted mnemonic in the vault.
-	 */
-	async importWalletMnemonic(
-		name: string,
-		mnemonic: string,
-		passphrase: string,
-		options?: ImportMnemonicOptions,
-	): Promise<IkaWalletInfo> {
-		this.#assertInitialized();
-
-		const curve = options?.curve ?? Curve.SECP256K1;
-		const index = options?.index ?? 0;
-		const privateKey = derivePrivateKeyFromMnemonic(mnemonic, curve, index);
-
-		const ikaInfo = await this.#importKeyIntoIka(privateKey, curve, options?.timeout);
-		const { ciphertext, salt, nonce } = encryptMnemonic(mnemonic, passphrase);
-
-		const entry: MnemonicVaultEntry = {
-			owsVersion: 1,
-			provider: 'ika',
-			id: crypto.randomUUID(),
-			name,
-			kind: 'mnemonic',
-			encryptedMnemonic: bytesToBase64(ciphertext),
-			encryptionSalt: bytesToHex(salt),
-			encryptionNonce: bytesToHex(nonce),
-			dwalletId: ikaInfo.dwalletId,
-			dwalletCapId: ikaInfo.dwalletCapId,
-			curve,
-			userShareKeysHex: ikaInfo.userShareKeysHex,
-			encryptedUserSecretKeyShareId: ikaInfo.encryptedUserSecretKeyShareId,
-			publicKeyHex: ikaInfo.publicKeyHex,
-			networkEncryptionKeyId: ikaInfo.networkEncryptionKeyId,
-			createdAt: new Date().toISOString(),
-			presignIds: [],
-		};
-
-		saveVaultEntry(entry, this.#vaultPath);
-		return this.#entryToWalletInfo(entry);
-	}
-
-	/**
-	 * Import a wallet from a raw private key.
-	 */
-	async importWalletPrivateKey(
 		name: string,
 		privateKeyHex: string,
 		options?: ImportPrivateKeyOptions,
 	): Promise<IkaWalletInfo> {
 		this.#assertInitialized();
+		this.#log('info', 'createWallet: starting', { name });
 
 		const curve = options?.curve ?? Curve.SECP256K1;
 		const privateKey = hexToBytes(privateKeyHex);
 		const ikaInfo = await this.#importKeyIntoIka(privateKey, curve, options?.timeout);
 
-		const entry: DkgVaultEntry = {
+		this.#log('info', 'createWallet: dWallet created', { dwalletId: ikaInfo.dwalletId });
+
+		const entry: ImportedKeyVaultEntry = {
 			owsVersion: 1,
 			provider: 'ika',
 			id: crypto.randomUUID(),
 			name,
-			kind: 'dkg', // No mnemonic to store; treated like a DKG entry.
+			kind: 'imported_key',
 			dwalletId: ikaInfo.dwalletId,
 			dwalletCapId: ikaInfo.dwalletCapId,
 			curve,
@@ -314,6 +286,7 @@ export class IkaOWSProvider {
 		};
 
 		saveVaultEntry(entry, this.#vaultPath);
+		this.#log('info', 'createWallet: complete', { name, dwalletId: ikaInfo.dwalletId });
 		return this.#entryToWalletInfo(entry);
 	}
 
@@ -327,6 +300,7 @@ export class IkaOWSProvider {
 	 */
 	async createDWallet(name: string, options?: CreateDWalletOptions): Promise<IkaWalletInfo> {
 		this.#assertInitialized();
+		this.#log('info', 'createDWallet: starting', { name });
 		const ikaClient = this.#ikaClient!;
 
 		const curve = options?.curve ?? Curve.SECP256K1;
@@ -336,16 +310,18 @@ export class IkaOWSProvider {
 			this.#encryptionSeed,
 			curve,
 		);
-		const signerAddress = userShareEncryptionKeys.getSuiAddress();
+		const signerAddress = this.#keypair.toSuiAddress();
 
 		// Prepare DKG.
 		const randomSessionIdentifier = randomBytes(32);
-		const dkgData = await prepareDKGAsync(
-			ikaClient,
-			curve,
-			userShareEncryptionKeys,
-			randomSessionIdentifier,
-			signerAddress,
+		const dkgData = await this.retry(() =>
+			prepareDKGAsync(
+				ikaClient,
+				curve,
+				userShareEncryptionKeys,
+				randomSessionIdentifier,
+				signerAddress,
+			),
 		);
 
 		// Execute DKG on-chain.
@@ -357,10 +333,18 @@ export class IkaOWSProvider {
 			userShareEncryptionKeys,
 		});
 
-		await ikaTransaction.registerEncryptionKey({ curve });
+		if (!this.#encryptionKeyRegistered) {
+			try {
+				await ikaClient.getActiveEncryptionKey(userShareEncryptionKeys.getSuiAddress());
+				this.#encryptionKeyRegistered = true;
+			} catch {
+				await ikaTransaction.registerEncryptionKey({ curve });
+				this.#encryptionKeyRegistered = true;
+			}
+		}
 
-		const sessionId = ikaTransaction.createSessionIdentifier();
-		const ikaCoin = await this.#prepareIkaCoin(transaction);
+		const sessionId = ikaTransaction.registerSessionIdentifier(randomSessionIdentifier);
+		const ikaCoin = this.#prepareIkaCoin(transaction);
 		const [dWalletCap] = await ikaTransaction.requestDWalletDKG({
 			dkgRequestInput: dkgData,
 			curve,
@@ -370,8 +354,9 @@ export class IkaOWSProvider {
 			sessionIdentifier: sessionId,
 		});
 
-		transaction.transferObjects([dWalletCap], this.#keypair.toSuiAddress());
+		transaction.transferObjects([dWalletCap, ikaCoin], this.#keypair.toSuiAddress());
 
+		this.#log('info', 'createDWallet: DKG submitted');
 		const result = await this.#executor!.execute(transaction);
 
 		const dkgEvent = (result.events ?? []).find((e: { type: string }) =>
@@ -380,26 +365,36 @@ export class IkaOWSProvider {
 		if (!dkgEvent) {
 			throw new OWSError(OWSErrorCode.DKG_FAILED, 'DKG event not found');
 		}
-		const eventData = dkgEvent.parsedJson as {
-			dwallet_id: string;
-			dwallet_cap_id: string;
-			user_secret_key_share: {
-				Encrypted?: { encrypted_user_secret_key_share_id: string };
+		const dkgSessionEvent = dkgEvent.parsedJson as {
+			event_data: {
+				dwallet_id: string;
+				dwallet_cap_id: string;
+				user_secret_key_share:
+					| { Encrypted?: { encrypted_user_secret_key_share_id: string } }
+					| { variant: string; fields: { encrypted_user_secret_key_share_id: string } };
 			};
 		};
+		const eventData = dkgSessionEvent.event_data;
+		const share = eventData.user_secret_key_share;
 		const encryptedShareId =
-			eventData.user_secret_key_share?.Encrypted?.encrypted_user_secret_key_share_id;
+			('Encrypted' in share ? share.Encrypted?.encrypted_user_secret_key_share_id : null) ??
+			('fields' in share ? share.fields?.encrypted_user_secret_key_share_id : null);
 		if (!encryptedShareId) {
-			throw new OWSError(OWSErrorCode.DKG_FAILED, 'Encrypted share ID not found');
+			throw new OWSError(
+				OWSErrorCode.DKG_FAILED,
+				`Encrypted share ID not found. user_secret_key_share: ${JSON.stringify(eventData.user_secret_key_share).slice(0, 500)}`,
+			);
 		}
 
 		// Wait → accept → activate.
+		this.#log('info', 'createDWallet: awaiting state', { state: 'AwaitingKeyHolderSignature' });
 		const awaitingDWallet = await ikaClient.getDWalletInParticularState(
 			eventData.dwallet_id,
 			'AwaitingKeyHolderSignature',
 			{ timeout },
 		);
 
+		this.#log('info', 'createDWallet: accepted');
 		const acceptTx = new Transaction();
 		const acceptIkaTx = new IkaTransaction({
 			ikaClient,
@@ -418,6 +413,7 @@ export class IkaOWSProvider {
 			'Active',
 			{ timeout },
 		);
+		this.#log('info', 'createDWallet: activated', { dwalletId: eventData.dwallet_id });
 
 		const publicOutput = Uint8Array.from(activeDWallet.state.Active?.public_output ?? []);
 		const publicKey = await publicKeyFromDWalletOutput(curve, publicOutput);
@@ -442,6 +438,7 @@ export class IkaOWSProvider {
 		};
 
 		saveVaultEntry(entry, this.#vaultPath);
+		this.#log('info', 'createDWallet: complete', { name, dwalletId: eventData.dwallet_id });
 		return this.#entryToWalletInfo(entry);
 	}
 
@@ -487,7 +484,7 @@ export class IkaOWSProvider {
 			);
 		}
 
-		// DKG wallet: return user share keys.
+		// DKG / imported_key wallet: return user share keys.
 		return entry.userShareKeysHex;
 	}
 
@@ -503,7 +500,7 @@ export class IkaOWSProvider {
 		transactionHex: string,
 		options?: SignOptions,
 	): Promise<SignResult> {
-		return this.#signBytes(wallet, chain, hexToBytes(transactionHex), options);
+		return this.retry(() => this.#signBytes(wallet, chain, hexToBytes(transactionHex), options));
 	}
 
 	/**
@@ -524,7 +521,7 @@ export class IkaOWSProvider {
 		} else {
 			bytes = new TextEncoder().encode(message);
 		}
-		return this.#signBytes(wallet, chain, bytes, options);
+		return this.retry(() => this.#signBytes(wallet, chain, bytes, options));
 	}
 
 	// ─── Presign Pool ────────────────────────────────────────────────────
@@ -641,16 +638,24 @@ export class IkaOWSProvider {
 		rules: RuleConfig[],
 	): Promise<PolicyEngineCreateResult> {
 		this.#assertInitialized();
+		this.#log('info', 'createPolicyEngine: starting', { wallet, rules: rules.map((r) => r.type) });
 
 		const entry = findVaultEntry(wallet, this.#vaultPath);
-		const isImportedKey = entry.kind === 'mnemonic';
+		const isImportedKey = entry.kind === 'mnemonic' || entry.kind === 'imported_key';
 
 		const tx = new Transaction();
 
 		// Create engine (custodies the cap).
-		const adminCap = isImportedKey
-			? policyEngineTx.createWithImportedKeyCap(packageId, entry.dwalletCapId, tx)
-			: policyEngineTx.createWithDkgCap(packageId, entry.dwalletCapId, tx);
+		const createFn = isImportedKey
+			? policyEngineGen.createWithImportedKeyCap({
+					package: packageId,
+					arguments: { cap: entry.dwalletCapId },
+				})
+			: policyEngineGen.createWithDkgCap({
+					package: packageId,
+					arguments: { cap: entry.dwalletCapId },
+				});
+		const adminCap = tx.add(createFn);
 
 		// Transfer admin cap to self.
 		tx.transferObjects([adminCap], this.#keypair.toSuiAddress());
@@ -667,10 +672,9 @@ export class IkaOWSProvider {
 				'PolicyEngineCreatedEvent not found in transaction result',
 			);
 		}
-		const { engine_id: engineId, admin_cap_id: adminCapId } = createdEvent.parsedJson as {
-			engine_id: string;
-			admin_cap_id: string;
-		};
+		const createdData = createdEvent.parsedJson as { engine_id: string; admin_cap_id: string };
+		const engineId = createdData.engine_id;
+		const adminCapId = createdData.admin_cap_id;
 
 		// Step 2: Register rules.
 		if (rules.length > 0) {
@@ -681,6 +685,7 @@ export class IkaOWSProvider {
 			await this.#executor!.execute(rulesTx);
 		}
 
+		this.#log('info', 'createPolicyEngine: complete', { engineId });
 		return { engineId, adminCapId, digest: createResult.digest };
 	}
 
@@ -699,24 +704,28 @@ export class IkaOWSProvider {
 		recipient?: string,
 	): Promise<PolicyAccessGrantResult> {
 		this.#assertInitialized();
+		this.#log('info', 'grantPolicyAccess: starting', { engineId });
 
 		const tx = new Transaction();
-		const accessCap = policyEngineTx.grantAccess(packageId, engineId, adminCapId, tx);
+		const accessCap = tx.add(
+			policyEngineGen.grantAccess({
+				package: packageId,
+				arguments: { self: engineId, adminCap: adminCapId },
+			}),
+		);
 		tx.transferObjects([accessCap], recipient ?? this.#keypair.toSuiAddress());
 		const result = await this.#executor!.execute(tx);
 
-		const grantEvent = result.events.find((e) =>
-			e.type.includes('PolicyAccessGrantedEvent'),
-		);
+		const grantEvent = result.events.find((e) => e.type.includes('PolicyAccessGrantedEvent'));
 		if (!grantEvent) {
 			throw new OWSError(
 				OWSErrorCode.INVALID_INPUT,
 				'PolicyAccessGrantedEvent not found in transaction result',
 			);
 		}
-		const { access_cap_id: accessCapId } = grantEvent.parsedJson as {
-			access_cap_id: string;
-		};
+		const grantData = grantEvent.parsedJson as { access_cap_id: string };
+		const accessCapId = grantData.access_cap_id;
+		this.#log('info', 'grantPolicyAccess: complete', { accessCapId });
 
 		return { accessCapId, digest: result.digest };
 	}
@@ -748,14 +757,18 @@ export class IkaOWSProvider {
 		this.#assertInitialized();
 		const tx = new Transaction();
 
+		const args = { engine: engineId, adminCap: adminCapId };
 		const removeFn: Record<string, () => void> = {
-			rate_limit: () => policyEngineTx.removeRateLimit(packageId, engineId, adminCapId, tx),
-			expiry: () => policyEngineTx.removeExpiry(packageId, engineId, adminCapId, tx),
-			sender_allowlist: () => policyEngineTx.removeSenderAllowlist(packageId, engineId, adminCapId, tx),
-			allowed_algorithms: () => policyEngineTx.removeAllowedAlgorithms(packageId, engineId, adminCapId, tx),
-			spending_budget: () => policyEngineTx.removeSpendingBudget(packageId, engineId, adminCapId, tx),
-			target_filter: () => policyEngineTx.removeTargetFilter(packageId, engineId, adminCapId, tx),
-			time_delay: () => policyEngineTx.removeTimeDelay(packageId, engineId, adminCapId, tx),
+			rate_limit: () => tx.add(rateLimitGen.remove({ package: packageId, arguments: args })),
+			expiry: () => tx.add(expiryGen.remove({ package: packageId, arguments: args })),
+			sender_allowlist: () =>
+				tx.add(senderAllowlistGen.remove({ package: packageId, arguments: args })),
+			allowed_algorithms: () =>
+				tx.add(allowedAlgorithmsGen.remove({ package: packageId, arguments: args })),
+			spending_budget: () =>
+				tx.add(spendingBudgetGen.remove({ package: packageId, arguments: args })),
+			target_filter: () => tx.add(targetFilterGen.remove({ package: packageId, arguments: args })),
+			time_delay: () => tx.add(timeDelayGen.remove({ package: packageId, arguments: args })),
 		};
 
 		removeFn[ruleType]?.();
@@ -768,17 +781,31 @@ export class IkaOWSProvider {
 	async pausePolicyEngine(packageId: string, engineId: string, adminCapId: string): Promise<void> {
 		this.#assertInitialized();
 		const tx = new Transaction();
-		policyEngineTx.pause(packageId, engineId, adminCapId, tx);
+		tx.add(
+			policyEngineGen.pause({
+				package: packageId,
+				arguments: { self: engineId, adminCap: adminCapId },
+			}),
+		);
 		await this.#executor!.execute(tx);
 	}
 
 	/**
 	 * Unpause the policy engine.
 	 */
-	async unpausePolicyEngine(packageId: string, engineId: string, adminCapId: string): Promise<void> {
+	async unpausePolicyEngine(
+		packageId: string,
+		engineId: string,
+		adminCapId: string,
+	): Promise<void> {
 		this.#assertInitialized();
 		const tx = new Transaction();
-		policyEngineTx.unpause(packageId, engineId, adminCapId, tx);
+		tx.add(
+			policyEngineGen.unpause({
+				package: packageId,
+				arguments: { self: engineId, adminCap: adminCapId },
+			}),
+		);
 		await this.#executor!.execute(tx);
 	}
 
@@ -805,6 +832,7 @@ export class IkaOWSProvider {
 		wallet: string,
 		rules: RuleConfig[],
 	): Promise<PolicyEngineConfig> {
+		this.#log('info', 'setupPolicyEngine: starting', { wallet, rules: rules.map((r) => r.type) });
 		const { engineId, adminCapId } = await this.createPolicyEngine(packageId, wallet, rules);
 		const { accessCapId } = await this.grantPolicyAccess(packageId, engineId, adminCapId);
 
@@ -817,6 +845,7 @@ export class IkaOWSProvider {
 
 		// Update the provider to use this engine for signing.
 		this.#policyEngineConfigOverride = config;
+		this.#log('info', 'setupPolicyEngine: complete', { engineId });
 
 		return config;
 	}
@@ -829,6 +858,12 @@ export class IkaOWSProvider {
 
 	get isInitialized(): boolean {
 		return this.#initialized;
+	}
+
+	/** Execute a raw transaction through the serial executor. */
+	async executeTransaction(tx: Transaction): Promise<import('./executor.js').TxResult> {
+		this.#assertInitialized();
+		return this.#executor!.execute(tx);
 	}
 
 	// ─── Internal: Import key into Ika ───────────────────────────────────
@@ -845,6 +880,7 @@ export class IkaOWSProvider {
 		userShareKeysHex: string;
 		networkEncryptionKeyId: string;
 	}> {
+		this.#log('info', 'importKeyIntoIka: starting');
 		const ikaClient = this.#ikaClient!;
 		const effectiveTimeout = timeout ?? this.#mpcTimeout;
 
@@ -852,16 +888,28 @@ export class IkaOWSProvider {
 			this.#encryptionSeed,
 			curve,
 		);
-		const signerAddress = userShareEncryptionKeys.getSuiAddress();
+		const signerAddress = this.#keypair.toSuiAddress();
+
+		// BCS-encode the private key for the WASM import function.
+		// ECDSA curves: BCS vector<u8> (ULEB128 length prefix + raw bytes)
+		// EdDSA/Schnorr: raw 32 bytes (no prefix)
+		const encodedKey =
+			curve === Curve.SECP256K1 || curve === Curve.SECP256R1
+				? Uint8Array.from(suiBcs.vector(suiBcs.u8()).serialize(Array.from(privateKey)).toBytes())
+				: Uint8Array.from(
+						suiBcs.fixedArray(32, suiBcs.u8()).serialize(Array.from(privateKey)).toBytes(),
+					);
 
 		const sessionIdentifier = randomBytes(32);
-		const importData = await prepareImportedKeyDWalletVerification(
-			ikaClient,
-			curve,
-			sessionIdentifier,
-			signerAddress,
-			userShareEncryptionKeys,
-			privateKey,
+		const importData = await this.retry(() =>
+			prepareImportedKeyDWalletVerification(
+				ikaClient,
+				curve,
+				sessionIdentifier,
+				signerAddress,
+				userShareEncryptionKeys,
+				encodedKey,
+			),
 		);
 
 		const transaction = new Transaction();
@@ -871,10 +919,19 @@ export class IkaOWSProvider {
 			userShareEncryptionKeys,
 		});
 
-		await ikaTransaction.registerEncryptionKey({ curve });
+		// Register encryption key in the same transaction if not yet registered.
+		if (!this.#encryptionKeyRegistered) {
+			try {
+				await ikaClient.getActiveEncryptionKey(userShareEncryptionKeys.getSuiAddress());
+				this.#encryptionKeyRegistered = true;
+			} catch {
+				await ikaTransaction.registerEncryptionKey({ curve });
+				this.#encryptionKeyRegistered = true;
+			}
+		}
 
 		const registeredSessionId = ikaTransaction.registerSessionIdentifier(sessionIdentifier);
-		const ikaCoin = await this.#prepareIkaCoin(transaction);
+		const ikaCoin = this.#prepareIkaCoin(transaction);
 
 		const importedKeyDWalletCap = await ikaTransaction.requestImportedKeyDWalletVerification({
 			importDWalletVerificationRequestInput: importData,
@@ -885,29 +942,43 @@ export class IkaOWSProvider {
 			suiCoin: transaction.gas,
 		});
 
-		transaction.transferObjects([importedKeyDWalletCap], this.#keypair.toSuiAddress());
+		transaction.transferObjects([importedKeyDWalletCap, ikaCoin], this.#keypair.toSuiAddress());
 
+		this.#log('info', 'importKeyIntoIka: tx submitted');
 		const result = await this.#executor!.execute(transaction);
 
-		const verificationEvent = (result.events ?? []).find((e: { type: string }) =>
+		const verificationEvent = result.events.find((e) =>
 			e.type.includes('DWalletImportedKeyVerificationRequestEvent'),
 		);
 		if (!verificationEvent) {
-			throw new OWSError(OWSErrorCode.DKG_FAILED, 'Imported key verification event not found');
+			const eventTypes = result.events.map((e) => e.type);
+			throw new OWSError(
+				OWSErrorCode.DKG_FAILED,
+				`Imported key verification event not found. Events: ${JSON.stringify(eventTypes)}`,
+			);
 		}
-		const eventData = verificationEvent.parsedJson as {
-			dwallet_id: string;
-			dwallet_cap_id: string;
-			encrypted_user_secret_key_share_id: string;
+		// Parse from BCS if parsedJson isn't available.
+		// The event is DWalletSessionEvent<DWalletImportedKeyVerificationRequestEvent>.
+		// The inner event data is nested under `event_data`.
+		const sessionEvent = verificationEvent.parsedJson as {
+			event_data: {
+				dwallet_id: string;
+				dwallet_cap_id: string;
+				encrypted_user_secret_key_share_id: string;
+			};
 		};
+		const eventData = sessionEvent.event_data;
+		this.#log('info', 'importKeyIntoIka: verification event found', { dwalletId: eventData.dwallet_id });
 
 		// Wait → accept → activate.
+		this.#log('info', 'importKeyIntoIka: awaiting state', { state: 'AwaitingKeyHolderSignature' });
 		const awaitingDWallet = await ikaClient.getDWalletInParticularState(
 			eventData.dwallet_id,
 			'AwaitingKeyHolderSignature',
 			{ timeout: effectiveTimeout },
 		);
 
+		this.#log('info', 'importKeyIntoIka: accepted');
 		const acceptTx = new Transaction();
 		const acceptIkaTx = new IkaTransaction({
 			ikaClient,
@@ -926,6 +997,7 @@ export class IkaOWSProvider {
 			'Active',
 			{ timeout: effectiveTimeout },
 		);
+		this.#log('info', 'importKeyIntoIka: activated', { dwalletId: eventData.dwallet_id });
 
 		const publicOutput = Uint8Array.from(activeDWallet.state.Active?.public_output ?? []);
 		const publicKey = await publicKeyFromDWalletOutput(curve, publicOutput);
@@ -952,6 +1024,7 @@ export class IkaOWSProvider {
 		options?: SignOptions,
 	): Promise<SignResult> {
 		this.#assertInitialized();
+		this.#log('info', 'signBytes: starting', { wallet: walletNameOrId, chain });
 		const ikaClient = this.#ikaClient!;
 
 		const entry = findVaultEntry(walletNameOrId, this.#vaultPath);
@@ -1001,9 +1074,10 @@ export class IkaOWSProvider {
 			timeout,
 			interval,
 		);
+		this.#log('info', 'signBytes: presign acquired');
 
 		// Build sign transaction.
-		const isImportedKey = entry.kind === 'mnemonic'; // Mnemonic wallets use imported-key protocol.
+		const isImportedKey = entry.kind === 'mnemonic' || entry.kind === 'imported_key'; // Mnemonic wallets use imported-key protocol.
 		const signTx = new Transaction();
 		const signIkaTx = new IkaTransaction({
 			ikaClient,
@@ -1012,12 +1086,13 @@ export class IkaOWSProvider {
 		});
 
 		const verifiedPresignCap = signIkaTx.verifyPresignCap({ presign: completedPresign });
-		const signIkaCoin = await this.#prepareIkaCoin(signTx);
+		const signIkaCoin = this.#prepareIkaCoin(signTx);
 
 		if (this.#activePolicyEngine) {
 			// Layer 2: On-chain policy enforcement via PolicyEngine.
 			const approval = this.#buildPolicyEngineApproval(
 				signTx,
+				entry.curve,
 				signatureAlgorithm,
 				hash,
 				message,
@@ -1093,6 +1168,10 @@ export class IkaOWSProvider {
 			});
 		}
 
+		// Transfer residual IKA coin back to sender.
+		signTx.transferObjects([signIkaCoin], this.#keypair.toSuiAddress());
+		this.#log('info', 'signBytes: approval built, submitting tx');
+
 		const signResult = await this.#executor!.execute(signTx);
 
 		const signEvent = (signResult.events ?? []).find((e: { type: string }) =>
@@ -1101,7 +1180,8 @@ export class IkaOWSProvider {
 		if (!signEvent) {
 			throw new OWSError(OWSErrorCode.SIGNING_FAILED, 'Sign event not found');
 		}
-		const signEventData = signEvent.parsedJson as { sign_id: string };
+		const signSessionEvent = signEvent.parsedJson as { event_data: { sign_id: string } };
+		const signEventData = signSessionEvent.event_data;
 
 		const completedSign = await ikaClient.getSignInParticularState(
 			signEventData.sign_id,
@@ -1111,6 +1191,7 @@ export class IkaOWSProvider {
 			{ timeout, interval },
 		);
 
+		this.#log('info', 'signBytes: signature received');
 		return {
 			signature: bytesToHex(Uint8Array.from(completedSign.state.Completed?.signature ?? [])),
 		};
@@ -1138,7 +1219,16 @@ export class IkaOWSProvider {
 		}
 
 		const tx = new Transaction();
-		policyEngineTx.timeDelayCommit(pe.packageId, pe.engineId, pe.accessCapId, messageHash, tx);
+		tx.add(
+			timeDelayGen.commit({
+				package: pe.packageId,
+				arguments: {
+					engine: pe.engineId,
+					accessCap: pe.accessCapId,
+					messageHash: Array.from(messageHash),
+				},
+			}),
+		);
 		await this.#executor!.execute(tx);
 	}
 
@@ -1155,6 +1245,7 @@ export class IkaOWSProvider {
 	 */
 	#buildPolicyEngineApproval(
 		tx: Transaction,
+		curve: Curve,
 		signatureAlgorithm: SignatureAlgorithm,
 		hash: Hash,
 		message: Uint8Array,
@@ -1162,19 +1253,23 @@ export class IkaOWSProvider {
 		options?: SignOptions,
 	) {
 		const pe = this.#activePolicyEngine!;
+		const pkg = pe.packageId;
 
-		const sigAlgoNum = signatureAlgorithmToNumber(signatureAlgorithm);
-		const hashNum = hashToNumber(hash);
+		const { signatureAlgorithmNumber: sigAlgoNum, hashNumber: hashNum } =
+			fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureAlgorithm, hash);
 
 		// 1. Create request.
-		const request = policyEngineTx.createRequest(
-			pe.packageId,
-			pe.engineId,
-			pe.accessCapId,
-			sigAlgoNum,
-			hashNum,
-			message,
-			tx,
+		const request = tx.add(
+			policyEngineGen.createRequest({
+				package: pkg,
+				arguments: {
+					self: pe.engineId,
+					accessCap: pe.accessCapId,
+					signatureAlgorithm: sigAlgoNum,
+					hashScheme: hashNum,
+					message: Array.from(message),
+				},
+			}),
 		);
 
 		// 2–3. Enforce each rule and add receipt.
@@ -1182,25 +1277,29 @@ export class IkaOWSProvider {
 			let receipt;
 			switch (rule) {
 				case 'rate_limit':
-					receipt = policyEngineTx.enforceRateLimit(pe.packageId, pe.engineId, request, tx);
+					receipt = tx.add(
+						rateLimitGen.enforce({ package: pkg, arguments: { engine: pe.engineId, request } }),
+					);
 					break;
 				case 'expiry':
-					receipt = policyEngineTx.enforceExpiry(pe.packageId, pe.engineId, request, tx);
+					receipt = tx.add(
+						expiryGen.enforce({ package: pkg, arguments: { engine: pe.engineId, request } }),
+					);
 					break;
 				case 'sender_allowlist':
-					receipt = policyEngineTx.enforceSenderAllowlist(
-						pe.packageId,
-						pe.engineId,
-						request,
-						tx,
+					receipt = tx.add(
+						senderAllowlistGen.enforce({
+							package: pkg,
+							arguments: { engine: pe.engineId, request },
+						}),
 					);
 					break;
 				case 'allowed_algorithms':
-					receipt = policyEngineTx.enforceAllowedAlgorithms(
-						pe.packageId,
-						pe.engineId,
-						request,
-						tx,
+					receipt = tx.add(
+						allowedAlgorithmsGen.enforce({
+							package: pkg,
+							arguments: { engine: pe.engineId, request },
+						}),
 					);
 					break;
 				case 'spending_budget': {
@@ -1211,12 +1310,11 @@ export class IkaOWSProvider {
 							'spending_budget rule requires declaredValue in SignOptions',
 						);
 					}
-					receipt = policyEngineTx.enforceSpendingBudget(
-						pe.packageId,
-						pe.engineId,
-						request,
-						value,
-						tx,
+					receipt = tx.add(
+						spendingBudgetGen.enforce({
+							package: pkg,
+							arguments: { engine: pe.engineId, request, declaredValue: value },
+						}),
 					);
 					break;
 				}
@@ -1228,54 +1326,46 @@ export class IkaOWSProvider {
 							'target_filter rule requires declaredTarget in SignOptions',
 						);
 					}
-					receipt = policyEngineTx.enforceTargetFilter(
-						pe.packageId,
-						pe.engineId,
-						request,
-						target,
-						tx,
+					receipt = tx.add(
+						targetFilterGen.enforce({
+							package: pkg,
+							arguments: { engine: pe.engineId, request, declaredTarget: Array.from(target) },
+						}),
 					);
 					break;
 				}
 				case 'time_delay':
-					receipt = policyEngineTx.enforceTimeDelay(
-						pe.packageId,
-						pe.engineId,
-						request,
-						tx,
+					receipt = tx.add(
+						timeDelayGen.enforce({ package: pkg, arguments: { engine: pe.engineId, request } }),
 					);
 					break;
 			}
 
-			policyEngineTx.addReceipt(pe.packageId, rule, this.#ruleTypeName(rule), request, receipt, tx);
+			tx.add(
+				policyEngineGen.addReceipt({
+					package: pkg,
+					typeArguments: [`${pkg}::${rule}::${RULE_TYPE_NAMES[rule]}`],
+					arguments: { self: request, receipt },
+				}),
+			);
 		}
 
 		// 4. Confirm → MessageApproval / ImportedKeyMessageApproval.
 		const coordinatorId = this.#ikaConfig.objects.ikaDWalletCoordinator.objectID;
 		if (isImportedKey) {
-			return policyEngineTx.confirmImportedKey(
-				pe.packageId,
-				pe.engineId,
-				coordinatorId,
-				request,
-				tx,
+			return tx.add(
+				policyEngineGen.confirmImportedKey({
+					package: pkg,
+					arguments: { self: pe.engineId, coordinator: coordinatorId, request },
+				}),
 			);
 		}
-		return policyEngineTx.confirmDkg(pe.packageId, pe.engineId, coordinatorId, request, tx);
-	}
-
-	/** Map rule type string to Move struct name. */
-	#ruleTypeName(rule: string): string {
-		const map: Record<string, string> = {
-			rate_limit: 'RateLimit',
-			expiry: 'Expiry',
-			sender_allowlist: 'SenderAllowlist',
-			allowed_algorithms: 'AllowedAlgorithms',
-			spending_budget: 'SpendingBudget',
-			target_filter: 'TargetFilter',
-			time_delay: 'TimeDelay',
-		};
-		return map[rule] ?? rule;
+		return tx.add(
+			policyEngineGen.confirmDkg({
+				package: pkg,
+				arguments: { self: pe.engineId, coordinator: coordinatorId, request },
+			}),
+		);
 	}
 
 	// ─── Internal: IKA Coin ──────────────────────────────────────────────
@@ -1285,37 +1375,26 @@ export class IkaOWSProvider {
 		return `${this.#ikaConfig.packages.ikaPackage}::ika::IKA`;
 	}
 
+	/** Minimum IKA per operation: 10 IKA (10 * 10^9 MIST). */
+	static readonly #IKA_PER_OPERATION = 10n * 10n ** 9n;
+
 	/**
-	 * Fetch the user's IKA coins and prepare a single merged coin in the
-	 * transaction for protocol fee payment.
+	 * Add an IKA coin intent to the transaction.
 	 *
-	 * If the user has multiple IKA coin objects, they are merged into one.
-	 * Returns a `TransactionObjectArgument` pointing to the IKA coin.
+	 * Allocates 10 IKA per operation for protocol fees. Uses `coinWithBalance`
+	 * which resolves coins at build time — no manual coin queries, no race
+	 * conditions between concurrent transactions.
+	 *
+	 * Minimum balance required: 10 IKA.
+	 * Recommended starting balance: 1,000–10,000 IKA.
 	 */
-	async #prepareIkaCoin(tx: Transaction): Promise<TransactionObjectArgument> {
-		const owner = this.#keypair.toSuiAddress();
-		const coins = await this.#suiClient.getCoins({
-			owner,
-			coinType: this.#ikaCoinType,
-		});
-
-		if (coins.data.length === 0) {
-			throw new OWSError(
-				OWSErrorCode.INVALID_INPUT,
-				`No IKA coins found for address ${owner}. IKA tokens are required for protocol fees.`,
-			);
-		}
-
-		// Use the first coin as the primary.
-		const primary = tx.object(coins.data[0]!.coinObjectId);
-
-		// Merge remaining coins into the primary if there are multiple.
-		if (coins.data.length > 1) {
-			const rest = coins.data.slice(1).map((c) => tx.object(c.coinObjectId));
-			tx.mergeCoins(primary, rest);
-		}
-
-		return primary;
+	#prepareIkaCoin(tx: Transaction): TransactionObjectArgument {
+		return tx.add(
+			coinWithBalance({
+				type: this.#ikaCoinType,
+				balance: IkaOWSProvider.#IKA_PER_OPERATION,
+			}),
+		);
 	}
 
 	// ─── Internal: Policy Engine Helpers ─────────────────────────────────
@@ -1327,42 +1406,92 @@ export class IkaOWSProvider {
 		rule: RuleConfig,
 		tx: Transaction,
 	): void {
+		const pkg = packageId;
 		switch (rule.type) {
 			case 'rate_limit':
-				policyEngineTx.addRateLimit(
-					packageId, engineId, adminCapId,
-					rule.maxPerWindow, rule.windowMs, tx,
+				tx.add(
+					rateLimitGen.add({
+						package: pkg,
+						arguments: {
+							engine: engineId,
+							adminCap: adminCapId,
+							maxPerWindow: rule.maxPerWindow,
+							windowMs: rule.windowMs,
+						},
+					}),
 				);
 				break;
 			case 'expiry':
-				policyEngineTx.addExpiry(packageId, engineId, adminCapId, rule.expiryMs, tx);
+				tx.add(
+					expiryGen.add({
+						package: pkg,
+						arguments: { engine: engineId, adminCap: adminCapId, expiryMs: rule.expiryMs },
+					}),
+				);
 				break;
 			case 'sender_allowlist':
-				policyEngineTx.addSenderAllowlist(
-					packageId, engineId, adminCapId, rule.allowed, tx,
+				tx.add(
+					senderAllowlistGen.add({
+						package: pkg,
+						arguments: { engine: engineId, adminCap: adminCapId, allowed: rule.allowed },
+					}),
 				);
 				break;
-			case 'allowed_algorithms':
-				policyEngineTx.addAllowedAlgorithms(
-					packageId, engineId, adminCapId, rule.pairs, tx,
+			case 'allowed_algorithms': {
+				const pairObjects = rule.pairs.map((p) =>
+					tx.add(
+						allowedAlgorithmsGen.newPair({
+							package: pkg,
+							arguments: { signatureAlgorithm: p.signatureAlgorithm, hashScheme: p.hashScheme },
+						}),
+					),
+				);
+				const pairsVec = tx.makeMoveVec({
+					elements: pairObjects,
+					type: `${pkg}::allowed_algorithms::AllowedPair`,
+				});
+				tx.add(
+					allowedAlgorithmsGen.add({
+						package: pkg,
+						arguments: { engine: engineId, adminCap: adminCapId, pairs: pairsVec },
+					}),
 				);
 				break;
+			}
 			case 'spending_budget':
-				policyEngineTx.addSpendingBudget(
-					packageId, engineId, adminCapId,
-					rule.maxPerWindow, rule.maxPerTx, rule.windowMs, tx,
+				tx.add(
+					spendingBudgetGen.add({
+						package: pkg,
+						arguments: {
+							engine: engineId,
+							adminCap: adminCapId,
+							maxPerWindow: rule.maxPerWindow,
+							maxPerTx: rule.maxPerTx,
+							windowMs: rule.windowMs,
+						},
+					}),
 				);
 				break;
 			case 'target_filter':
-				policyEngineTx.addTargetFilter(
-					packageId, engineId, adminCapId,
-					(rule.allowedTargets ?? []).map(hexToBytes),
-					(rule.blockedTargets ?? []).map(hexToBytes),
-					tx,
+				tx.add(
+					targetFilterGen.add({
+						package: pkg,
+						arguments: {
+							engine: engineId,
+							adminCap: adminCapId,
+							allowedTargets: (rule.allowedTargets ?? []).map((h) => Array.from(hexToBytes(h))),
+							blockedTargets: (rule.blockedTargets ?? []).map((h) => Array.from(hexToBytes(h))),
+						},
+					}),
 				);
 				break;
 			case 'time_delay':
-				policyEngineTx.addTimeDelay(packageId, engineId, adminCapId, rule.delayMs, tx);
+				tx.add(
+					timeDelayGen.add({
+						package: pkg,
+						arguments: { engine: engineId, adminCap: adminCapId, delayMs: rule.delayMs },
+					}),
+				);
 				break;
 		}
 	}
@@ -1391,5 +1520,29 @@ export class IkaOWSProvider {
 				'Provider not initialized. Call initialize() first.',
 			);
 		}
+	}
+
+	/** Retry on transient network errors (ECONNRESET, fetch failed, etc.). */
+	async retry<T>(fn: () => Promise<T>, maxAttempts: number = 3): Promise<T> {
+		let lastError: unknown;
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			try {
+				return await fn();
+			} catch (err: unknown) {
+				lastError = err;
+				const msg = err instanceof Error ? err.message : String(err);
+				const isTransient =
+					msg.includes('ECONNRESET') ||
+					msg.includes('fetch failed') ||
+					msg.includes('Network error') ||
+					msg.includes('Too Many Requests') ||
+					msg.includes('429') ||
+					msg.includes('ETIMEDOUT');
+				if (!isTransient || attempt === maxAttempts - 1) throw err;
+				this.#log('warn', 'retry: retrying', { attempt: attempt + 1, error: msg });
+				await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+			}
+		}
+		throw lastError;
 	}
 }

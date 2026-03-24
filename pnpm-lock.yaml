@@ -105,6 +105,9 @@ importers:
       '@ika.xyz/sdk':
         specifier: workspace:*
         version: link:../typescript
+      '@mysten/bcs':
+        specifier: ^2.0.3
+        version: 2.0.3
       '@mysten/sui':
         specifier: ^2.5.0
         version: 2.5.0(typescript@5.9.3)
@@ -130,6 +133,9 @@ importers:
       '@ika.xyz/build-scripts':
         specifier: workspace:*
         version: link:../build-scripts
+      '@mysten/codegen':
+        specifier: ^0.8.2
+        version: 0.8.2
       '@types/node':
         specifier: ^22.15.21
         version: 22.17.0
@@ -139,6 +145,10 @@ importers:
       vitest:
         specifier: 3.2.4
         version: 3.2.4(@types/node@22.17.0)(@vitest/ui@3.2.4)(tsx@4.21.0)(yaml@2.8.1)
+
+  sdk/ows/contract/build/ika_ows_policy/debug_info/dependencies/Sui: {}
+
+  sdk/ows/contract/package_summaries/sui: {}
 
   sdk/typescript:
     dependencies:
@@ -825,6 +835,9 @@ packages:
 
   '@mysten/bcs@2.0.2':
     resolution: {integrity: sha512-c/nVRPJEV1fRZdKXhysVsy/yCPdiFt7jn6A4/7W2LH1ZPSVPzRkxtLY362D0zaLuBnyT5Y9d9nFLm3ixI8Goug==}
+
+  '@mysten/bcs@2.0.3':
+    resolution: {integrity: sha512-dwcaL4HNAsEGpU3hKUAsXgCZp9l6++e2A3THpzoYZ8e7bsy4XH1V0dXD5dIzgNcVZiZfb6ZnDMG+gdF6+1WOQA==}
 
   '@mysten/codegen@0.8.2':
     resolution: {integrity: sha512-x/m7ony8Cuzph33LUv3Rce86ev+HUDuyjEW7QMyrenoE6oHIvMHtkjxBtVR8ia1gPCYxTCkwRzelHqC6shMr4g==}
@@ -3520,9 +3533,14 @@ snapshots:
       '@mysten/utils': 0.3.1
       '@scure/base': 2.0.0
 
+  '@mysten/bcs@2.0.3':
+    dependencies:
+      '@mysten/utils': 0.3.1
+      '@scure/base': 2.0.0
+
   '@mysten/codegen@0.8.2':
     dependencies:
-      '@mysten/bcs': 2.0.2
+      '@mysten/bcs': 2.0.3
       '@mysten/sui': 2.5.0(typescript@5.9.3)
       '@stricli/auto-complete': 1.2.5
       '@stricli/core': 1.2.5
@@ -3544,7 +3562,7 @@ snapshots:
   '@mysten/sui@2.5.0(typescript@5.8.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.12.0)
-      '@mysten/bcs': 2.0.2
+      '@mysten/bcs': 2.0.3
       '@mysten/utils': 0.3.1
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
@@ -3566,7 +3584,7 @@ snapshots:
   '@mysten/sui@2.5.0(typescript@5.9.3)':
     dependencies:
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.12.0)
-      '@mysten/bcs': 2.0.2
+      '@mysten/bcs': 2.0.3
       '@mysten/utils': 0.3.1
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1

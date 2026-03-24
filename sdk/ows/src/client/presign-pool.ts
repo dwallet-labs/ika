@@ -13,18 +13,17 @@
  * process restarts.
  */
 
-import type { Keypair } from '@mysten/sui/cryptography';
-import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import { Transaction } from '@mysten/sui/transactions';
-
 import type { IkaClient, IkaConfig, Presign, SignatureAlgorithm } from '@ika.xyz/sdk';
 import { IkaTransaction, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import type { Keypair } from '@mysten/sui/cryptography';
+import type { TransactionObjectArgument } from '@mysten/sui/transactions';
+import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
 
-import { hexToBytes } from './crypto.js';
-import { OWSError, OWSErrorCode } from './errors.js';
+import { hexToBytes } from '../crypto/index.js';
+import { OWSError, OWSErrorCode } from '../errors.js';
 import type { OWSExecutor } from './executor.js';
-import type { IkaVaultEntry, PresignPoolEntry } from './types.js';
-import { updateVaultEntry } from './vault.js';
+import type { IkaVaultEntry, PresignPoolEntry } from '../types.js';
+import { updateVaultEntry } from '../vault/index.js';
 
 /** Composite key for the in-memory pool map. */
 function poolKey(walletId: string, signatureAlgorithm: SignatureAlgorithm): string {
@@ -40,7 +39,7 @@ function poolKey(walletId: string, signatureAlgorithm: SignatureAlgorithm): stri
  * Everything else must use `requestGlobalPresign`.
  */
 function needsGlobalPresign(entry: IkaVaultEntry, signatureAlgorithm: SignatureAlgorithm): boolean {
-	const isImportedKey = entry.kind === 'mnemonic'; // Mnemonic wallets use imported-key protocol.
+	const isImportedKey = entry.kind === 'mnemonic' || entry.kind === 'imported_key';
 	const isEcdsa =
 		signatureAlgorithm === 'ECDSASecp256k1' || signatureAlgorithm === 'ECDSASecp256r1';
 
@@ -57,7 +56,6 @@ export class PresignPool {
 	readonly #pool = new Map<string, string[]>();
 
 	readonly #ikaClient: IkaClient;
-	readonly #suiClient: SuiJsonRpcClient;
 	readonly #keypair: Keypair;
 	readonly #executor: OWSExecutor;
 	readonly #vaultPath: string | undefined;
@@ -65,37 +63,29 @@ export class PresignPool {
 
 	constructor(
 		ikaClient: IkaClient,
-		suiClient: SuiJsonRpcClient,
 		keypair: Keypair,
 		executor: OWSExecutor,
 		ikaConfig: IkaConfig,
 		vaultPath?: string,
 	) {
 		this.#ikaClient = ikaClient;
-		this.#suiClient = suiClient;
 		this.#keypair = keypair;
 		this.#executor = executor;
 		this.#vaultPath = vaultPath;
 		this.#ikaCoinType = `${ikaConfig.packages.ikaPackage}::ika::IKA`;
 	}
 
-	/** Fetch user's IKA coins and merge into a single coin in the transaction. */
-	async #prepareIkaCoin(tx: Transaction) {
-		const owner = this.#keypair.toSuiAddress();
-		const coins = await this.#suiClient.getCoins({ owner, coinType: this.#ikaCoinType });
+	/** 10 IKA per operation (10 * 10^9 MIST). */
+	static readonly #IKA_PER_OPERATION = 10n * 10n ** 9n;
 
-		if (coins.data.length === 0) {
-			throw new OWSError(
-				OWSErrorCode.INVALID_INPUT,
-				`No IKA coins found for address ${owner}. IKA tokens are required for protocol fees.`,
-			);
-		}
-
-		const primary = tx.object(coins.data[0]!.coinObjectId);
-		if (coins.data.length > 1) {
-			tx.mergeCoins(primary, coins.data.slice(1).map((c) => tx.object(c.coinObjectId)));
-		}
-		return primary;
+	/** Add an IKA coin intent — resolved at build time, no race conditions. */
+	#prepareIkaCoin(tx: Transaction): TransactionObjectArgument {
+		return tx.add(
+			coinWithBalance({
+				type: this.#ikaCoinType,
+				balance: PresignPool.#IKA_PER_OPERATION,
+			}),
+		);
 	}
 
 	/**
@@ -123,10 +113,9 @@ export class PresignPool {
 		const latestEncryptionKey = await this.#ikaClient.getLatestNetworkEncryptionKey();
 		const caps: ReturnType<typeof ikaTransaction.requestPresign>[] = [];
 
-		const ikaCoin = await this.#prepareIkaCoin(transaction);
+		const ikaCoin = this.#prepareIkaCoin(transaction);
 
 		for (let i = 0; i < count; i++) {
-
 			if (needsGlobalPresign(entry, signatureAlgorithm)) {
 				caps.push(
 					ikaTransaction.requestGlobalPresign({
@@ -154,23 +143,21 @@ export class PresignPool {
 			}
 		}
 
-		transaction.transferObjects(caps, this.#keypair.toSuiAddress());
+		transaction.transferObjects([...caps, ikaCoin], this.#keypair.toSuiAddress());
 
 		const result = await this.#executor.execute(transaction);
 
 		// Parse all presign events.
-		const presignEvents = (result.events ?? []).filter((e: { type: string }) =>
+		const presignEvents = (result.events ?? []).filter((e) =>
 			e.type.includes('PresignRequestEvent'),
 		);
 
 		const now = new Date().toISOString();
-		const newEntries: PresignPoolEntry[] = presignEvents.map(
-			(e: { parsedJson: unknown }) => ({
-				presignId: (e.parsedJson as { presign_id: string }).presign_id,
-				signatureAlgorithm,
-				createdAt: now,
-			}),
-		);
+		const newEntries: PresignPoolEntry[] = presignEvents.map((e) => ({
+			presignId: (e.parsedJson as { event_data: { presign_id: string } }).event_data.presign_id,
+			signatureAlgorithm,
+			createdAt: now,
+		}));
 
 		const newIds = newEntries.map((e) => e.presignId);
 
@@ -283,7 +270,7 @@ export class PresignPool {
 		});
 
 		const latestEncryptionKey = await this.#ikaClient.getLatestNetworkEncryptionKey();
-		const ikaCoin = await this.#prepareIkaCoin(transaction);
+		const ikaCoin = this.#prepareIkaCoin(transaction);
 
 		let unverifiedPresignCap;
 		if (needsGlobalPresign(entry, signatureAlgorithm)) {
@@ -308,7 +295,7 @@ export class PresignPool {
 			});
 		}
 
-		transaction.transferObjects([unverifiedPresignCap], this.#keypair.toSuiAddress());
+		transaction.transferObjects([unverifiedPresignCap, ikaCoin], this.#keypair.toSuiAddress());
 
 		const result = await this.#executor.execute(transaction);
 
@@ -319,7 +306,8 @@ export class PresignPool {
 			throw new OWSError(OWSErrorCode.PRESIGN_FAILED, 'Presign event not found');
 		}
 
-		const presignId = (presignEvent.parsedJson as { presign_id: string }).presign_id;
+		const presignId = (presignEvent.parsedJson as { event_data: { presign_id: string } }).event_data
+			.presign_id;
 
 		return this.#ikaClient.getPresignInParticularState(presignId, 'Completed', {
 			timeout,
