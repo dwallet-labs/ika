@@ -103,6 +103,8 @@ export const DERIVATION_PATHS = {
 	SOLANA: (index: number) => `m/44'/501'/${index}'/0'`,
 	/** Sui */
 	SUI: (index: number) => `m/44'/784'/${index}'/0'/0'`,
+	/** TON */
+	TON: (index: number) => `m/44'/607'/${index}'`,
 };
 
 /**

@@ -209,8 +209,8 @@ export function deriveAddress(publicKey: Uint8Array, _curve: Curve, chainId: Cha
 		}
 
 		case 'ton': {
-			// Ed25519 public key → hex (simplified; full TON address involves workchain + state init).
-			return toHex(publicKey);
+			// TON wallet v5r1 address: pubkey → data cell hash → state init hash → base64url.
+			return tonWalletV5R1Address(publicKey);
 		}
 
 		case 'cosmos': {
@@ -276,4 +276,135 @@ export function deriveAccountsForCurve(
 		chainId,
 		address: deriveAddress(publicKey, curve, chainId),
 	}));
+}
+
+// ─── TON Wallet v5r1 Address ─────────────────────────────────────────────
+
+/** Wallet v5r1 code cell hash (SHA256 of the cell representation). */
+const WALLET_V5R1_CODE_HASH = new Uint8Array([
+	0x20, 0x83, 0x4b, 0x7b, 0x72, 0xb1, 0x12, 0x14, 0x7e, 0x1b, 0x2f, 0xb4,
+	0x57, 0xb8, 0x4e, 0x74, 0xd1, 0xa3, 0x0f, 0x04, 0xf7, 0x37, 0xd4, 0xf6,
+	0x2a, 0x66, 0x8e, 0x95, 0x52, 0xd2, 0xb7, 0x2f,
+]);
+
+const WALLET_V5R1_CODE_DEPTH = 6;
+
+/** Default walletId: networkGlobalId(-239) XOR context(0x80000000). */
+const DEFAULT_WALLET_ID = 0x7fffff11;
+
+/**
+ * Derive a TON wallet v5r1 address from an ed25519 public key.
+ * Non-bounceable, workchain 0.
+ */
+function tonWalletV5R1Address(publicKey: Uint8Array): string {
+	const dataHash = tonDataCellHash(publicKey);
+	const stateHash = tonStateInitHash(WALLET_V5R1_CODE_HASH, WALLET_V5R1_CODE_DEPTH, dataHash);
+	return tonEncodeAddress(0, stateHash, false);
+}
+
+/**
+ * Compute data cell hash for wallet v5r1 initial state.
+ * Data: is_sig_allowed(1b) + seqno(0, 32b) + walletId(32b) + pubkey(256b) + extensions(0, 1b)
+ * = 322 bits, 0 refs.
+ */
+function tonDataCellHash(publicKey: Uint8Array): Uint8Array {
+	const bits: number[] = [];
+
+	// is_signature_allowed = 1
+	bits.push(1);
+	// seqno = 0 (32 bits)
+	for (let i = 0; i < 32; i++) bits.push(0);
+	// walletId (32 bits, big-endian)
+	for (let shift = 31; shift >= 0; shift--) {
+		bits.push((DEFAULT_WALLET_ID >>> shift) & 1);
+	}
+	// public key (256 bits)
+	for (const byte of publicKey) {
+		for (let shift = 7; shift >= 0; shift--) {
+			bits.push((byte >> shift) & 1);
+		}
+	}
+	// extensions = 0
+	bits.push(0);
+	// Completion tag
+	bits.push(1);
+	while (bits.length % 8 !== 0) bits.push(0);
+
+	// Convert bits to bytes
+	const dataBytes: number[] = [];
+	for (let i = 0; i < bits.length; i += 8) {
+		let byte = 0;
+		for (let j = 0; j < 8; j++) byte |= (bits[i + j]! << (7 - j));
+		dataBytes.push(byte);
+	}
+
+	// Cell repr: d1(0 refs) + d2(ceil(322/8)+floor(322/8)) + data
+	const d1 = 0;
+	const d2 = 81; // 41 + 40
+	const repr = new Uint8Array(2 + dataBytes.length);
+	repr[0] = d1;
+	repr[1] = d2;
+	repr.set(dataBytes, 2);
+
+	return sha256(repr);
+}
+
+/**
+ * Compute StateInit cell hash.
+ * StateInit: 5 bits (00110) = split_depth(0) special(0) code(1) data(1) library(0), 2 refs.
+ */
+function tonStateInitHash(
+	codeHash: Uint8Array,
+	codeDepth: number,
+	dataHash: Uint8Array,
+): Uint8Array {
+	const repr = new Uint8Array(2 + 1 + 4 + 32 + 32);
+	repr[0] = 2;    // d1: 2 refs
+	repr[1] = 1;    // d2: ceil(5/8) + floor(5/8)
+	repr[2] = 0x34; // 00110 + completion tag '100'
+	// Code depth (big-endian u16)
+	repr[3] = (codeDepth >> 8) & 0xff;
+	repr[4] = codeDepth & 0xff;
+	// Data depth = 0
+	repr[5] = 0;
+	repr[6] = 0;
+	// Code hash + data hash
+	repr.set(codeHash, 7);
+	repr.set(dataHash, 39);
+
+	return sha256(repr);
+}
+
+/** Encode a TON user-friendly address (base64url with CRC16). */
+function tonEncodeAddress(workchain: number, hash: Uint8Array, bounceable: boolean): string {
+	const tag = bounceable ? 0x11 : 0x51;
+	const addr = new Uint8Array(36);
+	addr[0] = tag;
+	addr[1] = workchain & 0xff;
+	addr.set(hash, 2);
+
+	const crc = crc16ccitt(addr.subarray(0, 34));
+	addr[34] = (crc >> 8) & 0xff;
+	addr[35] = crc & 0xff;
+
+	return base64urlEncode(addr);
+}
+
+function crc16ccitt(data: Uint8Array): number {
+	let crc = 0;
+	for (const byte of data) {
+		crc ^= byte << 8;
+		for (let j = 0; j < 8; j++) {
+			if (crc & 0x8000) {
+				crc = ((crc << 1) ^ 0x1021) & 0xffff;
+			} else {
+				crc = (crc << 1) & 0xffff;
+			}
+		}
+	}
+	return crc;
+}
+
+function base64urlEncode(bytes: Uint8Array): string {
+	return Buffer.from(bytes).toString('base64url');
 }
