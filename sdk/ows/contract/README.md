@@ -1,4 +1,4 @@
-# OWS Policy Engine
+# OdWS Policy Engine
 
 **Mainnet Package ID:** `0x9fd74e7ad831f13730ddb59072978eeb51b1eb840f97238d836b27953be52180`
 
@@ -42,7 +42,7 @@ Uses a Sui TransferPolicy-style composable rule system with OTW witnesses.
 
 ## Using from the TypeScript SDK
 
-The `@ika.xyz/ows` SDK handles all on-chain interactions. No need to construct PTBs manually.
+The `@ika.xyz/odws` SDK handles all on-chain interactions. No need to construct PTBs manually.
 
 ### One-Call Setup
 

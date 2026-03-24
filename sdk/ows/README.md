@@ -1,17 +1,30 @@
-# @ika.xyz/ows
+# @ika.xyz/odws
 
-Open Wallet Standard SDK backed by Ika dWallet MPC signing. Create multi-chain wallets, sign transactions on any chain, enforce on-chain policies — all secured by Ika's 2PC-MPC protocol.
+Open dWallet Standard (OdWS) — multi-chain wallet SDK backed by Ika dWallet MPC signing. Create wallets, sign transactions on any chain, enforce on-chain policies — all secured by Ika's 2PC-MPC protocol.
 
 ## Installation
 
 ```bash
-pnpm add @ika.xyz/ows
+pnpm add @ika.xyz/odws
+```
+
+After installation, the `odws` CLI is available:
+
+```bash
+npx odws --help
+```
+
+Or install globally:
+
+```bash
+pnpm add -g @ika.xyz/odws
+odws wallet list
 ```
 
 ## Quick Start
 
 ```typescript
-import { IkaOWSProvider, derivePrivateKeyFromMnemonic, bytesToHex } from '@ika.xyz/ows';
+import { IkaOWSProvider, derivePrivateKeyFromMnemonic, bytesToHex } from '@ika.xyz/odws';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Curve } from '@ika.xyz/sdk';
 
@@ -65,7 +78,7 @@ const wallet = await provider.createDWallet('mpc-wallet', {
 The SDK provides helpers to derive private keys from BIP-39 mnemonics. You handle derivation, the SDK handles import.
 
 ```typescript
-import { generateMnemonic, derivePrivateKeyFromMnemonic, bytesToHex } from '@ika.xyz/ows';
+import { generateMnemonic, derivePrivateKeyFromMnemonic, bytesToHex } from '@ika.xyz/odws';
 import { Curve } from '@ika.xyz/sdk';
 
 const mnemonic = generateMnemonic(12);
@@ -136,7 +149,7 @@ const config = await provider.setupPolicyEngine(
 ## REST API
 
 ```bash
-IKA_OWS_KEYPAIR=<hex> IKA_OWS_API_KEY=<secret> ika-ows serve --port 3420
+IKA_OWS_KEYPAIR=<hex> IKA_OWS_API_KEY=<secret> odws serve --port 3420
 ```
 
 | Method | Path | Description |
@@ -154,27 +167,27 @@ All endpoints (except `/health`) require `Authorization: Bearer <api-key>`.
 ## CLI
 
 ```bash
-ika-ows wallet create --name my-wallet --key <hex> --curve SECP256K1
-ika-ows wallet dkg --name mpc-wallet --curve SECP256K1
-ika-ows wallet list
-ika-ows sign tx --wallet my-wallet --chain eip155:1 --tx <hex>
-ika-ows sign message --wallet my-wallet --chain eip155:1 --message "hello"
-ika-ows presign prefill --wallet my-wallet --count 10
-ika-ows serve --port 3420
+odws wallet create --name my-wallet --key <hex> --curve SECP256K1
+odws wallet dkg --name mpc-wallet --curve SECP256K1
+odws wallet list
+odws sign tx --wallet my-wallet --chain eip155:1 --tx <hex>
+odws sign message --wallet my-wallet --chain eip155:1 --message "hello"
+odws presign prefill --wallet my-wallet --count 10
+odws serve --port 3420
 ```
 
 ## Debugging
 
-Set `OWS_DEBUG=1` for verbose logging:
+Set `ODWS_DEBUG=1` for verbose logging:
 
 ```bash
-OWS_DEBUG=1 node my-agent.js
+ODWS_DEBUG=1 node my-agent.js
 ```
 
 ## Vault Backup
 
 ```typescript
-import { exportVault, importVault } from '@ika.xyz/ows';
+import { exportVault, importVault } from '@ika.xyz/odws';
 
 const backup = exportVault('/path/to/vault');
 fs.writeFileSync('backup.json', backup);

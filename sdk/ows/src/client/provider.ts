@@ -159,11 +159,11 @@ export class IkaOWSProvider {
 	static readonly #ENC_KEY_DOMAIN = new TextEncoder().encode('IKA_OWS_');
 
 	#log(level: LogLevel, msg: string, data?: Record<string, unknown>): void {
-		if (level === 'debug' && !process.env.OWS_DEBUG) return;
+		if (level === 'debug' && !process.env.ODWS_DEBUG) return;
 		const ts = new Date().toISOString();
 		const suffix = data ? ' ' + JSON.stringify(data) : '';
 		const fn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
-		fn(`[OWS] ${ts} ${level.toUpperCase()} ${msg}${suffix}`);
+		fn(`[OdWS] ${ts} ${level.toUpperCase()} ${msg}${suffix}`);
 	}
 
 	constructor(config: IkaOWSProviderConfig) {

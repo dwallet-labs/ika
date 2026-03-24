@@ -1,7 +1,7 @@
 {
-	"name": "@ika.xyz/ows",
+	"name": "@ika.xyz/odws",
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
-	"description": "Open Wallet Standard (OWS) implementation backed by Ika dWallet MPC signing",
+	"description": "Open dWallet Standard (OdWS) — multi-chain wallet SDK backed by Ika dWallet MPC signing",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/dwallet-labs/ika",
@@ -17,7 +17,8 @@
 		"node": ">=18"
 	},
 	"bin": {
-		"ika-ows": "./dist/cjs/cli/index.js"
+		"odws": "./dist/cjs/cli/index.js",
+		"ika-odws": "./dist/cjs/cli/index.js"
 	},
 	"type": "commonjs",
 	"main": "./dist/cjs/index.js",

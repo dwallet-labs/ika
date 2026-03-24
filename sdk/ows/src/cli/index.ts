@@ -3,10 +3,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /**
- * ika-ows CLI — Open Wallet Standard backed by Ika dWallet MPC signing.
- *
- * Mirrors the OWS CLI structure with Ika-specific extensions:
- *   wallet, sign, presign, pay, mnemonic, policy, key
+ * OdWS CLI — Open dWallet Standard backed by Ika dWallet MPC signing.
  */
 import * as fs from 'node:fs';
 
@@ -19,8 +16,8 @@ import { startServer } from '../server/index.js';
 const program = new Command();
 
 program
-	.name('ika-ows')
-	.description('Open Wallet Standard CLI backed by Ika dWallet MPC signing')
+	.name('odws')
+	.description('Open dWallet Standard (OdWS) CLI — multi-chain wallet management via Ika MPC')
 	.version('0.1.0');
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────

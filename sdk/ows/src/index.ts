@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 /**
- * @ika.xyz/ows — Open Wallet Standard backed by Ika dWallet MPC signing.
+ * @ika.xyz/odws — Open dWallet Standard (OdWS) backed by Ika dWallet MPC signing.
  *
  * @packageDocumentation
  */
