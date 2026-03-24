@@ -48,7 +48,10 @@
 	"devDependencies": {
 		"@ika.xyz/build-scripts": "workspace:*",
 		"@mysten/codegen": "^0.8.2",
+		"@noble/secp256k1": "^3.0.0",
 		"@types/node": "^22.15.21",
+		"bitcoinjs-lib": "^7.0.1",
+		"tiny-secp256k1": "^2.2.4",
 		"typescript": "^5.8.3",
 		"vitest": "3.2.4"
 	},
