@@ -1,6 +1,6 @@
 ---
 name: ika-cli
-version: 1.0.1
+version: 1.0.2
 description: Guide for using the Ika CLI tool for dWallet operations, validator management, system deployment, and network administration. Use when performing CLI-based dWallet creation, signing, presigning, key management, validator operations, system initialization, or querying Ika network state via the terminal. Triggers on tasks involving `ika` CLI commands, dWallet CLI operations, Ika system deployment, or MCP tool integration with Ika.
 metadata:
   openclaw:
@@ -101,11 +101,11 @@ ika
 
 Commands accept named values (not numeric IDs):
 
-| Parameter             | Accepted values                                          |
-| --------------------- | -------------------------------------------------------- |
-| `--curve`             | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`        |
-| `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`              |
-| `--hash-scheme`       | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
+| Parameter               | Accepted values                                            |
+| ----------------------- | ---------------------------------------------------------- |
+| `--curve`               | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`           |
+| `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`                  |
+| `--hash-scheme`         | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 
 ## Quick Start
 
@@ -136,6 +136,7 @@ ika dwallet sign \
 ### Secret Share Handling
 
 The secret share can be provided in three ways (in priority order):
+
 1. `--secret-share <file>` — read from a local file
 2. `--secret-share-hex <hex>` — pass directly as hex
 3. Omit both — the CLI derives the decryption key from your Sui keystore (seed args), fetches the encrypted share from chain, and decrypts it. Requires `--dwallet-id`.
