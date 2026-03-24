@@ -278,6 +278,96 @@ export function deriveAccountsForCurve(
 	}));
 }
 
+// ─── Bitcoin Taproot (P2TR Script Path) ──────────────────────────────────
+
+/** NUMS point ("Nothing Up My Sleeve") — provably unspendable internal key for script-path-only spending. */
+const NUMS_INTERNAL_PUBKEY = new Uint8Array([
+	0x50, 0x92, 0x9b, 0x74, 0xc1, 0xa0, 0x49, 0x54, 0xb7, 0x8b, 0x4b, 0x60,
+	0x35, 0xe9, 0x7a, 0x5e, 0x07, 0x8a, 0x5a, 0x0f, 0x28, 0xec, 0x96, 0xd5,
+	0x47, 0xbf, 0xee, 0x9a, 0xce, 0x80, 0x3a, 0xc0,
+]);
+
+/**
+ * Derive a Bitcoin Taproot (P2TR) address using script path spending.
+ *
+ * Key path is not supported because MPC cannot tweak the internal key.
+ * Uses NUMS point as internal key and a single `<pubkey> OP_CHECKSIG` tapscript.
+ *
+ * @param publicKey - Compressed secp256k1 public key (33 bytes). First byte is dropped to get x-only (32 bytes).
+ * @param network - 'mainnet' or 'testnet'
+ * @returns Bech32m-encoded P2TR address (`bc1p...` or `tb1p...`)
+ */
+export function deriveTaprootAddress(publicKey: Uint8Array, network: 'mainnet' | 'testnet' = 'mainnet'): string {
+	// Get x-only public key (32 bytes)
+	const xOnly = publicKey.length === 33 ? publicKey.slice(1) : publicKey;
+	if (xOnly.length !== 32) throw new Error('Public key must be 32 or 33 bytes');
+
+	// Build tapscript: OP_PUSHBYTES_32 <xonly_pubkey> OP_CHECKSIG
+	const script = new Uint8Array(34);
+	script[0] = 0x20; // OP_PUSHBYTES_32
+	script.set(xOnly, 1);
+	script[33] = 0xac; // OP_CHECKSIG
+
+	// Leaf hash: tagged_hash("TapLeaf", [leaf_version(0xc0), compact_size(script_len), script])
+	const leafData = new Uint8Array(1 + 1 + script.length);
+	leafData[0] = 0xc0; // leaf version
+	leafData[1] = script.length; // compact size (34 < 0xfd)
+	leafData.set(script, 2);
+	const leafHash = taggedHash('TapLeaf', leafData);
+
+	// Tweak: tagged_hash("TapTweak", internal_pubkey || merkle_root)
+	const tweakInput = new Uint8Array(32 + 32);
+	tweakInput.set(NUMS_INTERNAL_PUBKEY, 0);
+	tweakInput.set(leafHash, 32);
+	const tweak = taggedHash('TapTweak', tweakInput);
+
+	// Output key: internal_key + tweak * G (x-only)
+	const internalPoint = secp256k1.Point.fromHex('02' + toHex(NUMS_INTERNAL_PUBKEY));
+	const tweakPoint = secp256k1.Point.BASE.multiply(bytesToBigInt(tweak));
+	const outputPoint = internalPoint.add(tweakPoint);
+	const outputKey = outputPoint.toBytes(true).slice(1); // x-only (drop prefix)
+
+	// Bech32m encode (witness version 1)
+	const hrp = network === 'mainnet' ? 'bc' : 'tb';
+	return bech32mEncode(hrp, outputKey);
+}
+
+/** BIP-340 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || data). */
+function taggedHash(tag: string, data: Uint8Array): Uint8Array {
+	const tagHash = sha256(new TextEncoder().encode(tag));
+	const input = new Uint8Array(64 + data.length);
+	input.set(tagHash, 0);
+	input.set(tagHash, 32);
+	input.set(data, 64);
+	return sha256(input);
+}
+
+function bytesToBigInt(bytes: Uint8Array): bigint {
+	let n = 0n;
+	for (const b of bytes) n = (n << 8n) | BigInt(b);
+	return n;
+}
+
+/** Bech32m encoding (BIP-350) for witness version 1 (taproot). */
+function bech32mEncode(hrp: string, data: Uint8Array): string {
+	const fiveBit = convertBits(data, 8, 5, true);
+	const combined = [1, ...fiveBit]; // witness version 1
+	const checksum = bech32mCreateChecksum(hrp, combined);
+	let result = hrp + '1';
+	for (const d of combined.concat(checksum)) {
+		result += BECH32_CHARSET[d];
+	}
+	return result;
+}
+
+function bech32mCreateChecksum(hrp: string, data: number[]): number[] {
+	const values = bech32HrpExpand(hrp).concat(data).concat([0, 0, 0, 0, 0, 0]);
+	const polymod = bech32Polymod(values) ^ 0x2bc830a3; // bech32m constant
+	const ret: number[] = [];
+	for (let i = 0; i < 6; i++) ret.push((polymod >> (5 * (5 - i))) & 31);
+	return ret;
+}
+
 // ─── TON Wallet v5r1 Address ─────────────────────────────────────────────
 
 /** Wallet v5r1 code cell hash (SHA256 of the cell representation). */
