@@ -1,0 +1,62 @@
+{
+	"name": "@ika.xyz/ows",
+	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
+	"description": "Open Wallet Standard (OWS) implementation backed by Ika dWallet MPC signing",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dwallet-labs/ika",
+		"directory": "sdk/ows"
+	},
+	"version": "0.1.0",
+	"license": "BSD-3-Clause-Clear",
+	"sideEffects": false,
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"bin": {
+		"ika-ows": "./dist/cjs/cli/index.js"
+	},
+	"type": "commonjs",
+	"main": "./dist/cjs/index.js",
+	"module": "./dist/esm/index.js",
+	"types": "./dist/cjs/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/esm/index.js",
+			"require": "./dist/cjs/index.js"
+		}
+	},
+	"scripts": {
+		"build": "build-package",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
+		"prettier:fix": "prettier -w --ignore-unknown .",
+		"eslint:check": "eslint --max-warnings=0 .",
+		"eslint:fix": "pnpm run eslint:check --fix",
+		"lint": "pnpm run eslint:check && pnpm run prettier:check",
+		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"devDependencies": {
+		"@ika.xyz/build-scripts": "workspace:*",
+		"@types/node": "^22.15.21",
+		"typescript": "^5.8.3",
+		"vitest": "3.2.4"
+	},
+	"dependencies": {
+		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/sui": "^2.5.0",
+		"@noble/ciphers": "^1.2.1",
+		"@noble/curves": "^2.0.1",
+		"@noble/hashes": "^2.0.1",
+		"@scure/bip32": "^2.0.1",
+		"@scure/bip39": "^2.0.1",
+		"commander": "^13.1.0"
+	}
+}
