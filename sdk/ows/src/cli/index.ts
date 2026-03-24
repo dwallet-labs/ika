@@ -386,6 +386,27 @@ policy
 		console.log(`Deleted policy: ${opts.id}`);
 	});
 
+// ─── serve ───────────────────────────────────────────────────────────────
+
+program
+	.command('serve')
+	.description('Start the OWS REST API server')
+	.option('--port <port>', 'Port to listen on', '3420')
+	.option('--host <host>', 'Hostname to bind to', '127.0.0.1')
+	.action(async (opts) => {
+		const apiKey = process.env['IKA_OWS_API_KEY'];
+		if (!apiKey) throw new Error('Set IKA_OWS_API_KEY env for Bearer token authentication');
+
+		const provider = await createProvider();
+		const { startServer } = await import('../server.js');
+		startServer({
+			provider,
+			apiKey,
+			port: parseInt(opts.port),
+			host: opts.host,
+		});
+	});
+
 // ─── Run ─────────────────────────────────────────────────────────────────
 
 program.parseAsync(process.argv).catch((err) => {

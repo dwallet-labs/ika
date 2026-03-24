@@ -112,6 +112,9 @@ export interface IkaOWSProviderConfig {
 	mpcTimeout?: number;
 	/** Default MPC polling interval in ms. Default: 2000. */
 	mpcPollInterval?: number;
+	/** On-chain policy engine config. When set, signing goes through the
+	 *  policy engine instead of calling approve_message directly. */
+	policyEngine?: PolicyEngineConfig;
 }
 
 // ─── Operation Options ───────────────────────────────────────────────────
@@ -162,4 +165,111 @@ export interface SignOptions {
 	timeout?: number;
 	/** Polling interval in ms. */
 	interval?: number;
+	/** Declared transaction value (required when spending_budget rule is active). */
+	declaredValue?: bigint | number;
+	/** Declared target address bytes (required when target_filter rule is active). */
+	declaredTarget?: Uint8Array;
+}
+
+// ─── Policy Engine Config ────────────────────────────────────────────────
+
+/** On-chain policy engine configuration. */
+export interface PolicyEngineConfig {
+	/** Package ID of the deployed ika_ows_policy contract. */
+	packageId: string;
+	/** Object ID of the shared PolicyEngine. */
+	engineId: string;
+	/** Object ID of the PolicyAccessCap held by this agent. */
+	accessCapId: string;
+	/** Active rules registered on the engine. */
+	rules: PolicyRuleType[];
+}
+
+/** Supported built-in rule types. */
+export type PolicyRuleType =
+	| 'rate_limit'
+	| 'expiry'
+	| 'sender_allowlist'
+	| 'allowed_algorithms'
+	| 'spending_budget'
+	| 'target_filter'
+	| 'time_delay';
+
+/** Rule configurations for engine setup. */
+export interface RateLimitRuleConfig {
+	type: 'rate_limit';
+	/** Max signatures per window. */
+	maxPerWindow: number;
+	/** Window duration in milliseconds. */
+	windowMs: number;
+}
+
+export interface ExpiryRuleConfig {
+	type: 'expiry';
+	/** Timestamp (ms) after which signing is blocked. */
+	expiryMs: number;
+}
+
+export interface SenderAllowlistRuleConfig {
+	type: 'sender_allowlist';
+	/** Allowed Sui addresses. */
+	allowed: string[];
+}
+
+export interface AllowedAlgorithmsRuleConfig {
+	type: 'allowed_algorithms';
+	/** Allowed (signatureAlgorithm, hashScheme) pairs as u32 numbers. */
+	pairs: Array<{ signatureAlgorithm: number; hashScheme: number }>;
+}
+
+export interface SpendingBudgetRuleConfig {
+	type: 'spending_budget';
+	/** Max cumulative value per window. */
+	maxPerWindow: number;
+	/** Max value per transaction (0 = no per-tx limit). */
+	maxPerTx: number;
+	/** Window duration in milliseconds. */
+	windowMs: number;
+}
+
+export interface TargetFilterRuleConfig {
+	type: 'target_filter';
+	/** Allowed target addresses (raw bytes as hex). */
+	allowedTargets?: string[];
+	/** Blocked target addresses (raw bytes as hex). */
+	blockedTargets?: string[];
+}
+
+export interface TimeDelayRuleConfig {
+	type: 'time_delay';
+	/** Delay in milliseconds between commit and reveal. */
+	delayMs: number;
+}
+
+/** Union of all rule configs. */
+export type RuleConfig =
+	| RateLimitRuleConfig
+	| ExpiryRuleConfig
+	| SenderAllowlistRuleConfig
+	| AllowedAlgorithmsRuleConfig
+	| SpendingBudgetRuleConfig
+	| TargetFilterRuleConfig
+	| TimeDelayRuleConfig;
+
+/** Result of creating a policy engine. */
+export interface PolicyEngineCreateResult {
+	/** Object ID of the created PolicyEngine (shared). */
+	engineId: string;
+	/** Object ID of the PolicyAdminCap (transferred to creator). */
+	adminCapId: string;
+	/** Transaction digest. */
+	digest: string;
+}
+
+/** Result of granting access to a policy engine. */
+export interface PolicyAccessGrantResult {
+	/** Object ID of the created PolicyAccessCap. */
+	accessCapId: string;
+	/** Transaction digest. */
+	digest: string;
 }

@@ -27,6 +27,10 @@ export type {
 	OnChainPolicy,
 } from './policy.js';
 
+// ─── Executor ────────────────────────────────────────────────────────────
+export { OWSExecutor } from './executor.js';
+export type { TxEvent, TxResult } from './executor.js';
+
 // ─── Presign Pool ────────────────────────────────────────────────────────
 export { PresignPool } from './presign-pool.js';
 
@@ -64,7 +68,26 @@ export type {
 	ImportMnemonicOptions,
 	ImportPrivateKeyOptions,
 	SignOptions,
+	PolicyEngineConfig,
+	PolicyEngineCreateResult,
+	PolicyAccessGrantResult,
+	PolicyRuleType,
+	RuleConfig,
+	RateLimitRuleConfig,
+	ExpiryRuleConfig,
+	SenderAllowlistRuleConfig,
+	AllowedAlgorithmsRuleConfig,
+	SpendingBudgetRuleConfig,
+	TargetFilterRuleConfig,
+	TimeDelayRuleConfig,
 } from './types.js';
+
+// ─── Policy Engine Transaction Builders ──────────────────────────────────
+export * as policyEngineTx from './tx/policy-engine.js';
+
+// ─── REST Server ─────────────────────────────────────────────────────────
+export { handleRequest, startServer } from './server.js';
+export type { IkaOWSServerConfig, OWSRequest, OWSResponse } from './server.js';
 
 // ─── Errors ──────────────────────────────────────────────────────────────
 export { OWSError, OWSErrorCode } from './errors.js';

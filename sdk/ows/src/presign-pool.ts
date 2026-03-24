@@ -17,11 +17,12 @@ import type { Keypair } from '@mysten/sui/cryptography';
 import type { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Transaction } from '@mysten/sui/transactions';
 
-import type { IkaClient, Presign, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { IkaClient, IkaConfig, Presign, SignatureAlgorithm } from '@ika.xyz/sdk';
 import { IkaTransaction, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 import { hexToBytes } from './crypto.js';
 import { OWSError, OWSErrorCode } from './errors.js';
+import type { OWSExecutor } from './executor.js';
 import type { IkaVaultEntry, PresignPoolEntry } from './types.js';
 import { updateVaultEntry } from './vault.js';
 
@@ -58,18 +59,43 @@ export class PresignPool {
 	readonly #ikaClient: IkaClient;
 	readonly #suiClient: SuiJsonRpcClient;
 	readonly #keypair: Keypair;
+	readonly #executor: OWSExecutor;
 	readonly #vaultPath: string | undefined;
+	readonly #ikaCoinType: string;
 
 	constructor(
 		ikaClient: IkaClient,
 		suiClient: SuiJsonRpcClient,
 		keypair: Keypair,
+		executor: OWSExecutor,
+		ikaConfig: IkaConfig,
 		vaultPath?: string,
 	) {
 		this.#ikaClient = ikaClient;
 		this.#suiClient = suiClient;
 		this.#keypair = keypair;
+		this.#executor = executor;
 		this.#vaultPath = vaultPath;
+		this.#ikaCoinType = `${ikaConfig.packages.ikaPackage}::ika::IKA`;
+	}
+
+	/** Fetch user's IKA coins and merge into a single coin in the transaction. */
+	async #prepareIkaCoin(tx: Transaction) {
+		const owner = this.#keypair.toSuiAddress();
+		const coins = await this.#suiClient.getCoins({ owner, coinType: this.#ikaCoinType });
+
+		if (coins.data.length === 0) {
+			throw new OWSError(
+				OWSErrorCode.INVALID_INPUT,
+				`No IKA coins found for address ${owner}. IKA tokens are required for protocol fees.`,
+			);
+		}
+
+		const primary = tx.object(coins.data[0]!.coinObjectId);
+		if (coins.data.length > 1) {
+			tx.mergeCoins(primary, coins.data.slice(1).map((c) => tx.object(c.coinObjectId)));
+		}
+		return primary;
 	}
 
 	/**
@@ -97,8 +123,9 @@ export class PresignPool {
 		const latestEncryptionKey = await this.#ikaClient.getLatestNetworkEncryptionKey();
 		const caps: ReturnType<typeof ikaTransaction.requestPresign>[] = [];
 
+		const ikaCoin = await this.#prepareIkaCoin(transaction);
+
 		for (let i = 0; i < count; i++) {
-			const ikaCoin = transaction.splitCoins(transaction.gas, [0]);
 
 			if (needsGlobalPresign(entry, signatureAlgorithm)) {
 				caps.push(
@@ -129,11 +156,7 @@ export class PresignPool {
 
 		transaction.transferObjects(caps, this.#keypair.toSuiAddress());
 
-		const result = await this.#suiClient.signAndExecuteTransaction({
-			transaction,
-			signer: this.#keypair,
-			options: { showEvents: true },
-		});
+		const result = await this.#executor.execute(transaction);
 
 		// Parse all presign events.
 		const presignEvents = (result.events ?? []).filter((e: { type: string }) =>
@@ -260,7 +283,7 @@ export class PresignPool {
 		});
 
 		const latestEncryptionKey = await this.#ikaClient.getLatestNetworkEncryptionKey();
-		const ikaCoin = transaction.splitCoins(transaction.gas, [0]);
+		const ikaCoin = await this.#prepareIkaCoin(transaction);
 
 		let unverifiedPresignCap;
 		if (needsGlobalPresign(entry, signatureAlgorithm)) {
@@ -287,11 +310,7 @@ export class PresignPool {
 
 		transaction.transferObjects([unverifiedPresignCap], this.#keypair.toSuiAddress());
 
-		const result = await this.#suiClient.signAndExecuteTransaction({
-			transaction,
-			signer: this.#keypair,
-			options: { showEvents: true },
-		});
+		const result = await this.#executor.execute(transaction);
 
 		const presignEvent = (result.events ?? []).find((e: { type: string }) =>
 			e.type.includes('PresignRequestEvent'),
