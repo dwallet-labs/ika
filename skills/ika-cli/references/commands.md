@@ -199,6 +199,10 @@ Network encryption key is auto-fetched from the Ika coordinator.
 
 Import an external key as a dWallet. Coins are auto-detected from wallet.
 
+The secret key file format depends on the curve:
+- **secp256k1 / secp256r1**: 33 bytes (compressed public key prefix byte + 32-byte scalar)
+- **ed25519 / ristretto**: 32 bytes (raw scalar, must be a valid scalar for the curve)
+
 ```bash
 ika dwallet import [OPTIONS]
 ```
@@ -206,7 +210,7 @@ ika dwallet import [OPTIONS]
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--centralized-message <PATH>` | Yes | Path to the secret key file to import |
+| `--secret-key <PATH>` | Yes | Path to the secret key file to import |
 | `--output-secret <PATH>` | No | Where to save user secret share (default: `imported_dwallet_secret_share.bin`) |
 | Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |

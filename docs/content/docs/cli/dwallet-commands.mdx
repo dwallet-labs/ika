@@ -61,7 +61,7 @@ ika dwallet create \
 | `--output-secret <PATH>` | No | Output path (default: `dwallet_secret_share.bin`) |
 | `--public-share` | No | Create shared dWallet (public user key share) |
 | `--sign-message <HEX>` | No | Sign during DKG |
-| `--hash-scheme <U32>` | No | Hash scheme for sign-during-DKG |
+| `--hash-scheme <HASH>` | No | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 | Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
@@ -89,8 +89,8 @@ ika dwallet sign \
   --dwallet-cap-id <CAP_ID> \
   --dwallet-id <DWALLET_ID> \
   --message <HEX_MESSAGE> \
-  --signature-algorithm 0 \
-  --hash-scheme 0 \
+  --signature-algorithm ecdsa \
+  --hash-scheme keccak256 \
   --secret-share ./my_secret.bin \
   --presign-cap-id <PRESIGN_CAP_ID> \
   --wait
@@ -100,10 +100,11 @@ ika dwallet sign \
 |------|----------|-------------|
 | `--dwallet-cap-id <ID>` | Yes | dWallet capability object ID |
 | `--message <HEX>` | Yes | Message to sign (hex-encoded) |
-| `--signature-algorithm <U32>` | Yes | Signature algorithm |
-| `--hash-scheme <U32>` | Yes | Hash scheme |
+| `--signature-algorithm <ALG>` | Yes | `ecdsa`, `taproot`, `eddsa`, `schnorrkel` |
+| `--hash-scheme <HASH>` | Yes | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 | `--presign-cap-id <ID>` | Yes | Presign cap ID (verified or unverified — auto-verified if needed) |
-| `--secret-share <PATH>` | Yes | Path to user secret share file |
+| `--secret-share <PATH>` | No | Path to user secret share file. If omitted, decrypts from chain |
+| `--secret-share-hex <HEX>` | No | User secret share as hex string (alternative to file) |
 | `--presign-output <HEX>` | No | Presign output (hex). Auto-fetched from `--presign-cap-id` if omitted |
 | `--dkg-output <HEX>` | No | DKG public output (hex). Auto-fetched from `--dwallet-id` if omitted |
 | `--dwallet-id <ID>` | No | dWallet ID (auto-fetches curve and DKG output from chain) |
@@ -153,20 +154,21 @@ Create a partial user signature (first step of future signing).
 ika dwallet future-sign create \
   --dwallet-id <DWALLET_ID> \
   --message <HEX_MESSAGE> \
-  --hash-scheme 0 \
+  --hash-scheme sha256 \
   --presign-cap-id <PRESIGN_CAP_ID> \
   --secret-share ./my_secret.bin \
-  --signature-algorithm 0
+  --signature-algorithm ecdsa
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--message <HEX>` | Yes | Message to sign |
-| `--hash-scheme <U32>` | Yes | Hash scheme |
+| `--hash-scheme <HASH>` | Yes | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 | `--presign-cap-id <ID>` | Yes | Verified presign cap ID |
-| `--secret-share <PATH>` | Yes | Path to user secret share |
-| `--signature-algorithm <U32>` | Yes | Signature algorithm |
+| `--secret-share <PATH>` | No | Path to user secret share. If omitted, decrypts from chain |
+| `--secret-share-hex <HEX>` | No | User secret share as hex string (alternative to file) |
+| `--signature-algorithm <ALG>` | Yes | `ecdsa`, `taproot`, `eddsa`, `schnorrkel` |
 | `--presign-output <HEX>` | No | Presign output (hex). Auto-fetched if omitted |
 | `--dkg-output <HEX>` | No | DKG public output (hex). Auto-fetched if omitted |
 | `--curve <CURVE>` | No | Override auto-detected curve |
@@ -182,17 +184,18 @@ ika dwallet future-sign fulfill \
   --partial-cap-id <PARTIAL_CAP_ID> \
   --dwallet-cap-id <CAP_ID> \
   --message <HEX_MESSAGE> \
-  --signature-algorithm 0 \
-  --hash-scheme 0
+  --signature-algorithm ecdsa \
+  --hash-scheme keccak256
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--partial-cap-id <ID>` | Yes | Partial user signature cap ID (from `future-sign create`) |
 | `--dwallet-cap-id <ID>` | Yes | dWallet cap ID (for message approval) |
+| `--dwallet-id <ID>` | Yes | dWallet ID (used to resolve curve for validation) |
 | `--message <HEX>` | Yes | Message to sign |
-| `--signature-algorithm <U32>` | Yes | Signature algorithm |
-| `--hash-scheme <U32>` | Yes | Hash scheme |
+| `--signature-algorithm <ALG>` | Yes | `ecdsa`, `taproot`, `eddsa`, `schnorrkel` |
+| `--hash-scheme <HASH>` | Yes | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 | `--wait` | No | Wait for sign session to complete and return the signature |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
@@ -204,13 +207,15 @@ ika dwallet future-sign fulfill \
 Request a presign for a dWallet.
 
 ```bash
-ika dwallet presign --dwallet-id <ID> --signature-algorithm 0
+ika dwallet presign --dwallet-id <ID> --signature-algorithm ecdsa --count 5 --wait
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
-| `--signature-algorithm <U32>` | Yes | Signature algorithm |
+| `--signature-algorithm <ALG>` | Yes | `ecdsa`, `taproot`, `eddsa`, `schnorrkel` |
+| `--count <N>` | No | Number of presigns to create in a single transaction (1-20, default: 1) |
+| `--wait` | No | Wait for presigns to complete and auto-verify the caps |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
@@ -221,13 +226,14 @@ ika dwallet presign --dwallet-id <ID> --signature-algorithm 0
 Request a global presign using the network encryption key. The network encryption key is auto-fetched from the Ika coordinator.
 
 ```bash
-ika dwallet global-presign --curve 0 --signature-algorithm 0
+ika dwallet global-presign --curve secp256k1 --signature-algorithm ecdsa --wait
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--curve <U32>` | Yes | Curve identifier |
-| `--signature-algorithm <U32>` | Yes | Signature algorithm |
+| `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
+| `--signature-algorithm <ALG>` | Yes | `ecdsa`, `taproot`, `eddsa`, `schnorrkel` |
+| `--wait` | No | Wait for presign to complete and auto-verify the cap |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
@@ -240,13 +246,17 @@ Import an external key as a dWallet. Requires a previously registered encryption
 ```bash
 ika dwallet import \
   --curve secp256k1 \
-  --centralized-message ./secret_key.bin
+  --secret-key ./my_external_key.bin
 ```
+
+The secret key file format depends on the curve:
+- **secp256k1 / secp256r1**: 33 bytes (compressed public key prefix byte + 32-byte scalar)
+- **ed25519 / ristretto**: 32 bytes (raw scalar, must be a valid scalar for the curve)
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |
-| `--centralized-message <PATH>` | Yes | Path to the secret key file to import |
+| `--secret-key <PATH>` | Yes | Path to the secret key file to import |
 | `--output-secret <PATH>` | No | Where to save user secret share (default: `imported_dwallet_secret_share.bin`) |
 | Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
@@ -348,6 +358,80 @@ ika dwallet generate-keypair --curve secp256k1
 
 ---
 
+## `ika dwallet list`
+
+List dWallet capabilities owned by the active address.
+
+```bash
+ika dwallet list
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+---
+
+## `ika dwallet list-presigns`
+
+List presign caps owned by the active address, grouped by status and curve.
+
+```bash
+ika dwallet list-presigns
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+---
+
+## `ika dwallet public-key`
+
+Extract the signing public key from a dWallet.
+
+```bash
+ika dwallet public-key --dwallet-id <ID>
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--dwallet-id <ID>` | Yes | dWallet object ID |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+---
+
+## `ika dwallet decrypt`
+
+Decrypt a user secret share from the on-chain encrypted share (offline utility).
+
+```bash
+ika dwallet decrypt --dwallet-id <ID> --output-secret ./decrypted_share.bin
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--dwallet-id <ID>` | Yes | dWallet object ID |
+| `--output-secret <PATH>` | No | Save decrypted secret share to this file |
+| Seed args | No | `--seed-file`, `--address`, `--encryption-key-index`, `--legacy-hash` |
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+---
+
+## `ika dwallet epoch`
+
+Query current network epoch.
+
+```bash
+ika dwallet epoch
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| Transaction args | No | `--gas-budget`, `--ika-config` |
+
+---
+
 ## Share Management
 
 ### `ika dwallet share make-public`
@@ -361,7 +445,8 @@ ika dwallet share make-public --dwallet-id <ID> --secret-share ./my_secret.bin
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
-| `--secret-share <PATH>` | Yes | Path to user secret share file |
+| `--secret-share <PATH>` | No | Path to user secret share file. If omitted, decrypts from chain |
+| `--secret-share-hex <HEX>` | No | User secret share as hex string (alternative to file) |
 | Payment args | No | `--ika-coin-id`, `--sui-coin-id` |
 | Transaction args | No | `--gas-budget`, `--ika-config` |
 
@@ -383,7 +468,8 @@ ika dwallet share re-encrypt \
 |------|----------|-------------|
 | `--dwallet-id <ID>` | Yes | dWallet object ID |
 | `--destination-address <ADDR>` | Yes | Destination address to re-encrypt for |
-| `--secret-share <PATH>` | Yes | Path to user secret share file |
+| `--secret-share <PATH>` | No | Path to user secret share file. If omitted, decrypts from chain |
+| `--secret-share-hex <HEX>` | No | User secret share as hex string (alternative to file) |
 | `--source-encrypted-share-id <ID>` | Yes | Source encrypted user secret key share ID |
 | `--destination-encryption-key <HEX>` | Yes | Destination user's encryption key (hex) |
 | `--curve <CURVE>` | Yes | `secp256k1`, `secp256r1`, `ed25519`, `ristretto` |

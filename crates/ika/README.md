@@ -33,13 +33,20 @@ ika
 │   ├── create                 # Create dWallet via DKG
 │   ├── sign                   # Request signature (--wait for result)
 │   ├── future-sign            # Conditional/future signing
-│   ├── presign                # Request presign
+│   │   ├── create             # Create partial user signature
+│   │   └── fulfill            # Complete future sign
+│   ├── presign                # Request presign (--count for batch, --wait)
 │   ├── global-presign         # Global presign with network key
 │   ├── import                 # Import external key as dWallet
 │   ├── register-encryption-key
 │   ├── get-encryption-key
 │   ├── verify-presign
 │   ├── get                    # Query dWallet info
+│   ├── list                   # List owned dWallet capabilities
+│   ├── list-presigns          # List presign caps by status/curve
+│   ├── public-key             # Extract signing public key
+│   ├── decrypt                # Decrypt on-chain encrypted share
+│   ├── epoch                  # Query current network epoch
 │   ├── pricing                # Current pricing
 │   ├── generate-keypair       # Offline keypair generation
 │   └── share                  # User share management
@@ -60,11 +67,23 @@ ika
 │   └── initialize             # Full system init + encryption key DKG
 ├── config                     # Configuration management
 │   ├── init                   # Fetch contract addresses from GitHub
+│   ├── add-env                # Add env from local ika_config.json
+│   ├── sync                   # Re-fetch latest contract addresses
 │   └── show                   # Show current config
 ├── start                      # Start local network
 ├── network                    # Display network info
 └── completion                 # Shell completions (bash/zsh/fish)
 ```
+
+## Curves, Algorithms, and Hash Schemes
+
+Commands accept named values (not numeric IDs):
+
+| Parameter               | Accepted values                                             |
+| ----------------------- | ----------------------------------------------------------- |
+| `--curve`               | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`           |
+| `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`                  |
+| `--hash-scheme`         | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 
 ## Quick Start
 
@@ -75,19 +94,22 @@ ika dwallet register-encryption-key --curve secp256k1
 # Create a dWallet
 ika dwallet create \
   --curve secp256k1 \
-  --encryption-key-id <ENCRYPTION_KEY_ID> \
   --output-secret ./my_secret.bin
 
-# Request a presign
-ika dwallet presign --dwallet-id <DWALLET_ID> --signature-algorithm 0
+# Request a presign (batch of 5, wait for completion)
+ika dwallet presign \
+  --dwallet-id <DWALLET_ID> \
+  --signature-algorithm ecdsa \
+  --count 5 \
+  --wait
 
 # Sign a message (waits for completion)
 ika dwallet sign \
   --dwallet-cap-id <CAP_ID> \
   --dwallet-id <DWALLET_ID> \
   --message <HEX_MESSAGE> \
-  --signature-algorithm 0 \
-  --hash-scheme 0 \
+  --signature-algorithm ecdsa \
+  --hash-scheme keccak256 \
   --secret-share ./my_secret.bin \
   --presign-cap-id <PRESIGN_CAP_ID> \
   --wait
