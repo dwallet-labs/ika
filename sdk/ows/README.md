@@ -112,7 +112,8 @@ A single dWallet signs for all chains on its curve:
 | Chain | CAIP-2 | Curve | Signature | Hash |
 |-------|--------|-------|-----------|------|
 | EVM | `eip155:*` | secp256k1 | ECDSA | KECCAK256 |
-| Bitcoin | `bip122:*` | secp256k1 | ECDSA | DoubleSHA256 |
+| Bitcoin (segwit) | `bip122:*` | secp256k1 | ECDSA | DoubleSHA256 |
+| Bitcoin (taproot) | `bip122:*` | secp256k1 | Taproot | SHA256 |
 | Solana | `solana:*` | ed25519 | EdDSA | SHA512 |
 | Sui | `sui:*` | ed25519 | EdDSA | SHA512 |
 | Cosmos | `cosmos:*` | secp256k1 | ECDSA | SHA256 |
@@ -128,6 +129,44 @@ Pre-computed presigns accelerate signing from ~30-60s to ~20s.
 await provider.prefillPresigns('my-wallet', 'ECDSASecp256k1', 10);
 const sig = await provider.signTransaction('my-wallet', 'eip155:1', txHex); // uses pooled presign
 ```
+
+## Bitcoin Signing
+
+Two modes are supported. Both use the same secp256k1 dWallet.
+
+### Native Segwit (P2WPKH, `bc1q...`)
+
+Standard ECDSA signing. Build the BIP-143 sighash preimage externally and pass it:
+
+```typescript
+// The default bip122 chain uses ECDSA + DoubleSHA256
+const sig = await provider.signTransaction('btc-wallet', 'bip122:...', sighashPreimageHex);
+```
+
+### Taproot (P2TR, `bc1p...`, script path only)
+
+Schnorr signing via script path. Key path is not supported because MPC cannot tweak the internal key. Use `bitcoinjs-lib` to build the PSBT, compute the BIP-341 taproot preimage, then sign:
+
+```typescript
+import { SignatureAlgorithm, Hash } from '@ika.xyz/sdk';
+
+// Build PSBT with bitcoinjs-lib, compute taproot preimage...
+const sig = await provider.signTransaction('btc-wallet', 'bip122:...', taprootPreimageHex, {
+  signatureAlgorithmOverride: SignatureAlgorithm.Taproot,
+  hashOverride: Hash.SHA256,
+});
+
+// Finalize PSBT with the signature
+psbt.updateInput(0, {
+  tapScriptSig: [{
+    pubkey: xOnlyPubkey,     // 32-byte x-only public key
+    signature: sigBytes,      // 64-byte Schnorr signature
+    leafHash: leafHash,       // Tapscript leaf hash
+  }],
+}).finalizeAllInputs();
+```
+
+See `examples/multisig-bitcoin/` for a complete Taproot implementation.
 
 ## On-Chain Policy Engine
 

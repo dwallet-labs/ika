@@ -89,24 +89,42 @@ export function isValidMnemonic(mnemonic: string): boolean {
 
 // ─── Mnemonic → Private Key ──────────────────────────────────────────────
 
+/** Common derivation paths. */
+export const DERIVATION_PATHS = {
+	/** EVM (MetaMask, etc.) */
+	EVM: (index: number) => `m/44'/60'/0'/0/${index}`,
+	/** Bitcoin native segwit (BIP-84) */
+	BITCOIN_SEGWIT: (index: number) => `m/84'/0'/0'/0/${index}`,
+	/** Bitcoin taproot (BIP-86) */
+	BITCOIN_TAPROOT: (index: number) => `m/86'/0'/0'/0/${index}`,
+	/** Cosmos */
+	COSMOS: (index: number) => `m/44'/118'/0'/0/${index}`,
+	/** Solana (Phantom, Solflare) */
+	SOLANA: (index: number) => `m/44'/501'/${index}'/0'`,
+	/** Sui */
+	SUI: (index: number) => `m/44'/784'/${index}'/0'/0'`,
+};
+
 /**
  * Derive a private key from a BIP-39 mnemonic, ready to import into Ika.
  *
- * - **secp256k1 / secp256r1**: BIP-32 derivation at `m/44'/60'/0'/0/{index}`.
- *   Returns the raw 32-byte private key.
+ * - **secp256k1 / secp256r1**: BIP-32 derivation. Default path is EVM
+ *   (`m/44'/60'/0'/0/{index}`). Use `path` to override for Bitcoin, Cosmos, etc.
  *
- * - **ed25519**: SLIP-0010 derivation at `m/44'/501'/{index}'/0'`,
- *   then SHA-512 + clamp + reduce mod L (RFC 8032). The resulting
- *   public key matches Phantom/Solflare for the same mnemonic.
+ * - **ed25519**: SLIP-0010 derivation. Default path is Solana
+ *   (`m/44'/501'/{index}'/0'`). SHA-512 + clamp + reduce mod L (RFC 8032).
+ *   Produces Phantom-compatible addresses.
  *
  * @param mnemonic - BIP-39 mnemonic phrase
  * @param curve - Target curve
  * @param index - Account index (default: 0)
+ * @param path - Override derivation path (optional)
  */
 export function derivePrivateKeyFromMnemonic(
 	mnemonic: string,
 	curve: Curve,
 	index: number = 0,
+	path?: string,
 ): Uint8Array {
 	if (!isValidMnemonic(mnemonic)) {
 		throw new OWSError(OWSErrorCode.INVALID_INPUT, 'Invalid BIP-39 mnemonic');
@@ -115,17 +133,18 @@ export function derivePrivateKeyFromMnemonic(
 	const seed = mnemonicToSeedSync(mnemonic);
 
 	if (curve === Curve.ED25519) {
+		const edPath = path ?? DERIVATION_PATHS.SOLANA(index);
 		const seedHex = Buffer.from(seed).toString('hex');
-		const { key } = derivePath(`m/44'/501'/${index}'/0'`, seedHex);
+		const { key } = derivePath(edPath, seedHex);
 		return ed25519SeedToPrivateKey(new Uint8Array(key));
 	}
 
 	// BIP-32 for secp256k1 / secp256r1.
 	const master = HDKey.fromMasterSeed(seed);
-	const path = `m/44'/60'/0'/0/${index}`;
-	const derived = master.derive(path);
+	const bip32Path = path ?? DERIVATION_PATHS.EVM(index);
+	const derived = master.derive(bip32Path);
 	if (!derived.privateKey) {
-		throw new OWSError(OWSErrorCode.INVALID_INPUT, `Failed to derive key at path ${path}`);
+		throw new OWSError(OWSErrorCode.INVALID_INPUT, `Failed to derive key at path ${bip32Path}`);
 	}
 	return derived.privateKey;
 }

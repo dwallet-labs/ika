@@ -53,6 +53,7 @@ import type { Keypair } from '@mysten/sui/cryptography';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import type { TransactionObjectArgument } from '@mysten/sui/transactions';
 import { coinWithBalance, Transaction } from '@mysten/sui/transactions';
+import { blake2b } from '@noble/hashes/blake2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 
@@ -110,6 +111,81 @@ export type {
 	DeclarativePolicy,
 	DeclarativePolicyRules,
 } from '../policy/index.js';
+
+// ─── Chain-Specific Message Pre-Processing ───────────────────────────────
+
+/**
+ * Pre-process a message or transaction for chain-specific signing standards.
+ *
+ * Ika MPC signs raw bytes — it does not apply chain-specific envelope
+ * formatting. Each chain's verifier expects a particular format:
+ *
+ * - **EVM (eip155)**: `personal_sign` wraps with "\x19Ethereum Signed Message:\n{len}{msg}"
+ *   for messages. Transactions are passed as-is (already RLP-encoded + keccak hashed by the caller).
+ * - **Sui**: Intent-prefixed blake2b-256 digest: `blake2b256([scope, version, appId] || bytes)`.
+ *   Scope=0 for transactions, scope=3 for personal messages.
+ * - **Solana**: Raw bytes (ed25519 signs directly, no wrapping).
+ * - **Cosmos**: ADR-036 wraps messages. Transactions are passed as-is (already Amino/Protobuf encoded).
+ * - **Filecoin (fil)**: blake2b-256 hash of the message bytes.
+ * - **Bitcoin (bip122)**: Raw bytes (caller provides the sighash).
+ * - **Tron**: Same as EVM for messages.
+ * - **TON**: Raw bytes.
+ */
+function preProcessForChain(
+	chain: string,
+	bytes: Uint8Array,
+	kind: 'transaction' | 'message',
+): Uint8Array {
+	const namespace = chain.split(':')[0]!;
+
+	switch (namespace) {
+		case 'eip155':
+		case 'tron': {
+			if (kind === 'message') {
+				// EIP-191 personal_sign: "\x19Ethereum Signed Message:\n{len}{message}"
+				const prefix = new TextEncoder().encode(
+					`\x19Ethereum Signed Message:\n${bytes.length}`,
+				);
+				const wrapped = new Uint8Array(prefix.length + bytes.length);
+				wrapped.set(prefix, 0);
+				wrapped.set(bytes, prefix.length);
+				return wrapped;
+			}
+			// Transactions: caller provides the already-encoded tx bytes.
+			return bytes;
+		}
+
+		case 'sui': {
+			// Intent message: [scope, version(0), appId(0)] || bytes
+			// scope: 0 = TransactionData, 3 = PersonalMessage
+			const scope = kind === 'transaction' ? 0 : 3;
+			const intentMessage = new Uint8Array(3 + bytes.length);
+			intentMessage.set([scope, 0, 0], 0);
+			intentMessage.set(bytes, 3);
+			return blake2b(intentMessage, { dkLen: 32 });
+		}
+
+		case 'fil': {
+			// Filecoin: blake2b-256 of the message/tx bytes.
+			return blake2b(bytes, { dkLen: 32 });
+		}
+
+		case 'cosmos': {
+			if (kind === 'message') {
+				// ADR-036: wrap in a standard sign doc.
+				// For simplicity, sign the raw bytes — full ADR-036 requires
+				// constructing an Amino StdSignDoc which depends on chain-id and
+				// account info. Callers can construct the full sign doc themselves.
+				return bytes;
+			}
+			return bytes;
+		}
+
+		// solana, bip122, ton: raw bytes, no pre-processing.
+		default:
+			return bytes;
+	}
+}
 
 /** Move struct names for each rule type (used in type arguments). */
 const RULE_TYPE_NAMES: Record<string, string> = {
@@ -500,7 +576,9 @@ export class IkaOWSProvider {
 		transactionHex: string,
 		options?: SignOptions,
 	): Promise<SignResult> {
-		return this.retry(() => this.#signBytes(wallet, chain, hexToBytes(transactionHex), options));
+		const txBytes = hexToBytes(transactionHex);
+		const message = preProcessForChain(chain, txBytes, 'transaction');
+		return this.retry(() => this.#signBytes(wallet, chain, message, options));
 	}
 
 	/**
@@ -521,6 +599,7 @@ export class IkaOWSProvider {
 		} else {
 			bytes = new TextEncoder().encode(message);
 		}
+		bytes = preProcessForChain(chain, bytes, 'message');
 		return this.retry(() => this.#signBytes(wallet, chain, bytes, options));
 	}
 

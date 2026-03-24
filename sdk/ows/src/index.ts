@@ -50,6 +50,7 @@ export {
 	generateMnemonic,
 	isValidMnemonic,
 	derivePrivateKeyFromMnemonic,
+	DERIVATION_PATHS,
 } from './crypto/index.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────
