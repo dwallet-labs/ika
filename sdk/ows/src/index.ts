@@ -41,6 +41,7 @@ export type { ChainSigningParams } from './chain/chains.js';
 
 // ─── Address Derivation ──────────────────────────────────────────────────
 export { deriveAddress, deriveAccountsForCurve, deriveTaprootAddress } from './chain/address.js';
+export { preProcessForChain } from './chain/preprocess.js';
 
 // ─── Crypto Utilities ────────────────────────────────────────────────────
 export {
