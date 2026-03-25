@@ -2493,8 +2493,8 @@ impl IkaDWalletCommand {
                 let curve_id = curve_name_to_id(&curve)?;
                 let coins = resolve_payment_coins(context, &config, &payment).await?;
 
-                let secret_key = std::fs::read(&secret_key)
-                    .context("Failed to read secret key file")?;
+                let secret_key =
+                    std::fs::read(&secret_key).context("Failed to read secret key file")?;
 
                 let network_key_info =
                     get_network_key_info(context, &config_path, curve_id).await?;
