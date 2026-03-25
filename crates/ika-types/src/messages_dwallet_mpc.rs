@@ -114,12 +114,10 @@ pub struct GlobalPresignRequest {
     pub dwallet_network_encryption_key_id: ObjectID,
 }
 
-/// Status update sent by each validator on each consensus round.
-/// Contains information about whether the validator is idle and
-/// which presign sessions it wants to request.
+/// Idle status update sent by a validator via consensus.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct InternalSessionsStatusUpdate {
-    /// The authority that sent this status update.
+pub struct IdleStatusUpdate {
+    /// The authority that sent this update.
     pub authority: AuthorityName,
     /// A random unique value used once, sampled each time anew,
     /// used to make this update unique, such that its key will be unique.
@@ -127,28 +125,11 @@ pub struct InternalSessionsStatusUpdate {
     /// Whether this validator is idle (has fewer sessions ready to execute
     /// than the idle session count threshold).
     pub is_idle: bool,
-    /// The global presign requests this validator received.
-    pub global_presign_requests: Vec<GlobalPresignRequest>,
-    /// Network encryption key data this validator has loaded from Sui.
-    pub network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
-    /// This validator's locally observed Sui chain state for context agreement.
-    pub sui_chain_observation: Option<SuiChainObservation>,
-    /// NOA checkpoint tx observations (finalized/failed) from this validator.
-    /// Piggybacked here so quorum resolution happens in the same consensus round
-    /// as chain context agreement.
-    pub noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
 }
 
-impl InternalSessionsStatusUpdate {
-    /// Creates a new `InternalSessionsStatusUpdate` with a freshly sampled random nonce.
-    pub fn new(
-        authority: AuthorityName,
-        is_idle: bool,
-        global_presign_requests: Vec<GlobalPresignRequest>,
-        network_key_data: Vec<DWalletNetworkEncryptionKeyData>,
-        sui_chain_observation: Option<SuiChainObservation>,
-        noa_checkpoint_observations: Vec<NOACheckpointTxObservation>,
-    ) -> Self {
+impl IdleStatusUpdate {
+    /// Creates a new `IdleStatusUpdate` with a freshly sampled random nonce.
+    pub fn new(authority: AuthorityName, is_idle: bool) -> Self {
         use rand::RngCore;
         let mut nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut nonce);
@@ -156,10 +137,72 @@ impl InternalSessionsStatusUpdate {
             authority,
             nonce,
             is_idle,
-            global_presign_requests,
-            network_key_data,
+        }
+    }
+}
+
+/// Sui chain observation update sent by a validator via consensus.
+/// Only sent when there is an actual observation to share.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SuiChainObservationUpdate {
+    /// The authority that sent this update.
+    pub authority: AuthorityName,
+    /// A random unique value used once, sampled each time anew,
+    /// used to make this update unique, such that its key will be unique.
+    pub nonce: [u8; 32],
+    /// This validator's locally observed Sui chain state for context agreement.
+    pub sui_chain_observation: SuiChainObservation,
+}
+
+impl SuiChainObservationUpdate {
+    /// Creates a new `SuiChainObservationUpdate` with a freshly sampled random nonce.
+    pub fn new(authority: AuthorityName, sui_chain_observation: SuiChainObservation) -> Self {
+        use rand::RngCore;
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        Self {
+            authority,
+            nonce,
             sui_chain_observation,
-            noa_checkpoint_observations,
+        }
+    }
+}
+
+/// Individual consensus message for a global presign request.
+/// One message per request, keyed by `authority + session_sequence_number`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConsensusGlobalPresignRequest {
+    pub authority: AuthorityName,
+    pub request: GlobalPresignRequest,
+}
+
+/// Individual consensus message for network encryption key data.
+/// One message per key, keyed by `authority + key_id`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConsensusNetworkKeyData {
+    pub authority: AuthorityName,
+    pub key_data: DWalletNetworkEncryptionKeyData,
+}
+
+/// Individual consensus message for an NOA checkpoint observation.
+/// One message per observation, keyed by `authority + nonce`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConsensusNOAObservation {
+    pub authority: AuthorityName,
+    pub nonce: [u8; 32],
+    pub observation: NOACheckpointTxObservation,
+}
+
+impl ConsensusNOAObservation {
+    /// Creates a new `ConsensusNOAObservation` with a freshly sampled random nonce.
+    pub fn new(authority: AuthorityName, observation: NOACheckpointTxObservation) -> Self {
+        use rand::RngCore;
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        Self {
+            authority,
+            nonce,
+            observation,
         }
     }
 }
@@ -543,6 +586,9 @@ impl<E: DWalletSessionEventTrait> DWalletSessionEventTrait for DWalletSessionEve
         }
     }
 }
+
+// Compile-time assertion: Move hardcodes session identifier preimages to 32 bytes.
+const _: () = assert!(SessionIdentifier::LENGTH == 32);
 
 impl<E: DWalletSessionEventTrait> DWalletSessionEvent<E> {
     pub fn is_dwallet_mpc_event(event: StructTag, package_id: AccountAddress) -> bool {

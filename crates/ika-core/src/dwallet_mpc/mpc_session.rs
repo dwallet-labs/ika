@@ -12,6 +12,7 @@ use ika_types::messages_dwallet_mpc::{
     SessionIdentifier,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use sui_types::base_types::ObjectID;
@@ -56,7 +57,11 @@ pub(crate) struct DWalletSession {
 
     pub(super) computation_type: SessionComputationType,
 
-    outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
+    /// BTreeMap is required here (not HashMap) to guarantee deterministic iteration
+    /// order by consensus round. `build_outputs_to_finalize` uses "last output wins"
+    /// semantics — all validators must agree on which round's output is "last" for
+    /// each party, which requires ordered iteration.
+    outputs_by_consensus_round: BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
 
 /// Possible statuses of a session:
@@ -122,7 +127,7 @@ impl DWalletSession {
     ) -> Self {
         Self {
             status,
-            outputs_by_consensus_round: HashMap::new(),
+            outputs_by_consensus_round: BTreeMap::new(),
             session_identifier,
             party_id,
             counterparty_chain,
@@ -139,7 +144,7 @@ impl DWalletSession {
             SessionComputationType::Native => SessionComputationType::Native,
         };
 
-        self.outputs_by_consensus_round = HashMap::new();
+        self.outputs_by_consensus_round = BTreeMap::new();
     }
 
     /// Adds an incoming message.
@@ -282,7 +287,7 @@ impl DWalletSession {
 
     pub(crate) fn outputs_by_consensus_round(
         &self,
-    ) -> &HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>> {
+    ) -> &BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>> {
         &self.outputs_by_consensus_round
     }
 

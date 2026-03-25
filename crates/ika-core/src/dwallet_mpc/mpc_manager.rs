@@ -34,18 +34,20 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
     Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
     DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    InternalSessionsStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
+    SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use ika_types::noa_checkpoint::{
@@ -65,7 +67,7 @@ fn compute_chain_context<C: CounterpartyChain>(
 ) {
     let observations: HashMap<u16, C::Observation> = observations_by_party
         .iter()
-        .map(|(party_id, obs)| (*party_id as u16, obs.clone()))
+        .map(|(party_id, obs)| (*party_id, obs.clone()))
         .collect();
 
     if let Some(context) =
@@ -78,23 +80,6 @@ fn compute_chain_context<C: CounterpartyChain>(
         );
         *current_context = Some(context);
     }
-}
-
-/// Result of majority voting on status updates.
-#[derive(Debug, Clone)]
-pub struct AgreedStatusUpdate {
-    /// Whether the majority of validators are idle.
-    pub is_idle: bool,
-    /// The presign session requests that reached quorum agreement.
-    pub global_presign_requests: Vec<GlobalPresignRequest>,
-    /// Network key data that reached quorum agreement via weighted majority vote.
-    pub agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
-    /// The most recently consensus-agreed Sui chain context.
-    pub agreed_sui_chain_context: Option<SuiChainContext>,
-    /// NOA checkpoint tx_refs that reached 2f+1 finalization quorum this round.
-    pub newly_finalized_tx_refs: Vec<NOACheckpointTxRef>,
-    /// NOA checkpoint (tx_ref, retry_round) pairs that reached 2f+1 failure quorum this round.
-    pub newly_failed_tx_refs: Vec<(NOACheckpointTxRef, u32)>,
 }
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
@@ -201,8 +186,7 @@ pub(crate) struct DWalletMPCManager {
     epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
-    pub(crate) network_owned_address_sign_output_sender:
-        UnboundedSender<NetworkOwnedAddressSignOutput>,
+    pub(crate) network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
 
     /// Each validator's latest Sui chain observation, keyed by party ID.
     /// Updated every time a status update with an observation is received.
@@ -233,7 +217,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+        network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -268,7 +252,7 @@ impl DWalletMPCManager {
         sui_data_receivers: SuiDataReceivers,
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
-        network_owned_address_sign_output_sender: UnboundedSender<NetworkOwnedAddressSignOutput>,
+        network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
@@ -407,25 +391,80 @@ impl DWalletMPCManager {
         (agreed_outputs, completed_sessions)
     }
 
-    /// Handle status updates for a consensus round.
+    /// Handle idle status and chain observation updates for a consensus round.
     ///
-    /// For each status update:
-    /// - Override the sender's idle status in `idle_status_by_party`
-    /// - For each presign request, add the sender to `presign_request_votes`
-    ///   and immediately check if majority is reached
+    /// For each idle status update, override the sender's idle status in `idle_status_by_party`.
+    /// For each chain observation update, store the sender's latest observation.
     ///
-    /// At the end, perform majority vote on idle status using `idle_status_by_party`.
-    pub fn handle_status_updates(
+    /// Always runs majority vote on idle status (even with empty input).
+    /// Returns `(is_idle, Option<SuiChainContext>)`.
+    pub fn handle_idle_and_chain_updates(
         &mut self,
         consensus_round: u64,
-        status_updates: Vec<InternalSessionsStatusUpdate>,
-    ) -> Option<AgreedStatusUpdate> {
-        let mut agreed_presign_requests = Vec::new();
-        let mut newly_finalized = Vec::new();
-        let mut newly_failed = Vec::new();
+        idle_updates: Vec<IdleStatusUpdate>,
+        chain_observations: Vec<SuiChainObservationUpdate>,
+    ) -> (bool, Option<SuiChainContext>) {
+        for update in idle_updates {
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &update.authority)
+            else {
+                error!(
+                    sender_authority=?update.authority,
+                    consensus_round,
+                    should_never_happen = true,
+                    "got an idle status update for an authority without party ID",
+                );
+                continue;
+            };
 
-        for status_update in status_updates {
-            let sender_authority = status_update.authority;
+            self.idle_status_by_party
+                .insert(sender_party_id, update.is_idle);
+        }
+
+        for observation in chain_observations {
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &observation.authority)
+            else {
+                error!(
+                    sender_authority=?observation.authority,
+                    consensus_round,
+                    should_never_happen = true,
+                    "got a chain observation update for an authority without party ID",
+                );
+                continue;
+            };
+
+            self.sui_chain_observations_by_party
+                .insert(sender_party_id, observation.sui_chain_observation);
+        }
+
+        // Compute agreed chain context from accumulated observations.
+        compute_chain_context::<SuiCounterpartyChain>(
+            &self.sui_chain_observations_by_party,
+            &mut self.agreed_sui_chain_context,
+            &self.access_structure,
+            consensus_round,
+        );
+
+        // Perform majority vote on idle status.
+        let network_is_idle = self.compute_idle_status_majority_vote();
+
+        (network_is_idle, self.agreed_sui_chain_context.clone())
+    }
+
+    /// Handle presign request messages. Performs quorum voting per sequence number.
+    /// Marks own messages as sent when they return from consensus.
+    /// Returns newly agreed presign requests.
+    pub fn handle_presign_request_messages(
+        &mut self,
+        consensus_round: u64,
+        messages: Vec<ConsensusGlobalPresignRequest>,
+    ) -> Vec<GlobalPresignRequest> {
+        let mut agreed_presign_requests = Vec::new();
+
+        for msg in messages {
+            let sender_authority = msg.authority;
+            let request = msg.request;
 
             let Ok(sender_party_id) =
                 authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
@@ -433,125 +472,157 @@ impl DWalletMPCManager {
                 error!(
                     sender_authority=?sender_authority,
                     consensus_round,
-                    should_never_happen =? true,
-                    "got a status update for an authority without party ID",
+                    should_never_happen = true,
+                    "got a presign request for an authority without party ID",
                 );
                 continue;
             };
 
-            // When we receive our own status update back from consensus,
-            // mark the presign requests as sent to avoid re-sending them.
+            // When we receive our own presign request back from consensus,
+            // mark it as sent to avoid re-sending.
             if sender_authority == self.validator_name {
-                for request in &status_update.global_presign_requests {
-                    self.sent_presign_sequence_numbers
-                        .insert(request.session_sequence_number);
-                }
+                self.sent_presign_sequence_numbers
+                    .insert(request.session_sequence_number);
             }
 
-            // Override the idle status for this party.
-            self.idle_status_by_party
-                .insert(sender_party_id, status_update.is_idle);
+            let sequence_number = request.session_sequence_number;
 
-            // Process each presign request and check for majority immediately.
-            for request in status_update.global_presign_requests {
-                let sequence_number = request.session_sequence_number;
-
-                // Skip if this presign request has already reached majority.
-                if self
-                    .completed_presign_sequence_numbers
-                    .contains(&sequence_number)
-                {
-                    continue;
-                }
-
-                // Add this party's vote for this presign request.
-                let parties = self
-                    .presign_request_votes
-                    .entry(sequence_number)
-                    .or_default();
-                parties.insert(sender_party_id);
-
-                // Check if the parties that voted form an authorized subset.
-                if self.access_structure.is_authorized_subset(parties).is_ok() {
-                    // Majority reached - mark as completed and add to result.
-                    self.completed_presign_sequence_numbers
-                        .insert(sequence_number);
-                    agreed_presign_requests.push(request);
-                    info!(
-                        sequence_number,
-                        consensus_round, "Presign request reached majority vote"
-                    );
-                }
+            // Skip if this presign request has already reached majority.
+            if self
+                .completed_presign_sequence_numbers
+                .contains(&sequence_number)
+            {
+                continue;
             }
 
-            // Store this validator's latest Sui chain observation.
-            if let Some(observation) = status_update.sui_chain_observation {
-                self.sui_chain_observations_by_party
-                    .insert(sender_party_id, observation);
+            // Add this party's vote for this presign request.
+            let parties = self
+                .presign_request_votes
+                .entry(sequence_number)
+                .or_default();
+            parties.insert(sender_party_id);
+
+            // Check if the parties that voted form an authorized subset.
+            if self.access_structure.is_authorized_subset(parties).is_ok() {
+                self.completed_presign_sequence_numbers
+                    .insert(sequence_number);
+                agreed_presign_requests.push(request);
+                info!(
+                    sequence_number,
+                    consensus_round, "Presign request reached majority vote"
+                );
+            }
+        }
+
+        agreed_presign_requests
+    }
+
+    /// Handle network key data messages. Performs quorum voting per key.
+    /// Updates `agreed_network_key_data` in place.
+    pub fn handle_network_key_data_messages(
+        &mut self,
+        consensus_round: u64,
+        messages: Vec<ConsensusNetworkKeyData>,
+    ) {
+        for msg in messages {
+            let sender_authority = msg.authority;
+            let key_data = msg.key_data;
+
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+            else {
+                error!(
+                    sender_authority=?sender_authority,
+                    consensus_round,
+                    should_never_happen = true,
+                    "got network key data for an authority without party ID",
+                );
+                continue;
+            };
+
+            let key_id = key_data.id;
+
+            // Skip if this key has already reached agreement.
+            if self.agreed_network_key_data.contains_key(&key_id) {
+                continue;
             }
 
-            // Vote on network key data with inline is_authorized_subset check.
-            for key_data in status_update.network_key_data {
-                let key_id = key_data.id;
+            // Add this party's vote for this specific key data.
+            let parties = self
+                .network_key_data_votes
+                .entry(key_id)
+                .or_default()
+                .entry(key_data.clone())
+                .or_default();
+            parties.insert(sender_party_id);
 
-                // Skip if this key has already reached agreement.
-                if self.agreed_network_key_data.contains_key(&key_id) {
-                    continue;
-                }
-
-                // Add this party's vote for this specific key data.
-                let parties = self
-                    .network_key_data_votes
-                    .entry(key_id)
-                    .or_default()
-                    .entry(key_data.clone())
-                    .or_default();
-                parties.insert(sender_party_id);
-
-                // Check if the parties that voted for this data form an authorized subset.
-                if self.access_structure.is_authorized_subset(parties).is_ok() {
-                    self.agreed_network_key_data.insert(key_id, key_data);
-                    info!(
-                        ?key_id,
-                        consensus_round, "Network key data has been agreed upon"
-                    );
-                }
+            // Check if the parties that voted for this data form an authorized subset.
+            if self.access_structure.is_authorized_subset(parties).is_ok() {
+                self.agreed_network_key_data.insert(key_id, key_data);
+                info!(
+                    ?key_id,
+                    consensus_round, "Network key data has been agreed upon"
+                );
             }
+        }
+    }
 
-            // Process NOA checkpoint observations and resolve quorum.
-            for observation in status_update.noa_checkpoint_observations {
-                match observation {
-                    NOACheckpointTxObservation::Finalized(tx_ref) => {
-                        if self.finalized_tx_refs.contains(&tx_ref) {
-                            continue;
-                        }
-                        let parties = self
-                            .noa_finalization_observations
-                            .entry(tx_ref.clone())
-                            .or_default();
-                        parties.insert(sender_party_id);
-                        if self.access_structure.is_authorized_subset(parties).is_ok() {
-                            self.finalized_tx_refs.insert(tx_ref.clone());
-                            newly_finalized.push(tx_ref);
-                        }
+    /// Handle NOA observation messages. Resolves finalization and failure quorums.
+    /// Returns `(newly_finalized_tx_refs, newly_failed_tx_refs)`.
+    pub fn handle_noa_observation_messages(
+        &mut self,
+        consensus_round: u64,
+        messages: Vec<ConsensusNOAObservation>,
+    ) -> (Vec<NOACheckpointTxRef>, Vec<(NOACheckpointTxRef, u32)>) {
+        let mut newly_finalized = Vec::new();
+        let mut newly_failed = Vec::new();
+
+        for msg in messages {
+            let sender_authority = msg.authority;
+
+            let Ok(sender_party_id) =
+                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
+            else {
+                error!(
+                    sender_authority=?sender_authority,
+                    consensus_round,
+                    should_never_happen = true,
+                    "got an NOA observation for an authority without party ID",
+                );
+                continue;
+            };
+
+            match msg.observation {
+                NOACheckpointTxObservation::Finalized(tx_ref) => {
+                    if self.finalized_tx_refs.contains(&tx_ref) {
+                        continue;
                     }
-                    NOACheckpointTxObservation::Failed(tx_ref, retry_round) => {
-                        if self.finalized_tx_refs.contains(&tx_ref) {
-                            continue;
-                        }
-                        let key = (tx_ref.clone(), retry_round);
-                        if self.failed_tx_ref_rounds.contains(&key) {
-                            continue;
-                        }
-                        let parties = self
-                            .noa_failure_observations
-                            .entry(key.clone())
-                            .or_default();
-                        parties.insert(sender_party_id);
-                        if self.access_structure.is_authorized_subset(parties).is_ok() {
-                            self.failed_tx_ref_rounds.insert(key);
-                            newly_failed.push((tx_ref, retry_round));
-                        }
+                    let parties = self
+                        .noa_finalization_observations
+                        .entry(tx_ref.clone())
+                        .or_default();
+                    parties.insert(sender_party_id);
+                    if self.access_structure.is_authorized_subset(parties).is_ok() {
+                        self.finalized_tx_refs.insert(tx_ref.clone());
+                        newly_finalized.push(tx_ref);
+                    }
+                }
+                NOACheckpointTxObservation::Failed(tx_ref, retry_round) => {
+                    if self.finalized_tx_refs.contains(&tx_ref) {
+                        continue;
+                    }
+                    let key = (tx_ref.clone(), retry_round);
+                    if self.failed_tx_ref_rounds.contains(&key) {
+                        continue;
+                    }
+                    let parties = self
+                        .noa_failure_observations
+                        .entry(key.clone())
+                        .or_default();
+                    parties.insert(sender_party_id);
+                    if self.access_structure.is_authorized_subset(parties).is_ok() {
+                        self.failed_tx_ref_rounds.insert(key);
+                        newly_failed.push((tx_ref, retry_round));
                     }
                 }
             }
@@ -563,25 +634,7 @@ impl DWalletMPCManager {
             .filter(|(tx_ref, _)| !self.finalized_tx_refs.contains(tx_ref))
             .collect();
 
-        // Compute agreed chain context from accumulated observations.
-        compute_chain_context::<SuiCounterpartyChain>(
-            &self.sui_chain_observations_by_party,
-            &mut self.agreed_sui_chain_context,
-            &self.access_structure,
-            consensus_round,
-        );
-
-        // Perform majority vote on idle status at the end of processing.
-        let network_is_idle = self.compute_idle_status_majority_vote();
-
-        Some(AgreedStatusUpdate {
-            is_idle: network_is_idle,
-            global_presign_requests: agreed_presign_requests,
-            agreed_network_key_data: self.agreed_network_key_data.clone(),
-            agreed_sui_chain_context: self.agreed_sui_chain_context.clone(),
-            newly_finalized_tx_refs: newly_finalized,
-            newly_failed_tx_refs: newly_failed,
-        })
+        (newly_finalized, newly_failed)
     }
 
     /// Compute majority vote for idle status using the accumulated `idle_status_by_party`.
@@ -590,6 +643,8 @@ impl DWalletMPCManager {
             return false;
         }
 
+        // Clone is required because `weighted_majority_vote` consumes `self`
+        // (defined in the external `mpc` crate).
         match self
             .idle_status_by_party
             .clone()
@@ -712,7 +767,7 @@ impl DWalletMPCManager {
             },
             Err(e) => {
                 if is_internal {
-                    error!(                        should_never_happen =? true, error=?e, ?request, "create internal session input from dWallet request with error");
+                    error!(                        should_never_happen = true, error=?e, ?request, "create internal session input from dWallet request with error");
                 } else {
                     error!(error=?e, ?request, "create session input from dWallet request with error");
                 }
@@ -894,13 +949,6 @@ impl DWalletMPCManager {
         self.next_internal_presign_sequence_number += 1;
     }
 
-    /// Returns whether the network encryption key with the given ID is available.
-    pub(super) fn has_network_key(&self, key_id: &ObjectID) -> bool {
-        self.network_keys
-            .get_network_encryption_key_public_data(key_id)
-            .is_ok()
-    }
-
     /// Instantiates a generic network-owned-address sign session.
     ///
     /// Pops a presign from the internal pool, wraps it, and creates the sign session.
@@ -1072,52 +1120,6 @@ impl DWalletMPCManager {
             })
     }
 
-    /// Handles an external presign request by assigning a presign from the internal pool
-    /// to the assigned pool. Returns the session identifier if successful.
-    pub fn handle_external_presign_request(
-        &mut self,
-        signature_algorithm: DWalletSignatureAlgorithm,
-        dwallet_network_encryption_key_id: ObjectID,
-        user_verification_key: Option<Vec<u8>>,
-        dwallet_id: Option<ObjectID>,
-    ) -> Option<SessionIdentifier> {
-        // Assign the presign from internal pool to assigned pool
-        match self.epoch_store.assign_presign(
-            signature_algorithm,
-            dwallet_network_encryption_key_id,
-            user_verification_key,
-            dwallet_id,
-            self.epoch_id,
-        ) {
-            Ok(Some(session_id)) => {
-                info!(
-                    ?session_id,
-                    ?signature_algorithm,
-                    ?dwallet_network_encryption_key_id,
-                    "Successfully assigned presign to external request"
-                );
-                Some(session_id)
-            }
-            Ok(None) => {
-                warn!(
-                    ?signature_algorithm,
-                    ?dwallet_network_encryption_key_id,
-                    "No presign available in internal pool for external request"
-                );
-                None
-            }
-            Err(e) => {
-                error!(
-                    error=?e,
-                    ?signature_algorithm,
-                    ?dwallet_network_encryption_key_id,
-                    "Failed to assign presign for external request"
-                );
-                None
-            }
-        }
-    }
-
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
     pub(super) fn new_session(
@@ -1229,7 +1231,7 @@ impl DWalletMPCManager {
                 } = &session.status
                 else {
                     error!(
-                        should_never_happen=true,
+                        should_never_happen = true,
                         session_identifier=?session.session_identifier,
                         "session is not active, cannot perform cryptographic computation",
                     );
@@ -1361,9 +1363,10 @@ impl DWalletMPCManager {
             match res {
                 Ok(key) => {
                     if key.epoch() != self.epoch_id {
-                        info!(
+                        warn!(
                             key_id=?key_id,
-                            epoch=?key.epoch(),
+                            key_epoch=?key.epoch(),
+                            current_epoch=?self.epoch_id,
                             "Consensus-voted network key epoch does not match current epoch, ignoring"
                         );
                         continue;
@@ -1572,7 +1575,7 @@ impl DWalletMPCManager {
                 };
                 if let Err(e) = self
                     .network_owned_address_sign_output_sender
-                    .send(sign_output)
+                    .try_send(sign_output)
                 {
                     error!(
                         ?session_identifier,
@@ -1687,7 +1690,7 @@ impl DWalletMPCManager {
     pub(crate) fn build_outputs_to_finalize(
         &self,
         session_identifier: &SessionIdentifier,
-        outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
+        outputs_by_consensus_round: BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
     ) -> Option<(HashSet<AuthorityName>, DWalletMPCOutputKind)> {
         let mut outputs_to_finalize: HashMap<PartyID, DWalletMPCSessionOutput> = HashMap::new();
 

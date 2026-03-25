@@ -71,7 +71,7 @@ async fn test_some_malicious_validators_flows_succeed() {
 
     for malicious_party_index in malicious_parties {
         // Create a malicious message for round 1, and set it as the patty's message.
-        // Find the first DWalletMPCMessage by type, skipping any InternalSessionsStatusUpdate
+        // Find the first DWalletMPCMessage by type, skipping any IdleStatusUpdate
         // entries that may precede it.
         let message_index = {
             let submitted = sent_consensus_messages_collectors[malicious_party_index]

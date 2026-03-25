@@ -177,7 +177,7 @@ async fn test_internal_presign_instantiation_at_correct_rounds() {
             // - pool: pre_pool (read from epoch_store before step 5 deposits)
             // - idle: post_is_idle (updated from status updates before step 3)
             let guard_open = pre_instantiated == pre_completed;
-            let delay_aligned = post_number_of_rounds % delay == 0;
+            let delay_aligned = post_number_of_rounds.is_multiple_of(delay);
             let should_instantiate = guard_open
                 && ((delay_aligned && (*pre_pool) < min_pool)
                     || (post_is_idle && (*pre_pool) < max_pool));
@@ -401,6 +401,7 @@ async fn test_internal_presign_stops_at_min_pool_size_when_not_idle() {
                     signature_algorithm: noa_sign_algorithm,
                     hash_scheme: noa_sign_hash_scheme,
                 })
+                .await
                 .expect("failed to send network-owned-address sign request");
         }
     }

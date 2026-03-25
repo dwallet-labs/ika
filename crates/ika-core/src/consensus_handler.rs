@@ -435,9 +435,11 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::CapabilityNotificationV1(_) => "capability_notification_v1",
         ConsensusTransactionKind::SystemCheckpointSignature(_) => "system_checkpoint_signature",
         ConsensusTransactionKind::EndOfPublish(_) => "end_of_publish",
-        ConsensusTransactionKind::InternalSessionsStatusUpdate(_) => {
-            "internal_sessions_status_update"
-        }
+        ConsensusTransactionKind::IdleStatusUpdate(_) => "idle_status_update",
+        ConsensusTransactionKind::SuiChainObservationUpdate(_) => "sui_chain_observation_update",
+        ConsensusTransactionKind::GlobalPresignRequest(_) => "global_presign_request",
+        ConsensusTransactionKind::NetworkKeyData(_) => "network_key_data",
+        ConsensusTransactionKind::NOAObservation(_) => "noa_observation",
     }
 }
 

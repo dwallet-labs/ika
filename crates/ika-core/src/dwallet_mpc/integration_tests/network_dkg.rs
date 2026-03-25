@@ -211,7 +211,9 @@ pub(crate) async fn create_network_key_test(
         assert!(
             service
                 .dwallet_mpc_manager()
-                .has_network_key(&key_id.unwrap()),
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id.unwrap())
+                .is_ok(),
             "Validator {} should have network key {:?} installed after DKG and status voting",
             i,
             key_id.unwrap()

@@ -530,7 +530,7 @@ pub fn compute_decentralized_dkg_output(
     };
 
     // Use OsCsRng for cryptographic randomness
-    let mut rng = OsCsRng::default();
+    let mut rng = OsCsRng;
 
     // Dispatch to the appropriate protocol based on curve.
     // The execute_dkg helper handles deserialization and public input construction.
@@ -605,26 +605,31 @@ pub fn compute_decentralized_dkg_output(
 /// # Returns
 ///
 /// A `SessionIdentifier` for the network-owned-address sign DKG.
-pub fn network_owned_address_sign_dkg_session_id(
+/// DKG session identifier for network-owned-address signing.
+///
+/// DKG is curve-specific but signature-algorithm-independent: a single DKG on a curve
+/// produces key shares usable by any signature algorithm on that curve.
+pub fn network_owned_address_sign_dkg_session_identifier(
     network_key_id: &[u8],
     curve: DWalletCurve,
-    signature_algorithm: DWalletSignatureAlgorithm,
 ) -> SessionIdentifier {
-    // Compute a deterministic preimage using Merlin transcript
-    let mut transcript = Transcript::new(b"NetworkOwnedAddressSign DKG Session ID");
+    // Use binary enum discriminant instead of string representation to prevent
+    // collision if two variants ever produce the same Display output.
+    let mut transcript =
+        Transcript::new(b"Network Owned Address Sign DKG session identifier preimage");
     transcript.append_message(b"network_key_id", network_key_id);
-    transcript.append_message(b"curve", curve.to_string().as_bytes());
-    transcript.append_message(
-        b"signature_algorithm",
-        signature_algorithm.to_string().as_bytes(),
+    transcript.append_u64(b"curve", curve as u64);
+
+    // Generate a session identifier preimage in a deterministic way
+    // (internally, it uses a hash function to pseudo-randomly generate it).
+    let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+        [0; SessionIdentifier::LENGTH];
+    transcript.challenge_bytes(
+        b"session_identifier_preimage",
+        &mut session_identifier_preimage,
     );
 
-    let mut session_id_preimage = [0u8; 32];
-    transcript.challenge_bytes(b"session_id_preimage", &mut session_id_preimage);
-
-    // Create a SessionIdentifier from the preimage, using System session type
-    // for internal operations
-    SessionIdentifier::new(SessionType::System, session_id_preimage)
+    SessionIdentifier::new(SessionType::System, session_identifier_preimage)
 }
 
 /// Computes the full network-owned-address sign DKG output for network-owned-address signing.
@@ -650,13 +655,12 @@ pub fn network_owned_address_sign_dkg_session_id(
 pub fn compute_network_owned_address_sign_dkg_output(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
-    algorithm: DWalletSignatureAlgorithm,
     protocol_pp: &[u8],
     access_structure: &WeightedThresholdAccessStructure,
     party_id: group::PartyID,
 ) -> DwalletMPCResult<Vec<u8>> {
     // Compute the session ID for deterministic DKG
-    let session_id = network_owned_address_sign_dkg_session_id(network_key_id, curve, algorithm);
+    let session_id = network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
 
     // Emulate the centralized party DKG
     let centralized_result = emulate_centralized_dkg_for_network_owned_address_sign(
@@ -695,37 +699,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_network_owned_address_sign_dkg_session_id_is_deterministic() {
+    fn test_network_owned_address_sign_dkg_session_identifier_is_deterministic() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
-        let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let first_call =
-            network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
-        let second_call =
-            network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let first_call = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
+        let second_call = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
 
         assert_eq!(first_call, second_call);
     }
 
     #[test]
-    fn test_network_owned_address_sign_dkg_session_id_varies_with_inputs() {
+    fn test_network_owned_address_sign_dkg_session_identifier_varies_with_inputs() {
         let network_key_id = [1u8; 32];
         let curve = DWalletCurve::Curve25519;
-        let algorithm = DWalletSignatureAlgorithm::EdDSA;
 
-        let original = network_owned_address_sign_dkg_session_id(&network_key_id, curve, algorithm);
+        let original = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
 
         // Different network key
         let different_key = [2u8; 32];
         let with_different_key =
-            network_owned_address_sign_dkg_session_id(&different_key, curve, algorithm);
+            network_owned_address_sign_dkg_session_identifier(&different_key, curve);
 
         // Different curve
-        let with_different_curve = network_owned_address_sign_dkg_session_id(
+        let with_different_curve = network_owned_address_sign_dkg_session_identifier(
             &network_key_id,
             DWalletCurve::Secp256k1,
-            algorithm,
         );
 
         assert_ne!(original, with_different_key);

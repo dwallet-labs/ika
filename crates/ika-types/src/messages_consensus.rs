@@ -7,8 +7,9 @@ use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use crate::messages_dwallet_mpc::{
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
     DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
-    InternalSessionsStatusUpdate, SessionIdentifier,
+    IdleStatusUpdate, SessionIdentifier, SuiChainObservationUpdate,
 };
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
@@ -66,9 +67,18 @@ pub enum ConsensusTransactionKey {
         DWalletInternalMPCOutputKind,
         Vec<AuthorityName>, // malicious authorities
     ),
-    /// Internal sessions status update from a validator.
+    /// Idle status update from a validator.
     /// The nonce ensures each update is unique.
-    InternalSessionsStatusUpdate(AuthorityName, [u8; 32]),
+    IdleStatusUpdate(AuthorityName, [u8; 32]),
+    /// Sui chain observation update from a validator.
+    /// The nonce ensures each update is unique.
+    SuiChainObservationUpdate(AuthorityName, [u8; 32]),
+    /// A global presign request, keyed by authority + session_sequence_number.
+    GlobalPresignRequest(AuthorityName, u64),
+    /// Network encryption key data, keyed by authority + key_id.
+    NetworkKeyData(AuthorityName, ObjectID),
+    /// An NOA checkpoint observation, keyed by authority + nonce.
+    NOAObservation(AuthorityName, [u8; 32]),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -127,10 +137,37 @@ impl Debug for ConsensusTransactionKey {
             ConsensusTransactionKey::EndOfPublish(authority) => {
                 write!(f, "EndOfPublish({:?})", authority.concise())
             }
-            ConsensusTransactionKey::InternalSessionsStatusUpdate(authority, nonce) => {
+            ConsensusTransactionKey::IdleStatusUpdate(authority, nonce) => {
                 write!(
                     f,
-                    "InternalSessionsStatusUpdate({:?}, 0x{})",
+                    "IdleStatusUpdate({:?}, 0x{})",
+                    authority.concise(),
+                    hex::encode(nonce)
+                )
+            }
+            ConsensusTransactionKey::SuiChainObservationUpdate(authority, nonce) => {
+                write!(
+                    f,
+                    "SuiChainObservationUpdate({:?}, 0x{})",
+                    authority.concise(),
+                    hex::encode(nonce)
+                )
+            }
+            ConsensusTransactionKey::GlobalPresignRequest(authority, seq) => {
+                write!(
+                    f,
+                    "GlobalPresignRequest({:?}, {})",
+                    authority.concise(),
+                    seq
+                )
+            }
+            ConsensusTransactionKey::NetworkKeyData(authority, key_id) => {
+                write!(f, "NetworkKeyData({:?}, {:?})", authority.concise(), key_id)
+            }
+            ConsensusTransactionKey::NOAObservation(authority, nonce) => {
+                write!(
+                    f,
+                    "NOAObservation({:?}, 0x{})",
                     authority.concise(),
                     hex::encode(nonce)
                 )
@@ -209,7 +246,11 @@ pub enum ConsensusTransactionKind {
     DWalletMPCMessage(DWalletMPCMessage),
     DWalletMPCOutput(DWalletMPCOutput),
     DWalletInternalMPCOutput(DWalletInternalMPCOutput),
-    InternalSessionsStatusUpdate(InternalSessionsStatusUpdate),
+    IdleStatusUpdate(IdleStatusUpdate),
+    SuiChainObservationUpdate(SuiChainObservationUpdate),
+    GlobalPresignRequest(ConsensusGlobalPresignRequest),
+    NetworkKeyData(ConsensusNetworkKeyData),
+    NOAObservation(ConsensusNOAObservation),
 }
 
 impl ConsensusTransaction {
@@ -330,17 +371,79 @@ impl ConsensusTransaction {
         }
     }
 
-    /// Create a new consensus transaction with the internal sessions status update.
-    pub fn new_internal_sessions_status_update(
-        status_update: InternalSessionsStatusUpdate,
-    ) -> Self {
+    /// Create a new consensus transaction with an idle status update.
+    pub fn new_idle_status_update(update: IdleStatusUpdate) -> Self {
         let mut hasher = DefaultHasher::new();
-        status_update.authority.hash(&mut hasher);
-        status_update.nonce.hash(&mut hasher);
+        update.authority.hash(&mut hasher);
+        update.nonce.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
-            kind: ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update),
+            kind: ConsensusTransactionKind::IdleStatusUpdate(update),
+        }
+    }
+
+    /// Create a new consensus transaction with a Sui chain observation update.
+    pub fn new_sui_chain_observation_update(update: SuiChainObservationUpdate) -> Self {
+        let mut hasher = DefaultHasher::new();
+        update.authority.hash(&mut hasher);
+        update.nonce.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::SuiChainObservationUpdate(update),
+        }
+    }
+
+    /// Create a new consensus transaction for a global presign request.
+    pub fn new_global_presign_request(
+        authority: AuthorityName,
+        request: crate::messages_dwallet_mpc::GlobalPresignRequest,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        authority.hash(&mut hasher);
+        request.session_sequence_number.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::GlobalPresignRequest(ConsensusGlobalPresignRequest {
+                authority,
+                request,
+            }),
+        }
+    }
+
+    /// Create a new consensus transaction for network encryption key data.
+    pub fn new_network_key_data(
+        authority: AuthorityName,
+        key_data: crate::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        authority.hash(&mut hasher);
+        key_data.id.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::NetworkKeyData(ConsensusNetworkKeyData {
+                authority,
+                key_data,
+            }),
+        }
+    }
+
+    /// Create a new consensus transaction for an NOA checkpoint observation.
+    pub fn new_noa_observation(
+        authority: AuthorityName,
+        observation: crate::noa_checkpoint::NOACheckpointTxObservation,
+    ) -> Self {
+        let msg = ConsensusNOAObservation::new(authority, observation);
+        let mut hasher = DefaultHasher::new();
+        msg.authority.hash(&mut hasher);
+        msg.nonce.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::NOAObservation(msg),
         }
     }
 
@@ -393,11 +496,23 @@ impl ConsensusTransaction {
             ConsensusTransactionKind::EndOfPublish(origin_authority) => {
                 ConsensusTransactionKey::EndOfPublish(*origin_authority)
             }
-            ConsensusTransactionKind::InternalSessionsStatusUpdate(status_update) => {
-                ConsensusTransactionKey::InternalSessionsStatusUpdate(
-                    status_update.authority,
-                    status_update.nonce,
+            ConsensusTransactionKind::IdleStatusUpdate(update) => {
+                ConsensusTransactionKey::IdleStatusUpdate(update.authority, update.nonce)
+            }
+            ConsensusTransactionKind::SuiChainObservationUpdate(update) => {
+                ConsensusTransactionKey::SuiChainObservationUpdate(update.authority, update.nonce)
+            }
+            ConsensusTransactionKind::GlobalPresignRequest(msg) => {
+                ConsensusTransactionKey::GlobalPresignRequest(
+                    msg.authority,
+                    msg.request.session_sequence_number,
                 )
+            }
+            ConsensusTransactionKind::NetworkKeyData(msg) => {
+                ConsensusTransactionKey::NetworkKeyData(msg.authority, msg.key_data.id)
+            }
+            ConsensusTransactionKind::NOAObservation(msg) => {
+                ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
             }
         }
     }

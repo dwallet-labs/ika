@@ -1,8 +1,11 @@
+use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
+use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     TEST_IDLE_SESSION_COUNT_THRESHOLD, build_test_state, create_test_protocol_config_guard,
 };
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use ika_protocol_config::ProtocolConfig;
 use tracing::info;
 
@@ -263,9 +266,9 @@ async fn test_validators_compute_idle_status_correctly() {
 /// that the service reads and processes them (not just the test harness).
 ///
 /// Verifies:
-/// 1. Each validator submits InternalSessionsStatusUpdate to consensus each round.
-/// 2. After distribution, each validator's epoch store has status updates from all others.
-/// 3. The service reads these via `next_internal_sessions_status_update` and processes them.
+/// 1. Each validator submits IdleStatusUpdate to consensus each round.
+/// 2. After distribution, each validator's epoch store has idle status updates from all others.
+/// 3. The service reads these via `next_idle_status_update` and processes them.
 #[tokio::test]
 #[cfg(test)]
 async fn test_status_updates_distributed_through_consensus() {
@@ -298,17 +301,17 @@ async fn test_status_updates_distributed_through_consensus() {
         test_state.consensus_round += 1;
 
         if round > 3 {
-            // After a few rounds, verify each epoch store has received status updates
+            // After a few rounds, verify each epoch store has received idle status updates
             for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
-                let updates = epoch_store.round_to_status_updates.lock().unwrap();
+                let updates = epoch_store.round_to_idle_status_updates.lock().unwrap();
                 let total: usize = updates.values().map(|v| v.len()).sum();
                 info!(
-                    "Round {}: Validator {} has {} total status updates in epoch store",
+                    "Round {}: Validator {} has {} total idle status updates in epoch store",
                     round, i, total
                 );
                 assert!(
                     total > 0,
-                    "Validator {} should have received status updates by round {}",
+                    "Validator {} should have received idle status updates by round {}",
                     i,
                     round
                 );
@@ -359,4 +362,291 @@ async fn test_status_updates_distributed_through_consensus() {
     }
 
     info!("Test passed: status updates distributed through consensus and processed by service");
+}
+
+/// Creates a protocol config override guard for the split idle vote test.
+///
+/// Key settings:
+/// - `idle_session_count_threshold = 1`: a single active session makes a validator
+///   report `is_idle = false`, so one sign session is enough to break idle.
+/// - Pool minimum = maximum = 1: pools fill to exactly 1 presign and idle-fill
+///   never fires (condition `pool < max` is `1 < 1 = false`).
+/// - Delay = 2: pools fill quickly after DKG.
+/// - Sessions to instantiate = 1.
+#[cfg(test)]
+fn create_split_idle_test_config_guard() -> ika_protocol_config::OverrideGuard {
+    let pool_minimum = 1u64;
+    let pool_maximum = 1u64;
+    let delay = 2u64;
+    let sessions_to_instantiate = 1u64;
+    let idle_threshold = 1u64;
+
+    ProtocolConfig::apply_overrides_for_testing(move |_version, mut config| {
+        config.set_idle_session_count_threshold_for_testing(idle_threshold);
+
+        config.set_internal_secp256k1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256k1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256k1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256k1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_secp256r1_ecdsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_secp256r1_ecdsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_secp256r1_ecdsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_secp256r1_ecdsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_eddsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_eddsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_eddsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_eddsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_minimum_size_for_testing(pool_minimum);
+        config
+            .set_internal_schnorrkel_substrate_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_schnorrkel_substrate_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_internal_taproot_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_internal_taproot_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_internal_taproot_presign_consensus_round_delay_for_testing(delay);
+        config.set_internal_taproot_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size_for_testing(
+            pool_minimum,
+        );
+        config.set_network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size_for_testing(
+            pool_maximum,
+        );
+        config.set_network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay_for_testing(
+            delay,
+        );
+        config
+            .set_network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size_for_testing(
+            pool_minimum,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size_for_testing(
+            pool_maximum,
+        );
+        config.set_network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay_for_testing(
+            delay,
+        );
+        config
+            .set_network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config.set_network_owned_address_eddsa_presign_pool_minimum_size_for_testing(pool_minimum);
+        config.set_network_owned_address_eddsa_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_network_owned_address_eddsa_presign_consensus_round_delay_for_testing(delay);
+        config.set_network_owned_address_eddsa_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_minimum_size_for_testing(
+                pool_minimum,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_pool_maximum_size_for_testing(
+                pool_maximum,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_consensus_round_delay_for_testing(
+                delay,
+            );
+        config
+            .set_network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate_for_testing(
+                sessions_to_instantiate,
+            );
+
+        config
+            .set_network_owned_address_taproot_presign_pool_minimum_size_for_testing(pool_minimum);
+        config
+            .set_network_owned_address_taproot_presign_pool_maximum_size_for_testing(pool_maximum);
+        config.set_network_owned_address_taproot_presign_consensus_round_delay_for_testing(delay);
+        config.set_network_owned_address_taproot_presign_sessions_to_instantiate_for_testing(
+            sessions_to_instantiate,
+        );
+
+        config
+    })
+}
+
+/// Test that a 2-of-4 idle status split does NOT reach consensus quorum.
+///
+/// With 4 validators and threshold weight requiring 3/4 agreement, a 2-2 split
+/// in idle status votes produces `ThresholdNotReached`, which maps to
+/// `network_is_idle = false`.
+///
+/// Uses a custom config with `idle_session_count_threshold = 1` so that a single
+/// sign session is enough to make a validator report `is_idle = false`.
+///
+/// Flow:
+/// 1. Create network key, fill presign pools, wait for all validators to reach idle.
+/// 2. Send an EdDSA sign request to only validators 0 and 1 via their channels.
+/// 3. Advance consensus rounds to propagate the divergent status updates.
+/// 4. Assert `network_is_idle() == false` on all validators (2-2 split).
+#[tokio::test]
+#[cfg(test)]
+async fn test_split_idle_status_vote_does_not_reach_consensus() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_split_idle_test_config_guard();
+
+    let mut test_state = build_test_state(4);
+
+    // Initially, network_is_idle starts as false (default).
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        assert!(
+            !service.network_is_idle(),
+            "Validator {} network_is_idle should start as false",
+            i,
+        );
+    }
+
+    // Create network key to enable internal presigns.
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // Fill the EdDSA presign pool (needed for the sign request).
+    let start_round = test_state.consensus_round as u64;
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        DWalletSignatureAlgorithm::EdDSA,
+        network_key_id,
+        start_round,
+    )
+    .await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // Wait for all validators to reach idle via the consensus-agreed path.
+    let mut idle_reached = false;
+    for round in 0..200 {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+        utils::wait_for_computations(&mut test_state).await;
+
+        if test_state
+            .dwallet_mpc_services
+            .iter()
+            .all(|s| s.network_is_idle())
+        {
+            info!(
+                round,
+                consensus_round = test_state.consensus_round,
+                "All validators reached idle"
+            );
+            idle_reached = true;
+            break;
+        }
+    }
+    assert!(idle_reached, "all validators should reach idle");
+
+    // Verify the EdDSA pool has a presign available on all validators.
+    for (i, epoch_store) in test_state.epoch_stores.iter().enumerate() {
+        let pool_size = epoch_store
+            .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+            .unwrap_or(0);
+        assert!(
+            pool_size >= 1,
+            "Validator {} EdDSA pool should have at least 1 presign, got {}",
+            i,
+            pool_size,
+        );
+    }
+
+    // Send one EdDSA sign request to validators 0 and 1 ONLY.
+    // Validators 2 and 3 don't receive the request, so they remain idle.
+    let test_message = b"split-vote-test-message".to_vec();
+    for i in 0..2 {
+        test_state.network_owned_address_sign_request_senders[i]
+            .send(NetworkOwnedAddressSignRequest {
+                message: test_message.clone(),
+                curve: DWalletCurve::Curve25519,
+                signature_algorithm: DWalletSignatureAlgorithm::EdDSA,
+                hash_scheme: DWalletHashScheme::SHA512,
+            })
+            .await
+            .expect("failed to send sign request to validator");
+    }
+
+    // Advance 2 consensus rounds to:
+    // 1. Process the sign request + send status updates (round 1)
+    // 2. Distribute and process the divergent status updates (round 2)
+    for _ in 0..2 {
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+
+    // Assert: 2-2 split → ThresholdNotReached → network_is_idle = false.
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        assert!(
+            !service.network_is_idle(),
+            "Validator {} should report network_is_idle=false under 2-2 split",
+            i,
+        );
+    }
+
+    // Verify the split is visible in idle_status_by_party: 2 idle, 2 not-idle.
+    let manager = test_state.dwallet_mpc_services[0].dwallet_mpc_manager();
+    let idle_count = manager
+        .idle_status_by_party
+        .values()
+        .filter(|&&v| v)
+        .count();
+    let not_idle_count = manager
+        .idle_status_by_party
+        .values()
+        .filter(|&&v| !v)
+        .count();
+    info!(
+        idle_count,
+        not_idle_count, "idle_status_by_party distribution"
+    );
+    assert_eq!(
+        idle_count, 2,
+        "expected 2 validators reporting idle, got {}",
+        idle_count
+    );
+    assert_eq!(
+        not_idle_count, 2,
+        "expected 2 validators reporting not-idle, got {}",
+        not_idle_count
+    );
+
+    info!("Test passed: 2-2 split idle status vote does not reach consensus");
 }
