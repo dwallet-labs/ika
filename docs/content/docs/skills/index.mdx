@@ -16,11 +16,12 @@ Skills work with 40+ AI coding agents including **Claude Code**, **Cursor**, **C
 
 ## Available Skills
 
-| Skill | Description |
-|---|---|
-| **ika-sdk** | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle |
-| **ika-move** | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns |
-| **ika-operator** | Operating Ika network nodes — validator setup, fullnode/notifier configuration, monitoring, recovery |
+| Skill            | Description                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| **ika-cli**      | Using the Ika CLI for dWallet operations, validator management, system deployment, and network administration |
+| **ika-sdk**      | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle  |
+| **ika-move**     | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns     |
+| **ika-operator** | Operating Ika network nodes — validator setup, fullnode/notifier configuration, monitoring, recovery          |
 
 ## Install
 
@@ -35,6 +36,7 @@ npx skills add dwallet-labs/ika
 ### Specific Skill
 
 ```bash
+npx skills add dwallet-labs/ika -s ika-cli
 npx skills add dwallet-labs/ika -s ika-sdk
 npx skills add dwallet-labs/ika -s ika-move
 npx skills add dwallet-labs/ika -s ika-operator
@@ -49,10 +51,22 @@ npx skills add dwallet-labs/ika -g
 ```
 
 <Info title="Agent Auto-Detection">
-The skills CLI automatically detects which AI agents you have installed and prompts you to choose where to install. You can also target a specific agent with the `-a` flag, e.g. `-a claude`.
+	The skills CLI automatically detects which AI agents you have installed and prompts you to choose
+	where to install. You can also target a specific agent with the `-a` flag, e.g. `-a claude`.
 </Info>
 
 ## What Each Skill Provides
+
+### ika-cli
+
+Everything needed to use the Ika command-line interface:
+
+- **Installation** — Homebrew (`brew install ika-xyz/tap/ika`), pre-built binaries, building from source
+- **dWallet operations** — Create, sign, presign, future-sign, import, encryption key management
+- **Validator management** — Registration, committee operations, metadata updates
+- **Configuration** — Environment setup, contract address fetching, multi-network support
+- **JSON output** — Structured output for scripting and automation
+- **Shell completions** — Bash, Zsh, and Fish
 
 ### ika-sdk
 
@@ -99,7 +113,9 @@ skills/ika-sdk/
 ```
 
 <Note title="Open Source">
-Skills are maintained in the [Ika repository](https://github.com/dwallet-labs/ika/tree/main/skills) and follow the [Agent Skills specification](https://github.com/vercel-labs/skills). Contributions welcome!
+	Skills are maintained in the [Ika
+	repository](https://github.com/dwallet-labs/ika/tree/main/skills) and follow the [Agent Skills
+	specification](https://github.com/vercel-labs/skills). Contributions welcome!
 </Note>
 
 ## Managing Skills

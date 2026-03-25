@@ -367,14 +367,21 @@ pub enum IkaDWalletCommand {
     },
 
     /// Import an external key as a dWallet.
+    ///
+    /// The secret key file format depends on the curve:
+    /// - **secp256k1 / secp256r1**: 33 bytes (compressed public key prefix byte + 32-byte scalar)
+    /// - **ed25519 / ristretto**: 32 bytes (raw scalar, must be a valid scalar for the curve)
     #[clap(name = "import")]
     Import {
         /// The curve.
         #[clap(long, value_parser = ["secp256k1", "secp256r1", "ed25519", "ristretto"])]
         curve: String,
         /// Path to the secret key file to import.
-        #[clap(long)]
-        centralized_message: PathBuf,
+        ///
+        /// For secp256k1/secp256r1: 33-byte file (compressed point prefix + 32-byte scalar).
+        /// For ed25519/ristretto: 32-byte file (raw scalar, must be valid for the curve).
+        #[clap(long = "secret-key")]
+        secret_key: PathBuf,
         /// Where to save the user secret share. If omitted, the secret share is printed
         /// as hex in the command output (and included in JSON mode) but NOT saved to disk.
         #[clap(long)]
@@ -2470,7 +2477,7 @@ impl IkaDWalletCommand {
 
             IkaDWalletCommand::Import {
                 curve,
-                centralized_message,
+                secret_key,
                 output_secret,
                 payment,
                 seed,
@@ -2486,8 +2493,8 @@ impl IkaDWalletCommand {
                 let curve_id = curve_name_to_id(&curve)?;
                 let coins = resolve_payment_coins(context, &config, &payment).await?;
 
-                let secret_key = std::fs::read(&centralized_message)
-                    .context("Failed to read secret key file")?;
+                let secret_key =
+                    std::fs::read(&secret_key).context("Failed to read secret key file")?;
 
                 let network_key_info =
                     get_network_key_info(context, &config_path, curve_id).await?;

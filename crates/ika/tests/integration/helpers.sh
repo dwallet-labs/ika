@@ -446,7 +446,7 @@ import_dwallet() {
 
     ika_json dwallet import \
         --curve "$curve_name" \
-        --centralized-message "$key_file" \
+        --secret-key "$key_file" \
         --output-secret "$output_path"
 }
 

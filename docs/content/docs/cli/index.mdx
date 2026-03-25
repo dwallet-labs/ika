@@ -44,7 +44,7 @@ The Ika CLI is the primary tool for interacting with the Ika network. It support
 ### Install via Homebrew
 
 ```bash
-brew install ika
+brew install ika-xyz/tap/ika
 ```
 
 ### Build from Source
@@ -62,7 +62,8 @@ The binary will be at `target/release/ika`.
 Pre-built binaries are available from [GitHub Releases](https://github.com/dwallet-labs/ika/releases) for:
 
 - Linux x64 and ARM64
-- macOS x64 and ARM64
+- macOS x64 and ARM64 (Apple Silicon)
+- Windows x64
 
 ## Initial Configuration
 
@@ -90,26 +91,60 @@ ika config sync
 
 All commands support these flags:
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output results as JSON (machine-parseable) |
-| `--client.config <PATH>` | Custom Sui client config path |
-| `--ika-config <PATH>` | Custom Ika network config path |
-| `--gas-budget <MIST>` | Override default gas budget |
-| `-y, --yes` | Skip confirmation prompts |
-| `-q, --quiet` | Suppress human-readable output (JSON still printed with `--json -q`) |
+| Flag                     | Description                                                          |
+| ------------------------ | -------------------------------------------------------------------- |
+| `--json`                 | Output results as JSON (machine-parseable)                           |
+| `--client.config <PATH>` | Custom Sui client config path                                        |
+| `--ika-config <PATH>`    | Custom Ika network config path                                       |
+| `--gas-budget <MIST>`    | Override default gas budget                                          |
+| `-y, --yes`              | Skip confirmation prompts                                            |
+| `-q, --quiet`            | Suppress human-readable output (JSON still printed with `--json -q`) |
 
 ## Command Overview
 
 ```
 ika
-├── dwallet                    # dWallet operations (create, sign, presign, import, ...)
+├── dwallet                    # dWallet operations
+│   ├── create                 # Create dWallet via DKG
+│   ├── sign                   # Request signature (--wait for result)
+│   ├── future-sign            # Conditional/future signing
+│   │   ├── create             # Create partial user signature
+│   │   └── fulfill            # Complete future sign
+│   ├── presign                # Request presign (--count for batch, --wait)
+│   ├── global-presign         # Global presign with network key
+│   ├── import                 # Import external key as dWallet
+│   ├── register-encryption-key
+│   ├── get-encryption-key
+│   ├── verify-presign
+│   ├── get                    # Query dWallet info
+│   ├── list                   # List owned dWallet capabilities
+│   ├── list-presigns          # List presign caps by status/curve
+│   ├── public-key             # Extract signing public key
+│   ├── decrypt                # Decrypt on-chain encrypted share
+│   ├── epoch                  # Query current network epoch
+│   ├── pricing                # Current pricing
+│   ├── generate-keypair       # Offline keypair generation
+│   └── share                  # User share management
+│       ├── make-public
+│       ├── re-encrypt
+│       └── accept
 ├── validator                  # Validator operations (30+ subcommands)
 ├── config                     # Configuration management
+│   ├── init / add-env / sync / show
 ├── start                      # Start local Ika network
 ├── network                    # Display network info
 └── completion                 # Shell completions (bash/zsh/fish)
 ```
+
+## Curves, Algorithms, and Hash Schemes
+
+Commands accept named values (not numeric IDs):
+
+| Parameter               | Accepted values                                             |
+| ----------------------- | ----------------------------------------------------------- |
+| `--curve`               | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`           |
+| `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`                  |
+| `--hash-scheme`         | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
 
 ## Quick Start
 
@@ -124,25 +159,29 @@ ika dwallet create \
   --curve secp256k1 \
   --output-secret ./my_secret.bin
 
-# 3. Request a presign
+# 3. Request a presign (batch of 5, wait for completion)
 ika dwallet presign \
   --dwallet-id <DWALLET_ID> \
-  --signature-algorithm 0
+  --signature-algorithm ecdsa \
+  --count 5 \
+  --wait
 
 # 4. Sign a message (wait for result)
 ika dwallet sign \
   --dwallet-cap-id <CAP_ID> \
   --dwallet-id <DWALLET_ID> \
   --message <HEX_MESSAGE> \
-  --signature-algorithm 0 \
-  --hash-scheme 0 \
+  --signature-algorithm ecdsa \
+  --hash-scheme keccak256 \
   --secret-share ./my_secret.bin \
   --presign-cap-id <PRESIGN_CAP_ID> \
   --wait
 ```
 
 <Info title="Auto-detection">
-IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
+	IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve
+	and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
+	The secret share can also be omitted — the CLI will decrypt it from chain using your keystore-derived key.
 </Info>
 
 ### Key Management
@@ -176,6 +215,9 @@ All commands support `--json` for structured output suitable for scripting:
 
 ```bash
 ika dwallet create --curve secp256k1 --json
+ika dwallet list --json
+ika dwallet list-presigns --json
+ika dwallet public-key --dwallet-id <ID> --json
 ```
 
 On errors, JSON mode returns `{"error": "description"}` with exit code 1.
