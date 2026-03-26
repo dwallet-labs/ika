@@ -147,6 +147,14 @@ jobs:
         working-directory: ./sdk/ika-wasm
         run: pnpm build
 
+      - name: Verify git safety before publish
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            git diff --quiet || (echo "::error::Unclean working tree" && exit 1)
+          fi
+          git branch -r --contains HEAD | grep -q "origin/" || (echo "::error::HEAD not found on remote" && exit 1)
+          echo "Git safety checks passed"
+
       - name: Publish sdk/ika-wasm via pnpm (Trusted Publishing)
         if: steps.ika_check.outputs.published == 'false'
         working-directory: ./sdk/ika-wasm
