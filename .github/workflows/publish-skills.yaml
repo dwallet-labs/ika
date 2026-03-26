@@ -1,0 +1,160 @@
+name: Publish Skills to ClawHub
+
+on:
+  push:
+    tags:
+      - "skills/*-*"
+  workflow_dispatch:
+    inputs:
+      skill:
+        description: "Skill to publish (folder name under skills/, or 'all')"
+        required: true
+        type: string
+        default: all
+      version:
+        description: "Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed."
+        required: true
+        type: string
+
+jobs:
+  publish-skills:
+    name: Publish Skills
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Validate manual version has pre-release tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ inputs.version }}"
+          SEMVER_WITH_PRERELEASE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+
+          if [[ ! "$VERSION" =~ $SEMVER_WITH_PRERELEASE ]]; then
+            echo "::error::Manual version MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are reserved for tag-based releases."
+            exit 1
+          fi
+          echo "Manual version validated: $VERSION"
+
+      - name: Parse and validate tag
+        if: github.event_name == 'push'
+        id: tag
+        run: |
+          # Tag format: skills/{skill_name}-{version} e.g. skills/ika-sdk-1.0.0
+          TAG="${GITHUB_REF#refs/tags/skills/}"
+
+          # Version is everything after the last '-' that starts a semver
+          # Match the semver at the end: {name}-X.Y.Z...
+          if [[ "$TAG" =~ ^(.+)-([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            SKILL_NAME="${BASH_REMATCH[1]}"
+            VERSION="${BASH_REMATCH[2]}"
+          else
+            echo "::error::Could not parse tag '$TAG'. Expected format: skills/{skill_name}-{version} (e.g., skills/ika-sdk-1.0.0)"
+            exit 1
+          fi
+
+          # Validate skill directory exists
+          if [ ! -d "skills/$SKILL_NAME" ]; then
+            echo "::error::Skill directory 'skills/$SKILL_NAME' does not exist."
+            exit 1
+          fi
+
+          # Validate version matches SKILL.md
+          SKILL_FILE="skills/$SKILL_NAME/SKILL.md"
+          SKILL_VERSION=$(grep -m1 '^version:' "$SKILL_FILE" | sed 's/version: *//')
+          if [ "$VERSION" != "$SKILL_VERSION" ]; then
+            echo "::error::Tag version ($VERSION) does not match $SKILL_FILE version ($SKILL_VERSION). Update SKILL.md first."
+            exit 1
+          fi
+
+          echo "skill=$SKILL_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag parsed — skill: $SKILL_NAME, version: $VERSION"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ClawHub CLI
+        run: npm install -g clawhub
+
+      - name: Authenticate with ClawHub
+        run: clawhub login --token "${{ secrets.CLAWHUB_TOKEN }}"
+
+      - name: Publish skills
+        id: publish
+        run: |
+          PUBLISHED=""
+          FAILED=""
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            SKILL_FILTER="${{ inputs.skill }}"
+          else
+            VERSION="${{ steps.tag.outputs.version }}"
+            SKILL_FILTER="${{ steps.tag.outputs.skill }}"
+          fi
+
+          for skill_dir in skills/*/; do
+            [ -d "$skill_dir" ] || continue
+            SKILL_FILE="$skill_dir/SKILL.md"
+            [ -f "$SKILL_FILE" ] || continue
+
+            SLUG=$(basename "$skill_dir")
+
+            # Skip skills not matching the filter (unless 'all')
+            if [ "$SKILL_FILTER" != "all" ] && [ "$SLUG" != "$SKILL_FILTER" ]; then
+              continue
+            fi
+
+            # For manual dispatch, override version in SKILL.md
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              sed -i "s/^version: .*/version: $VERSION/" "$SKILL_FILE"
+            fi
+
+            DISPLAY_NAME=$(echo "$SLUG" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
+
+            echo "Publishing $SLUG v$VERSION..."
+            if clawhub publish "$skill_dir" \
+              --slug "$SLUG" \
+              --name "$DISPLAY_NAME" \
+              --version "$VERSION" \
+              --changelog "Release v$VERSION" \
+              --tags "latest"; then
+              echo "  Published $SLUG v$VERSION"
+              PUBLISHED="$PUBLISHED $SLUG"
+            else
+              echo "  Failed to publish $SLUG"
+              FAILED="$FAILED $SLUG"
+            fi
+          done
+
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$FAILED" ]; then
+            echo "::error::Failed to publish:$FAILED"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          VERSION="${{ steps.publish.outputs.version }}"
+          echo "## Skills Publish Results (v$VERSION)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.publish.outputs.published }}" ]; then
+            echo "### Published" >> "$GITHUB_STEP_SUMMARY"
+            for item in ${{ steps.publish.outputs.published }}; do
+              echo "- \`$item\`" >> "$GITHUB_STEP_SUMMARY"
+            done
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "${{ steps.publish.outputs.failed }}" ]; then
+            echo "### Failed" >> "$GITHUB_STEP_SUMMARY"
+            for item in ${{ steps.publish.outputs.failed }}; do
+              echo "- \`$item\`" >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi

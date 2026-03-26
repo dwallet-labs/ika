@@ -6460,26 +6460,34 @@ name = "ika"
 version = "1.1.8"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bcs",
  "bin-version",
  "clap",
+ "clap_complete",
  "colored 3.0.0",
  "dwallet-classgroups-types",
+ "dwallet-mpc-centralized-party",
  "dwallet-mpc-types",
  "dwallet-rng",
  "fastcrypto",
+ "hex",
  "http 1.4.0",
  "ika-config",
+ "ika-protocol-config",
  "ika-sui-client",
  "ika-swarm",
  "ika-swarm-config",
  "ika-types",
  "msim 0.1.0 (git+https://github.com/MystenLabs/mysten-sim.git?rev=9d787303d855f6cec92eb94933717d4ee1963548)",
+ "rand 0.9.0",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "sui",
  "sui-config",
+ "sui-json-rpc-types",
  "sui-keys",
  "sui-sdk",
  "sui-types",
@@ -6487,6 +6495,7 @@ dependencies = [
  "tikv-jemalloc-ctl",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -12784,9 +12793,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.16.1"
+version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fa237f2807440d238e0364a218270b98f767a00d3dada77b1c53ae88940e2e7"
+checksum = "381b283ce7bc6b476d903296fb59d0d36633652b633b27f64db4fb46dcbfc3b9"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -12803,9 +12812,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.16.1"
+version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52a8e3ca0ca629121f70ab50f95249e5a6f925cc0f6ffe8256c45b728875706c"
+checksum = "a6d4e30573c8cb306ed6ab1dca8423eec9a463ea0e155f45399455e0368b27e0"
 dependencies = [
  "darling 0.21.3",
  "proc-macro2",

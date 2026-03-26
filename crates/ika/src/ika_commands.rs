@@ -14,8 +14,12 @@ use std::path::PathBuf;
 use std::thread;
 use sui_config::{SUI_CLIENT_CONFIG, sui_config_dir};
 
+use crate::config_commands::IkaConfigCommand;
+use crate::dwallet_commands::IkaDWalletCommand;
 #[cfg(feature = "protocol-commands")]
 use crate::protocol_commands::IkaProtocolCommand;
+#[cfg(feature = "protocol-commands")]
+use crate::system_commands::IkaSystemCommand;
 use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
@@ -96,6 +100,12 @@ pub enum IkaCommand {
         /// Start the network without a fullnode
         #[clap(long = "no-full-node")]
         no_full_node: bool,
+
+        /// Clean persisted node databases (authorities_db, consensus_db, full_node_db)
+        /// before starting. Keeps the network config (keys/addresses) but removes stale
+        /// state that prevents restart. Use this when a previous run was interrupted.
+        #[clap(long)]
+        clean: bool,
     },
     #[clap(name = "network")]
     Network {
@@ -135,10 +145,47 @@ pub enum IkaCommand {
         #[clap(short = 'y', long = "yes")]
         accept_defaults: bool,
     },
+
+    /// dWallet operations: create, sign, presign, import, and key management.
+    #[clap(name = "dwallet")]
+    DWallet {
+        #[clap(subcommand)]
+        cmd: IkaDWalletCommand,
+    },
+
+    #[cfg(feature = "protocol-commands")]
+    /// System deployment and initialization operations (publish contracts, mint tokens, init env).
+    #[clap(name = "system")]
+    System {
+        #[clap(subcommand)]
+        cmd: IkaSystemCommand,
+    },
+
+    /// Manage Ika CLI configuration (fetch deployed contract addresses, show config).
+    #[clap(name = "config")]
+    Config {
+        #[clap(subcommand)]
+        cmd: IkaConfigCommand,
+    },
+
+    /// Generate shell completions for the given shell.
+    #[clap(name = "completion")]
+    Completion {
+        /// The shell to generate completions for.
+        #[clap(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 impl IkaCommand {
-    pub async fn execute(self) -> Result<(), anyhow::Error> {
+    pub async fn execute(
+        self,
+        json: bool,
+        quiet: bool,
+        client_config: Option<PathBuf>,
+        _ika_config: Option<PathBuf>,
+        _gas_budget: Option<u64>,
+    ) -> Result<(), anyhow::Error> {
         match self {
             IkaCommand::Network {
                 config,
@@ -178,7 +225,14 @@ impl IkaCommand {
                 sui_faucet_url,
                 no_full_node,
                 epoch_duration_ms,
+                clean,
             } => {
+                // Clean persisted DB directories if requested
+                if clean {
+                    let config_base = config_dir.clone().unwrap_or(ika_config_dir()?);
+                    clean_node_databases(&config_base);
+                }
+
                 let thread_builder = thread::Builder::new();
                 const SIXTEEN_MB: usize = 16777216;
                 let thread_builder = thread_builder.stack_size(SIXTEEN_MB);
@@ -210,12 +264,18 @@ impl IkaCommand {
                 Ok(())
             }
             IkaCommand::Validator {
-                config, cmd, json, ..
+                config,
+                cmd,
+                json: cmd_json,
+                ..
             } => {
-                let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let use_json = json || cmd_json;
+                let config_path = config
+                    .or(client_config)
+                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!json);
+                    cmd.execute(&mut context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
@@ -226,12 +286,18 @@ impl IkaCommand {
             }
             #[cfg(feature = "protocol-commands")]
             IkaCommand::Protocol {
-                config, cmd, json, ..
+                config,
+                cmd,
+                json: cmd_json,
+                ..
             } => {
-                let config_path = config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let use_json = json || cmd_json;
+                let config_path = config
+                    .or(client_config)
+                    .unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
                 let mut context = WalletContext::new(&config_path)?;
                 if let Some(cmd) = cmd {
-                    cmd.execute(&mut context).await?.print(!json);
+                    cmd.execute(&mut context).await?.print(!use_json);
                 } else {
                     // Print help
                     let mut app: Command = IkaCommand::command();
@@ -239,6 +305,49 @@ impl IkaCommand {
                     app.find_subcommand_mut("protocol").unwrap().print_help()?;
                 }
                 Ok(())
+            }
+            IkaCommand::DWallet { cmd } => {
+                let config_path =
+                    client_config.unwrap_or(sui_config_dir()?.join(SUI_CLIENT_CONFIG));
+                let mut context = WalletContext::new(&config_path)?;
+                cmd.execute(&mut context, json, quiet, _ika_config, _gas_budget)
+                    .await
+            }
+            #[cfg(feature = "protocol-commands")]
+            IkaCommand::System { cmd } => cmd.execute().await,
+            IkaCommand::Config { cmd } => cmd.execute(client_config).await,
+            IkaCommand::Completion { shell } => {
+                let mut app =
+                    crate::ika_commands::IkaCommand::augment_subcommands(clap::Command::new("ika"));
+                clap_complete::generate(shell, &mut app, "ika", &mut std::io::stdout());
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Remove persisted node databases (authorities_db, consensus_db, full_node_db)
+/// while keeping the network config file intact. This allows restarting a local
+/// network with the same keys/addresses but fresh state.
+fn clean_node_databases(config_dir: &std::path::Path) {
+    use ika_config::{AUTHORITIES_DB_NAME, CONSENSUS_DB_NAME, FULL_NODE_DB_PATH};
+
+    let db_dirs = [AUTHORITIES_DB_NAME, CONSENSUS_DB_NAME, FULL_NODE_DB_PATH];
+    for dir_name in &db_dirs {
+        let dir_path = config_dir.join(dir_name);
+        if dir_path.exists() {
+            match std::fs::remove_dir_all(&dir_path) {
+                Ok(()) => {
+                    info!("Cleaned {}", dir_path.display());
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("[warn] Failed to clean {}: {e}", dir_path.display())
+                            .yellow()
+                            .bold()
+                    );
+                }
             }
         }
     }

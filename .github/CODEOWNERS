@@ -1,33 +1,20 @@
-/crates/ika-types/src/crypto.rs @joyqvq @kchalkias @benr-ml
-/crates/ika-types/src/base_types.rs @joyqvq
-/crates/ika-keys/ @joyqvq @patrickkuo
-/crates/ika-protocol-config @mystenmark
+# ── Rust crates (ycscaly) ──
+/crates/ @ycscaly
 
-*.md @randall-Mysten @ronny-mysten
-# Omit auto-generated changelogs and changesets from docs review:
+# ── Move contracts (iamknownasfesal) ──
+/contracts/ @iamknownasfesal
+
+# ── SDK & TypeScript (iamknownasfesal) ──
+/sdk/ @iamknownasfesal
+
+# ── Documentation (iamknownasfesal) ──
+*.md @iamknownasfesal
+# Omit auto-generated changelogs and changesets from review:
 /.changeset/*.md
 CHANGELOG.md
 
-# When snapshot changes, most likely we will need to recreate the genesis blob.
-/crates/ika-config/tests/snapshot_tests.rs @tharbert
+# ── Docker & Infrastructure (omersadika) ──
+/docker/ @omersadika
 
-# When native functions change, so we can evaluate cost impact
-/crates/ika-framework/src/natives/ @oxade
-
-# GraphQL RPC working group
-/crates/ika-graphql-rpc/ @oxade @amnn @wlmyng @stefan-mysten @emmazzz @ikawombat
-/crates/ika-graphql-e2e-tests/ @oxade @amnn @wlmyng @stefan-mysten @emmazzz @ikawombat
-
-
-# Notify Narwhal changes to interested folks.
-/narwhal/crypto/ @joyqvq @kchalkias
-/narwhal/executor/ @asonnino @akichidis @laura-makdah
-/narwhal/network/ @bmwill
-/narwhal/storage/ @akichidis
-
-/crates/ika-core/src/consensus_adapter.rs @laura-makdah
-
-apps/ @MystenLabs/fe-and-apps
-sdk/ @MystenLabs/sdk-reviewers
-sdk/kiosk @MystenLabs/kiosk-sdk-reviewers
-sdk/wallet-standard @MystenLabs/wallet-kit-reviewers
+# ── CI/CD (omersadika) ──
+/.github/ @omersadika

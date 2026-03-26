@@ -1,14 +1,14 @@
 # ==========================
 # Build stage
 # ==========================
-FROM rust:1.90-bullseye AS builder
+FROM rust:1.94-bookworm AS builder
 
 # Arguments
 ARG PROFILE=release
 ARG GIT_REVISION=unknown
 ARG GH_DEPLOY_KEY
 ARG WORKDIR=/opt
-ARG NO_DEFAULT_FEATURES=false
+ARG BIN=ika-validator
 
 # Environment
 ENV CARGO_HOME=/usr/local/cargo
@@ -36,15 +36,9 @@ COPY deployed_contracts deployed_contracts
 
 # Build dependencies first for better layer caching
 # --locked ensures you never accidentally change dependencies during a build.
-# Build dependencies first for better layer caching
 RUN cargo fetch --locked
 
-# Conditionally compile with or without default features
-RUN if [ "$NO_DEFAULT_FEATURES" = "true" ]; then \
-      cargo build --profile ${PROFILE} --locked --bin ika-node --no-default-features; \
-    else \
-      cargo build --profile ${PROFILE} --locked --bin ika-node; \
-    fi
+RUN cargo build --profile ${PROFILE} --locked --bin ${BIN}
 
 # ==========================
 # Runtime stage
@@ -55,6 +49,7 @@ ARG WORKDIR=/opt
 ARG BUILD_DATE
 ARG GIT_REVISION
 ARG PROFILE=release
+ARG BIN=ika-validator
 ARG TARGETARCH
 
 # Install runtime dependencies and jemalloc.
@@ -70,10 +65,9 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 WORKDIR ${WORKDIR}/ika
 
 # Copy the built binary from the builder stage.
-COPY --from=builder /opt/ika/target/${PROFILE}/ika-node /opt/ika/bin/ika-node
-COPY --from=builder /opt/ika/target/${PROFILE}/ika-node /usr/local/bin/ika-node
+COPY --from=builder /opt/ika/target/${PROFILE}/${BIN} /opt/ika/bin/${BIN}
+COPY --from=builder /opt/ika/target/${PROFILE}/${BIN} /usr/local/bin/${BIN}
 
 # Add build metadata.
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
-

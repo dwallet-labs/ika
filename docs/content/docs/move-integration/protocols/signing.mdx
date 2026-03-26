@@ -239,7 +239,7 @@ async function signMessage(
 		],
 	});
 
-	const result = await suiClient.signAndExecuteTransaction({
+	const result = await suiClient.core.signAndExecuteTransaction({
 		transaction: tx,
 		signer: keypair,
 	});

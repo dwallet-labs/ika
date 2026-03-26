@@ -1,5 +1,5 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
-import { Blocks, BookOpen, Code2, FileCode, Server } from 'lucide-react';
+import { Blocks, BookOpen, Bot, Code2, FileCode, Server, Terminal } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import { source } from '@/lib/source';
@@ -20,6 +20,12 @@ const tabConfig: Record<string, TabConfig> = {
 		color: 'text-pink-500 dark:text-pink-400',
 		bgColor: 'bg-pink-500/10 dark:bg-pink-500/20',
 	},
+	cli: {
+		icon: <Terminal className="size-4" />,
+		description: 'dWallet operations from the terminal',
+		color: 'text-emerald-500 dark:text-emerald-400',
+		bgColor: 'bg-emerald-500/10 dark:bg-emerald-500/20',
+	},
 	'move-integration': {
 		icon: <Blocks className="size-4" />,
 		description: 'Integrate dWallets in Move contracts',
@@ -37,6 +43,12 @@ const tabConfig: Record<string, TabConfig> = {
 		description: 'Run and operate Ika nodes',
 		color: 'text-purple-500 dark:text-purple-400',
 		bgColor: 'bg-purple-500/10 dark:bg-purple-500/20',
+	},
+	skills: {
+		icon: <Bot className="size-4" />,
+		description: 'AI skills for coding agents',
+		color: 'text-amber-500 dark:text-amber-400',
+		bgColor: 'bg-amber-500/10 dark:bg-amber-500/20',
 	},
 	'code-examples': {
 		icon: <FileCode className="size-4" />,

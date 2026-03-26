@@ -31,7 +31,7 @@ fi
 
 # Handle optional flags
 PROFILE="release"
-NO_DEFAULT_FEATURES="false"
+BIN="ika-validator"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -40,10 +40,9 @@ while [[ $# -gt 0 ]]; do
       echo "Building with full debug info enabled ... WARNING: binary size might significantly increase"
       shift
       ;;
-    --no-default-features)
-      NO_DEFAULT_FEATURES="true"
-      echo "Building with --no-default-features flag enabled"
-      shift
+    --bin)
+      BIN="$2"
+      shift 2
       ;;
     *)
       break
@@ -52,21 +51,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo
-echo "Building ika-node docker image"
+echo "Building $BIN docker image"
 echo "Dockerfile:      $DOCKERFILE"
 echo "Docker context:  $REPO_ROOT"
 echo "Build date:      $BUILD_DATE"
 echo "Git revision:    $GIT_REVISION"
 echo "Docker tag:      $DOCKER_TAG"
 echo "Build profile:   $PROFILE"
-echo "No default features: $NO_DEFAULT_FEATURES"
+echo "Binary:          $BIN"
 echo
 
 docker build -f "$DOCKERFILE" "$REPO_ROOT" \
   --build-arg GIT_REVISION="$GIT_REVISION" \
   --build-arg BUILD_DATE="$BUILD_DATE" \
   --build-arg PROFILE="$PROFILE" \
-  --build-arg NO_DEFAULT_FEATURES="$NO_DEFAULT_FEATURES" \
+  --build-arg BIN="$BIN" \
   --build-arg GH_DEPLOY_KEY="GH_DEPLOY_KEY" \
   --tag "$DOCKER_TAG" \
   "$@"

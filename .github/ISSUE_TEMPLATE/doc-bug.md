@@ -3,7 +3,7 @@ name: Ika doc content issue or request
 about: Creates an issue for Ika documentation
 title: 'Ika doc content issue or request'
 labels: doc-issue
-assignees: 'ronny-mysten'
+assignees: 'iamknownasfesal'
 ---
 
 If this is an issue with existing content, provide the URL or GitHub path to the topic. Otherwise, use **New**.

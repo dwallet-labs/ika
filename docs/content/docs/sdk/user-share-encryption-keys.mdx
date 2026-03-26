@@ -95,6 +95,23 @@ const secp256r1Keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.
 const ristrettoKeys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.RISTRETTO);
 ```
 
+### Legacy Hash
+
+If you registered encryption keys **before the curve byte fix** with a **non-SECP256K1** curve (ED25519, SECP256R1, or RISTRETTO), use `fromRootSeedKeyLegacyHash` to reproduce your existing keys:
+
+```typescript
+// Reproduce legacy keys for a previously registered ED25519 encryption key
+const legacyKeys = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(seed, Curve.ED25519);
+```
+
+<Warning title="Migration Note">
+The legacy hash has a bug where the curve byte is always `0`, producing identical keys for all curves given the same seed. SECP256K1 keys are unaffected because its curve number is already `0`.
+
+For new registrations, always use `fromRootSeedKey` (the default).
+</Warning>
+
+Serialized keys (`toShareEncryptionKeysBytes` / `fromShareEncryptionKeysBytes`) automatically track whether the legacy hash was used, so deserialized keys always use the correct derivation.
+
 <Info title="Choosing the Right Curve">
 	Choose your curve based on the signature algorithm you intend to use: - **SECP256K1**: Best for
 	Ethereum, Bitcoin (ECDSA), and general ECDSA use cases - **ED25519**: Best for high-performance
