@@ -157,7 +157,7 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
           fi
-          pnpm publish --provenance --access public --tag "$TAG"
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
           echo "Published ${{ steps.ika_pkg.outputs.name }}@$VERSION with tag $TAG"
 
       # ---------- sdk/typescript ----------
@@ -203,7 +203,7 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
           fi
-          pnpm publish --provenance --access public --tag "$TAG"
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
           echo "Published ${{ steps.ts_pkg.outputs.name }}@$VERSION with tag $TAG"
 
       - name: Summary
