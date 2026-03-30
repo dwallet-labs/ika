@@ -5,6 +5,7 @@
 		"dwallets",
 		"multi-chain-vs-cross-chain",
 		"zero-trust-and-decentralization",
-		"cryptography"
+		"cryptography",
+		"whitepaper"
 	]
 }
