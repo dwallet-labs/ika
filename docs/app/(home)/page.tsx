@@ -1,4 +1,5 @@
-import { BookOpen, Code2, FileCode, Layers, Puzzle, Terminal } from 'lucide-react';
+import { BookOpen, Code2, Globe, Layers, Puzzle, Zap } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 
 const features = [
@@ -8,13 +9,6 @@ const features = [
 		href: '/docs/sdk',
 		icon: Code2,
 		gradient: 'from-pink-500 to-rose-500',
-	},
-	{
-		title: 'CLI',
-		description: 'Create dWallets, sign messages, and manage the network from the terminal',
-		href: '/docs/cli',
-		icon: Terminal,
-		gradient: 'from-violet-500 to-purple-500',
 	},
 	{
 		title: 'Move Integration',
@@ -29,20 +23,6 @@ const features = [
 		href: '/docs/core-concepts/dwallets',
 		icon: BookOpen,
 		gradient: 'from-blue-500 to-cyan-500',
-	},
-	{
-		title: 'Operator Guides',
-		description: 'Run and operate Ika network nodes',
-		href: '/docs/operators',
-		icon: Layers,
-		gradient: 'from-emerald-500 to-teal-500',
-	},
-	{
-		title: 'Code Examples',
-		description: 'Real-world examples and implementation patterns',
-		href: '/docs/code-examples',
-		icon: FileCode,
-		gradient: 'from-orange-500 to-amber-500',
 	},
 ];
 
@@ -62,8 +42,8 @@ export default function HomePage() {
 					<div className="text-center animate-fade-in-up">
 						{/* Badge */}
 						<div className="mb-8 inline-flex items-center gap-2 rounded-full border border-pink-200 dark:border-pink-800 bg-pink-50 dark:bg-pink-950/50 px-4 py-1.5 text-sm font-medium text-pink-700 dark:text-pink-300">
-							<Layers className="h-4 w-4" />
-							Multi-chain dWallet Infrastructure
+							<Globe className="h-4 w-4" />
+							Bridgeless Capital Markets
 						</div>
 
 						{/* Title */}
@@ -72,14 +52,27 @@ export default function HomePage() {
 						</h1>
 
 						{/* Subtitle */}
-						<p className="mx-auto mt-6 max-w-2xl text-lg text-fd-muted-foreground sm:text-xl">
-							The documentation for Ika - enabling secure, decentralized multi-chain interactions
-							through dWallets and 2PC-MPC cryptography.
+						<p className="mx-auto mt-6 max-w-3xl text-lg text-fd-muted-foreground sm:text-xl">
+							Ika enables bridgeless capital markets. Move value across any blockchain
+							without bridges, wrapping, or centralized custody. Powered by dWallets and
+							2PC-MPC cryptography.
 						</p>
+
+						{/* Solana callout */}
+						<div className="mt-6 inline-flex items-center gap-2.5 rounded-full bg-gradient-to-r from-purple-500/10 to-fuchsia-500/10 dark:from-purple-500/20 dark:to-fuchsia-500/20 border border-purple-200/60 dark:border-purple-700/40 px-5 py-2">
+							<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="dark:brightness-0 dark:invert" />
+							<span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+								Solana support coming soon
+							</span>
+							<span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+						</div>
 
 						{/* CTA Buttons */}
 						<div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-							<Link href="/docs/sdk" className="btn-primary inline-flex items-center gap-2">
+							<Link
+								href="/docs/sdk"
+								className="btn-primary inline-flex items-center gap-2"
+							>
 								<Code2 className="h-5 w-5" />
 								Get Started
 							</Link>
@@ -98,6 +91,44 @@ export default function HomePage() {
 								</svg>
 								View on GitHub
 							</Link>
+						</div>
+					</div>
+				</div>
+			</section>
+
+			{/* Value Proposition Section */}
+			<section className="relative py-16 sm:py-20 border-b border-fd-border">
+				<div className="mx-auto max-w-6xl px-6">
+					<div className="grid gap-8 md:grid-cols-3">
+						<div className="text-center">
+							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-lg">
+								<Globe className="h-6 w-6" />
+							</div>
+							<h3 className="text-lg font-semibold mb-2">No Bridges Required</h3>
+							<p className="text-sm text-fd-muted-foreground">
+								Sign transactions natively on any blockchain. No wrapped tokens, no
+								bridge exploits, no centralized custodians.
+							</p>
+						</div>
+						<div className="text-center">
+							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg">
+								<Layers className="h-6 w-6" />
+							</div>
+							<h3 className="text-lg font-semibold mb-2">Zero-Trust Security</h3>
+							<p className="text-sm text-fd-muted-foreground">
+								2PC-MPC cryptography ensures no party, not even the network, can sign
+								without user consent. Non-collusive by design.
+							</p>
+						</div>
+						<div className="text-center">
+							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg">
+								<Zap className="h-6 w-6" />
+							</div>
+							<h3 className="text-lg font-semibold mb-2">Programmable Signing</h3>
+							<p className="text-sm text-fd-muted-foreground">
+								Build smart contract logic on Sui that controls signing on any chain.
+								DeFi, custody, governance, all composable.
+							</p>
 						</div>
 					</div>
 				</div>
@@ -178,8 +209,8 @@ export default function HomePage() {
 									Ready to get started?
 								</h2>
 								<p className="mt-4 text-fd-muted-foreground">
-									Install the Ika SDK and start building multi-chain applications with dWallets in
-									minutes.
+									Install the Ika SDK and start building bridgeless multi-chain
+									applications with dWallets in minutes.
 								</p>
 								<div className="mt-6">
 									<code className="inline-flex items-center gap-2 rounded-lg bg-fd-muted px-4 py-2 text-sm font-mono">
@@ -192,7 +223,10 @@ export default function HomePage() {
 								<Link href="/docs/sdk" className="btn-primary text-center">
 									Read the Docs
 								</Link>
-								<Link href="/docs/sdk/setup-localnet" className="btn-secondary text-center">
+								<Link
+									href="/docs/sdk/setup-localnet"
+									className="btn-secondary text-center"
+								>
 									Setup Localnet
 								</Link>
 							</div>

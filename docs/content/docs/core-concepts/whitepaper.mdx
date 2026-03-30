@@ -1,0 +1,53 @@
+---
+id: whitepaper
+title: Whitepaper
+description: The Ika whitepaper:technical foundations of dWallets, 2PC-MPC, and bridgeless multi-chain infrastructure.
+sidebar_position: 5
+sidebar_label: Whitepaper
+---
+
+# Whitepaper
+
+The Ika whitepaper provides a comprehensive technical overview of the protocol's design, covering the cryptographic foundations, network architecture, and the economic model that enables bridgeless capital markets.
+
+## Read the Whitepaper
+
+<a href="/whitepaper.pdf" target="_blank" rel="noopener noreferrer" style={{display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1.5rem', borderRadius: '0.75rem', fontWeight: 600, background: '#1a1a2e', color: '#f0f0f0', textDecoration: 'none', border: '1px solid #333', transition: 'opacity 0.15s'}}>
+  Download Whitepaper (PDF)
+</a>
+
+## Key Topics Covered
+
+### Bridgeless Multi-Chain Architecture
+
+Ika introduces a fundamentally different approach to cross-chain interoperability. Rather than bridging assets between chains:which requires wrapping, locking, and trusting intermediaries:Ika enables **native signing** on any blockchain through dWallets. This eliminates the entire category of bridge exploits and wrapped token risks.
+
+### 2PC-MPC Protocol
+
+The core cryptographic innovation behind Ika. Two-Party Computation with Multi-Party Computation (2PC-MPC) ensures that:
+
+- **The user** always holds one share of the signing key
+- **The network** collectively holds the other share via MPC among validators
+- **No collusion** is possible:even if all validators collude, they cannot sign without the user
+
+This achieves zero-trust security without sacrificing decentralization or performance.
+
+### dWallet Primitive
+
+dWallets are programmable, transferable signing mechanisms that hold an address on any supported blockchain. The whitepaper details:
+
+- The key generation protocol (DKG)
+- The presigning and signing flows
+- How programmability is achieved through Sui Move smart contracts
+- The security model and trust assumptions
+
+### Network Economics
+
+The economic design of the Ika network, including validator incentives, staking mechanics, and fee structures that align participant incentives with network security.
+
+## Further Reading
+
+- [dWallets](/docs/core-concepts/dwallets):what dWallets are and how they work
+- [2PC-MPC](/docs/core-concepts/cryptography/2pc-mpc):deep dive into the cryptographic protocol
+- [Zero-Trust & Decentralization](/docs/core-concepts/zero-trust-and-decentralization):security model
+- [Multi-Chain vs Cross-Chain](/docs/core-concepts/multi-chain-vs-cross-chain):why bridgeless matters
