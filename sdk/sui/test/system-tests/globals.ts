@@ -1,11 +1,12 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { CoreV1Api, KubeConfig, V1Namespace } from '@kubernetes/client-node';
+import type { V1Namespace } from '@kubernetes/client-node';
+import { CoreV1Api, KubeConfig } from '@kubernetes/client-node';
 import { execa } from 'execa';
 
-import { createConfigMaps } from './config-map';
-import { createNetworkServices } from './network-service';
-import { createPods, createPVCs } from './pods';
+import { createConfigMaps } from './config-map.js';
+import { createNetworkServices } from './network-service.js';
+import { createPods, createPVCs } from './pods.js';
 
 export const CONFIG_MAP_NAME = 'ika-system-test-config';
 export const NETWORK_SERVICE_NAME = 'ika-dns-service';

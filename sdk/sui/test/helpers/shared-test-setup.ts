@@ -1,10 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { ClientWithCoreApi } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 
-import type { IkaClient } from '../../src';
-import type { UserShareEncryptionKeys } from '../../src';
+import type { IkaClient } from '../../src/index.js';
 import { createTestIkaClient, createTestSuiClient, generateTestKeypair } from './test-utils.js';
 
 // Shared test instances to reduce memory usage across all tests

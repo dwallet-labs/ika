@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { bytesToHex } from '@ika.xyz/core';
-import { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
+import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
 import { getFaucetHost, requestSuiFromFaucetV2 } from '@mysten/sui/faucet';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -12,7 +12,8 @@ import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 import { randomBytes } from '@noble/hashes/utils.js';
 
-import { Curve, IkaClient, IkaConfig, IkaTransaction, UserShareEncryptionKeys } from '../../src';
+import type { IkaConfig } from '../../src/index.js';
+import { Curve, IkaClient, IkaTransaction, UserShareEncryptionKeys } from '../../src/index.js';
 
 // Store random seeds per test to ensure deterministic behavior within each test
 const testSeeds = new Map<string, Uint8Array>();
@@ -22,7 +23,7 @@ export async function getObjectWithType<TObject>(
 	objectID: string,
 	isObject: (obj: any) => obj is TObject,
 ): Promise<TObject> {
-	let timeout = 600_000; // Default timeout of 10 minutes
+	const timeout = 600_000; // Default timeout of 10 minutes
 	const startTime = Date.now();
 	while (Date.now() - startTime <= timeout) {
 		// Wait for a bit before polling again, objects might not be available immediately.

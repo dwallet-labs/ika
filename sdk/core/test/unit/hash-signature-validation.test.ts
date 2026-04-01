@@ -86,37 +86,73 @@ describe('Hash numbering', () => {
 
 describe('Curve-SignatureAlgorithm validation', () => {
 	it('should accept valid combinations', () => {
-		expect(() => validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1)).not.toThrow();
-		expect(() => validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.Taproot)).not.toThrow();
-		expect(() => validateCurveSignatureAlgorithm(Curve.ED25519, SignatureAlgorithm.EdDSA)).not.toThrow();
+		expect(() =>
+			validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1),
+		).not.toThrow();
+		expect(() =>
+			validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.Taproot),
+		).not.toThrow();
+		expect(() =>
+			validateCurveSignatureAlgorithm(Curve.ED25519, SignatureAlgorithm.EdDSA),
+		).not.toThrow();
 	});
 
 	it('should reject invalid combinations', () => {
-		expect(() => validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.EdDSA)).toThrow();
-		expect(() => validateCurveSignatureAlgorithm(Curve.ED25519, SignatureAlgorithm.ECDSASecp256k1)).toThrow();
+		expect(() =>
+			validateCurveSignatureAlgorithm(Curve.SECP256K1, SignatureAlgorithm.EdDSA),
+		).toThrow();
+		expect(() =>
+			validateCurveSignatureAlgorithm(Curve.ED25519, SignatureAlgorithm.ECDSASecp256k1),
+		).toThrow();
 	});
 
 	it('isValidSignatureAlgorithmForCurve should match', () => {
-		expect(isValidSignatureAlgorithmForCurve(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1)).toBe(true);
-		expect(isValidSignatureAlgorithmForCurve(Curve.SECP256K1, SignatureAlgorithm.EdDSA)).toBe(false);
+		expect(
+			isValidSignatureAlgorithmForCurve(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1),
+		).toBe(true);
+		expect(isValidSignatureAlgorithmForCurve(Curve.SECP256K1, SignatureAlgorithm.EdDSA)).toBe(
+			false,
+		);
 	});
 });
 
 describe('Hash-SignatureAlgorithm validation', () => {
 	it('should accept valid combinations', () => {
-		expect(() => validateHashSignatureCombination(Hash.KECCAK256, SignatureAlgorithm.ECDSASecp256k1)).not.toThrow();
-		expect(() => validateHashSignatureCombination(Hash.SHA512, SignatureAlgorithm.EdDSA)).not.toThrow();
-		expect(() => validateHashSignatureCombination(Hash.Merlin, SignatureAlgorithm.SchnorrkelSubstrate)).not.toThrow();
+		expect(() =>
+			validateHashSignatureCombination(Hash.KECCAK256, SignatureAlgorithm.ECDSASecp256k1),
+		).not.toThrow();
+		expect(() =>
+			validateHashSignatureCombination(Hash.SHA512, SignatureAlgorithm.EdDSA),
+		).not.toThrow();
+		expect(() =>
+			validateHashSignatureCombination(Hash.Merlin, SignatureAlgorithm.SchnorrkelSubstrate),
+		).not.toThrow();
 	});
 
 	it('should reject invalid combinations', () => {
-		expect(() => validateHashSignatureCombination(Hash.SHA512, SignatureAlgorithm.ECDSASecp256k1)).toThrow();
-		expect(() => validateHashSignatureCombination(Hash.KECCAK256, SignatureAlgorithm.EdDSA)).toThrow();
+		expect(() =>
+			validateHashSignatureCombination(Hash.SHA512, SignatureAlgorithm.ECDSASecp256k1),
+		).toThrow();
+		expect(() =>
+			validateHashSignatureCombination(Hash.KECCAK256, SignatureAlgorithm.EdDSA),
+		).toThrow();
 	});
 
 	it('isValidHashForCurveAndSignature should match', () => {
-		expect(isValidHashForCurveAndSignature(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1, Hash.KECCAK256)).toBe(true);
-		expect(isValidHashForCurveAndSignature(Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1, Hash.SHA512)).toBe(false);
+		expect(
+			isValidHashForCurveAndSignature(
+				Curve.SECP256K1,
+				SignatureAlgorithm.ECDSASecp256k1,
+				Hash.KECCAK256,
+			),
+		).toBe(true);
+		expect(
+			isValidHashForCurveAndSignature(
+				Curve.SECP256K1,
+				SignatureAlgorithm.ECDSASecp256k1,
+				Hash.SHA512,
+			),
+		).toBe(false);
 	});
 });
 

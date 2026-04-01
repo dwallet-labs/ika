@@ -3,7 +3,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { bytesToHex, encodeToASCII, hexToBytes, stringToUint8Array, u64ToBytesBigEndian } from '../../src';
+import {
+	bytesToHex,
+	encodeToASCII,
+	hexToBytes,
+	stringToUint8Array,
+	u64ToBytesBigEndian,
+} from '../../src';
 
 describe('hexToBytes', () => {
 	it('should convert valid hex to bytes', () => {

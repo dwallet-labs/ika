@@ -1,15 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { bcs } from '@mysten/sui/bcs';
-import type { PublicKey } from '@mysten/sui/cryptography';
-import { SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
-import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-
 import type {
 	Curve,
 	DKGRequestInput,
 	ImportDWalletVerificationRequestInput,
+	UserShareEncryptionKeys,
 } from '@ika.xyz/core';
 import {
 	fromNumberToCurve,
@@ -17,7 +13,10 @@ import {
 	prepareImportedKeyVerification,
 	userAndNetworkDKGOutputMatch,
 } from '@ika.xyz/core';
-import type { UserShareEncryptionKeys } from '@ika.xyz/core';
+import { bcs } from '@mysten/sui/bcs';
+import type { PublicKey } from '@mysten/sui/cryptography';
+import { SIGNATURE_FLAG_TO_SCHEME } from '@mysten/sui/cryptography';
+import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 
 import type { IkaClient } from './ika-client.js';
 import type { DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';

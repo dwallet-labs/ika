@@ -1,9 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
-
 import { InvalidObjectError } from '@ika.xyz/core';
+import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
 
 /**
  * Extract BCS (Binary Canonical Serialization) bytes from a Sui object response.

@@ -77,7 +77,7 @@ describe('Upgrade twopc_mpc Move package', () => {
 });
 
 export async function getPublisherKeypair(): Promise<Ed25519Keypair> {
-	let publisherMnemonicBytes = await fs.readFile(
+	const publisherMnemonicBytes = await fs.readFile(
 		`${TEST_ROOT_DIR}/${process.env.SUBDOMAIN}/publisher/sui_config/publisher.seed`,
 	);
 	const publisherMnemonic = new TextDecoder().decode(publisherMnemonicBytes);
@@ -117,13 +117,13 @@ export async function deployUpgradedPackage(
 	);
 
 	const tx = new Transaction();
-	let protocolCap = tx.object(protocolCapID);
-	let systemStateArg = tx.sharedObjectRef({
+	const protocolCap = tx.object(protocolCapID);
+	const systemStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaSystemObject.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaSystemObject.initialSharedVersion,
 		mutable: true,
 	});
-	let coordinatorStateArg = tx.sharedObjectRef({
+	const coordinatorStateArg = tx.sharedObjectRef({
 		objectId: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectID,
 		initialSharedVersion: ikaClient.ikaConfig.objects.ikaDWalletCoordinator.initialSharedVersion,
 		mutable: true,
@@ -139,7 +139,7 @@ export async function deployUpgradedPackage(
 		],
 	});
 
-	let [upgradeTicket, upgradeApprover] = tx.moveCall({
+	const [upgradeTicket, upgradeApprover] = tx.moveCall({
 		target: `${ikaClient.ikaConfig.packages.ikaSystemPackage}::system::authorize_upgrade`,
 		arguments: [systemStateArg, tx.pure.id(ikaClient.ikaConfig.packages.ikaDwallet2pcMpcPackage)],
 	});

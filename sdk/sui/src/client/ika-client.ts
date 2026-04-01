@@ -1,6 +1,24 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import {
+	fromNumberToCurve,
+	InvalidObjectError,
+	networkDkgPublicOutputToProtocolPublicParameters,
+	NetworkError,
+	ObjectNotFoundError,
+	parseSignatureFromSignOutput,
+	reconfigurationPublicOutputToProtocolPublicParameters,
+	validateCurveSignatureAlgorithm,
+} from '@ika.xyz/core';
+import type {
+	Curve,
+	DWalletKind,
+	EncryptionKeyOptions,
+	NetworkEncryptionKey,
+	SignatureAlgorithm,
+	ValidSignatureAlgorithmForCurve,
+} from '@ika.xyz/core';
 import { bcs } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
@@ -10,22 +28,6 @@ import * as CoordinatorModule from '../generated/ika_dwallet_2pc_mpc/coordinator
 import { TableVec } from '../generated/ika_system/deps/sui/table_vec.js';
 import * as SystemModule from '../generated/ika_system/system.js';
 import { getActiveEncryptionKey as getActiveEncryptionKeyFromCoordinator } from '../tx/coordinator.js';
-import {
-	networkDkgPublicOutputToProtocolPublicParameters,
-	parseSignatureFromSignOutput,
-	reconfigurationPublicOutputToProtocolPublicParameters,
-} from '@ika.xyz/core';
-import { InvalidObjectError, NetworkError, ObjectNotFoundError } from '@ika.xyz/core';
-import { fromNumberToCurve, validateCurveSignatureAlgorithm } from '@ika.xyz/core';
-import type { ValidSignatureAlgorithmForCurve } from '@ika.xyz/core';
-import type {
-	Curve,
-	DWalletKind,
-	EncryptionKeyOptions,
-	NetworkEncryptionKey,
-	SignatureAlgorithm,
-} from '@ika.xyz/core';
-
 import { CoordinatorInnerDynamicField, DynamicField, SystemInnerDynamicField } from './types.js';
 import type {
 	CoordinatorInner,

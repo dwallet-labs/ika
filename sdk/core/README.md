@@ -2,9 +2,12 @@
 
 ## Overview
 
-Chain-agnostic cryptographic core for the Ika dWallet 2PC-MPC protocol. This package provides all the protocol-level operations needed to create and use dWallets, without any blockchain-specific dependencies.
+Chain-agnostic cryptographic core for the Ika dWallet 2PC-MPC protocol. This package provides all
+the protocol-level operations needed to create and use dWallets, without any blockchain-specific
+dependencies.
 
-Use this package directly if you're building a chain adapter, or use a chain-specific SDK (e.g., `@ika.xyz/sui`) which re-exports everything from core.
+Use this package directly if you're building a chain adapter, or use a chain-specific SDK (e.g.,
+`@ika.xyz/sui`) which re-exports everything from core.
 
 ## Install
 
@@ -55,15 +58,15 @@ const secretShare = await keys.decryptSecretShare(publicOutput, encryptedShare, 
 ## DKG preparation
 
 ```ts
-import { prepareDKG, Curve } from '@ika.xyz/core';
+import { Curve, prepareDKG } from '@ika.xyz/core';
 
 // Chain-agnostic: takes raw address bytes, not a chain-specific address string
 const dkgInput = await prepareDKG(
-  protocolPublicParameters,
-  Curve.SECP256K1,
-  encryptionKey,
-  bytesToHash,
-  senderAddressBytes, // Uint8Array — chain SDK converts address format to bytes
+	protocolPublicParameters,
+	Curve.SECP256K1,
+	encryptionKey,
+	bytesToHash,
+	senderAddressBytes, // Uint8Array — chain SDK converts address format to bytes
 );
 ```
 
@@ -71,34 +74,39 @@ const dkgInput = await prepareDKG(
 
 ```ts
 import {
-  createUserSignMessageWithPublicOutput,
-  verifySecpSignature,
-  parseSignatureFromSignOutput,
-  Curve,
-  Hash,
-  SignatureAlgorithm,
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	Hash,
+	parseSignatureFromSignOutput,
+	SignatureAlgorithm,
+	verifySecpSignature,
 } from '@ika.xyz/core';
 
 const signMsg = await createUserSignMessageWithPublicOutput(
-  protocolPublicParameters,
-  publicOutput,
-  userSecretKeyShare,
-  presign,
-  message,
-  Hash.KECCAK256,
-  SignatureAlgorithm.ECDSASecp256k1,
-  Curve.SECP256K1,
+	protocolPublicParameters,
+	publicOutput,
+	userSecretKeyShare,
+	presign,
+	message,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
 );
 
 const signature = await parseSignatureFromSignOutput(
-  Curve.SECP256K1,
-  SignatureAlgorithm.ECDSASecp256k1,
-  signOutput,
+	Curve.SECP256K1,
+	SignatureAlgorithm.ECDSASecp256k1,
+	signOutput,
 );
 
 const valid = await verifySecpSignature(
-  publicKey, signature, message, networkDkgPublicOutput,
-  Hash.KECCAK256, SignatureAlgorithm.ECDSASecp256k1, Curve.SECP256K1,
+	publicKey,
+	signature,
+	message,
+	networkDkgPublicOutput,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
 );
 ```
 
@@ -120,7 +128,8 @@ import { validateCurveSignatureAlgorithm, validateHashSignatureCombination } fro
 
 ## Ed25519 keypair
 
-Chain-agnostic Ed25519 using `@noble/curves`. Supports both hex and Bech32 secret key formats for backward compatibility.
+Chain-agnostic Ed25519 using `@noble/curves`. Supports both hex and Bech32 secret key formats for
+backward compatibility.
 
 ```ts
 import { Ed25519Keypair } from '@ika.xyz/core';
@@ -133,6 +142,7 @@ const valid = await keypair.verify(message, signature);
 ## Building a chain adapter
 
 Chain SDKs should:
+
 1. Depend on `@ika.xyz/core` and re-export everything from their index
 2. Provide chain-specific address derivation (e.g., `getSuiAddress(keys)`)
 3. Wrap `prepareDKG` to convert chain address formats to raw bytes

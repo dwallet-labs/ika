@@ -1,22 +1,24 @@
 import { bcs } from '@mysten/sui/bcs';
-import { ClientWithCoreApi } from '@mysten/sui/client';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { expect } from 'vitest';
 
-import {
-	CoordinatorInnerModule,
-	createRandomSessionIdentifier,
+import type {
 	Curve,
 	DWallet,
 	Hash,
 	IkaClient,
-	prepareDKGAsync,
 	Presign,
+	UserShareEncryptionKeys,
+	ZeroTrustDWallet,
+} from '../../src/index.js';
+import {
+	CoordinatorInnerModule,
+	createRandomSessionIdentifier,
+	prepareDKGAsync,
 	SessionsManagerModule,
 	SignatureAlgorithm,
-	ZeroTrustDWallet,
-} from '../../src';
-import { UserShareEncryptionKeys } from '../../src';
+} from '../../src/index.js';
 import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,
@@ -27,7 +29,7 @@ import {
 	generateTestKeypair,
 	requestTestFaucetFunds,
 	retryUntil,
-} from '../helpers/test-utils';
+} from '../helpers/test-utils.js';
 
 const PublicKeyBCS = bcs.vector(bcs.u8());
 

@@ -33,6 +33,8 @@ export default tseslint.config(
 			'examples/**',
 			'sdk/typescript/examples/**',
 			'sdk/typescript/test/**',
+			'sdk/sui/test/system-tests/**',
+			'sdk/sui/test/integration/**',
 		],
 	},
 

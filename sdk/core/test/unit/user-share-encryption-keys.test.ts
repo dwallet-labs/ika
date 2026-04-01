@@ -1,16 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { bech32 } from '@scure/base';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { bcs } from '@mysten/bcs';
-import { bech32 } from '@scure/base';
-
-import {
-	Curve,
-	UserShareEncryptionKeys,
-	VersionedUserShareEncryptionKeysBcs,
-} from '../../src';
+import { Curve, UserShareEncryptionKeys, VersionedUserShareEncryptionKeysBcs } from '../../src';
 
 describe('UserShareEncryptionKeys', () => {
 	const testSeed = new Uint8Array(32);
@@ -67,7 +61,10 @@ describe('UserShareEncryptionKeys', () => {
 
 		it('legacy and fixed should differ for non-zero curve numbers', async () => {
 			const fixedEd = await UserShareEncryptionKeys.fromRootSeedKey(testSeed, Curve.ED25519);
-			const legacyEd = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(testSeed, Curve.ED25519);
+			const legacyEd = await UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(
+				testSeed,
+				Curve.ED25519,
+			);
 			// ED25519 has curve number 2, so legacy (byte=0) != fixed (byte=2)
 			expect(legacyEd.encryptionKey).not.toEqual(fixedEd.encryptionKey);
 		});
@@ -89,7 +86,9 @@ describe('UserShareEncryptionKeys', () => {
 			const deserialized = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(serialized);
 
 			expect(deserialized.encryptionKey).toEqual(keysLegacy.encryptionKey);
-			expect(deserialized.getSigningPublicKeyBytes()).toEqual(keysLegacy.getSigningPublicKeyBytes());
+			expect(deserialized.getSigningPublicKeyBytes()).toEqual(
+				keysLegacy.getSigningPublicKeyBytes(),
+			);
 			expect(deserialized.legacyHash).toBe(true);
 		});
 

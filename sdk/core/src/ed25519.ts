@@ -129,7 +129,9 @@ export class Ed25519Keypair {
 function decodeSuiPrivateKey(encoded: string): Uint8Array {
 	const { prefix, words } = bech32.decode(encoded as `${string}1${string}`);
 	if (prefix !== SUI_PRIVATE_KEY_PREFIX) {
-		throw new Error(`Invalid private key prefix: expected '${SUI_PRIVATE_KEY_PREFIX}', got '${prefix}'`);
+		throw new Error(
+			`Invalid private key prefix: expected '${SUI_PRIVATE_KEY_PREFIX}', got '${prefix}'`,
+		);
 	}
 	const extendedSecretKey = new Uint8Array(bech32.fromWords(words));
 	const flag = extendedSecretKey[0];

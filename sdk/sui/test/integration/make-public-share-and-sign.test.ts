@@ -9,13 +9,13 @@ import { describe, expect, it } from 'vitest';
 import {
 	CoordinatorInnerModule,
 	Curve,
+	decryptUserShare,
 	Hash,
 	IkaClient,
 	Presign,
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
 	SignatureAlgorithm,
-	decryptUserShare,
 	ZeroTrustDWallet,
 } from '../../src';
 import {

@@ -1,13 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import type {
-	Transaction,
-	TransactionObjectArgument,
-	TransactionResult,
-} from '@mysten/sui/transactions';
-
 import type {
 	Curve,
 	DKGRequestInput,
@@ -31,6 +24,12 @@ import {
 	validateHashSignatureCombination,
 	verifyUserShare,
 } from '@ika.xyz/core';
+import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
+import type {
+	Transaction,
+	TransactionObjectArgument,
+	TransactionResult,
+} from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
 import {
@@ -39,7 +38,6 @@ import {
 	getUserOutputSignature,
 	getUserOutputSignatureForTransferredDWallet,
 } from './cryptography.js';
-
 import type { IkaClient } from './ika-client.js';
 import type {
 	DWallet,
@@ -1753,13 +1751,12 @@ export class IkaTransaction {
 				throw new Error('User share encryption keys are not set');
 			}
 
-			const { secretShare: decryptedSecretShare } =
-				await decryptUserShare(
-					this.#userShareEncryptionKeys,
-					dWallet,
-					sourceEncryptedUserSecretKeyShare,
-					await this.#ikaClient.getProtocolPublicParameters(dWallet),
-				);
+			const { secretShare: decryptedSecretShare } = await decryptUserShare(
+				this.#userShareEncryptionKeys,
+				dWallet,
+				sourceEncryptedUserSecretKeyShare,
+				await this.#ikaClient.getProtocolPublicParameters(dWallet),
+			);
 			finalSourceSecretShare = decryptedSecretShare;
 		}
 
@@ -1926,13 +1923,12 @@ export class IkaTransaction {
 		const publicParameters =
 			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
 
-		const { secretShare, verifiedPublicOutput } =
-			await decryptUserShare(
-				this.#userShareEncryptionKeys,
-				dWallet,
-				encryptedUserSecretKeyShare,
-				publicParameters,
-			);
+		const { secretShare, verifiedPublicOutput } = await decryptUserShare(
+			this.#userShareEncryptionKeys,
+			dWallet,
+			encryptedUserSecretKeyShare,
+			publicParameters,
+		);
 
 		await this.#verifySecretShare({
 			curve: fromNumberToCurve(dWallet.curve),

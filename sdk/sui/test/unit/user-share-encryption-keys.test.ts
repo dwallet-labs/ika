@@ -1,17 +1,16 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { bytesToHex } from '@ika.xyz/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
 	Curve,
 	decryptUserShare,
-	type DWallet,
-	type EncryptedUserSecretKeyShare,
 	getSuiAddress,
 	getUserOutputSignature,
 	UserShareEncryptionKeys,
+	type DWallet,
+	type EncryptedUserSecretKeyShare,
 } from '../../src';
 
 describe('Sui-specific UserShareEncryptionKeys functions', () => {

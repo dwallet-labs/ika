@@ -35,7 +35,9 @@ describe('sessionIdentifierDigest', () => {
 	it('should be deterministic', () => {
 		const bytes = new Uint8Array([1, 2, 3]);
 		const address = new Uint8Array(32);
-		expect(sessionIdentifierDigest(bytes, address)).toEqual(sessionIdentifierDigest(bytes, address));
+		expect(sessionIdentifierDigest(bytes, address)).toEqual(
+			sessionIdentifierDigest(bytes, address),
+		);
 	});
 
 	it('should differ for different inputs', () => {
@@ -49,13 +51,17 @@ describe('sessionIdentifierDigest', () => {
 		const bytes = new Uint8Array([1, 2, 3]);
 		const addrA = new Uint8Array(32).fill(0);
 		const addrB = new Uint8Array(32).fill(1);
-		expect(sessionIdentifierDigest(bytes, addrA)).not.toEqual(sessionIdentifierDigest(bytes, addrB));
+		expect(sessionIdentifierDigest(bytes, addrA)).not.toEqual(
+			sessionIdentifierDigest(bytes, addrB),
+		);
 	});
 });
 
 describe('createClassGroupsKeypair', () => {
 	it('should reject non-32-byte seeds', async () => {
-		await expect(createClassGroupsKeypair(new Uint8Array(16), Curve.SECP256K1)).rejects.toThrow('32 bytes');
+		await expect(createClassGroupsKeypair(new Uint8Array(16), Curve.SECP256K1)).rejects.toThrow(
+			'32 bytes',
+		);
 	});
 
 	it('should produce encryption and decryption keys', async () => {

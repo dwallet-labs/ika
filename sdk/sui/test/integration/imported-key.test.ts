@@ -10,16 +10,18 @@ import {
 	CoordinatorInnerModule,
 	createRandomSessionIdentifier,
 	Curve,
+	fromNumberToCurve,
 	Hash,
 	IkaClient,
+	ImportedKeyDWallet,
 	prepareImportedKeyDWalletVerification,
 	Presign,
 	publicKeyFromCentralizedDKGOutput,
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
 	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 } from '../../src';
-import { fromNumberToCurve, ImportedKeyDWallet, UserShareEncryptionKeys } from '../../src';
 import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,

@@ -2,9 +2,11 @@
 
 ## Overview
 
-TypeScript SDK for interacting with the Ika Network on Sui. Provides everything needed to create and manage dWallets, with zero-trust multi-chain signing powered by 2PC-MPC.
+TypeScript SDK for interacting with the Ika Network on Sui. Provides everything needed to create and
+manage dWallets, with zero-trust multi-chain signing powered by 2PC-MPC.
 
-This package re-exports everything from `@ika.xyz/core` (chain-agnostic crypto) plus Sui-specific client, transaction builders, and utilities.
+This package re-exports everything from `@ika.xyz/core` (chain-agnostic crypto) plus Sui-specific
+client, transaction builders, and utilities.
 
 - Create and manage dWallets (zero-trust, imported-key, shared variants)
 - Sign messages across multiple curves and signature algorithms
@@ -18,32 +20,32 @@ This package re-exports everything from `@ika.xyz/core` (chain-agnostic crypto) 
 npm install @ika.xyz/sui
 ```
 
-> **Migrating from `@ika.xyz/sdk`?** This package replaces `@ika.xyz/sdk`, which is now a
-> deprecated shim. See [Migration](#migrating-from-ikaxyz-sdk) below.
+> **Migrating from `@ika.xyz/sdk`?** This package replaces `@ika.xyz/sdk`, which is now a deprecated
+> shim. See [Migration](#migrating-from-ikaxyz-sdk) below.
 
 ## Quick start
 
 ```ts
 import {
-  Curve,
-  getNetworkConfig,
-  Hash,
-  IkaClient,
-  IkaTransaction,
-  SignatureAlgorithm,
-  UserShareEncryptionKeys,
+	Curve,
+	getNetworkConfig,
+	Hash,
+	IkaClient,
+	IkaTransaction,
+	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 } from '@ika.xyz/sui';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Transaction } from '@mysten/sui/transactions';
 
 // 1. Set up clients
 const suiClient = new SuiJsonRpcClient({
-  url: getJsonRpcFullnodeUrl('testnet'),
-  network: 'testnet',
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
 });
 const ikaClient = new IkaClient({
-  suiClient,
-  config: getNetworkConfig('testnet'),
+	suiClient,
+	config: getNetworkConfig('testnet'),
 });
 await ikaClient.initialize();
 
@@ -65,14 +67,15 @@ const config = getNetworkConfig('testnet'); // or 'mainnet'
 
 ## Creating a client
 
-`IkaClient` wraps a Sui JSON-RPC client with caching and helpers for fetching dWallets, encryption keys, and protocol parameters.
+`IkaClient` wraps a Sui JSON-RPC client with caching and helpers for fetching dWallets, encryption
+keys, and protocol parameters.
 
 ```ts
 const ikaClient = new IkaClient({
-  suiClient,
-  config: getNetworkConfig('testnet'),
-  cache: true,
-  encryptionKeyOptions: { autoDetect: true },
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
+	encryptionKeyOptions: { autoDetect: true },
 });
 ```
 
@@ -108,12 +111,12 @@ const epoch = await ikaClient.getEpoch();
 
 ```ts
 await ikaTx.requestDWalletDKG({
-  dkgRequestInput,
-  sessionIdentifier,
-  dwalletNetworkEncryptionKeyId,
-  curve: Curve.SECP256K1,
-  ikaCoin,
-  suiCoin,
+	dkgRequestInput,
+	sessionIdentifier,
+	dwalletNetworkEncryptionKeyId,
+	curve: Curve.SECP256K1,
+	ikaCoin,
+	suiCoin,
 });
 ```
 
@@ -121,10 +124,10 @@ await ikaTx.requestDWalletDKG({
 
 ```ts
 ikaTx.requestPresign({
-  dWallet,
-  signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
-  ikaCoin,
-  suiCoin,
+	dWallet,
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin,
+	suiCoin,
 });
 ```
 
@@ -132,16 +135,16 @@ ikaTx.requestPresign({
 
 ```ts
 await ikaTx.requestSign({
-  dWallet,
-  messageApproval,
-  hashScheme: Hash.KECCAK256,
-  verifiedPresignCap,
-  presign,
-  encryptedUserSecretKeyShare,
-  message,
-  signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
-  ikaCoin,
-  suiCoin,
+	dWallet,
+	messageApproval,
+	hashScheme: Hash.KECCAK256,
+	verifiedPresignCap,
+	presign,
+	encryptedUserSecretKeyShare,
+	message,
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin,
+	suiCoin,
 });
 ```
 
@@ -160,24 +163,33 @@ These functions wrap core operations with Sui address derivation and on-chain st
 
 ```ts
 import {
-  decryptUserShare,
-  getSuiAddress,
-  getUserOutputSignature,
-  getUserOutputSignatureForTransferredDWallet,
-  prepareDKGAsync,
-  prepareImportedKeyDWalletVerification,
-  verifyAndGetDWalletDKGPublicOutput,
+	decryptUserShare,
+	getSuiAddress,
+	getUserOutputSignature,
+	getUserOutputSignatureForTransferredDWallet,
+	prepareDKGAsync,
+	prepareImportedKeyDWalletVerification,
+	verifyAndGetDWalletDKGPublicOutput,
 } from '@ika.xyz/sui';
 
 // Derive Sui address from encryption keys
 const address = getSuiAddress(keys);
 
 // Async DKG preparation (fetches protocol params from network)
-const dkgInput = await prepareDKGAsync(ikaClient, Curve.SECP256K1, keys, bytesToHash, senderAddress);
+const dkgInput = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	keys,
+	bytesToHash,
+	senderAddress,
+);
 
 // Decrypt with on-chain state verification
 const { verifiedPublicOutput, secretShare } = await decryptUserShare(
-  keys, dWallet, encryptedShare, protocolPublicParameters,
+	keys,
+	dWallet,
+	encryptedShare,
+	protocolPublicParameters,
 );
 
 // Sign dWallet public output for authorization
@@ -212,7 +224,12 @@ import { coordinatorTransactions, systemTransactions } from '@ika.xyz/sui';
 Generated BCS modules:
 
 ```ts
-import { CoordinatorInnerModule, CoordinatorModule, SessionsManagerModule, SystemModule } from '@ika.xyz/sui';
+import {
+	CoordinatorInnerModule,
+	CoordinatorModule,
+	SessionsManagerModule,
+	SystemModule,
+} from '@ika.xyz/sui';
 ```
 
 ## Migrating from @ika.xyz/sdk
@@ -224,18 +241,19 @@ import { CoordinatorInnerModule, CoordinatorModule, SessionsManagerModule, Syste
 3. Update method calls that moved to standalone functions:
 
 ```ts
-// Before (method on class):
-keys.getSuiAddress()
-keys.getUserOutputSignature(dWallet, publicOutput)
-keys.decryptUserShare(dWallet, share, params)
-keys.getPublicKey()
-
 // After (standalone functions):
-import { getSuiAddress, getUserOutputSignature, decryptUserShare } from '@ika.xyz/sui';
-getSuiAddress(keys)
-getUserOutputSignature(keys, dWallet, publicOutput)
-decryptUserShare(keys, dWallet, share, params)
-keys.getSigningPublicKeyBytes()
+import { decryptUserShare, getSuiAddress, getUserOutputSignature } from '@ika.xyz/sui';
+
+// Before (method on class):
+keys.getSuiAddress();
+keys.getUserOutputSignature(dWallet, publicOutput);
+keys.decryptUserShare(dWallet, share, params);
+keys.getPublicKey();
+
+getSuiAddress(keys);
+getUserOutputSignature(keys, dWallet, publicOutput);
+decryptUserShare(keys, dWallet, share, params);
+keys.getSigningPublicKeyBytes();
 ```
 
 ## Testing

@@ -1,11 +1,16 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import type {
+	Curve,
+	DWalletKind,
+	EncryptionKeyOptions,
+	Hash,
+	SignatureAlgorithm,
+} from '@ika.xyz/core';
 import type { BcsType } from '@mysten/sui/bcs';
 import { bcs, BcsStruct } from '@mysten/sui/bcs';
 import type { ClientWithCoreApi } from '@mysten/sui/client';
-
-import type { Curve, DWalletKind, EncryptionKeyOptions, Hash, SignatureAlgorithm } from '@ika.xyz/core';
 
 import * as CoordinatorInnerModule from '../generated/ika_dwallet_2pc_mpc/coordinator_inner.js';
 import * as SystemInnerModule from '../generated/ika_system/system_inner.js';

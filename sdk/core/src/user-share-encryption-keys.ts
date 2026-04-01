@@ -353,11 +353,7 @@ export class UserShareEncryptionKeys {
 		userPublicOutput: Uint8Array,
 		networkDKGOutput: Uint8Array,
 	): Promise<boolean> {
-		return userAndNetworkDKGOutputMatch(
-			this.curve,
-			userPublicOutput,
-			networkDKGOutput,
-		);
+		return userAndNetworkDKGOutputMatch(this.curve, userPublicOutput, networkDKGOutput);
 	}
 
 	// -----------------------------------------------------------------------

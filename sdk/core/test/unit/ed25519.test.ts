@@ -1,11 +1,10 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { bech32 } from '@scure/base';
 import { describe, expect, it } from 'vitest';
 
-import { bech32 } from '@scure/base';
-
-import { bytesToHex, Ed25519Keypair, hexToBytes } from '../../src';
+import { bytesToHex, Ed25519Keypair } from '../../src';
 
 describe('Ed25519Keypair', () => {
 	const validSeed = new Uint8Array(32);
@@ -88,7 +87,9 @@ describe('Ed25519Keypair', () => {
 			expect(hexKey.startsWith('suiprivkey')).toBe(false);
 			// hex path
 			const fromHex = Ed25519Keypair.fromSecretKey(hexKey);
-			expect(fromHex.getPublicKeyBytes()).toEqual(Ed25519Keypair.fromSeed(validSeed).getPublicKeyBytes());
+			expect(fromHex.getPublicKeyBytes()).toEqual(
+				Ed25519Keypair.fromSeed(validSeed).getPublicKeyBytes(),
+			);
 		});
 	});
 

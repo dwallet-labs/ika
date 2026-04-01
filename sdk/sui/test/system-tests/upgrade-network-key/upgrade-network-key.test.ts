@@ -186,7 +186,7 @@ describe('system tests', () => {
 		await waitForEpochSwitch(ikaClient);
 		console.log('Epoch switched, verifying the network key version is V1');
 		const networkKey = await ikaClient.getConfiguredNetworkEncryptionKey();
-		let networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
+		const networkKeyBytes = await ikaClient.readTableVecAsRawBytes(networkKey.networkDKGOutputID);
 		const networkKeyVersion = network_key_version(networkKeyBytes);
 		expect(networkKeyVersion).toBe(1);
 		console.log('Network key version is V1, upgrading two validators to the new docker image');
@@ -335,7 +335,7 @@ async function waitForV2NetworkKey(ikaClient: IkaClient) {
 
 async function updateOperatorsConfigWithNewPackageID(upgradedPackageID: string) {
 	for (let i = 0; i < Number(process.env.VALIDATOR_NUM); i++) {
-		let validatorYamlPath = `${TEST_ROOT_DIR}/${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/val${i + 1}.${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/validator.yaml`;
+		const validatorYamlPath = `${TEST_ROOT_DIR}/${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/val${i + 1}.${NETWORK_SERVICE_NAME}.${NAMESPACE_NAME}.svc.cluster.local/validator.yaml`;
 		exec(
 			`yq e '.["sui-connector-config"]["ika-dwallet-2pc-mpc-package-id-v2"] = "${upgradedPackageID}"' -i "${validatorYamlPath}"`,
 		);

@@ -9,15 +9,17 @@ import { describe, expect, it } from 'vitest';
 import {
 	CoordinatorInnerModule,
 	Curve,
+	EncryptedUserSecretKeyShare,
+	getSuiAddress,
 	Hash,
 	IkaClient,
 	Presign,
 	publicKeyFromDWalletOutput,
 	SessionsManagerModule,
 	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 	ZeroTrustDWallet,
 } from '../../src';
-import { EncryptedUserSecretKeyShare, getSuiAddress, UserShareEncryptionKeys } from '../../src';
 import {
 	createEmptyTestIkaToken,
 	createTestIkaClient,
