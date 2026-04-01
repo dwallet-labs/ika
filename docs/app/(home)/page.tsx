@@ -1,4 +1,4 @@
-import { BookOpen, Code2, Globe, Layers, Puzzle, Zap } from 'lucide-react';
+import { BookOpen, Code2, Globe, Layers, Puzzle, Terminal, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 
@@ -9,6 +9,13 @@ const features = [
 		href: '/docs/sdk',
 		icon: Code2,
 		gradient: 'from-pink-500 to-rose-500',
+	},
+	{
+		title: 'CLI',
+		description: 'Create dWallets, sign messages, and manage the network from the terminal',
+		href: '/docs/cli',
+		icon: Terminal,
+		gradient: 'from-violet-500 to-purple-500',
 	},
 	{
 		title: 'Move Integration',

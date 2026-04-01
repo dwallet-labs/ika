@@ -1,4 +1,4 @@
 {
 	"title": "Documentation",
-	"pages": ["sdk", "move-integration", "core-concepts", "skills"]
+	"pages": ["sdk", "cli", "move-integration", "core-concepts", "skills"]
 }

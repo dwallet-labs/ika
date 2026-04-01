@@ -14,7 +14,9 @@ All validator operations are under the `ika validator` subcommand. Use `ika vali
 ika validator [--client.config <PATH>] [--json] [-y] <SUBCOMMAND>
 ```
 
-## Registration
+> Most commands accept optional `--gas-budget` and `--ika-sui-config` flags. These are omitted below for brevity.
+
+## Setup
 
 ### `make-validator-info`
 
@@ -22,8 +24,23 @@ Generate a validator info file with the required metadata.
 
 ```bash
 ika validator make-validator-info \
-  <NAME> <DESCRIPTION> <IMAGE_URL> <PROJECT_URL> <HOST> <GAS_PRICE> <ADDRESS>
+  <NAME> <DESCRIPTION> <IMAGE_URL> <PROJECT_URL> <HOST_NAME> <GAS_PRICE> <SENDER_SUI_ADDRESS>
 ```
+
+### `config-env`
+
+Configure the Ika package and system object IDs for the CLI environment.
+
+```bash
+ika validator config-env \
+  --ika-package-id <ID> \
+  --ika-common-package-id <ID> \
+  --ika-dwallet-2pc-mpc-package-id <ID> \
+  --ika-system-package-id <ID> \
+  --ika-system-object-id <ID>
+```
+
+## Registration
 
 ### `become-candidate`
 
@@ -31,6 +48,14 @@ Register as a validator candidate using a validator info file.
 
 ```bash
 ika validator become-candidate <VALIDATOR_INFO_PATH>
+```
+
+### `remove-candidate`
+
+Remove your validator candidacy.
+
+```bash
+ika validator remove-candidate --validator-cap-id <CAP_ID>
 ```
 
 ### `join-committee`
@@ -46,7 +71,7 @@ ika validator join-committee --validator-cap-id <CAP_ID>
 Leave the active validator committee.
 
 ```bash
-ika validator leave-committee
+ika validator leave-committee --validator-cap-id <CAP_ID>
 ```
 
 ## Staking
@@ -56,41 +81,68 @@ ika validator leave-committee
 Stake IKA tokens with a validator.
 
 ```bash
-ika validator stake-validator --amount <AMOUNT>
+ika validator stake-validator \
+  --validator-id <ID> \
+  --ika-supply-id <ID> \
+  --stake-amount <AMOUNT>
 ```
 
-### `unstake-validator`
+### `request-withdraw-stake`
 
-Unstake IKA tokens from a validator.
+Request to withdraw staked tokens. The withdrawal is processed at the end of the epoch.
 
 ```bash
-ika validator unstake-validator --staked-ika-id <ID>
+ika validator request-withdraw-stake --staked-ika-id <ID>
 ```
 
-## Configuration
+### `withdraw-stake`
+
+Withdraw staked tokens after a withdrawal request has been processed.
+
+```bash
+ika validator withdraw-stake --staked-ika-id <ID>
+```
+
+## Commission
 
 ### `set-commission`
 
 Set the validator commission rate.
 
 ```bash
-ika validator set-commission --commission-rate <RATE>
+ika validator set-commission \
+  --validator-operation-cap-id <CAP_ID> \
+  --new-commission-rate <RATE>
 ```
+
+### `collect-commission`
+
+Collect accumulated commission rewards.
+
+```bash
+ika validator collect-commission \
+  --validator-commission-cap-id <CAP_ID> \
+  [--amount <AMOUNT>]
+```
+
+## Pricing
 
 ### `set-pricing-vote`
 
 Set the validator's pricing vote for network operations.
 
 ```bash
-ika validator set-pricing-vote
+ika validator set-pricing-vote \
+  --validator-operation-cap-id <CAP_ID> \
+  --new-pricing-file-path <PATH>
 ```
 
-### `set-gas-price`
+### `get-current-pricing-info`
 
-Update the validator's gas price.
+Fetch current network pricing information.
 
 ```bash
-ika validator set-gas-price --gas-price <PRICE>
+ika validator get-current-pricing-info
 ```
 
 ## Metadata
@@ -100,28 +152,125 @@ ika validator set-gas-price --gas-price <PRICE>
 Query validator information.
 
 ```bash
-ika validator get-validator-metadata [--json]
+ika validator get-validator-metadata --validator-id <ID>
 ```
 
-### `update-validator-name` / `description` / `image-url` / `project-url`
+### `set-validator-name`
 
-Update validator metadata fields.
+Update the validator display name.
 
 ```bash
-ika validator update-validator-name --name <NAME>
-ika validator update-validator-description --description <DESC>
-ika validator update-validator-image-url --image-url <URL>
-ika validator update-validator-project-url --project-url <URL>
+ika validator set-validator-name \
+  --validator-operation-cap-id <CAP_ID> \
+  --name <NAME>
 ```
 
-## Other Subcommands
+### `set-validator-metadata`
 
-| Command | Description |
-|---------|-------------|
-| `display-metadata` | Display validator metadata |
-| `report-validator` | Report a misbehaving validator |
-| `undo-report-validator` | Undo a previous validator report |
-| `set-candidate-commission` | Set commission rate for a candidate |
-| `withdraw-stake` | Withdraw staked tokens |
+Update validator metadata (description, image URL, project URL, etc.).
 
-Run `ika validator --help` for the full list of 30+ subcommands.
+```bash
+ika validator set-validator-metadata \
+  --validator-operation-cap-id <CAP_ID> \
+  --metadata <METADATA>
+```
+
+## Capability Verification
+
+Verify that capability objects are valid and owned by the caller.
+
+```bash
+ika validator verify-validator-cap --validator-cap-id <CAP_ID>
+ika validator verify-operation-cap --validator-operation-cap-id <CAP_ID>
+ika validator verify-commission-cap --validator-commission-cap-id <CAP_ID>
+```
+
+## Capability Rotation
+
+Rotate capability objects for security. Generates a new capability and invalidates the old one.
+
+```bash
+ika validator rotate-operation-cap --validator-cap-id <CAP_ID>
+ika validator rotate-commission-cap --validator-cap-id <CAP_ID>
+```
+
+## Reporting
+
+### `report-validator`
+
+Report a misbehaving validator.
+
+```bash
+ika validator report-validator \
+  --validator-operation-cap-id <CAP_ID> \
+  --reportee-id <ID>
+```
+
+### `undo-report-validator`
+
+Undo a previous validator report.
+
+```bash
+ika validator undo-report-validator \
+  --validator-operation-cap-id <CAP_ID> \
+  --reportee-id <ID>
+```
+
+## Next Epoch Configuration
+
+Update validator network configuration for the next epoch. All commands require `--validator-operation-cap-id`.
+
+### `set-next-epoch-network-address`
+
+```bash
+ika validator set-next-epoch-network-address \
+  --validator-operation-cap-id <CAP_ID> \
+  --network-address <ADDRESS>
+```
+
+### `set-next-epoch-p2p-address`
+
+```bash
+ika validator set-next-epoch-p2p-address \
+  --validator-operation-cap-id <CAP_ID> \
+  --p2p-address <ADDRESS>
+```
+
+### `set-next-epoch-consensus-address`
+
+```bash
+ika validator set-next-epoch-consensus-address \
+  --validator-operation-cap-id <CAP_ID> \
+  --consensus-address <ADDRESS>
+```
+
+### `set-next-epoch-protocol-pubkey`
+
+```bash
+ika validator set-next-epoch-protocol-pubkey \
+  --validator-operation-cap-id <CAP_ID> \
+  <VALIDATOR_INFO_PATH>
+```
+
+### `set-next-epoch-network-pubkey`
+
+```bash
+ika validator set-next-epoch-network-pubkey \
+  --validator-operation-cap-id <CAP_ID> \
+  <VALIDATOR_INFO_PATH>
+```
+
+### `set-next-epoch-consensus-pubkey`
+
+```bash
+ika validator set-next-epoch-consensus-pubkey \
+  --validator-operation-cap-id <CAP_ID> \
+  <VALIDATOR_INFO_PATH>
+```
+
+### `set-next-epoch-mpc-data`
+
+```bash
+ika validator set-next-epoch-mpc-data \
+  --validator-operation-cap-id <CAP_ID>
+```

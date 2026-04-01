@@ -15,32 +15,6 @@ The Ika CLI is the primary tool for interacting with the Ika network. It support
 
 ## Installation
 
-<Prerequisites
-	items={[
-		{
-			name: 'Sui CLI',
-			description: 'Required for key management and on-chain operations',
-			link: {
-				url: 'https://docs.sui.io/guides/developer/getting-started/sui-install',
-				text: 'Sui Documentation',
-			},
-			methods: [
-				{
-					name: 'Homebrew',
-					description: 'Recommended for macOS and Linux users',
-					command: 'brew install sui',
-				},
-				{
-					name: 'Cargo',
-					description: 'Install from source (all platforms)',
-					command:
-						'cargo install --locked --git https://github.com/MystenLabs/sui.git --branch mainnet sui',
-				},
-			],
-		},
-	]}
-/>
-
 ### Install via Homebrew
 
 ```bash
@@ -64,6 +38,10 @@ Pre-built binaries are available from [GitHub Releases](https://github.com/dwall
 - Linux x64 and ARM64
 - macOS x64 and ARM64 (Apple Silicon)
 - Windows x64
+
+<Note title="Prerequisite">
+	The Ika CLI uses the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) for key management and on-chain operations. Make sure you have it installed before using Ika.
+</Note>
 
 ## Initial Configuration
 
@@ -128,7 +106,7 @@ ika
 │       ├── make-public
 │       ├── re-encrypt
 │       └── accept
-├── validator                  # Validator operations (30+ subcommands)
+├── validator                  # Validator operations (29 subcommands)
 ├── config                     # Configuration management
 │   ├── init / add-env / sync / show
 ├── start                      # Start local Ika network
