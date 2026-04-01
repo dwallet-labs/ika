@@ -1,0 +1,9 @@
+curve_to_signature_algorithms_for_dkg:
+  0: [0, 1]
+  1: [0]
+  2: [0]
+  3: [0]
+curve_to_signature_algorithms_for_imported_key:
+  0: [1]
+  2: [0]
+  3: [0]
