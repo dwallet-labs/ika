@@ -38,4 +38,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: bun
           command: pages deploy ./docs/out --project-name=${{ vars.CLOUDFLARE_DOCS_PROJECT_NAME }}
