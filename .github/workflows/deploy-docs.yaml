@@ -4,10 +4,8 @@ on:
   push:
     branches:
       - main
-      - fix/docs-ci-pnpm
     paths:
       - "docs/**"
-      - ".github/workflows/deploy-docs.yaml"
   workflow_dispatch:
 
 concurrency:
