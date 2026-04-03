@@ -1,4 +1,4 @@
-name: Publish SDKs (ika-wasm + typescript via pnpm Trusted Publishing)
+name: Publish SDKs (ika-wasm + core + sui + typescript via pnpm Trusted Publishing)
 
 on:
   push:
@@ -96,7 +96,13 @@ jobs:
           sui --version
 
       - name: Install dependencies (workspace)
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run codegen for sdk/sui (generates TS from Move contracts)
+        working-directory: ./sdk/sui
+        run: |
+          sui client --yes active-address
+          pnpm sui-ts-codegen generate
 
       # ---------- Apply manual version override if provided ----------
 
@@ -104,7 +110,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
         run: |
           VERSION="${{ inputs.version }}"
-          for pkg in sdk/ika-wasm/package.json sdk/typescript/package.json; do
+          for pkg in sdk/ika-wasm/package.json sdk/core/package.json sdk/sui/package.json sdk/typescript/package.json; do
             node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
@@ -143,16 +149,13 @@ jobs:
           fi
 
       - name: Build (sdk/ika-wasm)
-        if: steps.ika_check.outputs.published == 'false'
         working-directory: ./sdk/ika-wasm
         run: pnpm build
 
       - name: Verify git safety before publish
+        if: github.event_name == 'push'
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            git diff --quiet || (echo "::error::Unclean working tree" && exit 1)
-          fi
-          # In CI, HEAD is a tag checkout — verify the tag exists on the remote
+          git diff --quiet || (echo "::error::Unclean working tree" && exit 1)
           git ls-remote --exit-code origin "refs/tags/${GITHUB_REF#refs/tags/}" > /dev/null 2>&1 \
             || (echo "::error::Tag not found on remote" && exit 1)
           echo "Git safety checks passed"
@@ -167,10 +170,100 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
           fi
-          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks --ignore-scripts
           echo "Published ${{ steps.ika_pkg.outputs.name }}@$VERSION with tag $TAG"
 
-      # ---------- sdk/typescript ----------
+      # ---------- sdk/core ----------
+
+      - name: Get sdk/core package info
+        id: core_pkg
+        working-directory: ./sdk/core
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package: $NAME"
+          echo "Version: $VERSION"
+
+      - name: Check if sdk/core version is already published
+        id: core_check
+        env:
+          PKG_NAME: ${{ steps.core_pkg.outputs.name }}
+          PKG_VERSION: ${{ steps.core_pkg.outputs.version }}
+        run: |
+          echo "Checking if $PKG_NAME@$PKG_VERSION is already on npm..."
+          if npm view "$PKG_NAME@$PKG_VERSION" version > /dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is already published. Skipping publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is NOT published yet. Will publish."
+          fi
+
+      - name: Build (sdk/core)
+        working-directory: ./sdk/core
+        run: pnpm build
+
+      - name: Publish sdk/core via pnpm (Trusted Publishing)
+        if: steps.core_check.outputs.published == 'false'
+        working-directory: ./sdk/core
+        run: |
+          # Pre-release versions get their own dist-tag, not "latest"
+          TAG="latest"
+          VERSION="${{ steps.core_pkg.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
+          fi
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks --ignore-scripts
+          echo "Published ${{ steps.core_pkg.outputs.name }}@$VERSION with tag $TAG"
+
+      # ---------- sdk/sui ----------
+
+      - name: Get sdk/sui package info
+        id: sui_pkg
+        working-directory: ./sdk/sui
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package: $NAME"
+          echo "Version: $VERSION"
+
+      - name: Check if sdk/sui version is already published
+        id: sui_check
+        env:
+          PKG_NAME: ${{ steps.sui_pkg.outputs.name }}
+          PKG_VERSION: ${{ steps.sui_pkg.outputs.version }}
+        run: |
+          echo "Checking if $PKG_NAME@$PKG_VERSION is already on npm..."
+          if npm view "$PKG_NAME@$PKG_VERSION" version > /dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is already published. Skipping publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is NOT published yet. Will publish."
+          fi
+
+      - name: Build (sdk/sui)
+        working-directory: ./sdk/sui
+        run: pnpm build
+
+      - name: Publish sdk/sui via pnpm (Trusted Publishing)
+        if: steps.sui_check.outputs.published == 'false'
+        working-directory: ./sdk/sui
+        run: |
+          # Pre-release versions get their own dist-tag, not "latest"
+          TAG="latest"
+          VERSION="${{ steps.sui_pkg.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
+          fi
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks --ignore-scripts
+          echo "Published ${{ steps.sui_pkg.outputs.name }}@$VERSION with tag $TAG"
+
+      # ---------- sdk/typescript (deprecated shim) ----------
 
       - name: Get sdk/typescript package info
         id: ts_pkg
@@ -199,7 +292,6 @@ jobs:
           fi
 
       - name: Build (sdk/typescript)
-        if: steps.ts_check.outputs.published == 'false'
         working-directory: ./sdk/typescript
         run: pnpm build
 
@@ -213,7 +305,7 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
           fi
-          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks --ignore-scripts
           echo "Published ${{ steps.ts_pkg.outputs.name }}@$VERSION with tag $TAG"
 
       - name: Summary
@@ -228,6 +320,18 @@ jobs:
             echo "| ${{ steps.ika_pkg.outputs.name }} | ${{ steps.ika_pkg.outputs.version }} | Skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "| ${{ steps.ika_pkg.outputs.name }} | ${{ steps.ika_pkg.outputs.version }} | Published |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${{ steps.core_check.outputs.published }}" = "true" ]; then
+            echo "| ${{ steps.core_pkg.outputs.name }} | ${{ steps.core_pkg.outputs.version }} | Skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| ${{ steps.core_pkg.outputs.name }} | ${{ steps.core_pkg.outputs.version }} | Published |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${{ steps.sui_check.outputs.published }}" = "true" ]; then
+            echo "| ${{ steps.sui_pkg.outputs.name }} | ${{ steps.sui_pkg.outputs.version }} | Skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| ${{ steps.sui_pkg.outputs.name }} | ${{ steps.sui_pkg.outputs.version }} | Published |" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ "${{ steps.ts_check.outputs.published }}" = "true" ]; then

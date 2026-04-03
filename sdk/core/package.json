@@ -1,14 +1,14 @@
 {
-	"name": "@ika.xyz/sdk",
+	"name": "@ika.xyz/core",
 	"author": "dWallet Labs, Ltd. <dev@dwalletlabs.com>",
-	"description": "DEPRECATED: Use @ika.xyz/sui instead. This package re-exports @ika.xyz/sui for backward compatibility.",
+	"description": "Chain-agnostic core library for Ika dWallet 2PC-MPC protocol",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/dwallet-labs/ika",
-		"directory": "sdk/typescript"
+		"directory": "sdk/core"
 	},
 	"homepage": "https://docs.ika.xyz/sdk",
-	"version": "0.5.0",
+	"version": "0.1.0",
 	"license": "BSD-3-Clause-Clear",
 	"sideEffects": false,
 	"files": [
@@ -30,7 +30,9 @@
 	},
 	"scripts": {
 		"build": "build-package",
-		"pre-commit": "pnpm build",
+		"test": "vitest run",
+		"test:unit": "vitest run test/unit",
+		"pre-commit": "pnpm prettier:fix && pnpm lint && pnpm build",
 		"prepublishOnly": "pnpm turbo build",
 		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
 		"prettier:fix": "prettier -w --ignore-unknown .",
@@ -45,13 +47,17 @@
 	"publishConfig": {
 		"access": "public"
 	},
-	"deprecated": "Use @ika.xyz/sui instead.",
 	"devDependencies": {
 		"@ika.xyz/build-scripts": "workspace:*",
 		"@types/node": "^22.15.21",
-		"typescript": "^5.8.3"
+		"typescript": "^5.8.3",
+		"vitest": "3.2.4"
 	},
 	"dependencies": {
-		"@ika.xyz/sui": "workspace:*"
+		"@ika.xyz/ika-wasm": "workspace:*",
+		"@mysten/bcs": "^2.0.2",
+		"@noble/curves": "^2.0.1",
+		"@noble/hashes": "^2.0.1",
+		"@scure/base": "^2.0.0"
 	}
 }

@@ -55,18 +55,41 @@ jobs:
           tar -xvzf sui.tgz
           sudo cp ./sui /usr/local/bin/sui
 
-      - name: Install dependencies
-        run: pnpm install
-        working-directory: ./sdk/typescript
+      - name: Install dependencies (workspace)
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Format Check
-        run: pnpm run prettier:check
-        working-directory: ./sdk/typescript
+      - name: Run codegen for sdk/sui
+        working-directory: ./sdk/sui
+        run: |
+          sui client --yes active-address
+          pnpm sui-ts-codegen generate
 
-      - name: Build
-        run: pnpm run build
-        working-directory: ./sdk/typescript
+      # Build in dependency order: ika-wasm → core → sui → typescript
+      - name: Build (sdk/ika-wasm)
+        working-directory: ./sdk/ika-wasm
+        run: pnpm build
 
-      - name: Lint
-        run: pnpm run eslint:check
+      - name: Build (sdk/core)
+        working-directory: ./sdk/core
+        run: pnpm build
+
+      - name: Build (sdk/sui)
+        working-directory: ./sdk/sui
+        run: pnpm build
+
+      - name: Build (sdk/typescript)
+        working-directory: ./sdk/typescript
+        run: pnpm build
+
+      # Lint all SDK packages
+      - name: Lint (sdk/core)
+        run: pnpm run lint
+        working-directory: ./sdk/core
+
+      - name: Lint (sdk/sui)
+        run: pnpm run lint
+        working-directory: ./sdk/sui
+
+      - name: Lint (sdk/typescript)
+        run: pnpm run lint
         working-directory: ./sdk/typescript

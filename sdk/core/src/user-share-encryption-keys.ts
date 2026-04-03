@@ -1,29 +1,26 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { bcs, toHex } from '@mysten/bcs';
-import { Ed25519Keypair, Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
+import { bcs } from '@mysten/bcs';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 
-import {
-	createClassGroupsKeypair,
-	userAndNetworkDKGOutputMatch,
-	verifyAndGetDWalletDKGPublicOutput,
-} from './cryptography.js';
+import { createClassGroupsKeypair, userAndNetworkDKGOutputMatch } from './cryptography.js';
+import { Ed25519Keypair } from './ed25519.js';
 import { fromCurveToNumber, fromNumberToCurve } from './hash-signature-validation.js';
-import type { Curve, DWallet, EncryptedUserSecretKeyShare, EncryptionKey } from './types.js';
-import { encodeToASCII } from './utils.js';
+import type { Curve } from './types.js';
+import { bytesToHex, encodeToASCII } from './utils.js';
 import { decrypt_user_share } from './wasm-loader.js';
 
 /**
  * BCS enum for serializing/deserializing UserShareEncryptionKeys.
  *
- * - `V1`: Keys derived with the legacy hash (curve byte always 0).
- * - `V2`: Keys derived with the fixed hash (correct curve byte).
+ * - `V1`: Legacy hash (curve byte always 0), secret key as Bech32 string.
+ * - `V2`: Fixed hash (correct curve byte), secret key as Bech32 string.
+ * - `V3`: Fixed hash, secret key as hex string. Chain-agnostic format.
  *
- * Both variants have the same fields; the variant tag is what distinguishes
- * which hash derivation was used, so deserialization can reconstruct
- * the keys with the right derivation function.
+ * Deserialization handles all three variants transparently — the
+ * Ed25519Keypair auto-detects Bech32 vs hex encoding.
+ * Serialization always writes V3.
  */
 export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareEncryptionKeys', {
 	V1: bcs.struct('UserShareEncryptionKeysV1', {
@@ -37,6 +34,13 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
 		decryptionKey: bcs.vector(bcs.u8()),
 		secretShareSigningSecretKey: bcs.string(),
 		curve: bcs.u32(),
+	}),
+	V3: bcs.struct('UserShareEncryptionKeysV3', {
+		encryptionKey: bcs.vector(bcs.u8()),
+		decryptionKey: bcs.vector(bcs.u8()),
+		secretShareSigningSecretKey: bcs.string(),
+		curve: bcs.u32(),
+		legacyHash: bcs.bool(),
 	}),
 });
 
@@ -69,19 +73,24 @@ export const VersionedUserShareEncryptionKeysBcs = bcs.enum('VersionedUserShareE
  * - Use {@link fromRootSeedKeyLegacyHash} only to reproduce keys that
  *   were registered on-chain before the fix.
  *
- * Serialization via {@link toShareEncryptionKeysBytes} records which
- * derivation was used (BCS `V1` = legacy, `V2` = fixed), so
- * {@link fromShareEncryptionKeysBytes} always picks the right one.
+ * Serialization via {@link toShareEncryptionKeysBytes} always writes
+ * `V3` (chain-agnostic hex format). Deserialization handles all three
+ * variants: `V1` (legacy Bech32), `V2` (fixed Bech32), `V3` (hex).
  */
 export class UserShareEncryptionKeys {
 	/** Class-groups public encryption key (encrypts secret shares). */
-	encryptionKey: Uint8Array;
-	/** Class-groups private decryption key (decrypts secret shares). */
-	decryptionKey: Uint8Array;
+	readonly encryptionKey: Uint8Array;
+	/**
+	 * Class-groups private decryption key (decrypts secret shares).
+	 *
+	 * @security This is sensitive key material. Do not expose or log.
+	 * Use {@link decryptSecretShare} for decryption operations.
+	 */
+	readonly #decryptionKey: Uint8Array;
 	/** Ed25519 keypair used to sign encryption keys and dWallet outputs. */
-	#encryptedSecretShareSigningKeypair: Ed25519Keypair;
+	#signingKeypair: Ed25519Keypair;
 	/** Curve these keys were generated for. */
-	curve: Curve;
+	readonly curve: Curve;
 	/**
 	 * `true` when the keys were derived with the legacy (buggy) hash that
 	 * always uses `0` as the curve byte.
@@ -97,13 +106,13 @@ export class UserShareEncryptionKeys {
 	private constructor(
 		encryptionKey: Uint8Array,
 		decryptionKey: Uint8Array,
-		secretShareSigningSecretKey: Ed25519Keypair,
+		signingKeypair: Ed25519Keypair,
 		curve: Curve,
 		legacyHash: boolean = false,
 	) {
 		this.encryptionKey = encryptionKey;
-		this.decryptionKey = decryptionKey;
-		this.#encryptedSecretShareSigningKeypair = secretShareSigningSecretKey;
+		this.#decryptionKey = decryptionKey;
+		this.#signingKeypair = signingKeypair;
 		this.curve = curve;
 		this.legacyHash = legacyHash;
 	}
@@ -111,6 +120,35 @@ export class UserShareEncryptionKeys {
 	// -----------------------------------------------------------------------
 	// Construction
 	// -----------------------------------------------------------------------
+
+	/**
+	 * Create a `UserShareEncryptionKeys` from pre-existing key material.
+	 *
+	 * This is intended for chain SDKs that need to construct instances from
+	 * deserialized legacy formats (e.g., Sui's V1/V2 Bech32-encoded keys).
+	 *
+	 * @param encryptionKey - Class-groups public encryption key
+	 * @param decryptionKey - Class-groups private decryption key
+	 * @param signingSecretKeyHex - Ed25519 signing secret key as hex string
+	 * @param curve - The curve these keys were generated for
+	 * @param legacyHash - Whether the legacy hash derivation was used
+	 */
+	static fromKeyMaterial(
+		encryptionKey: Uint8Array,
+		decryptionKey: Uint8Array,
+		signingSecretKeyHex: string,
+		curve: Curve,
+		legacyHash: boolean,
+	): UserShareEncryptionKeys {
+		const signingKeypair = Ed25519Keypair.fromSecretKey(signingSecretKeyHex);
+		return new UserShareEncryptionKeys(
+			encryptionKey,
+			decryptionKey,
+			signingKeypair,
+			curve,
+			legacyHash,
+		);
+	}
 
 	/**
 	 * Derives encryption keys from a root seed using the **fixed** hash
@@ -168,14 +206,14 @@ export class UserShareEncryptionKeys {
 		);
 
 		const classGroupsKeypair = await createClassGroupsKeypair(classGroupsSeed, curve);
-		const encryptionSignerKey = Ed25519Keypair.deriveKeypairFromSeed(
-			toHex(encryptionSignerKeySeed),
+		const signingKeypair = Ed25519Keypair.deriveKeypairFromSeed(
+			bytesToHex(encryptionSignerKeySeed),
 		);
 
 		return new UserShareEncryptionKeys(
 			new Uint8Array(classGroupsKeypair.encryptionKey),
 			new Uint8Array(classGroupsKeypair.decryptionKey),
-			encryptionSignerKey,
+			signingKeypair,
 			curve,
 			legacyHash,
 		);
@@ -189,9 +227,13 @@ export class UserShareEncryptionKeys {
 	 * Restores a `UserShareEncryptionKeys` instance from bytes previously
 	 * produced by {@link toShareEncryptionKeysBytes}.
 	 *
-	 * The BCS variant (`V1` vs `V2`) determines whether the legacy or
-	 * fixed hash was used, so the returned instance always has the correct
-	 * {@link legacyHash} flag.
+	 * Supports all BCS variants:
+	 * - V1: Legacy hash (implicit), Bech32-encoded secret key
+	 * - V2: Fixed hash (implicit), Bech32-encoded secret key
+	 * - V3: Explicit legacyHash flag, hex-encoded secret key (chain-agnostic)
+	 *
+	 * `Ed25519Keypair.fromSecretKey` auto-detects the string format
+	 * (hex vs Bech32), so all variants are handled transparently.
 	 */
 	static fromShareEncryptionKeysBytes(
 		shareEncryptionKeysBytes: Uint8Array,
@@ -199,22 +241,27 @@ export class UserShareEncryptionKeys {
 		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve, legacyHash } =
 			this.#parseShareEncryptionKeys(shareEncryptionKeysBytes);
 
-		const secretShareSigningKeypair = Ed25519Keypair.fromSecretKey(secretShareSigningSecretKey);
+		const signingKeypair = Ed25519Keypair.fromSecretKey(secretShareSigningSecretKey);
 
 		return new UserShareEncryptionKeys(
 			encryptionKey,
 			decryptionKey,
-			secretShareSigningKeypair,
+			signingKeypair,
 			curve,
 			legacyHash,
 		);
 	}
 
 	/**
-	 * Serializes these keys to bytes (BCS `V1` for legacy, `V2` for fixed).
+	 * Serializes these keys to V3 BCS bytes (chain-agnostic hex format).
 	 *
 	 * The output is suitable for persistent storage and can be restored
 	 * with {@link fromShareEncryptionKeysBytes}.
+	 *
+	 * @security The output contains **unencrypted secret key material**
+	 * (class-groups decryption key and Ed25519 signing key). Store the
+	 * result encrypted at rest — never persist to localStorage, logs,
+	 * or unencrypted databases.
 	 */
 	toShareEncryptionKeysBytes(): Uint8Array {
 		return this.#serializeShareEncryptionKeys();
@@ -224,19 +271,9 @@ export class UserShareEncryptionKeys {
 	// Identity
 	// -----------------------------------------------------------------------
 
-	/** Returns the Ed25519 public key of the signing keypair. */
-	getPublicKey() {
-		return this.#encryptedSecretShareSigningKeypair.getPublicKey();
-	}
-
-	/** Returns the Sui address derived from the signing keypair. */
-	getSuiAddress(): string {
-		return this.#encryptedSecretShareSigningKeypair.getPublicKey().toSuiAddress();
-	}
-
 	/** Returns the raw bytes of the Ed25519 signing public key. */
 	getSigningPublicKeyBytes(): Uint8Array {
-		return this.#encryptedSecretShareSigningKeypair.getPublicKey().toRawBytes();
+		return this.#signingKeypair.getPublicKeyBytes();
 	}
 
 	// -----------------------------------------------------------------------
@@ -244,11 +281,25 @@ export class UserShareEncryptionKeys {
 	// -----------------------------------------------------------------------
 
 	/**
+	 * Sign a message with the Ed25519 signing keypair.
+	 *
+	 * This is the generic signing primitive. Chain SDKs use this to
+	 * implement domain-specific signing operations (e.g., signing dWallet
+	 * public outputs for authorization).
+	 *
+	 * @param message - The message bytes to sign
+	 * @returns The Ed25519 signature
+	 */
+	async sign(message: Uint8Array): Promise<Uint8Array> {
+		return await this.#signingKeypair.sign(message);
+	}
+
+	/**
 	 * Verifies an Ed25519 signature over a message using the signing
 	 * public key.
 	 */
 	async verifySignature(message: Uint8Array, signature: Uint8Array): Promise<boolean> {
-		return await this.#encryptedSecretShareSigningKeypair.getPublicKey().verify(message, signature);
+		return await this.#signingKeypair.verify(message, signature);
 	}
 
 	/**
@@ -256,60 +307,7 @@ export class UserShareEncryptionKeys {
 	 * Used to prove ownership when registering the key on-chain.
 	 */
 	async getEncryptionKeySignature(): Promise<Uint8Array> {
-		return await this.#encryptedSecretShareSigningKeypair.sign(this.encryptionKey);
-	}
-
-	/**
-	 * Signs the dWallet public output to authorize a newly created dWallet.
-	 *
-	 * @throws If the dWallet is not in `AwaitingKeyHolderSignature` state,
-	 *         or the user public output doesn't match the on-chain output.
-	 */
-	async getUserOutputSignature(
-		dWallet: DWallet,
-		userPublicOutput: Uint8Array,
-	): Promise<Uint8Array> {
-		if (!dWallet.state.AwaitingKeyHolderSignature?.public_output) {
-			throw new Error('DWallet is not in awaiting key holder signature state');
-		}
-
-		const dWalletPublicOutput = Uint8Array.from(
-			dWallet.state.AwaitingKeyHolderSignature?.public_output,
-		);
-
-		const isOutputMatch = await userAndNetworkDKGOutputMatch(
-			fromNumberToCurve(dWallet.curve),
-			userPublicOutput,
-			dWalletPublicOutput,
-		).catch(() => false);
-
-		if (!isOutputMatch) {
-			throw new Error('User public output does not match the DWallet public output');
-		}
-
-		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);
-	}
-
-	/**
-	 * Signs the dWallet public output for a transferred/shared dWallet.
-	 *
-	 * Verifies the source encrypted share against the source encryption key
-	 * before signing. The source encryption key should be known to the
-	 * receiver through a trusted channel — **do not fetch it from the
-	 * network without independent verification.**
-	 */
-	async getUserOutputSignatureForTransferredDWallet(
-		dWallet: DWallet,
-		sourceEncryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
-		sourceEncryptionKey: EncryptionKey,
-	): Promise<Uint8Array> {
-		const dWalletPublicOutput = await verifyAndGetDWalletDKGPublicOutput(
-			dWallet,
-			sourceEncryptedUserSecretKeyShare,
-			new Ed25519PublicKey(sourceEncryptionKey.signer_public_key),
-		);
-
-		return await this.#encryptedSecretShareSigningKeypair.sign(dWalletPublicOutput);
+		return await this.#signingKeypair.sign(this.encryptionKey);
 	}
 
 	// -----------------------------------------------------------------------
@@ -317,43 +315,45 @@ export class UserShareEncryptionKeys {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Decrypts an encrypted user secret key share for a dWallet.
+	 * Decrypt an encrypted user secret key share.
 	 *
-	 * Performs multi-layer verification before decryption:
-	 * 1. Validates the dWallet is active with a public output.
-	 * 2. Checks the encrypted share's signature against the signing key.
-	 * 3. Decrypts with the class-groups decryption key.
-	 * 4. Verifies consistency of the decrypted share against the public output.
+	 * This is the low-level decryption primitive. Chain SDKs should wrap this
+	 * with domain-specific verification (e.g., checking dWallet state and
+	 * signature verification) before calling.
 	 *
-	 * @throws If the dWallet is not active, verification fails, or
-	 *         decryption fails.
+	 * @param dWalletPublicOutput - The verified public output of the dWallet
+	 * @param encryptedShareAndProof - The encrypted centralized secret share and proof
+	 * @param protocolPublicParameters - The protocol public parameters
+	 * @returns The decrypted secret share
 	 */
-	async decryptUserShare(
-		dWallet: DWallet,
-		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare,
+	async decryptSecretShare(
+		dWalletPublicOutput: Uint8Array,
+		encryptedShareAndProof: Uint8Array,
 		protocolPublicParameters: Uint8Array,
-	): Promise<{
-		verifiedPublicOutput: Uint8Array;
-		secretShare: Uint8Array;
-	}> {
-		const dWalletPublicOutput = await verifyAndGetDWalletDKGPublicOutput(
-			dWallet,
-			encryptedUserSecretKeyShare,
-			this.#encryptedSecretShareSigningKeypair.getPublicKey(),
-		);
-
-		return {
-			verifiedPublicOutput: dWalletPublicOutput,
-			secretShare: Uint8Array.from(
-				await decrypt_user_share(
-					fromCurveToNumber(this.curve),
-					this.decryptionKey,
-					dWalletPublicOutput,
-					Uint8Array.from(encryptedUserSecretKeyShare.encrypted_centralized_secret_share_and_proof),
-					protocolPublicParameters,
-				),
+	): Promise<Uint8Array> {
+		return Uint8Array.from(
+			await decrypt_user_share(
+				fromCurveToNumber(this.curve),
+				this.#decryptionKey,
+				dWalletPublicOutput,
+				encryptedShareAndProof,
+				protocolPublicParameters,
 			),
-		};
+		);
+	}
+
+	/**
+	 * Verify that a user public output matches a network DKG output for this key's curve.
+	 *
+	 * @param userPublicOutput - The user's public output
+	 * @param networkDKGOutput - The network's DKG output
+	 * @returns True if the outputs match
+	 */
+	async verifyDKGOutputMatch(
+		userPublicOutput: Uint8Array,
+		networkDKGOutput: Uint8Array,
+	): Promise<boolean> {
+		return userAndNetworkDKGOutputMatch(this.curve, userPublicOutput, networkDKGOutput);
 	}
 
 	// -----------------------------------------------------------------------
@@ -396,31 +396,57 @@ export class UserShareEncryptionKeys {
 	#serializeShareEncryptionKeys() {
 		const fields = {
 			encryptionKey: this.encryptionKey,
-			decryptionKey: this.decryptionKey,
-			secretShareSigningSecretKey: this.#encryptedSecretShareSigningKeypair.getSecretKey(),
+			decryptionKey: this.#decryptionKey,
+			secretShareSigningSecretKey: this.#signingKeypair.getSecretKey(),
 			curve: fromCurveToNumber(this.curve),
+			legacyHash: this.legacyHash,
 		};
 
-		// Legacy keys serialize as V1, fixed keys as V2.
-		return VersionedUserShareEncryptionKeysBcs.serialize(
-			this.legacyHash ? { V1: fields } : { V2: fields },
-		).toBytes();
+		// Always serialize as V3 (chain-agnostic hex format).
+		return VersionedUserShareEncryptionKeysBcs.serialize({ V3: fields }).toBytes();
 	}
 
 	static #parseShareEncryptionKeys(shareEncryptionKeysBytes: Uint8Array) {
 		const parsed = VersionedUserShareEncryptionKeysBcs.parse(shareEncryptionKeysBytes);
 
-		// V1 variant → legacy hash was used; V2 → fixed hash.
-		const variant = parsed.V1 ?? parsed.V2;
-		const legacyHash = !!parsed.V1;
-		const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } = variant;
+		// V1 = legacy hash + Bech32 secret key
+		// V2 = fixed hash + Bech32 secret key
+		// V3 = hex secret key + explicit legacyHash flag
+		// Ed25519Keypair.fromSecretKey auto-detects Bech32 vs hex.
+		if (parsed.V1) {
+			const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } = parsed.V1;
+			return {
+				encryptionKey: new Uint8Array(encryptionKey),
+				decryptionKey: new Uint8Array(decryptionKey),
+				secretShareSigningSecretKey,
+				curve: fromNumberToCurve(Number(curve)),
+				legacyHash: true,
+			};
+		}
 
-		return {
-			encryptionKey: new Uint8Array(encryptionKey),
-			decryptionKey: new Uint8Array(decryptionKey),
-			secretShareSigningSecretKey,
-			curve: fromNumberToCurve(Number(curve)),
-			legacyHash,
-		};
+		if (parsed.V2) {
+			const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve } = parsed.V2;
+			return {
+				encryptionKey: new Uint8Array(encryptionKey),
+				decryptionKey: new Uint8Array(decryptionKey),
+				secretShareSigningSecretKey,
+				curve: fromNumberToCurve(Number(curve)),
+				legacyHash: false,
+			};
+		}
+
+		if (parsed.V3) {
+			const { encryptionKey, decryptionKey, secretShareSigningSecretKey, curve, legacyHash } =
+				parsed.V3;
+			return {
+				encryptionKey: new Uint8Array(encryptionKey),
+				decryptionKey: new Uint8Array(decryptionKey),
+				secretShareSigningSecretKey,
+				curve: fromNumberToCurve(Number(curve)),
+				legacyHash,
+			};
+		}
+
+		throw new Error('Failed to parse UserShareEncryptionKeys: no recognized BCS variant');
 	}
 }

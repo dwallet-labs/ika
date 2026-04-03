@@ -1,68 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { ClientWithCoreApi, SuiClientTypes } from '@mysten/sui/client';
-
-import { InvalidObjectError } from './errors.js';
-
-/**
- * Extract BCS (Binary Canonical Serialization) bytes from a Sui object response.
- * This function validates the response and extracts the serialized object data.
- *
- * @param resp - The Sui object response from a blockchain query
- * @returns The BCS-encoded bytes of the object
- * @throws {InvalidObjectError} If the response doesn't contain valid BCS data
- */
-export function objResToBcs(
-	resp:
-		| SuiClientTypes.Object<{
-				content: true;
-		  }>
-		| SuiClientTypes.GetObjectResponse<{
-				content: true;
-		  }>
-		| Error,
-): Uint8Array<ArrayBuffer> {
-	if (resp instanceof Error) {
-		throw resp;
-	}
-
-	if ('object' in resp) {
-		resp = resp.object;
-	}
-
-	if (!resp.content) {
-		throw new InvalidObjectError(`Response bcs missing: ${JSON.stringify(resp.type, null, 2)}`);
-	}
-
-	return new Uint8Array(resp.content);
-}
-
-export async function fetchAllDynamicFields(
-	suiClient: ClientWithCoreApi,
-	parentId: string,
-): Promise<SuiClientTypes.DynamicFieldEntry[]> {
-	const allFields: any[] = [];
-	let cursor: string | null = null;
-
-	while (true) {
-		const response = await suiClient.core.listDynamicFields({
-			parentId,
-			cursor,
-		});
-
-		allFields.push(...response.dynamicFields);
-
-		if (response.cursor === cursor) {
-			break;
-		}
-
-		cursor = response.cursor;
-	}
-
-	return allFields;
-}
-
 /**
  * Encode a string to ASCII bytes.
  * Converts each character to its ASCII character code and returns as a Uint8Array.
@@ -94,8 +32,7 @@ export function u64ToBytesBigEndian(value: number | bigint): Uint8Array {
 	// Create a DataView to manipulate the buffer with specific endianness
 	const view = new DataView(buffer);
 
-	// Write the BigInt value as a BigInt64 (signed 64-bit integer)
-	// or BigUint64 (unsigned 64-bit integer) depending on the context.
+	// Write the BigInt value as a BigUint64 (unsigned 64-bit integer)
 	// For u64, use setBigUint64.
 	view.setBigUint64(0, bigIntValue, false); // false for big-endian
 
@@ -105,7 +42,6 @@ export function u64ToBytesBigEndian(value: number | bigint): Uint8Array {
 
 /**
  * Converts a string to a Uint8Array by encoding each character as its ASCII value.
- * This function is similar to encodeToASCII but with a more descriptive name.
  *
  * @param input - The string to convert
  * @returns The Uint8Array representation of the string's ASCII values
@@ -118,4 +54,38 @@ export function stringToUint8Array(input: string): Uint8Array {
 	}
 
 	return Uint8Array.from(asciiValues);
+}
+
+/**
+ * Convert a Uint8Array to a hex string.
+ *
+ * @param bytes - The bytes to convert
+ * @returns The hex string representation (without 0x prefix)
+ */
+export function bytesToHex(bytes: Uint8Array): string {
+	return Array.from(bytes)
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+/**
+ * Convert a hex string to a Uint8Array.
+ *
+ * @param hex - The hex string to convert (with or without 0x prefix)
+ * @returns The Uint8Array representation
+ * @throws {Error} If the string contains non-hex characters or has odd length
+ */
+export function hexToBytes(hex: string): Uint8Array {
+	const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+	if (cleanHex.length % 2 !== 0) {
+		throw new Error(`Invalid hex string: odd length (${cleanHex.length})`);
+	}
+	if (cleanHex.length > 0 && !/^[0-9a-fA-F]+$/.test(cleanHex)) {
+		throw new Error('Invalid hex string: contains non-hex characters');
+	}
+	const bytes = new Uint8Array(cleanHex.length / 2);
+	for (let i = 0; i < cleanHex.length; i += 2) {
+		bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
+	}
+	return bytes;
 }

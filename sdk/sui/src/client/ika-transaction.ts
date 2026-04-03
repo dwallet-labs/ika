@@ -1,6 +1,29 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import type {
+	Curve,
+	DKGRequestInput,
+	Hash,
+	ImportDWalletVerificationRequestInput,
+	ValidHashForSignature,
+	ValidSignatureAlgorithmForCurve,
+} from '@ika.xyz/core';
+import {
+	createRandomSessionIdentifier,
+	createUserSignMessageWithCentralizedOutput,
+	createUserSignMessageWithPublicOutput,
+	encryptSecretShare,
+	fromCurveAndSignatureAlgorithmAndHashToNumbers,
+	fromCurveAndSignatureAlgorithmToNumbers,
+	fromCurveToNumber,
+	fromHashToNumber,
+	fromNumberToCurve,
+	SignatureAlgorithm,
+	validateCurveSignatureAlgorithm,
+	validateHashSignatureCombination,
+	verifyUserShare,
+} from '@ika.xyz/core';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import type {
 	Transaction,
@@ -9,32 +32,17 @@ import type {
 } from '@mysten/sui/transactions';
 
 import * as coordinatorTx from '../tx/coordinator.js';
-import type { DKGRequestInput, ImportDWalletVerificationRequestInput } from './cryptography.js';
 import {
-	createRandomSessionIdentifier,
-	encryptSecretShare,
-	verifyUserShare,
+	decryptUserShare,
+	getSuiAddress,
+	getUserOutputSignature,
+	getUserOutputSignatureForTransferredDWallet,
 } from './cryptography.js';
-import {
-	fromCurveAndSignatureAlgorithmAndHashToNumbers,
-	fromCurveAndSignatureAlgorithmToNumbers,
-	fromCurveToNumber,
-	fromHashToNumber,
-	fromNumberToCurve,
-	validateCurveSignatureAlgorithm,
-	validateHashSignatureCombination,
-} from './hash-signature-validation.js';
-import type {
-	ValidHashForSignature,
-	ValidSignatureAlgorithmForCurve,
-} from './hash-signature-validation.js';
 import type { IkaClient } from './ika-client.js';
 import type {
-	Curve,
 	DWallet,
 	EncryptedUserSecretKeyShare,
 	EncryptionKey,
-	Hash,
 	ImportedKeyDWallet,
 	ImportedSharedDWallet,
 	Presign,
@@ -42,12 +50,7 @@ import type {
 	UserSignatureInputs,
 	ZeroTrustDWallet,
 } from './types.js';
-import { SignatureAlgorithm } from './types.js';
 import type { UserShareEncryptionKeys } from './user-share-encryption-keys.js';
-import {
-	create_sign_centralized_party_message as create_sign,
-	create_sign_centralized_party_message_with_centralized_party_dkg_output as create_sign_with_centralized_output,
-} from './wasm-loader.js';
 
 /**
  * Parameters for creating an IkaTransaction instance
@@ -214,7 +217,7 @@ export class IkaTransaction {
 			fromCurveToNumber(curve),
 			dkgRequestInput.userDKGMessage,
 			dkgRequestInput.encryptedUserShareAndProof,
-			this.#userShareEncryptionKeys.getSuiAddress(),
+			getSuiAddress(this.#userShareEncryptionKeys),
 			dkgRequestInput.userPublicOutput,
 			this.#userShareEncryptionKeys.getSigningPublicKeyBytes(),
 			sessionIdentifier,
@@ -423,7 +426,7 @@ export class IkaTransaction {
 				this.#getCoordinatorObjectRef(),
 				dWallet.id,
 				encryptedUserSecretKeyShareId,
-				await this.#userShareEncryptionKeys.getUserOutputSignature(dWallet, userPublicOutput),
+				await getUserOutputSignature(this.#userShareEncryptionKeys, dWallet, userPublicOutput),
 				this.#transaction,
 			);
 
@@ -441,7 +444,8 @@ export class IkaTransaction {
 				this.#getCoordinatorObjectRef(),
 				dWallet.id,
 				destinationEncryptedUserSecretKeyShare.id,
-				await this.#userShareEncryptionKeys.getUserOutputSignatureForTransferredDWallet(
+				await getUserOutputSignatureForTransferredDWallet(
+					this.#userShareEncryptionKeys,
 					dWallet,
 					sourceEncryptedUserSecretKeyShare,
 					sourceEncryptionKey,
@@ -1747,12 +1751,12 @@ export class IkaTransaction {
 				throw new Error('User share encryption keys are not set');
 			}
 
-			const { secretShare: decryptedSecretShare } =
-				await this.#userShareEncryptionKeys.decryptUserShare(
-					dWallet,
-					sourceEncryptedUserSecretKeyShare,
-					await this.#ikaClient.getProtocolPublicParameters(dWallet),
-				);
+			const { secretShare: decryptedSecretShare } = await decryptUserShare(
+				this.#userShareEncryptionKeys,
+				dWallet,
+				sourceEncryptedUserSecretKeyShare,
+				await this.#ikaClient.getProtocolPublicParameters(dWallet),
+			);
 			finalSourceSecretShare = decryptedSecretShare;
 		}
 
@@ -1919,12 +1923,12 @@ export class IkaTransaction {
 		const publicParameters =
 			publicParametersFromParam ?? (await this.#ikaClient.getProtocolPublicParameters(dWallet));
 
-		const { secretShare, verifiedPublicOutput } =
-			await this.#userShareEncryptionKeys.decryptUserShare(
-				dWallet,
-				encryptedUserSecretKeyShare,
-				publicParameters,
-			);
+		const { secretShare, verifiedPublicOutput } = await decryptUserShare(
+			this.#userShareEncryptionKeys,
+			dWallet,
+			encryptedUserSecretKeyShare,
+			publicParameters,
+		);
 
 		await this.#verifySecretShare({
 			curve: fromNumberToCurve(dWallet.curve),
@@ -2302,7 +2306,7 @@ export class IkaTransaction {
 			fromCurveToNumber(curve),
 			importDWalletVerificationRequestInput.userMessage,
 			importDWalletVerificationRequestInput.encryptedUserShareAndProof,
-			this.#userShareEncryptionKeys.getSuiAddress(),
+			getSuiAddress(this.#userShareEncryptionKeys),
 			importDWalletVerificationRequestInput.userPublicOutput,
 			signerPublicKey,
 			sessionIdentifier,
@@ -2333,34 +2337,27 @@ export class IkaTransaction {
 		curve: Curve;
 		createWithCentralizedOutput?: boolean;
 	}): Promise<Uint8Array> {
-		const { curveNumber, signatureAlgorithmNumber, hashNumber } =
-			fromCurveAndSignatureAlgorithmAndHashToNumbers(curve, signatureScheme, hash);
-
 		if (createWithCentralizedOutput) {
-			return new Uint8Array(
-				await create_sign_with_centralized_output(
-					protocolPublicParameters,
-					publicOutput,
-					userSecretKeyShare,
-					presign,
-					message,
-					hashNumber,
-					signatureAlgorithmNumber,
-					curveNumber,
-				),
+			return createUserSignMessageWithCentralizedOutput(
+				protocolPublicParameters,
+				publicOutput,
+				userSecretKeyShare,
+				presign,
+				message,
+				hash,
+				signatureScheme,
+				curve,
 			);
 		} else {
-			return new Uint8Array(
-				await create_sign(
-					protocolPublicParameters,
-					publicOutput,
-					userSecretKeyShare,
-					presign,
-					message,
-					hashNumber,
-					signatureAlgorithmNumber,
-					curveNumber,
-				),
+			return createUserSignMessageWithPublicOutput(
+				protocolPublicParameters,
+				publicOutput,
+				userSecretKeyShare,
+				presign,
+				message,
+				hash,
+				signatureScheme,
+				curve,
 			);
 		}
 	}
