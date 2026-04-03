@@ -5,83 +5,20 @@ icon: Globe
 ---
 
 import { Cards, Card } from 'fumadocs-ui/components/card';
-import { Callout } from 'fumadocs-ui/components/callout';
 
 # Solana Integration
 
-Build Solana programs that control dWallets — enabling cross-chain signing directly from your Solana smart contracts. Create multisigs, governance systems, or any program logic that authorizes signing on Bitcoin, Ethereum, and other chains.
-
-<Callout type="info" title="Pre-Alpha Available">
-  The Solana dWallet SDK is available as a pre-alpha release. Start building today with Pinocchio, Anchor, or Native Solana programs. Full documentation, examples, and a local mock environment are included.
-</Callout>
-
-## What You Can Build
-
-- **Governance-controlled signing** — DAO votes trigger cross-chain transactions
-- **Multisig wallets** — M-of-N threshold signing across any chain
-- **Programmable custody** — Smart contract logic controls when and how dWallets sign
-- **Cross-chain DeFi** — Solana programs that execute trades on Ethereum, Bitcoin, etc.
-
-## Supported Frameworks
-
-| Framework | Description |
-|-----------|-------------|
-| **Pinocchio** | Lightweight, no-std CPI wrapper for maximum performance |
-| **Anchor** | High-level Anchor framework integration with account macros |
-| **Native** | Standard `solana-program` integration |
-
-## How It Works
-
-1. **Create a dWallet** via gRPC — the Ika network generates a distributed key pair
-2. **Transfer authority** to your program's CPI PDA — your program now controls signing
-3. **Approve messages** from your program logic — when conditions are met (votes, approvals, etc.), your program CPI-calls `approve_message`
-4. **Sign via gRPC** — submit the approval proof to get the actual cross-chain signature
-
-## Get Started
-
-The full Solana pre-alpha documentation — including installation guides, tutorials, examples, API reference, and a local development environment — is available at:
+Build Solana programs that control dWallets for cross-chain signing. The Solana dWallet SDK is available as a pre-alpha release with full documentation, examples, and a local development environment.
 
 <Cards>
   <Card
-    title="Solana Pre-Alpha Docs"
-    description="Complete SDK documentation with tutorials, examples, and API reference"
+    title="Solana Pre-Alpha Docs →"
+    description="Installation, tutorials, API reference, and examples"
     href="https://solana-pre-alpha.ika.xyz"
   />
   <Card
-    title="GitHub Repository"
-    description="Source code, examples, and developer SDK"
+    title="GitHub Repository →"
+    description="Source code and developer SDK"
     href="https://github.com/dwallet-labs/ika-pre-alpha"
   />
 </Cards>
-
-## Examples
-
-The pre-alpha ships with two complete examples:
-
-### Voting dWallet
-Open governance where anyone can vote. When quorum is reached, the program automatically signs the approved message. Demonstrates the full CPI authority pattern.
-
-### Multisig dWallet
-M-of-N multisig with fixed members, on-chain transaction data, approve/reject flow, and future sign support. Includes a React frontend.
-
-Both examples include Pinocchio, Anchor, and Native implementations with Mollusk unit tests and TypeScript end-to-end tests.
-
-## Quick Start
-
-```bash
-# Clone the SDK
-git clone https://github.com/dwallet-labs/ika-pre-alpha.git
-cd ika-pre-alpha
-
-# Build example programs
-just build-sbf
-
-# Run unit tests
-just test-examples-mollusk
-
-# Install TypeScript dependencies
-just install-ts
-
-# Run e2e tests (requires local validator + mock)
-just e2e-voting <DWALLET_ID> <VOTING_ID>
-```
