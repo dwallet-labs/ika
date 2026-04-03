@@ -25,7 +25,7 @@ The dWallet is an innovative Web3 building block that has the following attribut
 dWallets are the only way that exists today for Web3 builders to achieve secure, multi-chain interoperability, without
 compromising on the core Web3 values of user ownership and decentralization.
 
-Builders on [Sui Network](https://sui.io) can use dWallets natively and utilize Ika as a composable
+Builders on [Solana Network](https://solana.com) and [Sui Network](https://sui.io) can use dWallets natively and utilize Ika as a composable
 modular signature network, adding powerful multi-chain access control capabilities to their protocol.
 
 ## Cryptography of dWallets - 2PC-MPC
@@ -52,9 +52,10 @@ blockchain systems. Changes that were made to Ika include disabling smart contra
 communication in [Sui's consensus Mysticeti](https://github.com/MystenLabs/mysticeti) for the MPC protocol between the
 nodes.
 
-Ika is natively coordinated on Sui, and dWallets on Ika are controlled by DWalletCap objects on Sui.
+Ika is natively coordinated on Sui, and dWallets on Ika are controlled by DWalletCap objects on Sui. Soon Ika will be 
+natively coordinated on Solana, and dWallets will be controlled by Solana accounts.
 
-Ika has a native token on Sui called IKA that is used (much like SUI) to pay for gas, and is also used as delegated stake
+Ika has a native token on Sui called IKA that is used to pay for gas, and is also used as delegated stake
 on authorities within an epoch. Authorities are periodically reconfigured according to the stake delegated to them. In any
 epoch, the set of authorities is [Byzantine fault tolerant](http://pmg.csail.mit.edu/papers/osdi99.pdf). At the end of the
 epoch, fees collected through all transactions processed are distributed to authorities according to their contribution to
