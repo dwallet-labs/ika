@@ -72,13 +72,13 @@ export default function Layout({ children }: { children: ReactNode }) {
 	return (
 		<>
 		<Banner id="solana-banner" className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-pink-500 text-white">
-			<div className="flex items-center justify-center gap-3 text-sm font-medium">
+			<a href="https://solana-pre-alpha.ika.xyz" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 text-sm font-medium text-white no-underline hover:opacity-90 transition-opacity">
 				<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="brightness-0 invert" />
 				<span>
 					Solana Pre-Alpha is live! dWallets now support Solana for native cross-chain signing.
 				</span>
 				<ArrowRight className="h-4 w-4" />
-			</div>
+			</a>
 		</Banner>
 		<DocsLayout
 			tree={source.pageTree}
