@@ -4,6 +4,13 @@ import Link from 'next/link';
 
 const features = [
 	{
+		title: 'Solana Integration',
+		description: 'Build Solana programs that control dWallets for cross-chain signing. Pinocchio, Anchor, and Native frameworks supported.',
+		href: 'https://solana-pre-alpha.ika.xyz',
+		icon: Globe,
+		gradient: 'from-[#9945FF] to-[#14F195]',
+	},
+	{
 		title: 'SDK',
 		description: 'TypeScript SDK for building applications with dWallets',
 		href: '/docs/sdk',
@@ -66,13 +73,17 @@ export default function HomePage() {
 						</p>
 
 						{/* Solana callout */}
-						<div className="mt-6 inline-flex items-center gap-2.5 rounded-full bg-gradient-to-r from-purple-500/10 to-fuchsia-500/10 dark:from-purple-500/20 dark:to-fuchsia-500/20 border border-purple-200/60 dark:border-purple-700/40 px-5 py-2">
+						<Link
+							href="https://solana-pre-alpha.ika.xyz"
+							target="_blank"
+							className="mt-6 inline-flex items-center gap-2.5 rounded-full bg-gradient-to-r from-[#9945FF]/10 to-[#14F195]/10 dark:from-[#9945FF]/20 dark:to-[#14F195]/20 border border-[#9945FF]/40 dark:border-[#9945FF]/30 px-5 py-2 transition-all hover:scale-105 hover:shadow-lg hover:shadow-[#9945FF]/10"
+						>
 							<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="dark:brightness-0 dark:invert" />
-							<span className="text-sm font-medium text-purple-700 dark:text-purple-300">
-								Solana support coming soon
+							<span className="text-sm font-medium text-[#9945FF] dark:text-[#14F195]">
+								Solana Pre-Alpha is live — Build dWallet programs now
 							</span>
-							<span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
-						</div>
+							<span className="h-1.5 w-1.5 rounded-full bg-[#14F195] animate-pulse" />
+						</Link>
 
 						{/* CTA Buttons */}
 						<div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
