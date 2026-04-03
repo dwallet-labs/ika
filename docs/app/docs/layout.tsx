@@ -1,6 +1,6 @@
 import { Banner } from 'fumadocs-ui/components/banner';
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
-import { ArrowRight, Blocks, BookOpen, Bot, Code2, Terminal } from 'lucide-react';
+import { ArrowRight, Blocks, BookOpen, Bot, Code2, Globe, Terminal } from 'lucide-react';
 import Image from 'next/image';
 import type { ReactNode } from 'react';
 
@@ -16,6 +16,12 @@ type TabConfig = {
 };
 
 const tabConfig: Record<string, TabConfig> = {
+	'solana-integration': {
+		icon: <Globe className="size-4" />,
+		description: 'Solana dWallet integration (Pre-Alpha)',
+		color: 'text-purple-500 dark:text-purple-400',
+		bgColor: 'bg-purple-500/10 dark:bg-purple-500/20',
+	},
 	sdk: {
 		icon: <Code2 className="size-4" />,
 		description: 'TypeScript SDK for building with Ika',
@@ -69,7 +75,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 			<div className="flex items-center justify-center gap-3 text-sm font-medium">
 				<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="brightness-0 invert" />
 				<span>
-					Solana support coming soon. dWallets are expanding to Solana for native cross-chain signing.
+					Solana Pre-Alpha is live! dWallets now support Solana for native cross-chain signing.
 				</span>
 				<ArrowRight className="h-4 w-4" />
 			</div>
