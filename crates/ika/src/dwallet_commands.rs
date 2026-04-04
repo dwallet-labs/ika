@@ -841,17 +841,17 @@ async fn find_created_object_by_type(
 
     let mut grpc_client = context.grpc_client().ok()?;
     for obj_id in created_ids {
-        if let Ok(obj) = grpc_client.get_object(obj_id).await {
-            if let Some(move_obj) = obj.data.try_as_move() {
-                let type_str = move_obj.type_().to_string();
-                // Skip dynamic field wrapper types (e.g. Field<ID, SignSession>)
-                // to avoid matching wrappers instead of the actual object.
-                if type_str.contains("dynamic_field") || type_str.contains("dynamic_object_field") {
-                    continue;
-                }
-                if type_str.contains(type_substr) {
-                    return Some(obj_id);
-                }
+        if let Ok(obj) = grpc_client.get_object(obj_id).await
+            && let Some(move_obj) = obj.data.try_as_move()
+        {
+            let type_str = move_obj.type_().to_string();
+            // Skip dynamic field wrapper types (e.g. Field<ID, SignSession>)
+            // to avoid matching wrappers instead of the actual object.
+            if type_str.contains("dynamic_field") || type_str.contains("dynamic_object_field") {
+                continue;
+            }
+            if type_str.contains(type_substr) {
+                return Some(obj_id);
             }
         }
     }
@@ -881,10 +881,10 @@ fn extract_event_field(
                 return val.as_str().map(|s| s.to_string());
             }
             // Also check nested event_data (for DWalletSessionEvent wrappers)
-            if let Some(event_data) = event.parsed_json.get("event_data") {
-                if let Some(val) = event_data.get(field_name) {
-                    return val.as_str().map(|s| s.to_string());
-                }
+            if let Some(event_data) = event.parsed_json.get("event_data")
+                && let Some(val) = event_data.get(field_name)
+            {
+                return val.as_str().map(|s| s.to_string());
             }
         }
     }
@@ -1027,27 +1027,27 @@ async fn poll_dwallet_until_dkg_complete(
             anyhow::bail!("Timeout waiting for dWallet {dwallet_id} DKG to complete");
         }
 
-        if let Ok(fields) = fetch_object_fields(sdk_client, dwallet_id).await {
-            if let Some(state) = fields.get("state") {
-                // Check for public_output — present in AwaitingKeyHolderSignature and Active
-                let has_public_output = state
-                    .get("fields")
-                    .and_then(|f| f.get("public_output"))
-                    .is_some();
-                if has_public_output {
-                    return Ok(fields);
-                }
-                // Check if state has no fields at all (unit variant like DKGRequested or Rejected)
-                let state_fields = state.get("fields");
-                let is_empty = state_fields
-                    .map(|f| f.is_null() || f.as_object().map(|o| o.is_empty()).unwrap_or(false))
-                    .unwrap_or(true);
-                // If it's a unit variant with a name-like field, check for rejection
-                if is_empty {
-                    let state_str = serde_json::to_string(state).unwrap_or_default();
-                    if state_str.contains("Rejected") {
-                        anyhow::bail!("dWallet {dwallet_id} DKG was rejected. State: {state_str}");
-                    }
+        if let Ok(fields) = fetch_object_fields(sdk_client, dwallet_id).await
+            && let Some(state) = fields.get("state")
+        {
+            // Check for public_output — present in AwaitingKeyHolderSignature and Active
+            let has_public_output = state
+                .get("fields")
+                .and_then(|f| f.get("public_output"))
+                .is_some();
+            if has_public_output {
+                return Ok(fields);
+            }
+            // Check if state has no fields at all (unit variant like DKGRequested or Rejected)
+            let state_fields = state.get("fields");
+            let is_empty = state_fields
+                .map(|f| f.is_null() || f.as_object().map(|o| o.is_empty()).unwrap_or(false))
+                .unwrap_or(true);
+            // If it's a unit variant with a name-like field, check for rejection
+            if is_empty {
+                let state_str = serde_json::to_string(state).unwrap_or_default();
+                if state_str.contains("Rejected") {
+                    anyhow::bail!("dWallet {dwallet_id} DKG was rejected. State: {state_str}");
                 }
             }
         }
@@ -1175,7 +1175,7 @@ fn valid_hash_schemes_for(curve_id: u32, sig_algo_id: u32) -> String {
 fn on_chain_session_preimage(sender: &SuiAddress, user_bytes: &[u8]) -> [u8; 32] {
     use fastcrypto::hash::{HashFunction, Keccak256};
     let mut hasher = Keccak256::default();
-    hasher.update(&sender.to_vec());
+    hasher.update(sender.to_vec());
     hasher.update(user_bytes);
     let digest = hasher.finalize();
     let mut preimage = [0u8; 32];
@@ -1206,8 +1206,8 @@ fn derive_encryption_keys(
         use fastcrypto::hash::{HashFunction, Keccak256};
         let mut hasher = Keccak256::default();
         hasher.update(b"CLASS_GROUPS_DECRYPTION_KEY_V1");
-        hasher.update(&[curve_byte]);
-        hasher.update(&seed);
+        hasher.update([curve_byte]);
+        hasher.update(seed);
         let digest = hasher.finalize();
         let mut cg_seed = [0u8; 32];
         cg_seed.copy_from_slice(digest.as_ref());
@@ -1218,8 +1218,8 @@ fn derive_encryption_keys(
         use fastcrypto::hash::{HashFunction, Keccak256};
         let mut hasher = Keccak256::default();
         hasher.update(b"ED25519_SIGNING_KEY_V1");
-        hasher.update(&[curve_byte]);
-        hasher.update(&seed);
+        hasher.update([curve_byte]);
+        hasher.update(seed);
         let digest = hasher.finalize();
         let mut signing_seed = [0u8; 32];
         signing_seed.copy_from_slice(digest.as_ref());
@@ -1280,7 +1280,7 @@ fn resolve_seed(
     use fastcrypto::hash::{HashFunction, Keccak256};
     let mut hasher = Keccak256::default();
     hasher.update(&sk_bytes);
-    hasher.update(&index.to_le_bytes());
+    hasher.update(index.to_le_bytes());
     let digest = hasher.finalize();
     let mut seed = [0u8; 32];
     seed.copy_from_slice(digest.as_ref());
@@ -1504,10 +1504,10 @@ async fn fetch_object_fields(
         .ok_or_else(|| anyhow::anyhow!("No fields in object: {object_id}"))?;
     // Handle SuiMoveStruct::WithTypes serialization which wraps as
     // { "type": "...", "fields": { actual fields } }
-    if fields.get("type").is_some() {
-        if let Some(inner) = fields.get("fields") {
-            return Ok(inner.clone());
-        }
+    if fields.get("type").is_some()
+        && let Some(inner) = fields.get("fields")
+    {
+        return Ok(inner.clone());
     }
     Ok(fields)
 }
@@ -2322,7 +2322,7 @@ impl IkaDWalletCommand {
                             .await?
                         }
                     }
-                    Err(e) => return Err(e.into()),
+                    Err(e) => return Err(e),
                 };
 
                 let (digest, status) = tx_digest_and_status(&response);
@@ -2337,14 +2337,12 @@ impl IkaDWalletCommand {
                 let mut presign_cap_ids = Vec::new();
                 let mut grpc_client = context.grpc_client()?;
                 for obj_id in &created_ids {
-                    if let Ok(obj) = grpc_client.get_object(*obj_id).await {
-                        if let Some(move_obj) = obj.data.try_as_move() {
-                            let type_str = move_obj.type_().to_string();
-                            if type_str.contains("PresignCap")
-                                && !type_str.contains("dynamic_field")
-                            {
-                                presign_cap_ids.push(*obj_id);
-                            }
+                    if let Ok(obj) = grpc_client.get_object(*obj_id).await
+                        && let Some(move_obj) = obj.data.try_as_move()
+                    {
+                        let type_str = move_obj.type_().to_string();
+                        if type_str.contains("PresignCap") && !type_str.contains("dynamic_field") {
+                            presign_cap_ids.push(*obj_id);
                         }
                     }
                 }
@@ -3256,21 +3254,21 @@ async fn poll_presign_until_complete(
             );
         }
 
-        if let Ok(fields) = fetch_object_fields(&sdk_client, presign_id).await {
-            if let Some(state) = fields.get("state") {
-                let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
-                match variant {
-                    "Completed" => return Ok(()),
-                    "NetworkRejected" => {
-                        anyhow::bail!("Presign {presign_id} was rejected by the network");
-                    }
-                    _ => {} // Still processing
+        if let Ok(fields) = fetch_object_fields(&sdk_client, presign_id).await
+            && let Some(state) = fields.get("state")
+        {
+            let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
+            match variant {
+                "Completed" => return Ok(()),
+                "NetworkRejected" => {
+                    anyhow::bail!("Presign {presign_id} was rejected by the network");
                 }
-                // Also check for presign field (non-enum state representation)
-                let has_presign = state.get("fields").and_then(|f| f.get("presign")).is_some();
-                if has_presign {
-                    return Ok(());
-                }
+                _ => {} // Still processing
+            }
+            // Also check for presign field (non-enum state representation)
+            let has_presign = state.get("fields").and_then(|f| f.get("presign")).is_some();
+            if has_presign {
+                return Ok(());
             }
         }
 
