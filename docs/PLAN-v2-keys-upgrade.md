@@ -1,87 +1,190 @@
-# Plan: Add HPKE + PVSS Encryption Keys to ika Validators (Stage 1)
+# Plan: Broadcast Validator Encryption Keys via Consensus
 
 ## Context
 
-The cryptography-private library is adding VSS protocols and extended 7-round DKG
-that require validators to have HPKE encryption keys (Curve25519) and PVSS encryption
-keys per curve (class groups elements). This is the prerequisite key distribution step —
-no protocol changes yet, just getting the keys on-chain so a future protocol version
-bump can use them.
+The cryptography-private library upgrade requires validators to have HPKE encryption
+keys (Curve25519) and PVSS encryption keys per curve, in addition to the existing
+class groups keys. These are needed for the extended 7-round DKG and VSS protocols.
 
-The on-chain storage is opaque `vector<u8>` in Move, and the Rust side already has
-`VersionedMPCData::V1`. No Move contract changes needed.
+## Design
 
-**Rollout sequence:**
-1. Ship code that reads both V1 and V2 MPC data
-2. Validators upgrade software at their own pace
-3. Upgraded validators publish V2 keys (class groups + HPKE + PVSS) at next epoch
-4. Non-upgraded validators still publish V1 (class groups only) — no errors
-5. Once all committee members have V2 keys, future protocol upgrade can activate
+Instead of stuffing new keys into the existing on-chain `mpc_data_bytes` path (which
+is a generic `TableVec<vector<u8>>` used for many purposes), validators broadcast a
+new `ValidatorPublicMPCData` message via Mysticeti consensus at epoch start.
 
----
+**Why consensus broadcast, not on-chain storage:**
+- A protocol version bump requires all validators to upgrade their binary.
+- The new binary broadcasts `ValidatorPublicMPCData`; old binaries can't.
+- Therefore every validator in the committee has the new keys — no mixed V1/V2
+  committees, no fallback deserialization, no `Option` fields.
 
 ## Changes
 
-### 1. `dwallet-mpc-types/src/dwallet_mpc.rs` — Add V2 format
+### 1. Define `ValidatorPublicMPCData`
 
-Add `MPCDataV2` and a `V2` variant to the existing enum. The new struct carries
-the same class groups field as V1, plus HPKE and PVSS fields (all `Vec<u8>`).
+**File:** `crates/dwallet-mpc-types/src/dwallet_mpc.rs`
+
+A flat struct — no versioned enum needed, since the protocol version bump guarantees
+all validators are on the new binary.
 
 ```rust
-// --- dwallet-mpc-types/src/dwallet_mpc.rs ---
+use serde::{Deserialize, Serialize};
 
-pub type HpkePublicKeyAndProofBytes = Vec<u8>;
-pub type PvssEncryptionKeyAndProofBytes = Vec<u8>;
+/// All public encryption keys and proofs a validator broadcasts at epoch start.
+/// Every validator in the committee must broadcast this before MPC sessions begin.
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ValidatorPublicMPCData {
+    /// BCS-serialized ClassGroupsEncryptionKeyAndProof.
+    pub class_groups_public_key_and_proof: Vec<u8>,
+    /// BCS-serialized HPKE (Curve25519) public key and proof of knowledge.
+    pub hpke_public_key_and_proof: Vec<u8>,
+    /// BCS-serialized PVSS encryption key and proof, one per curve.
+    /// Index: 0 = secp256k1, 1 = ristretto, 2 = secp256r1.
+    pub pvss_encryption_keys_and_proofs: Vec<Vec<u8>>,
+}
+```
 
-#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
-pub struct MPCDataV2 {
-    pub class_groups_public_key_and_proof: ClassGroupsPublicKeyAndProofBytes,
-    pub hpke_public_key_and_proof: HpkePublicKeyAndProofBytes,
-    /// One PVSS encryption key+proof per curve (secp256k1, ristretto, secp256r1).
-    pub pvss_encryption_keys_and_proofs: Vec<PvssEncryptionKeyAndProofBytes>,
+### 2. Add consensus message variant
+
+**File:** `crates/ika-types/src/messages_consensus.rs`
+
+Add a new variant to `ConsensusTransactionKind` and its key:
+
+```rust
+// In ConsensusTransactionKind enum (line 172):
+pub enum ConsensusTransactionKind {
+    DWalletCheckpointSignature(Box<DWalletCheckpointSignatureMessage>),
+    SystemCheckpointSignature(Box<SystemCheckpointSignatureMessage>),
+    CapabilityNotificationV1(AuthorityCapabilitiesV1),
+    EndOfPublish(AuthorityName),
+    DWalletMPCMessage(DWalletMPCMessage),
+    DWalletMPCOutput(DWalletMPCOutput),
+    ValidatorPublicMPCData(AuthorityName, ValidatorPublicMPCData),  // NEW
 }
 
-#[enum_dispatch(MPCDataTrait)]
-#[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
-pub enum VersionedMPCData {
-    V1(MPCDataV1),
-    V2(MPCDataV2),
+// In ConsensusTransactionKey enum (line 45):
+pub enum ConsensusTransactionKey {
+    // ... existing variants ...
+    ValidatorPublicMPCData(AuthorityName),  // NEW — one per validator per epoch
 }
+```
 
-// V2 implements the existing trait so all existing code that only needs
-// class_groups_public_key_and_proof keeps working without changes.
-impl MPCDataTrait for MPCDataV2 {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes {
-        self.class_groups_public_key_and_proof.clone()
-    }
-}
+Add factory method:
 
-// New accessors on VersionedMPCData (not on the trait, since enum_dispatch
-// may not support default methods returning None for V1).
-impl VersionedMPCData {
-    pub fn hpke_public_key_and_proof(&self) -> Option<&HpkePublicKeyAndProofBytes> {
-        match self {
-            Self::V1(_) => None,
-            Self::V2(v2) => Some(&v2.hpke_public_key_and_proof),
-        }
-    }
-
-    pub fn pvss_encryption_keys_and_proofs(&self) -> Option<&Vec<PvssEncryptionKeyAndProofBytes>> {
-        match self {
-            Self::V1(_) => None,
-            Self::V2(v2) => Some(&v2.pvss_encryption_keys_and_proofs),
-        }
+```rust
+// In impl ConsensusTransaction:
+pub fn new_validator_public_mpc_data(
+    authority: AuthorityName,
+    data: ValidatorPublicMPCData,
+) -> Self {
+    let mut hasher = DefaultHasher::new();
+    authority.hash(&mut hasher);
+    let tracking_id = hasher.finish().to_le_bytes();
+    Self {
+        tracking_id,
+        kind: ConsensusTransactionKind::ValidatorPublicMPCData(authority, data),
     }
 }
 ```
 
-### 2. `dwallet-rng/src/lib.rs` — Add seed derivation for new keys
+### 3. Broadcast at epoch start
 
-Add two new derivation methods following the existing `class_groups_decryption_key_seed`
-pattern: distinct Merlin transcript labels for domain separation.
+**File:** `crates/ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` (or a new sender
+analogous to `EndOfPublishSender`)
+
+At epoch start, after the `DWalletMPCManager` is initialized, each validator generates
+its keys from the root seed and submits the consensus message:
 
 ```rust
-// --- dwallet-rng/src/lib.rs, inside impl RootSeed ---
+// Generate all keys from root seed (same seed already used for class groups).
+let class_groups = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+let data = ValidatorPublicMPCData {
+    class_groups_public_key_and_proof: bcs::to_bytes(
+        &class_groups.encryption_key_and_proof(),
+    )?,
+    hpke_public_key_and_proof: todo!("generate from root_seed.hpke_key_rng()"),
+    pvss_encryption_keys_and_proofs: todo!("generate per curve from root_seed.pvss_encryption_key_rng(i)"),
+};
+
+let tx = ConsensusTransaction::new_validator_public_mpc_data(self.name, data);
+consensus_adapter.submit_to_consensus(&[tx], &epoch_store).await?;
+```
+
+### 4. Handle incoming broadcasts
+
+**File:** `crates/ika-core/src/authority/authority_per_epoch_store.rs`
+
+Add a match arm in `process_consensus_transactions_and_commit_boundary` (line 1340)
+to collect `ValidatorPublicMPCData` from each validator:
+
+```rust
+SequencedConsensusTransactionKind::External(ConsensusTransaction {
+    kind: ConsensusTransactionKind::ValidatorPublicMPCData(authority, data),
+    ..
+}) => {
+    self.record_validator_public_mpc_data(authority, data)?;
+    Ok(ConsensusCertificateResult::ConsensusMessage)
+}
+```
+
+`record_validator_public_mpc_data` stores the data in a map on the epoch store
+(or directly on the MPC manager). Once all committee members have submitted,
+the MPC manager can begin sessions.
+
+### 5. Wire into `DWalletMPCManager`
+
+**File:** `crates/ika-core/src/dwallet_mpc/mpc_manager.rs`
+
+Add storage for the received keys and a readiness gate:
+
+```rust
+pub(crate) struct DWalletMPCManager {
+    // ... existing fields ...
+
+    /// Public MPC data received from each validator via consensus.
+    /// Populated as ValidatorPublicMPCData messages arrive.
+    pub(crate) validators_public_mpc_data: HashMap<PartyID, ValidatorPublicMPCData>,
+
+    // ... rest of existing fields ...
+}
+```
+
+Add a method to record incoming data and check readiness:
+
+```rust
+impl DWalletMPCManager {
+    pub fn record_validator_public_mpc_data(
+        &mut self,
+        authority: &AuthorityName,
+        data: &ValidatorPublicMPCData,
+    ) -> DwalletMPCResult<()> {
+        let party_id = authority_name_to_party_id_from_committee(&self.committee, authority)?;
+        self.validators_public_mpc_data.insert(party_id, data.clone());
+        Ok(())
+    }
+
+    pub fn all_validators_submitted_public_mpc_data(&self) -> bool {
+        self.committee
+            .voting_rights
+            .iter()
+            .all(|(name, _)| {
+                authority_name_to_party_id_from_committee(&self.committee, name)
+                    .map(|pid| self.validators_public_mpc_data.contains_key(&pid))
+                    .unwrap_or(false)
+            })
+    }
+}
+```
+
+### 6. Add seed derivation for new keys
+
+**File:** `crates/dwallet-rng/src/lib.rs`
+
+Same as before — add `hpke_key_rng()` and `pvss_encryption_key_rng(curve_index)`
+to `RootSeed` using distinct Merlin transcript labels:
+
+```rust
+// In impl RootSeed:
 
 fn hpke_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
     let mut transcript = Transcript::new(b"HPKE Encryption Key Seed");
@@ -109,422 +212,51 @@ pub fn pvss_encryption_key_rng(&self, curve_index: u8) -> ChaCha20Rng {
 }
 ```
 
-### 3. `dwallet-classgroups-types/src/lib.rs` — Key generation bundle
+### 7. Update metrics and validation
 
-Add a struct that generates all three key types from a single root seed. The HPKE and
-PVSS key generation functions depend on the cryptography-private library upgrade (not
-available at ika's current pin `babbb483`), so the exact calls will be filled in when
-we bump the dependency. The structure is:
+**File:** `crates/ika-core/src/consensus_handler.rs`
 
-```rust
-// --- dwallet-classgroups-types/src/lib.rs ---
-
-/// All cryptographic keys a validator needs, generated deterministically from RootSeed.
-pub struct ValidatorCryptoKeys {
-    pub class_groups: ClassGroupsKeyPairAndProof,
-    /// BCS-serialized HPKE public key + proof of knowledge.
-    pub hpke_public_key_and_proof: Vec<u8>,
-    /// BCS-serialized PVSS encryption key + proof per curve.
-    /// Index 0 = secp256k1, 1 = ristretto, 2 = secp256r1.
-    pub pvss_encryption_keys_and_proofs: Vec<Vec<u8>>,
-    // Private keys are NOT stored here — they are re-derived from RootSeed
-    // at protocol time via hpke_key_rng() / pvss_encryption_key_rng().
-}
-
-impl ValidatorCryptoKeys {
-    pub fn from_seed(root_seed: &RootSeed) -> Self {
-        let class_groups = ClassGroupsKeyPairAndProof::from_seed(root_seed);
-
-        // HPKE key generation (Curve25519-based).
-        // Exact API depends on cryptography-private upgrade.
-        // Placeholder — will call the HPKE keygen from the upgraded lib:
-        let mut hpke_rng = root_seed.hpke_key_rng();
-        let hpke_public_key_and_proof = Vec::new(); // TODO: generate_hpke_keypair(&mut hpke_rng)
-
-        // PVSS encryption keys per curve.
-        // Each curve gets its own deterministic RNG.
-        let pvss_encryption_keys_and_proofs = (0u8..3)
-            .map(|curve_index| {
-                let mut pvss_rng = root_seed.pvss_encryption_key_rng(curve_index);
-                Vec::new() // TODO: generate_pvss_encryption_key(&mut pvss_rng, curve_index)
-            })
-            .collect();
-
-        ValidatorCryptoKeys {
-            class_groups,
-            hpke_public_key_and_proof,
-            pvss_encryption_keys_and_proofs,
-        }
-    }
-}
-```
-
-### 4. `ika-types/src/committee.rs` — Extend Committee
-
-Add two new optional key maps. They're `HashMap` (not every validator will have V2 keys
-during the gradual rollout). Add a readiness check.
+Add to `classify` (line 429):
 
 ```rust
-// --- ika-types/src/committee.rs ---
-
-// New type aliases (or use the bytes types from dwallet-mpc-types)
-pub type HpkeEncryptionKeyAndProof = Vec<u8>;
-pub type PvssEncryptionKeyAndProof = Vec<u8>;
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq)]
-pub struct Committee {
-    pub epoch: EpochId,
-    pub voting_rights: Vec<(AuthorityName, StakeUnit)>,
-    pub class_groups_public_keys_and_proofs:
-        HashMap<AuthorityName, ClassGroupsEncryptionKeyAndProof>,
-    // --- NEW FIELDS ---
-    pub hpke_public_keys_and_proofs:
-        HashMap<AuthorityName, HpkeEncryptionKeyAndProof>,
-    pub pvss_encryption_keys_and_proofs:
-        HashMap<AuthorityName, Vec<PvssEncryptionKeyAndProof>>,
-    // --- END NEW FIELDS ---
-    pub quorum_threshold: u64,
-    pub validity_threshold: u64,
-    expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
-    index_map: HashMap<AuthorityName, usize>,
-}
-
-impl Committee {
-    pub fn new(
-        epoch: EpochId,
-        voting_rights: Vec<(AuthorityName, StakeUnit)>,
-        class_groups_public_keys_and_proofs: HashMap<
-            AuthorityName,
-            ClassGroupsEncryptionKeyAndProof,
-        >,
-        hpke_public_keys_and_proofs: HashMap<AuthorityName, HpkeEncryptionKeyAndProof>,
-        pvss_encryption_keys_and_proofs: HashMap<AuthorityName, Vec<PvssEncryptionKeyAndProof>>,
-        quorum_threshold: u64,
-        validity_threshold: u64,
-    ) -> Self {
-        // ... existing validation ...
-        let (expanded_keys, index_map) = Self::load_inner(&voting_rights);
-        Committee {
-            epoch,
-            voting_rights,
-            class_groups_public_keys_and_proofs,
-            hpke_public_keys_and_proofs,
-            pvss_encryption_keys_and_proofs,
-            expanded_keys,
-            index_map,
-            quorum_threshold,
-            validity_threshold,
-        }
-    }
-
-    /// Returns true iff every validator in the committee has published V2 keys
-    /// (HPKE + PVSS). Used to gate future protocol upgrades.
-    pub fn all_validators_have_v2_keys(&self) -> bool {
-        self.voting_rights.iter().all(|(name, _)| {
-            self.hpke_public_keys_and_proofs.contains_key(name)
-                && self.pvss_encryption_keys_and_proofs.contains_key(name)
-        })
-    }
-}
+ConsensusTransactionKind::ValidatorPublicMPCData(..) => "validator_public_mpc_data",
 ```
 
-All existing callers of `Committee::new()` (tests, helpers) pass `HashMap::new()` for
-the two new parameters — no behavioral change.
+**File:** `crates/ika-core/src/consensus_validator.rs`
 
-### 5. `ika-types/src/sui/epoch_start_system.rs` — Deserialization fallback
-
-**This is where the deserialization fallback logic lives.** The existing
-`get_ika_committee()` method (line 170) already handles V1 data. The change adds
-extraction of V2 fields when present, and gracefully falls back when they're absent.
+Add to the `validate_transactions` match (line 72) — no special validation needed
+beyond what consensus provides (the authority is authenticated by consensus):
 
 ```rust
-// --- ika-types/src/sui/epoch_start_system.rs, in get_ika_committee() ---
-
-fn get_ika_committee(&self) -> Committee {
-    let voting_rights = self
-        .active_validators
-        .iter()
-        .map(|validator| (validator.authority_name(), validator.voting_power))
-        .collect();
-
-    // --- Existing: always extract class groups keys (works for both V1 and V2) ---
-    let class_groups_public_keys_and_proofs = self
-        .active_validators
-        .iter()
-        .filter_map(|validator| {
-            validator.mpc_data.clone().and_then(|mpc_data| {
-                // class_groups_public_key_and_proof() is on MPCDataTrait,
-                // dispatched by enum_dispatch — works for V1 AND V2.
-                match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                    &mpc_data.class_groups_public_key_and_proof(),
-                ) {
-                    Ok(key) => Some((validator.authority_name(), key)),
-                    Err(e) => {
-                        error!("Failed to deserialize class groups key: {}", e);
-                        None
-                    }
-                }
-            })
-        })
-        .collect();
-
-    // --- NEW: extract HPKE keys (only present in V2) ---
-    let hpke_public_keys_and_proofs = self
-        .active_validators
-        .iter()
-        .filter_map(|validator| {
-            validator.mpc_data.as_ref().and_then(|mpc_data| {
-                // Returns None for V1 validators → filter_map skips them.
-                // Returns Some(&bytes) for V2 validators.
-                mpc_data.hpke_public_key_and_proof().map(|bytes| {
-                    (validator.authority_name(), bytes.clone())
-                })
-            })
-        })
-        .collect();
-
-    // --- NEW: extract PVSS keys (only present in V2) ---
-    let pvss_encryption_keys_and_proofs = self
-        .active_validators
-        .iter()
-        .filter_map(|validator| {
-            validator.mpc_data.as_ref().and_then(|mpc_data| {
-                // Returns None for V1 validators → filter_map skips them.
-                mpc_data.pvss_encryption_keys_and_proofs().map(|keys| {
-                    (validator.authority_name(), keys.clone())
-                })
-            })
-        })
-        .collect();
-
-    Committee::new(
-        self.epoch,
-        voting_rights,
-        class_groups_public_keys_and_proofs,
-        hpke_public_keys_and_proofs,          // empty HashMap if no V2 validators
-        pvss_encryption_keys_and_proofs,       // empty HashMap if no V2 validators
-        self.quorum_threshold,
-        self.validity_threshold,
-    )
-}
+ConsensusTransactionKind::ValidatorPublicMPCData(..) => {}
 ```
 
-**Deserialization fallback summary:**
-- `VersionedMPCData` is a BCS-serialized enum. BCS encodes enum variants with a
-  variant index prefix (0 = V1, 1 = V2).
-- A V1-only binary receiving V2 data: BCS deserialization of the `VersionedMPCData`
-  enum itself fails (unknown variant index 1). The existing `filter_map` + `and_then`
-  pattern in `get_ika_committee()` already handles this — the validator is skipped
-  with an error log, same as if `mpc_data` were `None`.
-- A V2-capable binary receiving V1 data: BCS deserializes into `VersionedMPCData::V1`
-  successfully. The `Option`-returning accessors (`hpke_public_key_and_proof()`,
-  `pvss_encryption_keys_and_proofs()`) return `None`, so that validator simply
-  doesn't appear in the HPKE/PVSS `HashMap`s. No error, no skip.
-- **Net effect during mixed rollout:** all validators' class groups keys work as
-  before; HPKE/PVSS maps are progressively populated as validators upgrade.
+## What stays unchanged
 
-### 6. `ika/src/validator_commands.rs` — Publish V2 data
+- **Move contracts** — `mpc_data_bytes` on-chain path is untouched
+- **`VersionedMPCData`** — stays as-is, used for other MPC data
+- **`Committee` struct** — no new fields; keys live on `DWalletMPCManager` instead
+- **`validator_commands.rs`** — the on-chain MPC data path stays as V1; the consensus
+  broadcast handles the new keys separately
+- **`epoch_start_system.rs`** — existing class groups deserialization from on-chain
+  can eventually be removed once the consensus path is fully active, but not in this PR
 
-Both `MakeValidatorInfo` and `SetNextEpochMPCData` currently construct
-`VersionedMPCData::V1`. Change them to construct V2 using `ValidatorCryptoKeys`:
+## Open questions
 
-```rust
-// --- ika/src/validator_commands.rs ---
-// Replace the MakeValidatorInfo block (currently at line 429-435):
+1. **Should MPC sessions block until all validators have submitted?** Or proceed with
+   a quorum threshold? Currently the manager starts sessions based on the committee;
+   we'd need a gate that waits for `all_validators_submitted_public_mpc_data()`.
 
-let crypto_keys = ValidatorCryptoKeys::from_seed(&root_seed);
-let mpc_data = VersionedMPCData::V2(MPCDataV2 {
-    class_groups_public_key_and_proof: bcs::to_bytes(
-        &crypto_keys.class_groups.encryption_key_and_proof(),
-    )?,
-    hpke_public_key_and_proof: crypto_keys.hpke_public_key_and_proof,
-    pvss_encryption_keys_and_proofs: crypto_keys.pvss_encryption_keys_and_proofs,
-});
+2. **Crypto dependency bump** — the HPKE and PVSS keygen APIs don't exist at ika's
+   current pin (`babbb483`). This work needs to happen in parallel or first.
 
-// Replace the SetNextEpochMPCData block (currently at line 949-956):
+## Files to modify
 
-let mpc_root_seed = RootSeed::random_seed();
-let crypto_keys = ValidatorCryptoKeys::from_seed(&mpc_root_seed);
-let mpc_data = VersionedMPCData::V2(MPCDataV2 {
-    class_groups_public_key_and_proof: bcs::to_bytes(
-        &crypto_keys.class_groups.encryption_key_and_proof(),
-    )?,
-    hpke_public_key_and_proof: crypto_keys.hpke_public_key_and_proof,
-    pvss_encryption_keys_and_proofs: crypto_keys.pvss_encryption_keys_and_proofs,
-});
-```
-
-Also update `read_or_generate_root_seed` (line 1213) to return `ValidatorCryptoKeys`
-instead of `Box<ClassGroupsKeyPairAndProof>`:
-
-```rust
-fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<(RootSeed, ValidatorCryptoKeys)> {
-    let seed = match RootSeed::from_file(seed_path.clone()) {
-        Ok(seed) => {
-            println!("Use existing seed: {seed_path:?}.");
-            seed
-        }
-        Err(_) => {
-            let seed = RootSeed::random_seed();
-            seed.save_to_file(seed_path.clone())?;
-            println!("Generated root seed file: {seed_path:?}.");
-            seed
-        }
-    };
-    let crypto_keys = ValidatorCryptoKeys::from_seed(&seed);
-    Ok((seed, crypto_keys))
-}
-```
-
-### 7. `ika-core/src/dwallet_mpc/mpc_manager.rs` and `mod.rs` — Surface keys
-
-Add HPKE/PVSS fields to `DWalletMPCManager` and populate from Committee at init.
-Add a helper function parallel to `get_validators_class_groups_public_keys_and_proofs`.
-
-```rust
-// --- ika-core/src/dwallet_mpc/mod.rs ---
-
-pub(crate) fn get_validators_hpke_public_keys_and_proofs(
-    committee: &Committee,
-) -> HashMap<PartyID, HpkeEncryptionKeyAndProof> {
-    committee
-        .voting_rights
-        .iter()
-        .filter_map(|(name, _)| {
-            let party_id = authority_name_to_party_id_from_committee(committee, name).ok()?;
-            committee
-                .hpke_public_keys_and_proofs
-                .get(name)
-                .map(|key| (party_id, key.clone()))
-        })
-        .collect()
-}
-
-pub(crate) fn get_validators_pvss_encryption_keys_and_proofs(
-    committee: &Committee,
-) -> HashMap<PartyID, Vec<PvssEncryptionKeyAndProof>> {
-    committee
-        .voting_rights
-        .iter()
-        .filter_map(|(name, _)| {
-            let party_id = authority_name_to_party_id_from_committee(committee, name).ok()?;
-            committee
-                .pvss_encryption_keys_and_proofs
-                .get(name)
-                .map(|keys| (party_id, keys.clone()))
-        })
-        .collect()
-}
-```
-
-```rust
-// --- ika-core/src/dwallet_mpc/mpc_manager.rs ---
-
-pub(crate) struct DWalletMPCManager {
-    // ... existing fields ...
-    pub(crate) validators_class_groups_public_keys_and_proofs:
-        HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
-    // --- NEW ---
-    pub(crate) validators_hpke_public_keys_and_proofs:
-        HashMap<PartyID, HpkeEncryptionKeyAndProof>,
-    pub(crate) validators_pvss_encryption_keys_and_proofs:
-        HashMap<PartyID, Vec<PvssEncryptionKeyAndProof>>,
-    /// True when every committee member has published V2 keys.
-    pub(crate) all_validators_have_v2_keys: bool,
-    // --- END NEW ---
-    // ... rest of existing fields ...
-}
-
-// In try_new(), after the existing class groups initialization:
-//   validators_class_groups_public_keys_and_proofs:
-//       get_validators_class_groups_public_keys_and_proofs(&committee)?,
-// Add:
-//   validators_hpke_public_keys_and_proofs:
-//       get_validators_hpke_public_keys_and_proofs(&committee),
-//   validators_pvss_encryption_keys_and_proofs:
-//       get_validators_pvss_encryption_keys_and_proofs(&committee),
-//   all_validators_have_v2_keys: committee.all_validators_have_v2_keys(),
-```
-
----
-
-## Deserialization Fallback — Detailed Walkthrough
-
-The fallback lives in **`epoch_start_system.rs::get_ika_committee()`** (step 5 above).
-
-There are two distinct scenarios during gradual rollout:
-
-### Scenario A: V2-capable node reads V1 validator data
-
-```
-On-chain bytes: [0x00, ...V1 payload...]    (BCS variant index 0 = V1)
-                 ^^^^
-                 BCS enum variant prefix
-
-Deserialization: bcs::from_bytes::<VersionedMPCData>(...) → Ok(VersionedMPCData::V1(MPCDataV1 {...}))
-
-class_groups_public_key_and_proof()  → returns bytes (via MPCDataTrait, works for V1)
-hpke_public_key_and_proof()          → returns None  (V1 match arm)
-pvss_encryption_keys_and_proofs()    → returns None  (V1 match arm)
-
-Result: validator appears in class_groups map, absent from HPKE/PVSS maps.
-        all_validators_have_v2_keys() = false.
-```
-
-### Scenario B: V1-only node reads V2 validator data
-
-```
-On-chain bytes: [0x01, ...V2 payload...]    (BCS variant index 1 = V2)
-                 ^^^^
-                 V1-only code doesn't know variant index 1
-
-Deserialization of VersionedMPCData itself fails → the existing filter_map
-in get_ika_committee() catches the error (or mpc_data is None for that
-validator in the EpochStartValidatorInfoV1 deserialization).
-
-Result: validator is skipped entirely from all key maps.
-        Protocols that need this validator's class groups key will be missing it,
-        but this is the same behavior as if a validator hasn't published MPC data
-        at all — it's already handled.
-```
-
-### Scenario C: All validators are V2
-
-```
-All validators in hpke/pvss maps.
-committee.all_validators_have_v2_keys() = true.
-Future protocol version bump can activate VSS/extended-DKG protocols.
-```
-
----
-
-## Key Design Decisions
-
-- **No Move changes** — on-chain storage is opaque `Vec<u8>`, Rust controls versioning
-- **Fallback via enum variant dispatch** — V1 data deserializes into the V1 variant;
-  `Option`-returning accessors on `VersionedMPCData` return `None` for V1
-- **No protocol changes in this step** — old protocols keep running, new keys are unused
-- **All private keys re-derivable from root seed** — no new persistence needed
-- **`enum_dispatch` caveat** — new accessors are `impl VersionedMPCData` methods (not
-  trait methods), because `enum_dispatch` may not support default methods returning `None`
-
-## Verification
-
-1. Build ika with new code — ensure existing tests pass (V1 backward compat)
-2. Test V2 key generation: `ValidatorCryptoKeys::from_seed()` produces valid keys
-3. Test mixed committee: some validators V1, some V2 — committee constructs without error,
-   `all_validators_have_v2_keys()` returns false
-4. Test all-V2 committee: `all_validators_have_v2_keys()` returns true
-5. Test BCS round-trip: V2 data serializes and deserializes correctly
-6. Test V1 binary reading V2 data: deserialization fails gracefully (logged, validator skipped)
-
-## Files to Modify
-
-- `crates/dwallet-mpc-types/src/dwallet_mpc.rs`
-- `crates/dwallet-rng/src/lib.rs`
-- `crates/dwallet-classgroups-types/src/lib.rs`
-- `crates/ika-types/src/committee.rs`
-- `crates/ika-types/src/sui/epoch_start_system.rs`
-- `crates/ika/src/validator_commands.rs`
-- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs`
-- `crates/ika-core/src/dwallet_mpc/mod.rs`
+- `crates/dwallet-mpc-types/src/dwallet_mpc.rs` — add `ValidatorPublicMPCData` struct
+- `crates/dwallet-rng/src/lib.rs` — add HPKE/PVSS seed derivation
+- `crates/ika-types/src/messages_consensus.rs` — add consensus variant + factory
+- `crates/ika-core/src/consensus_handler.rs` — add to `classify`
+- `crates/ika-core/src/consensus_validator.rs` — add to validation match
+- `crates/ika-core/src/authority/authority_per_epoch_store.rs` — add handler
+- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs` — add storage + readiness gate
+- `crates/ika-core/src/dwallet_mpc/dwallet_mpc_service.rs` — broadcast at epoch start
