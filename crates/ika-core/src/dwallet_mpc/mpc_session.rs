@@ -191,13 +191,34 @@ impl DWalletSession {
             &message.message,
         );
 
+        // For reconfiguration sessions, decode the message variant to determine
+        // the MPC round (1=DealRandomizer, 2=VerifiedRandomizerDealers,
+        // 3=ThresholdDecryptShares). For other protocols, fall back to no
+        // mpcr suffix.
+        let mpc_round_hint: Option<u8> = match &self.status {
+            SessionStatus::Active { request, .. } => match &request.protocol_data {
+                ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+                    bcs::from_bytes::<
+                        twopc_mpc::decentralized_party::reconfiguration::Message,
+                    >(&message.message)
+                    .ok()
+                    .map(|m| match m {
+                        twopc_mpc::decentralized_party::reconfiguration::Message::DealRandomizerContributionAndProveCoefficientCommitments { .. } => 1u8,
+                        twopc_mpc::decentralized_party::reconfiguration::Message::VerifiedRandomizerDealers(_) => 2,
+                        twopc_mpc::decentralized_party::reconfiguration::Message::ThresholdDecryptShares { .. } => 3,
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
         let sid_hex = hex::encode(message.session_identifier.into_bytes());
-        dump_blob(
-            &sid_hex,
-            "msg",
-            &format!("p{sender_party_id}_r{consensus_round}"),
-            &message.message,
-        );
+        let name = match mpc_round_hint {
+            Some(mpcr) => format!("p{sender_party_id}_mpcr{mpcr}_r{consensus_round}"),
+            None => format!("p{sender_party_id}_r{consensus_round}"),
+        };
+        dump_blob(&sid_hex, "msg", &name, &message.message);
 
         let SessionComputationType::MPC {
             messages_by_consensus_round,
