@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use tracing::{debug, error, info, warn};
 
-use crate::debug_variable_chunks;
+use crate::{debug_variable_chunks, dump_blob};
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
@@ -191,6 +191,14 @@ impl DWalletSession {
             &message.message,
         );
 
+        let sid_hex = hex::encode(message.session_identifier.into_bytes());
+        dump_blob(
+            &sid_hex,
+            "msg",
+            &format!("p{sender_party_id}_r{consensus_round}"),
+            &message.message,
+        );
+
         let SessionComputationType::MPC {
             messages_by_consensus_round,
         } = &mut self.computation_type
@@ -248,6 +256,14 @@ impl DWalletSession {
                     output.rejected(),
                 ),
                 "mpc_output",
+                &output_bcs,
+            );
+
+            let sid_hex = hex::encode(output.session_identifier.into_bytes());
+            dump_blob(
+                &sid_hex,
+                "out",
+                &format!("p{sender_party_id}_r{consensus_round}"),
                 &output_bcs,
             );
         }

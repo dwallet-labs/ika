@@ -115,6 +115,37 @@ pub fn debug_variable_chunks(msg: &str, name: &str, data: &[u8]) {
     debug_variable_chunks_impl_with_size(msg, name, data, 16 * 1024);
 }
 
+/// Debug-mode dump of a binary blob to disk under `/tmp/ika_debug/`.
+///
+/// Filename: `{session_id_hex}_{kind}_{name}.bin`. Idempotent — overwrites
+/// existing files with the same name. Errors are logged at warn level only;
+/// never panics, never propagates errors.
+///
+/// Intended for the `mainnet-v1.1.8-debug` branch only.
+pub fn dump_blob(session_id_hex: &str, kind: &str, name: &str, data: &[u8]) {
+    use std::io::Write;
+    let dir = std::path::Path::new("/tmp/ika_debug");
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        tracing::warn!(error=?e, "dump_blob: failed to create /tmp/ika_debug");
+        return;
+    }
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    let path = dir.join(format!("{session_id_hex}_{kind}_{safe_name}.bin"));
+    match std::fs::File::create(&path) {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(data) {
+                tracing::warn!(path=?path, error=?e, "dump_blob: write failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(path=?path, error=?e, "dump_blob: create failed");
+        }
+    }
+}
+
 /// Allows custom chunk size if you ever want 4KB, 32KB, etc.
 pub fn debug_variable_chunks_impl_with_size(msg: &str, name: &str, data: &[u8], chunk_size: usize) {
     if data.is_empty() {

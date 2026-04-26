@@ -1,7 +1,7 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::debug_variable_chunks;
+use crate::{debug_variable_chunks, dump_blob};
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -14,6 +14,7 @@ use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use mpc::{Party, WeightedThresholdAccessStructure};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use tracing::debug;
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
     fn generate_public_input(
+        session_identifier: &SessionIdentifier,
         committee: &Committee,
         new_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
@@ -31,11 +33,13 @@ pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
 
 impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
     fn generate_public_input(
+        session_identifier: &SessionIdentifier,
         current_committee: &Committee,
         upcoming_committee: Committee,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
     ) -> DwalletMPCResult<<ReconfigurationParty as Party>::PublicInput> {
+        let sid_hex = hex::encode(session_identifier.into_bytes());
         let current_committee = current_committee.clone();
         let current_access_structure =
             generate_access_structure_from_committee(&current_committee)?;
@@ -57,6 +61,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                 current_access_structure_bcs=%hex::encode(&current_access_structure_bcs),
                 "Instantiating public input for reconfiguration v2 [current_access_structure]"
             );
+            dump_blob(&sid_hex, "pubinput", "current_access_structure", &current_access_structure_bcs);
         }
 
         if let Ok(upcoming_access_structure_bcs) = bcs::to_bytes(&upcoming_access_structure) {
@@ -65,6 +70,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                 upcoming_access_structure_bcs=%hex::encode(&upcoming_access_structure_bcs),
                 "Instantiating public input for reconfiguration v2 [upcoming_access_structure]"
             );
+            dump_blob(&sid_hex, "pubinput", "upcoming_access_structure", &upcoming_access_structure_bcs);
         }
 
         if let Ok(current_tangible_party_id_to_upcoming_bcs) =
@@ -75,6 +81,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                 current_tangible_party_id_to_upcoming_bcs=%hex::encode(&current_tangible_party_id_to_upcoming_bcs),
                 "Instantiating public input for reconfiguration v2 [current_tangible_party_id_to_upcoming]"
             );
+            dump_blob(&sid_hex, "pubinput", "current_tangible_party_id_to_upcoming", &current_tangible_party_id_to_upcoming_bcs);
         }
 
         if let Ok(current_encryption_keys_per_crt_prime_and_proofs_bcs) =
@@ -85,6 +92,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                 "current_encryption_keys_per_crt_prime_and_proofs",
                 &current_encryption_keys_per_crt_prime_and_proofs_bcs,
             );
+            dump_blob(&sid_hex, "pubinput", "current_encryption_keys", &current_encryption_keys_per_crt_prime_and_proofs_bcs);
         }
 
         if let Ok(upcoming_encryption_keys_per_crt_prime_and_proofs_bcs) =
@@ -95,6 +103,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                 "upcoming_encryption_keys_per_crt_prime_and_proofs",
                 &upcoming_encryption_keys_per_crt_prime_and_proofs_bcs,
             );
+            dump_blob(&sid_hex, "pubinput", "upcoming_encryption_keys", &upcoming_encryption_keys_per_crt_prime_and_proofs_bcs);
         }
 
         match network_dkg_public_output {
@@ -122,12 +131,14 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                             "network_dkg_public_output",
                             &network_dkg_public_output
                         );
+                        dump_blob(&sid_hex, "pubinput", "network_dkg_public_output_v1", &network_dkg_public_output);
 
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
                             "latest_reconfiguration_public_output",
                             &latest_reconfiguration_public_output
                         );
+                        dump_blob(&sid_hex, "pubinput", "latest_reconfiguration_public_output", &latest_reconfiguration_public_output);
 
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -157,6 +168,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                             "network_dkg_public_output",
                             &network_dkg_public_output
                         );
+                        dump_blob(&sid_hex, "pubinput", "network_dkg_public_output_v2", &network_dkg_public_output);
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
@@ -190,12 +202,14 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                             "network_dkg_public_output",
                             &network_dkg_public_output
                         );
+                        dump_blob(&sid_hex, "pubinput", "network_dkg_public_output_v2", &network_dkg_public_output);
 
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
                             "latest_reconfiguration_public_output",
                             &latest_reconfiguration_public_output
                         );
+                        dump_blob(&sid_hex, "pubinput", "latest_reconfiguration_public_output", &latest_reconfiguration_public_output);
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(

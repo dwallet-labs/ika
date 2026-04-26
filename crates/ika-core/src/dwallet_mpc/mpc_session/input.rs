@@ -174,6 +174,7 @@ pub(crate) fn session_input_from_request(
             )?;
             Ok((
                     PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                        &request.session_identifier,
                         committee,
                         next_active_committee,
                         network_keys
