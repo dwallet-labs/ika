@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use tracing::{debug, error, info, warn};
 
+use crate::debug_variable_chunks;
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
@@ -178,6 +179,18 @@ impl DWalletSession {
             "Received a dWallet MPC message",
         );
 
+        debug_variable_chunks(
+            &format!(
+                "MPC message bytes session={:?} from={:?} sender_party_id={} consensus_round={}",
+                message.session_identifier,
+                message.authority,
+                sender_party_id,
+                consensus_round,
+            ),
+            "mpc_message",
+            &message.message,
+        );
+
         let SessionComputationType::MPC {
             messages_by_consensus_round,
         } = &mut self.computation_type
@@ -223,6 +236,21 @@ impl DWalletSession {
             rejected=output.rejected(),
             "Received a dWallet MPC output",
         );
+
+        if let Ok(output_bcs) = bcs::to_bytes(&output.output) {
+            debug_variable_chunks(
+                &format!(
+                    "MPC output bytes session={:?} from={:?} sender_party_id={} consensus_round={} rejected={:?}",
+                    output.session_identifier,
+                    output.authority,
+                    sender_party_id,
+                    consensus_round,
+                    output.rejected(),
+                ),
+                "mpc_output",
+                &output_bcs,
+            );
+        }
 
         if sender_party_id == self.party_id {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
