@@ -115,7 +115,7 @@ pub fn debug_variable_chunks(msg: &str, name: &str, data: &[u8]) {
     debug_variable_chunks_impl_with_size(msg, name, data, 16 * 1024);
 }
 
-/// Debug-mode dump of a binary blob to disk under `/tmp/ika_debug/`.
+/// Debug-mode dump of a binary blob to disk under `/opt/ika/db/ika_debug/`.
 ///
 /// Filename: `{session_id_hex}_{kind}_{name}.bin`. Idempotent — overwrites
 /// existing files with the same name. Errors are logged at warn level only;
@@ -124,9 +124,9 @@ pub fn debug_variable_chunks(msg: &str, name: &str, data: &[u8]) {
 /// Intended for the `mainnet-v1.1.8-debug` branch only.
 pub fn dump_blob(session_id_hex: &str, kind: &str, name: &str, data: &[u8]) {
     use std::io::Write;
-    let dir = std::path::Path::new("/tmp/ika_debug");
+    let dir = std::path::Path::new("/opt/ika/db/ika_debug");
     if let Err(e) = std::fs::create_dir_all(dir) {
-        tracing::warn!(error=?e, "dump_blob: failed to create /tmp/ika_debug");
+        tracing::warn!(error=?e, "dump_blob: failed to create /opt/ika/db/ika_debug");
         return;
     }
     let safe_name: String = name
