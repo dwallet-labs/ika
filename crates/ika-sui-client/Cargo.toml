@@ -12,8 +12,11 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true, features = ["backtrace"] }
 async-trait.workspace = true
+base64.workspace = true
 bcs.workspace = true
+hex.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 itertools.workspace = true
 prometheus.workspace = true
 tokio = { workspace = true, features = ["full", "tracing", "test-util"] }
@@ -33,6 +36,7 @@ sui-sdk.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
 dwallet-classgroups-types.workspace = true
+dwallet-mpc-centralized-party.workspace = true
 sui.workspace = true
 sui-keys.workspace = true
 dwallet-mpc-types.workspace = true
