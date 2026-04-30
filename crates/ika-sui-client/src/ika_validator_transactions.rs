@@ -35,7 +35,6 @@ use move_core_types::identifier::IdentStr;
 use move_core_types::language_storage::{StructTag, TypeTag};
 use serde::Serialize;
 use shared_crypto::intent::Intent;
-use sui::client_commands::{SuiClientCommandResult, execute_dry_run};
 use sui::fire_drill::get_gas_obj_ref;
 use sui_json_rpc_types::{
     SuiTransactionBlockEffects, SuiTransactionBlockEffectsAPI, SuiTransactionBlockResponse,
@@ -44,7 +43,6 @@ use sui_keys::keystore::AccountKeystore;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::collection_types::Entry;
-use sui_types::effects::TransactionEffectsAPI;
 use sui_types::object::Owner;
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, ObjectArg, Transaction, TransactionKind};
@@ -723,35 +721,11 @@ pub(crate) async fn construct_unsigned_txn(
     let tx = ptb.finish();
     let tx_kind = TransactionKind::ProgrammableTransaction(tx.clone());
 
-    let dry_run = execute_dry_run(
-        context,
-        sender,
-        tx_kind.clone(),
-        None,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .map_err(|e| IkaError::DryRunFailed(e.to_string()))?;
-    if let SuiClientCommandResult::DryRun(dry_run) = dry_run
-        && dry_run.transaction.effects.status().is_err()
-    {
-        let err_msg = format!("{:?}", dry_run.transaction.effects.status());
-        tracing::debug!(?dry_run.transaction.effects, "Dry run failed");
-        return Err(IkaError::DryRunFailed(err_msg));
-    };
-
-    let gas_budget = sui::client_commands::estimate_gas_budget(
-        context,
-        sender,
-        tx_kind,
-        gas_price,
-        vec![],
-        None,
-    )
-    .await
-    .unwrap_or(gas_budget);
+    // [TEMP] Pre-flight dry-run + gas estimation disabled while testnet runs a
+    // newer Sui gRPC schema than the SDK pin in this workspace; both calls
+    // fail to decode `SimulateTransactionResponse`. The real submit still
+    // surfaces tx errors via effects, just without the early signal.
+    let _ = (gas_price, &tx_kind);
 
     let rgp = sui_client
         .get_reference_gas_price()
