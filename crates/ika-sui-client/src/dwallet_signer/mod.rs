@@ -14,6 +14,7 @@ pub mod metadata;
 pub mod network_key;
 pub mod presign;
 pub mod sign_session;
+pub mod tx;
 
 pub use coin::find_ika_coin;
 pub use common::{
