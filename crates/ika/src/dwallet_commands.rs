@@ -8,14 +8,16 @@ use clap::*;
 use dwallet_mpc_centralized_party::{
     advance_centralized_sign_party, create_dkg_output_by_curve_v2,
     create_imported_dwallet_centralized_step_inner_v2, decrypt_user_share_v2,
-    encrypt_secret_key_share_and_prove_v2, generate_cg_keypair_from_seed,
-    network_dkg_public_output_to_protocol_pp_inner,
-    reconfiguration_public_output_to_protocol_pp_inner,
+    encrypt_secret_key_share_and_prove_v2,
 };
-use fastcrypto::ed25519::Ed25519KeyPair;
 use fastcrypto::traits::{KeyPair, Signer, ToFromBytes};
 use ika_config::{IKA_SUI_CONFIG, ika_config_dir};
 use ika_sui_client::SuiConnectorClient;
+use ika_sui_client::dwallet_signer::{
+    DWalletMetadata, NetworkKeyInfo, SignSessionResult, derive_encryption_keys,
+    extract_bytes_from_json, extract_event_field, extract_nested_event_field, fetch_object_fields,
+    find_ika_coin, hex_decode,
+};
 use ika_sui_client::ika_dwallet_transactions;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier};
@@ -858,88 +860,19 @@ async fn find_created_object_by_type(
     None
 }
 
-/// Fetch transaction events by digest.
+/// Fetch transaction events by digest (CLI wrapper around the lifted helper).
 async fn fetch_tx_events(
     context: &WalletContext,
     digest: &str,
 ) -> Option<Vec<sui_json_rpc_types::SuiEvent>> {
     let sdk_client = create_sdk_client(context).await.ok()?;
-    let tx_digest: sui_types::digests::TransactionDigest = digest.parse().ok()?;
-    sdk_client.event_api().get_events(tx_digest).await.ok()
-}
-
-/// Extract a string field from the first event whose type contains `event_type_substr`.
-fn extract_event_field(
-    events: &[sui_json_rpc_types::SuiEvent],
-    event_type_substr: &str,
-    field_name: &str,
-) -> Option<String> {
-    for event in events {
-        let type_str = event.type_.to_string();
-        if type_str.contains(event_type_substr) {
-            if let Some(val) = event.parsed_json.get(field_name) {
-                return val.as_str().map(|s| s.to_string());
-            }
-            // Also check nested event_data (for DWalletSessionEvent wrappers)
-            if let Some(event_data) = event.parsed_json.get("event_data")
-                && let Some(val) = event_data.get(field_name)
-            {
-                return val.as_str().map(|s| s.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Extract a deeply nested field from event data, traversing through Move enum variant `fields`.
-///
-/// `path` is a chain of field names. For each step, it first looks for a direct child, then
-/// checks inside a `fields` sub-object (Move enum variant serialization: `{ variant, fields }`).
-fn extract_nested_event_field(
-    events: &[sui_json_rpc_types::SuiEvent],
-    event_type_substr: &str,
-    path: &[&str],
-) -> Option<String> {
-    for event in events {
-        let type_str = event.type_.to_string();
-        if !type_str.contains(event_type_substr) {
-            continue;
-        }
-        // Start from event_data (DWalletSessionEvent wrapper) or top-level
-        let root = event
-            .parsed_json
-            .get("event_data")
-            .unwrap_or(&event.parsed_json);
-        let mut current = root;
-        for (i, key) in path.iter().enumerate() {
-            let next = current.get(key).or_else(|| {
-                // Try inside enum variant's "fields" sub-object
-                current.get("fields").and_then(|f| f.get(key))
-            });
-            match next {
-                Some(val) if i == path.len() - 1 => {
-                    return val.as_str().map(|s| s.to_string());
-                }
-                Some(val) => current = val,
-                None => break,
-            }
-        }
-    }
-    None
+    ika_sui_client::dwallet_signer::fetch_tx_events(&sdk_client, digest).await
 }
 
 /// Extract the sign session object ID from a sign transaction's events.
 async fn find_sign_session_id(context: &WalletContext, digest: &str) -> Option<String> {
-    fetch_tx_events(context, digest)
-        .await
-        .as_deref()
-        .and_then(|evts| extract_event_field(evts, "SignRequestEvent", "session_object_id"))
-}
-
-/// Result of polling a sign session.
-enum SignSessionResult {
-    Completed { signature: String },
-    Rejected,
+    let sdk_client = create_sdk_client(context).await.ok()?;
+    ika_sui_client::dwallet_signer::find_sign_session_id(&sdk_client, digest).await
 }
 
 /// Poll a sign session until it reaches Completed or NetworkRejected state.
@@ -948,63 +881,8 @@ async fn poll_sign_session(
     sign_session_id: ObjectID,
 ) -> Result<SignSessionResult> {
     let sdk_client = create_sdk_client(context).await?;
-    let poll_interval = std::time::Duration::from_secs(3);
-    let timeout = std::time::Duration::from_secs(300);
-    let start = std::time::Instant::now();
-
-    loop {
-        if start.elapsed() > timeout {
-            anyhow::bail!(
-                "Timeout waiting for sign session {sign_session_id} to complete ({}s)",
-                timeout.as_secs()
-            );
-        }
-
-        match fetch_object_fields(&sdk_client, sign_session_id).await {
-            Ok(fields) => {
-                if let Some(state) = fields.get("state") {
-                    let variant = state.get("variant").and_then(|v| v.as_str()).unwrap_or("");
-                    match variant {
-                        "Completed" => {
-                            let sig_bytes = state
-                                .get("fields")
-                                .and_then(|f| f.get("signature"))
-                                .and_then(extract_bytes_from_json)
-                                .unwrap_or_default();
-                            return Ok(SignSessionResult::Completed {
-                                signature: hex::encode(sig_bytes),
-                            });
-                        }
-                        "NetworkRejected" => {
-                            return Ok(SignSessionResult::Rejected);
-                        }
-                        _ => {
-                            // Still "Requested", keep polling
-                        }
-                    }
-                } else {
-                    // Log unexpected structure once at 30s to aid debugging
-                    if start.elapsed().as_secs() == 30 {
-                        let keys: Vec<&str> = fields
-                            .as_object()
-                            .map(|m| m.keys().map(|k| k.as_str()).collect())
-                            .unwrap_or_default();
-                        eprintln!(
-                            "Warning: sign session object has no 'state' field. Keys: {:?}",
-                            keys
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                // Log fetch errors once at 30s
-                if start.elapsed().as_secs() == 30 {
-                    eprintln!("Warning: failed to fetch sign session: {e}");
-                }
-            }
-        }
-        tokio::time::sleep(poll_interval).await;
-    }
+    ika_sui_client::dwallet_signer::poll_sign_session(&sdk_client, sign_session_id, None, None)
+        .await
 }
 
 /// Poll a dWallet until its state contains `public_output` (meaning DKG succeeded and state
@@ -1055,12 +933,6 @@ async fn poll_dwallet_until_dkg_complete(
         tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
         interval_ms = (interval_ms * 3 / 2).min(max_interval_ms);
     }
-}
-
-/// Decode a hex string (with or without 0x prefix) into bytes.
-fn hex_decode(s: &str) -> Result<Vec<u8>> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    Ok(hex::decode(s)?)
 }
 
 /// Generate a random 32-byte value.
@@ -1183,62 +1055,6 @@ fn on_chain_session_preimage(sender: &SuiAddress, user_bytes: &[u8]) -> [u8; 32]
     preimage
 }
 
-/// Derive encryption keys from a seed: (encryption_key, decryption_key, signing_keypair).
-///
-/// Hash matches the TS SDK `UserShareEncryptionKeys.hash()`:
-///   `keccak256(ASCII(domain_separator) || curve_byte || seed)`
-///
-/// By default uses the numeric curve byte (matching TS SDK V2 hash).
-/// With `legacy_hash = true`, uses 0x00 as curve byte (matching TS SDK V1 bug).
-fn derive_encryption_keys(
-    curve: u32,
-    seed: [u8; 32],
-    legacy_hash: bool,
-) -> Result<(Vec<u8>, Vec<u8>, Ed25519KeyPair)> {
-    let curve_byte = if legacy_hash {
-        0u8
-    } else {
-        u8::try_from(curve)
-            .map_err(|_| anyhow::anyhow!("Curve number {curve} does not fit in a single byte"))?
-    };
-
-    let cg_seed = {
-        use fastcrypto::hash::{HashFunction, Keccak256};
-        let mut hasher = Keccak256::default();
-        hasher.update(b"CLASS_GROUPS_DECRYPTION_KEY_V1");
-        hasher.update([curve_byte]);
-        hasher.update(seed);
-        let digest = hasher.finalize();
-        let mut cg_seed = [0u8; 32];
-        cg_seed.copy_from_slice(digest.as_ref());
-        cg_seed
-    };
-
-    let signing_seed = {
-        use fastcrypto::hash::{HashFunction, Keccak256};
-        let mut hasher = Keccak256::default();
-        hasher.update(b"ED25519_SIGNING_KEY_V1");
-        hasher.update([curve_byte]);
-        hasher.update(seed);
-        let digest = hasher.finalize();
-        let mut signing_seed = [0u8; 32];
-        signing_seed.copy_from_slice(digest.as_ref());
-        signing_seed
-    };
-
-    let (encryption_key, decryption_key) = generate_cg_keypair_from_seed(curve, cg_seed)
-        .context("Failed to generate class groups keypair")?;
-
-    let signing_keypair = {
-        use fastcrypto::ed25519::Ed25519PrivateKey;
-        let private_key = Ed25519PrivateKey::from_bytes(&signing_seed)
-            .map_err(|e| anyhow::anyhow!("Failed to derive Ed25519 private key: {e}"))?;
-        Ed25519KeyPair::from(private_key)
-    };
-
-    Ok((encryption_key, decryption_key, signing_keypair))
-}
-
 /// Resolve the 32-byte seed for encryption key derivation.
 ///
 /// Three modes:
@@ -1311,24 +1127,14 @@ async fn create_sui_client(
     .context("Failed to create Sui connector client")
 }
 
-/// Get the network DKG public output for deriving protocol parameters.
-struct NetworkKeyInfo {
-    network_encryption_key_id: ObjectID,
-    /// Protocol public parameters derived from the network key.
-    /// Accounts for reconfiguration if the key was created in a prior epoch.
-    protocol_public_parameters: Vec<u8>,
-}
-
-/// Fetch network key info, optionally for a specific key ID (from a dWallet).
-///
-/// When `specific_key_id` is provided (e.g. from `dWallet.dwallet_network_encryption_key_id`),
-/// uses that exact key. Otherwise falls back to the latest network key.
+/// Fetch network key info, optionally for a specific key ID (CLI wrapper).
 async fn get_network_key_info(
     context: &WalletContext,
     config_path: &PathBuf,
     curve_id: u32,
 ) -> Result<NetworkKeyInfo> {
-    get_network_key_info_for(context, config_path, None, curve_id).await
+    let client = create_sui_client(context, config_path).await?;
+    ika_sui_client::dwallet_signer::get_network_key_info(&client, curve_id).await
 }
 
 async fn get_network_key_info_for(
@@ -1338,72 +1144,8 @@ async fn get_network_key_info_for(
     curve_id: u32,
 ) -> Result<NetworkKeyInfo> {
     let client = create_sui_client(context, config_path).await?;
-    let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
-    let network_keys = client
-        .get_dwallet_mpc_network_keys(&coordinator_inner)
+    ika_sui_client::dwallet_signer::get_network_key_info_for(&client, specific_key_id, curve_id)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get network encryption keys: {e}"))?;
-
-    let (id, key) = if let Some(target_id) = specific_key_id {
-        network_keys
-            .iter()
-            .find(|(id, _)| **id == target_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Network encryption key {target_id} not found in coordinator")
-            })?
-    } else {
-        network_keys
-            .iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No network encryption keys found"))?
-    };
-
-    let epoch = match &coordinator_inner {
-        ika_types::sui::DWalletCoordinatorInner::V1(inner) => inner.current_epoch,
-    };
-
-    let key_data = client
-        .get_network_encryption_key_with_full_data_by_epoch(key, epoch)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to get network key data: {e}"))?;
-
-    // Derive protocol parameters: use reconfiguration output if the key was created
-    // in a prior epoch (matching TS SDK behavior).
-    let protocol_public_parameters = if key_data.current_reconfiguration_public_output.is_empty() {
-        network_dkg_public_output_to_protocol_pp_inner(curve_id, key_data.network_dkg_public_output)
-            .context("Failed to derive protocol parameters from network DKG output")?
-    } else {
-        reconfiguration_public_output_to_protocol_pp_inner(
-            curve_id,
-            key_data.current_reconfiguration_public_output,
-            key_data.network_dkg_public_output,
-        )
-        .context("Failed to derive protocol parameters from reconfiguration output")?
-    };
-
-    Ok(NetworkKeyInfo {
-        network_encryption_key_id: *id,
-        protocol_public_parameters,
-    })
-}
-
-/// Auto-find an IKA coin owned by the active address.
-async fn find_ika_coin(
-    sdk_client: &sui_sdk::SuiClient,
-    owner: SuiAddress,
-    config: &IkaNetworkConfig,
-) -> Result<ObjectID> {
-    let coin_type = format!("{}::ika::IKA", config.packages.ika_package_id);
-    let coins = sdk_client
-        .coin_read_api()
-        .get_coins(owner, Some(coin_type.clone()), None, Some(1))
-        .await
-        .context("Failed to query IKA coins")?;
-    let coin =
-        coins.data.into_iter().next().ok_or_else(|| {
-            anyhow::anyhow!("No IKA coins found for {owner}. Coin type: {coin_type}")
-        })?;
-    Ok(coin.coin_object_id)
 }
 
 /// Resolve payment coins from CLI args.
@@ -1453,172 +1195,31 @@ async fn resolve_payment_coins(
     })
 }
 
-/// Check if a presign cap is already verified by inspecting its on-chain type.
-///
-/// Returns `true` if the object type contains "VerifiedPresignCap",
-/// `false` if it contains "UnverifiedPresignCap".
+/// Check if a presign cap is already verified (CLI wrapper).
 async fn is_presign_cap_verified(
     context: &WalletContext,
     presign_cap_id: ObjectID,
 ) -> Result<bool> {
     let sdk_client = create_sdk_client(context).await?;
-    let response = sdk_client
-        .read_api()
-        .get_object_with_options(presign_cap_id, SuiObjectDataOptions::new().with_type())
-        .await?;
-    let data = response
-        .data
-        .ok_or_else(|| anyhow::anyhow!("Presign cap not found: {presign_cap_id}"))?;
-    let type_str = data
-        .type_
-        .ok_or_else(|| anyhow::anyhow!("No type info for presign cap: {presign_cap_id}"))?
-        .to_string();
-    if type_str.contains("VerifiedPresignCap") {
-        Ok(true)
-    } else if type_str.contains("UnverifiedPresignCap") {
-        Ok(false)
-    } else {
-        anyhow::bail!("Object {presign_cap_id} is not a presign cap (type: {type_str})")
-    }
+    ika_sui_client::dwallet_signer::is_presign_cap_verified(&sdk_client, presign_cap_id).await
 }
 
-/// Fetch a Sui object's JSON fields by object ID.
-async fn fetch_object_fields(
-    sdk_client: &sui_sdk::SuiClient,
-    object_id: ObjectID,
-) -> Result<serde_json::Value> {
-    let response = sdk_client
-        .read_api()
-        .get_object_with_options(object_id, SuiObjectDataOptions::full_content())
-        .await?;
-    let data = response
-        .data
-        .ok_or_else(|| anyhow::anyhow!("Object not found: {object_id}"))?;
-    let content = data
-        .content
-        .ok_or_else(|| anyhow::anyhow!("No content for object: {object_id}"))?;
-    let json = serde_json::to_value(&content)?;
-    let fields = json
-        .get("fields")
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("No fields in object: {object_id}"))?;
-    // Handle SuiMoveStruct::WithTypes serialization which wraps as
-    // { "type": "...", "fields": { actual fields } }
-    if fields.get("type").is_some()
-        && let Some(inner) = fields.get("fields")
-    {
-        return Ok(inner.clone());
-    }
-    Ok(fields)
-}
-
-/// Fetch dWallet metadata (curve, DKG output) from chain using the dWallet object ID.
+/// Fetch dWallet metadata (CLI wrapper).
 async fn fetch_dwallet_metadata(
     context: &WalletContext,
     dwallet_id: ObjectID,
 ) -> Result<DWalletMetadata> {
     let sdk_client = create_sdk_client(context).await?;
-    let fields = fetch_object_fields(&sdk_client, dwallet_id).await?;
-
-    let curve = fields
-        .get("curve")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| anyhow::anyhow!("Could not read curve from dWallet object"))?
-        as u32;
-
-    // Extract DKG output from state.Active.public_output
-    let dkg_output = fields
-        .get("state")
-        .and_then(|state| state.get("fields"))
-        .and_then(|f| f.get("public_output"))
-        .and_then(extract_bytes_from_json);
-
-    let is_imported_key_dwallet = fields
-        .get("is_imported_key_dwallet")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let network_encryption_key_id = fields
-        .get("dwallet_network_encryption_key_id")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<ObjectID>().ok());
-
-    Ok(DWalletMetadata {
-        curve,
-        dkg_output,
-        is_imported_key_dwallet,
-        network_encryption_key_id,
-    })
+    ika_sui_client::dwallet_signer::fetch_dwallet_metadata(&sdk_client, dwallet_id).await
 }
 
-struct DWalletMetadata {
-    curve: u32,
-    /// The DKG public output bytes, if the dWallet is in Active state.
-    dkg_output: Option<Vec<u8>>,
-    /// Whether this dWallet was created from an imported key.
-    is_imported_key_dwallet: bool,
-    /// The network encryption key ID used for this dWallet's DKG.
-    network_encryption_key_id: Option<ObjectID>,
-}
-
-/// Fetch presign output from chain using the verified presign cap ID.
-///
-/// Reads the VerifiedPresignCap to get the presign_id, then reads the PresignSession
-/// to extract state.Completed.presign bytes.
+/// Fetch presign output (CLI wrapper).
 async fn fetch_presign_output(
     context: &WalletContext,
     presign_cap_id: ObjectID,
 ) -> Result<Vec<u8>> {
     let sdk_client = create_sdk_client(context).await?;
-
-    // 1. Read the VerifiedPresignCap to get presign_id
-    let cap_fields = fetch_object_fields(&sdk_client, presign_cap_id).await?;
-    let presign_id_str = cap_fields
-        .get("presign_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!("Could not read presign_id from presign cap: {presign_cap_id}")
-        })?;
-    let presign_id: ObjectID = presign_id_str
-        .parse()
-        .context("Invalid presign_id in presign cap")?;
-
-    // 2. Read the PresignSession to get state.Completed.presign
-    let session_fields = fetch_object_fields(&sdk_client, presign_id).await?;
-    let presign_bytes = session_fields
-        .get("state")
-        .and_then(|state| state.get("fields"))
-        .and_then(|f| f.get("presign"))
-        .and_then(extract_bytes_from_json)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Presign session {presign_id} is not in Completed state. \
-                 The presign may still be processing."
-            )
-        })?;
-    Ok(presign_bytes)
-}
-
-/// Extract byte array from Sui JSON representation.
-///
-/// Sui encodes `vector<u8>` as either a JSON array of numbers or a base64 string.
-/// Hex strings are supported only with an explicit `0x` prefix.
-fn extract_bytes_from_json(value: &serde_json::Value) -> Option<Vec<u8>> {
-    match value {
-        // Array of numbers: [1, 2, 3, ...]
-        serde_json::Value::Array(arr) => arr.iter().map(|v| v.as_u64().map(|n| n as u8)).collect(),
-        // String: Sui uses base64 for vector<u8> fields.
-        // Only treat as hex if explicitly prefixed with "0x".
-        serde_json::Value::String(s) => {
-            if let Some(hex_str) = s.strip_prefix("0x") {
-                return hex::decode(hex_str).ok();
-            }
-            // Sui's default encoding for byte vectors is base64
-            use base64::{Engine, engine::general_purpose::STANDARD};
-            STANDARD.decode(s).ok()
-        }
-        _ => None,
-    }
+    ika_sui_client::dwallet_signer::fetch_presign_output(&sdk_client, presign_cap_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -3370,14 +2971,10 @@ async fn resolve_secret_share(
     .context("Failed to decrypt on-chain secret share. Is your keystore seed correct?")
 }
 
-/// Fetch the encrypted secret share for a dWallet from its on-chain `ObjectTable`.
+/// Fetch the encrypted secret share for the user (CLI wrapper).
 ///
-/// The dWallet stores encrypted shares in `encrypted_user_secret_key_shares: ObjectTable`.
-/// We enumerate its dynamic fields (DynamicObject entries) and find the one whose
-/// `encryption_key_address` matches the user's derived encryption key address.
-///
-/// `encryption_key_address` is an `address` field derived from the Ed25519 signing keypair
-/// (not the Sui wallet address), so we compute it from seed args.
+/// Resolves the seed → derives the user's signing keypair → uses its Ed25519 public key
+/// as the on-chain `encryption_key_address`, then delegates to the lifted helper.
 async fn fetch_encrypted_share_for_dwallet(
     sdk_client: &sui_sdk::SuiClient,
     context: &mut WalletContext,
@@ -3385,76 +2982,16 @@ async fn fetch_encrypted_share_for_dwallet(
     curve_id: u32,
     seed: &SeedArgs,
 ) -> Result<Vec<u8>> {
-    // Compute the encryption_key_address from the user's seed
     let seed_bytes = resolve_seed(context, seed.seed_file.clone(), seed.address, seed.index)?;
     let (_encryption_key, _decryption_key, signing_keypair) =
         derive_encryption_keys(curve_id, seed_bytes, seed.legacy_hash)?;
     let encryption_key_address: SuiAddress = signing_keypair.public().into();
-
-    // 1. Get the dWallet object to find the ObjectTable ID
-    let dwallet_fields = fetch_object_fields(sdk_client, dwallet_id).await?;
-    let table_id = dwallet_fields
-        .get("encrypted_user_secret_key_shares")
-        .and_then(|v| v.get("fields"))
-        .and_then(|f| f.get("id"))
-        .and_then(|id| id.get("id"))
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Could not find encrypted_user_secret_key_shares table on dWallet {dwallet_id}"
-            )
-        })?;
-    let table_oid: ObjectID = table_id
-        .parse()
-        .context("Invalid ObjectTable ID for encrypted shares")?;
-
-    // 2. Enumerate dynamic fields of the ObjectTable.
-    //    These are DynamicObject entries — each field_info.object_id IS the
-    //    EncryptedUserSecretKeyShare object directly (no Field wrapper).
-    let mut cursor = None;
-    loop {
-        let page = sdk_client
-            .read_api()
-            .get_dynamic_fields(table_oid, cursor, Some(50))
-            .await
-            .context("Failed to query encrypted share dynamic fields")?;
-
-        for field_info in &page.data {
-            let share_fields = fetch_object_fields(sdk_client, field_info.object_id).await?;
-
-            // Check if this share belongs to the current user's encryption key
-            let key_address = share_fields
-                .get("encryption_key_address")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if key_address != encryption_key_address.to_string() {
-                continue;
-            }
-
-            // Found our share — extract the encrypted bytes
-            let encrypted_bytes = share_fields
-                .get("encrypted_centralized_secret_share_and_proof")
-                .and_then(extract_bytes_from_json)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Found EncryptedUserSecretKeyShare for dWallet {dwallet_id} \
-                         but could not extract encrypted bytes"
-                    )
-                })?;
-            return Ok(encrypted_bytes);
-        }
-
-        if !page.has_next_page {
-            break;
-        }
-        cursor = page.next_cursor;
-    }
-
-    anyhow::bail!(
-        "No EncryptedUserSecretKeyShare found for dWallet {dwallet_id} \
-         with encryption key address {encryption_key_address}. \
-         Was the dWallet created with this keystore address and seed index?"
+    ika_sui_client::dwallet_signer::fetch_encrypted_share_for_dwallet(
+        sdk_client,
+        dwallet_id,
+        encryption_key_address,
     )
+    .await
 }
 
 /// Resolve presign output: use provided hex string or auto-fetch from the presign cap on chain.
