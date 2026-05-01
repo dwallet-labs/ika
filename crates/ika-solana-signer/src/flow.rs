@@ -23,6 +23,21 @@ use crate::config::{IkaSignerConfig, PresignMode, SecretShareSource};
 use crate::error::IkaSignerError;
 use crate::pubkey::ed25519_curve_id;
 
+/// Package ID to address Move calls at.
+///
+/// The dWallet coordinator object carries a `version` field that must match
+/// the `VERSION` constant of whichever package it's called through. When the
+/// network has upgraded the coordinator (e.g. to V2 on testnet), V1 calls
+/// abort with `EWrongInnerVersion` inside `coordinator::inner_mut`. Always
+/// use V2 if the network config exposes it; fall back to V1 only when the
+/// network hasn't been upgraded.
+fn dwallet_package_id(cfg: &IkaSignerConfig) -> ObjectID {
+    cfg.ika_network_config
+        .packages
+        .ika_dwallet_2pc_mpc_package_id_v2
+        .unwrap_or(cfg.ika_network_config.packages.ika_dwallet_2pc_mpc_package_id)
+}
+
 /// Solana-specific algorithm identifiers used in every sign call.
 const EDDSA_SIG_ALGORITHM: u32 = 0;
 const SHA512_HASH_SCHEME: u32 = 0;
@@ -69,14 +84,13 @@ pub(crate) async fn sign_with_presign(
         sui_coin_id: cfg.sui_coin_id,
     };
 
+    let package_id = dwallet_package_id(cfg);
     let response = if state.metadata.is_imported_key_dwallet {
         tx::request_imported_key_sign_tx_with_signer(
             rpc,
             keypair,
             sender,
-            cfg.ika_network_config
-                .packages
-                .ika_dwallet_2pc_mpc_package_id,
+            package_id,
             cfg.ika_network_config
                 .objects
                 .ika_dwallet_coordinator_object_id,
@@ -97,9 +111,7 @@ pub(crate) async fn sign_with_presign(
             rpc,
             keypair,
             sender,
-            cfg.ika_network_config
-                .packages
-                .ika_dwallet_2pc_mpc_package_id,
+            package_id,
             cfg.ika_network_config
                 .objects
                 .ika_dwallet_coordinator_object_id,
@@ -209,9 +221,7 @@ pub(crate) async fn fresh_global_presign(
         rpc,
         keypair,
         sender,
-        cfg.ika_network_config
-            .packages
-            .ika_dwallet_2pc_mpc_package_id,
+        dwallet_package_id(cfg),
         cfg.ika_network_config
             .objects
             .ika_dwallet_coordinator_object_id,
