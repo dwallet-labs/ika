@@ -7,13 +7,15 @@ use crate::consensus_validator::IkaTxValidator;
 use crate::mysticeti_adapter::LazyMysticetiClient;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use consensus_config::{Committee, NetworkKeyPair, Parameters, ProtocolKeyPair};
+use consensus_config::{
+    ChainType, Committee, ConsensusProtocolConfig, NetworkKeyPair, Parameters, ProtocolKeyPair,
+};
 use consensus_core::{
     Clock, CommitConsumerArgs, CommitConsumerMonitor, CommitIndex, ConsensusAuthority, NetworkType,
 };
 use fastcrypto::traits::KeyPair as _;
 use ika_config::{ConsensusConfig, NodeConfig};
-use ika_protocol_config::ProtocolVersion;
+use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{ConsensusPosition, ConsensusTransaction};
 use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
@@ -31,6 +33,25 @@ use tracing::{error, info};
 enum Running {
     True(EpochId, ProtocolVersion),
     False,
+}
+
+fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> ConsensusProtocolConfig {
+    let chain_type = match chain {
+        Chain::Mainnet => ChainType::Mainnet,
+        Chain::Testnet => ChainType::Testnet,
+        Chain::Devnet | Chain::Unknown => ChainType::Unknown,
+    };
+    ConsensusProtocolConfig::new(
+        config.version.as_u64(),
+        chain_type,
+        config.consensus_max_transaction_size_bytes(),
+        config.consensus_max_transactions_in_block_bytes(),
+        config.consensus_max_num_transactions_in_block(),
+        config.gc_depth(),
+        config.mysticeti_fastpath(),
+        config.mysticeti_num_leaders_per_round(),
+        config.consensus_bad_nodes_stake_threshold(),
+    )
 }
 
 /// Used by Ika validator to start consensus protocol for each epoch.
@@ -176,56 +197,7 @@ impl ConsensusManager {
             );
         }
 
-        // This can only be changed for all validators together at the same epoch
-        // IMPORTANT: DONT CHANGE THIS VALUE UNLESS YOU KNOW WHAT YOU ARE DOING
-        // MAKE SURE TO CHECK WE MANUALLY SET EVERY CONSENSUS CONFIG FROM OUR PROTOCOL CONFIG
-        // AND THAT WE OVERRIDE THE SUI PROTOCOL CONFIG VALUES
-        let mut protocol_config = sui_protocol_config::ProtocolConfig::get_for_version(
-            // Version 84 was taken from Sui, DO NOT CHANGE IT.
-            sui_protocol_config::ProtocolVersion::new(ika_protocol_config.sui_protocol_version()),
-            sui_protocol_config::Chain::Mainnet,
-        );
-
-        protocol_config.set_consensus_max_transaction_size_bytes_for_testing(
-            ika_protocol_config.consensus_max_transaction_size_bytes(),
-        );
-        protocol_config.set_consensus_max_transactions_in_block_bytes_for_testing(
-            ika_protocol_config.consensus_max_transactions_in_block_bytes(),
-        );
-
-        protocol_config.set_consensus_max_num_transactions_in_block_for_testing(
-            ika_protocol_config.consensus_max_num_transactions_in_block(),
-        );
-
-        protocol_config.set_consensus_gc_depth_for_testing(ika_protocol_config.gc_depth());
-
-        protocol_config
-            .set_consensus_round_prober_for_testing(ika_protocol_config.consensus_round_prober());
-
-        protocol_config
-            .set_mysticeti_fastpath_for_testing(ika_protocol_config.mysticeti_fastpath());
-
-        protocol_config.set_mysticeti_num_leaders_per_round_for_testing(
-            ika_protocol_config.mysticeti_num_leaders_per_round(),
-        );
-
-        // TODO: Do not remove this, this will be set once there is a "set" function for it.
-        // protocol_config.set_consensus_zstd_compression_for_testing(
-        //     ika_protocol_config.consensus_zstd_compression(),
-        // );
-
-        protocol_config.set_consensus_batched_block_sync_for_testing(
-            ika_protocol_config.consensus_batched_block_sync(),
-        );
-
-        // protocol_config.set_consensus_skip_gced_blocks_in_direct_finalization_for_testing(
-        //     ika_protocol_config.consensus_skip_gced_blocks_in_direct_finalization(),
-        // );
-
-        // TODO: Do not remove this, this will be set once there is a "set" function for it.
-        // protocol_config.set_enforce_checkpoint_timestamp_monotonicity_for_testing(
-        //     ika_protocol_config.enforce_checkpoint_timestamp_monotonicity(),
-        // );
+        let chain = epoch_store.get_chain_identifier().chain();
 
         let authority = ConsensusAuthority::start(
             NetworkType::Tonic,
@@ -233,7 +205,7 @@ impl ConsensusManager {
             own_index,
             committee.clone(),
             parameters.clone(),
-            protocol_config.clone(),
+            to_consensus_protocol_config(ika_protocol_config, chain),
             self.protocol_keypair.clone(),
             self.network_keypair.clone(),
             Arc::new(Clock::default()),

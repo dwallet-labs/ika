@@ -213,8 +213,6 @@ pub struct ProtocolConfig {
 
     feature_flags: FeatureFlags,
 
-    sui_protocol_version: Option<u64>,
-
     // === Core Protocol ===
     /// Max number of transactions per dwallet checkpoint.
     /// Note that this is a protocol constant and not a config as validators must have this set to
@@ -456,8 +454,6 @@ impl ProtocolConfig {
             // All flags are disabled in V1
             feature_flags: Default::default(),
 
-            sui_protocol_version: Some(87),
-
             max_messages_per_dwallet_checkpoint: Some(500),
             max_messages_per_system_checkpoint: Some(500),
 
@@ -511,7 +507,6 @@ impl ProtocolConfig {
                     cfg.reconfiguration_message_version = Some(2);
                 }
                 4 => {
-                    cfg.sui_protocol_version = Some(108);
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                 }

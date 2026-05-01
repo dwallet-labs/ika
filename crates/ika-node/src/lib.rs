@@ -330,7 +330,8 @@ impl IkaNode {
 
         let secret = Arc::pin(config.protocol_key_pair().copy());
         let committee_store = Arc::new(CommitteeStore::new(config.db_path().join("epochs"), None));
-        let perpetual_tables_options = default_db_options().optimize_db_for_write_throughput(4);
+        let perpetual_tables_options =
+            default_db_options().optimize_db_for_write_throughput(4, false);
         let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(
             &config.db_path().join("store"),
             Some(perpetual_tables_options.options),
@@ -350,7 +351,7 @@ impl IkaNode {
         //     .get_epoch_start_configuration()?
         //     .expect("EpochStartConfiguration of the current epoch must exist");
 
-        let epoch_options = default_db_options().optimize_db_for_write_throughput(4);
+        let epoch_options = default_db_options().optimize_db_for_write_throughput(4, false);
 
         let mut ika_dwallet_2pc_mpc_package_id_v2 = config
             .sui_connector_config
