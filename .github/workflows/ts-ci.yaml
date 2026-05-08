@@ -51,7 +51,7 @@ jobs:
 
       - name: Install Sui from Github
         run: |
-          curl -L https://github.com/MystenLabs/sui/releases/download/testnet-v1.67.1/sui-testnet-v1.67.1-ubuntu-x86_64.tgz > sui.tgz
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.70.2/sui-mainnet-v1.70.2-ubuntu-x86_64.tgz > sui.tgz
           tar -xvzf sui.tgz
           sudo cp ./sui /usr/local/bin/sui
 
