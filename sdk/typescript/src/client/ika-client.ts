@@ -1102,27 +1102,31 @@ export class IkaClient {
 					keyParsed.reconfiguration_public_outputs.id,
 				);
 
-				const lastReconfigOutput = (
-					await Promise.all(
-						reconfigOutputsDFs.map(async (df) => {
-							const name = bcs.u32().parse(df.name.bcs);
-							const reconfigObject = await this.client.core.getObject({
-								objectId: df.fieldId,
-								include: { content: true },
-							});
-
-							const parsedValue = DynamicField(TableVec).parse(objResToBcs(reconfigObject));
-
-							return {
-								name,
-								parsedValue,
-							};
-						}),
-					)
-				)
+				// We only need one reconfiguration output (the second-to-last by
+				// epoch, since the last one may not have completed yet). Sort
+				// the dynamic-field metadata by name first, then fetch the
+				// single object we care about. Fetching every entry's object
+				// trips public-endpoint rate limits on networks with long
+				// reconfiguration histories.
+				const targetReconfigDF = reconfigOutputsDFs
+					.map((df) => ({ df, name: bcs.u32().parse(df.name.bcs) }))
 					.sort((a, b) => Number(a.name) - Number(b.name))
 					// The last reconfiguration has not necessarily been completed, so we take the second to last
 					.at(-2);
+
+				const lastReconfigOutput = targetReconfigDF
+					? {
+							name: targetReconfigDF.name,
+							parsedValue: DynamicField(TableVec).parse(
+								objResToBcs(
+									await this.client.core.getObject({
+										objectId: targetReconfigDF.df.fieldId,
+										include: { content: true },
+									}),
+								),
+							),
+						}
+					: undefined;
 
 				const encryptionKey: NetworkEncryptionKey = {
 					id: keyName,
