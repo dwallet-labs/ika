@@ -220,7 +220,11 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                 address: active_validator.consensus_address.clone(),
                 hostname: active_validator.hostname.clone(),
                 authority_name: consensus_config::AuthorityName::from_bytes(
-                    active_validator.protocol_pubkey.as_bytes(),
+                    &[
+                        [0u8; 48],
+                        active_validator.protocol_pubkey.pubkey.to_bytes(),
+                    ]
+                    .concat(),
                 ),
                 protocol_key: consensus_config::ProtocolPublicKey::new(
                     active_validator.consensus_pubkey.clone(),
