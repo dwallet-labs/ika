@@ -13,11 +13,8 @@ use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
 use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-use fastcrypto::bls12381;
-use fastcrypto::traits::{KeyPair, ToFromBytes};
+use fastcrypto::traits::ToFromBytes;
 use ika_protocol_config::ProtocolVersion;
-use rand::SeedableRng;
-use rand::prelude::StdRng;
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{EpochId, ObjectID};
 use sui_types::multiaddr::Multiaddr;
@@ -222,12 +219,12 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                 stake: *stake as consensus_config::Stake,
                 address: active_validator.consensus_address.clone(),
                 hostname: active_validator.hostname.clone(),
-                authority_key: consensus_config::AuthorityPublicKey::new(
-                    // This key is not really in use
-                    // TODO(omersadika) - try to make a PR to change that
-                    bls12381::min_sig::BLS12381KeyPair::generate(&mut StdRng::from_seed([0; 32]))
-                        .public()
-                        .clone(),
+                authority_name: consensus_config::AuthorityName::from_bytes(
+                    &[
+                        [0u8; 48],
+                        active_validator.protocol_pubkey.pubkey.to_bytes(),
+                    ]
+                    .concat(),
                 ),
                 protocol_key: consensus_config::ProtocolPublicKey::new(
                     active_validator.consensus_pubkey.clone(),

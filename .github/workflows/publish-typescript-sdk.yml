@@ -152,7 +152,9 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then
             git diff --quiet || (echo "::error::Unclean working tree" && exit 1)
           fi
-          git branch -r --contains HEAD | grep -q "origin/" || (echo "::error::HEAD not found on remote" && exit 1)
+          # In CI, HEAD is a tag checkout — verify the tag exists on the remote
+          git ls-remote --exit-code origin "refs/tags/${GITHUB_REF#refs/tags/}" > /dev/null 2>&1 \
+            || (echo "::error::Tag not found on remote" && exit 1)
           echo "Git safety checks passed"
 
       - name: Publish sdk/ika-wasm via pnpm (Trusted Publishing)

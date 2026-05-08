@@ -100,6 +100,10 @@ importers:
         specifier: ^7.0.3
         version: 7.0.3
 
+  sdk/ows/contract/build/ika_ows_policy/debug_info/dependencies/Sui: {}
+
+  sdk/ows/contract/package_summaries/sui: {}
+
   sdk/typescript:
     dependencies:
       '@ika.xyz/ika-wasm':

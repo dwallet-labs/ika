@@ -13,7 +13,6 @@ feature_flags:
   internal_presign_sessions: true
   bls_checkpoints: true
   noa_checkpoints: true
-sui_protocol_version: 108
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200

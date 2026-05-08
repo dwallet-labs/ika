@@ -146,7 +146,7 @@ public fun verify_certificate(
     let mut non_signer_public_keys: vector<Element<UncompressedG1>> = vector::empty();
     let mut offset: u64 = 0;
     let n_members = members.length();
-    let max_bitmap_len_bytes = n_members.divide_and_round_up(8);
+    let max_bitmap_len_bytes = n_members.div_ceil(8);
 
     // The signers bitmap must not be longer than necessary to hold all members
     // It may be shorter, in which case the excluded members are treated as non-signers

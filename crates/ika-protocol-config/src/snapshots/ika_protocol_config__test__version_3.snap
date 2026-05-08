@@ -9,9 +9,8 @@ feature_flags:
   consensus_zstd_compression: true
   consensus_batched_block_sync: true
   enforce_checkpoint_timestamp_monotonicity: true
-  bls_checkpoints: true
-sui_protocol_version: 87
 max_messages_per_dwallet_checkpoint: 500
+  bls_checkpoints: true
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200
 max_system_checkpoint_size_bytes: 51200

@@ -306,3 +306,17 @@ tbody tr:hover {
 	-webkit-text-fill-color: transparent;
 	background-clip: text;
 }
+
+/* ===== BANNER SHIMMER ===== */
+@keyframes shimmer {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(100%);
+	}
+}
+
+.animate-shimmer {
+	animation: shimmer 3s ease-in-out infinite;
+}

@@ -4,6 +4,7 @@ import { RootProvider } from 'fumadocs-ui/provider';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+
 export const metadata: Metadata = {
 	title: {
 		template: '%s | Ika Docs',
@@ -20,7 +21,15 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<body>
-				<RootProvider>{children}</RootProvider>
+				<RootProvider
+					search={{
+						options: {
+							type: 'static',
+						},
+					}}
+				>
+					{children}
+				</RootProvider>
 			</body>
 		</html>
 	);

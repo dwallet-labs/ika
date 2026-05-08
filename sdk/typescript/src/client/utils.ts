@@ -42,7 +42,7 @@ export async function fetchAllDynamicFields(
 	suiClient: ClientWithCoreApi,
 	parentId: string,
 ): Promise<SuiClientTypes.DynamicFieldEntry[]> {
-	const allFields: any[] = [];
+	const allFields: SuiClientTypes.DynamicFieldEntry[] = [];
 	let cursor: string | null = null;
 
 	while (true) {
@@ -53,7 +53,12 @@ export async function fetchAllDynamicFields(
 
 		allFields.push(...response.dynamicFields);
 
-		if (response.cursor === cursor) {
+		// Use `hasNextPage` as the authoritative stop condition. The
+		// previous cursor-equality check was incorrect: when the final
+		// page returns `cursor: null` after a non-null prior cursor, the
+		// inequality drove the loop back to a null cursor (i.e., page 1)
+		// and looped forever.
+		if (!response.hasNextPage) {
 			break;
 		}
 
