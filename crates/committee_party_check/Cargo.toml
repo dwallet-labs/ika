@@ -1,0 +1,9 @@
+[package]
+name = "committee_party_check"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+ika-types = { path = "../ika-types" }
+serde_json = "1.0"
+hex = "0.4"

@@ -215,8 +215,8 @@ impl DWalletSession {
 
         let sid_hex = hex::encode(message.session_identifier.into_bytes());
         let name = match mpc_round_hint {
-            Some(mpcr) => format!("p{sender_party_id}_mpcr{mpcr}_r{consensus_round}"),
-            None => format!("p{sender_party_id}_r{consensus_round}"),
+            Some(mpcr) => format!("p{sender_party_id}_mpcr{mpcr}"),
+            None => format!("p{sender_party_id}"),
         };
         dump_blob(&sid_hex, "msg", &name, &message.message);
 
@@ -284,7 +284,7 @@ impl DWalletSession {
             dump_blob(
                 &sid_hex,
                 "out",
-                &format!("p{sender_party_id}_r{consensus_round}"),
+                &format!("p{sender_party_id}"),
                 &output_bcs,
             );
         }

@@ -24,6 +24,7 @@ members = [
     "crates/ika-move-contracts",
     "crates/ika-network",
     "crates/ika-archival",
+    "crates/committee_party_check",
 ]
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.

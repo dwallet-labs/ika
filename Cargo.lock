@@ -2480,6 +2480,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "committee_party_check"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "ika-types",
+ "serde_json",
+]
+
+[[package]]
 name = "compact_str"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
