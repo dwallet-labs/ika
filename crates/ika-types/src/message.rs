@@ -172,6 +172,49 @@ impl DWalletCheckpointMessageKind {
     pub fn digest(&self) -> MessageDigest {
         MessageDigest::new(default_hash(self))
     }
+
+    /// Returns the on-chain `session_sequence_number` carried by this message, if any.
+    /// `EndOfPublish`, `SetMaxActiveSessionsBuffer`, and `SetGasFeeReimbursementSuiSystemCallValue`
+    /// are not session-scoped and return `None`. Used by the dwallet checkpoint builder to
+    /// emit the `dwallet_checkpoint_user_session_written_at_seq` metric.
+    pub fn session_sequence_number(&self) -> Option<u64> {
+        match self {
+            DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletDKGSecondRoundOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondMakeDWalletUserSecretKeySharesPublic(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletImportedKeyVerificationOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletPresign(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletSign(o) => Some(o.session_sequence_number),
+            DWalletCheckpointMessageKind::RespondDWalletPartialSignatureVerificationOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::RespondDWalletDKGOutput(o) => {
+                Some(o.session_sequence_number)
+            }
+            DWalletCheckpointMessageKind::SetMaxActiveSessionsBuffer(_) => None,
+            DWalletCheckpointMessageKind::SetGasFeeReimbursementSuiSystemCallValue(_) => None,
+            DWalletCheckpointMessageKind::EndOfPublish => None,
+        }
+    }
     pub fn rejected(&self) -> Option<bool> {
         match self {
             DWalletCheckpointMessageKind::RespondDWalletDKGFirstRoundOutput(output) => {

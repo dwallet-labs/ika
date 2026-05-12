@@ -570,6 +570,19 @@ impl DWalletCheckpointBuilder {
                 .last_constructed_dwallet_checkpoint
                 .set(sequence_number as i64);
 
+            // For every session-scoped message in this checkpoint, record the checkpoint seq
+            // it landed in. Lets an operator answer "for session N, which dwallet checkpoint
+            // carried its response?" — pair with the on-chain
+            // `last_processed_checkpoint_sequence_number` to tell if it ever got applied.
+            for kind in &checkpoint_message.messages {
+                if let Some(session_seq) = kind.session_sequence_number() {
+                    self.metrics
+                        .user_session_written_at_seq
+                        .with_label_values(&[&session_seq.to_string()])
+                        .set(sequence_number as i64);
+                }
+            }
+
             // batch.insert_batch(
             //     &self.tables.checkpoint_content,
             //     [(contents.digest(), contents)],

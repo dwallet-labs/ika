@@ -65,6 +65,36 @@ pub(crate) struct DWalletSession {
 
     /// Same idea — set to `Some(_)` once we've seen a request, preserved across transitions.
     pub(super) session_type: Option<SessionType>,
+
+    // -------- per-session timing/diagnostic counters --------
+    // All of these are populated in this process's lifetime only — pre-restart events
+    // do not contribute. They feed the `dwallet_mpc_user_session_*` per-seq gauges.
+
+    /// Earliest consensus round (since this process started) at which *any* validator's
+    /// output for this session was received. `None` until first output arrives.
+    pub(super) first_output_consensus_round: Option<u64>,
+
+    /// Most recent consensus round at which any validator's output for this session was received.
+    pub(super) last_output_consensus_round: Option<u64>,
+
+    /// Consensus round at which this validator broadcasted its own output and saw it loop back
+    /// (i.e., the round in which we transitioned to `ComputationCompleted`).
+    pub(super) self_output_consensus_round: Option<u64>,
+
+    /// Consensus round at which 2/3 quorum was first reached on this session's output
+    /// (`mpc_manager::handle_consensus_round_outputs` returned `Some`). `None` if quorum was
+    /// never observed during this process's lifetime — i.e., either it really hasn't been
+    /// reached or it was reached before we restarted.
+    pub(super) quorum_consensus_round: Option<u64>,
+
+    /// Set of authorities that submitted an output for this session this lifetime.
+    /// `.len()` is exposed as the `_distinct_output_authorities` metric.
+    pub(super) distinct_output_authorities: std::collections::HashSet<AuthorityName>,
+
+    /// Whether the output *this* validator submitted to consensus was `rejected: true`.
+    /// `None` until we submit an output; `Some(true)` for an MPC failure / `submit_failed_session`
+    /// path; `Some(false)` for a normal `Finalize`.
+    pub(super) local_output_rejected: Option<bool>,
 }
 
 /// Possible statuses of a session:
@@ -145,6 +175,12 @@ impl DWalletSession {
             created_at: std::time::Instant::now(),
             session_sequence_number,
             session_type,
+            first_output_consensus_round: None,
+            last_output_consensus_round: None,
+            self_output_consensus_round: None,
+            quorum_consensus_round: None,
+            distinct_output_authorities: std::collections::HashSet::new(),
+            local_output_rejected: None,
         }
     }
 
@@ -260,11 +296,33 @@ impl DWalletSession {
             "Received a dWallet MPC output",
         );
 
+        // Track timing/diagnostic counters for the per-session metrics. We always update,
+        // even for sessions in non-Active state — the data is meaningful for sessions stuck
+        // in `ComputationCompleted` (e.g. session 6713 awaiting quorum). These never decrement.
+        self.first_output_consensus_round = Some(match self.first_output_consensus_round {
+            Some(prev) => prev.min(consensus_round),
+            None => consensus_round,
+        });
+        self.last_output_consensus_round = Some(match self.last_output_consensus_round {
+            Some(prev) => prev.max(consensus_round),
+            None => consensus_round,
+        });
+        self.distinct_output_authorities.insert(output.authority);
         if sender_party_id == self.party_id {
+            // Record the round in which we saw our own output loop back through consensus.
+            // First occurrence wins — subsequent retries shouldn't overwrite the original.
+            self.self_output_consensus_round
+                .get_or_insert(consensus_round);
+            // `output.rejected()` returns None only when the output carries no rejection
+            // semantics (system messages); treat that as a non-rejection.
+            self.local_output_rejected = Some(output.rejected().unwrap_or(false));
+
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
                 authority=?self.validator_name,
                 status =? self.status,
+                consensus_round,
+                rejected = output.rejected(),
                 "Received our output from consensus, marking session as computation completed",
             );
 

@@ -21,7 +21,8 @@
 
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use prometheus::{
-    GaugeVec, IntCounterVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
+    GaugeVec, Histogram, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    register_gauge_vec_with_registry, register_histogram_with_registry,
     register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
     register_int_gauge_with_registry,
 };
@@ -145,6 +146,39 @@ pub struct DWalletMPCMetrics {
     /// times 5 states. Lets an operator answer "is session 6713 on this validator?" from
     /// `curl /metrics | grep session_seq=\"6713\"`.
     pub user_session_state: IntGaugeVec,
+
+    /// Per-user-session: earliest consensus round (since this process started) at which any
+    /// output for this session arrived. `-1` until the first output. Label: `session_seq`.
+    pub user_session_first_output_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: consensus round at which *this* validator's own output looped back.
+    /// `-1` if this validator hasn't submitted an output. Label: `session_seq`.
+    pub user_session_self_output_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: consensus round at which 2/3 quorum was first observed.
+    /// `-1` if quorum hasn't been observed in this process's lifetime. A stuck session in
+    /// `computation_completed` with this gauge at `-1` is the exact symptom of "submitted,
+    /// no quorum". Label: `session_seq`.
+    pub user_session_quorum_consensus_round: IntGaugeVec,
+
+    /// Per-user-session: count of distinct authorities from which we've received an output.
+    /// Compare to the committee's validity-threshold to see if a session is starved for
+    /// participation. Label: `session_seq`.
+    pub user_session_distinct_output_authorities: IntGaugeVec,
+
+    /// Per-user-session: -1 = haven't submitted, 0 = submitted success, 1 = submitted rejected.
+    /// Label: `session_seq`.
+    pub user_session_local_output_rejected: IntGaugeVec,
+
+    /// How many user sessions on this validator are stuck in the
+    /// `self_output set && quorum_consensus_round = None` state — i.e., we submitted but
+    /// nobody (us included) has seen quorum. Per-tick gauge.
+    pub sessions_with_self_output_no_quorum: IntGauge,
+
+    /// Per-completion: number of consensus rounds elapsed between this validator submitting
+    /// its own output and 2/3 quorum being reached. Wide tails ≡ slow consensus, lots of
+    /// retries. Observed once per session at the moment quorum is reached.
+    pub self_output_to_quorum_consensus_rounds: Histogram,
 }
 
 impl DWalletMPCMetrics {
@@ -320,6 +354,54 @@ impl DWalletMPCMetrics {
                 "dwallet_mpc_user_session_state",
                 "1 if user session is in this state on this validator, 0 otherwise (one series per (seq, state))",
                 &["session_seq", "state"],
+                registry,
+            )
+            .unwrap(),
+            user_session_first_output_consensus_round: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_first_output_consensus_round",
+                "Earliest consensus round (this process lifetime) at which any output for the session arrived. -1 if none.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_self_output_consensus_round: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_self_output_consensus_round",
+                "Consensus round at which this validator's own output for the session looped back. -1 if not yet.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_quorum_consensus_round: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_quorum_consensus_round",
+                "Consensus round at which quorum was first observed on the session output. -1 if not in this lifetime.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_distinct_output_authorities: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_distinct_output_authorities",
+                "Number of distinct authorities that submitted an output for the session.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_local_output_rejected: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_local_output_rejected",
+                "-1 if this validator hasn't submitted an output, 0 if submitted success, 1 if submitted rejected.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            sessions_with_self_output_no_quorum: register_int_gauge_with_registry!(
+                "dwallet_mpc_sessions_with_self_output_no_quorum",
+                "User sessions where this validator submitted an output but no quorum has been observed.",
+                registry,
+            )
+            .unwrap(),
+            self_output_to_quorum_consensus_rounds: register_histogram_with_registry!(
+                "dwallet_mpc_self_output_to_quorum_consensus_rounds",
+                "Consensus rounds elapsed between this validator submitting an output and quorum being reached on it.",
+                vec![0.0, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 5000.0],
                 registry,
             )
             .unwrap(),
