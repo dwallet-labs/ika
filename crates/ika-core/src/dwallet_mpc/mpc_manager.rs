@@ -37,7 +37,13 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+use crate::dwallet_mpc::dwallet_mpc_metrics::{
+    AGE_BUCKETS, AGE_BUCKET_OVERFLOW, SESSION_STATE_ACTIVE, SESSION_STATE_COMPLETED,
+    SESSION_STATE_COMPUTATION_COMPLETED, SESSION_STATE_FAILED, SESSION_STATE_WAITING_FOR_REQUEST,
+    SESSION_TYPE_SYSTEM, SESSION_TYPE_USER,
+};
 
 /// The [`DWalletMPCManager`] manages MPC sessions:
 /// — Keeping track of all MPC sessions,
@@ -407,14 +413,40 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                self.generate_protocol_cryptographic_data(
+                let protocol_data_result = self.generate_protocol_cryptographic_data(
                     &session.computation_type,
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
                     &self.protocol_config,
-                )
-                .ok()?
+                );
+                let protocol_cryptographic_data_opt = match protocol_data_result {
+                    Ok(opt) => opt,
+                    Err(err) => {
+                        // Previously a silent `.ok()?` — that's how a stuck session can sit
+                        // in `self.sessions` indefinitely with neither an Advance nor a Reject
+                        // ever being submitted. Emit a warn + counter so this is visible.
+                        let protocol_metric_data = crate::dwallet_session_request::DWalletSessionRequestMetricData::from(
+                            &request.protocol_data,
+                        );
+                        let protocol_name = protocol_metric_data.name();
+                        self.dwallet_mpc_metrics
+                            .protocol_data_generation_errors_total
+                            .with_label_values(&[protocol_name, err.kind()])
+                            .inc();
+                        warn!(
+                            session_identifier = ?session.session_identifier,
+                            session_sequence_number = request.session_sequence_number,
+                            session_type = ?request.session_type,
+                            protocol_name,
+                            error = ?err,
+                            error_kind = err.kind(),
+                            "generate_protocol_cryptographic_data failed; session will be retried silently next tick"
+                        );
+                        return None;
+                    }
+                };
+                protocol_cryptographic_data_opt
                 .map(|protocol_cryptographic_data| {
                     let attempt_number = protocol_cryptographic_data.get_attempt_number();
                     let mpc_round = protocol_cryptographic_data.get_mpc_round();
@@ -675,8 +707,12 @@ impl DWalletMPCManager {
             error!(
                 authority=?self.validator_name,
                 malicious_authorities =? authorities,
+                malicious_actors_size = self.malicious_actors.len(),
                 "malicious actors identified & recorded"
             );
+            self.dwallet_mpc_metrics
+                .malicious_actors_size
+                .set(self.malicious_actors.len() as i64);
         }
     }
 
@@ -749,5 +785,101 @@ impl DWalletMPCManager {
                 );
             }
         };
+    }
+
+    /// Refresh the gauges that summarize the in-memory `sessions` map and the parking lots.
+    /// Cheap (O(sessions) per call) and idempotent; intended to be called once per service tick.
+    /// We deliberately re-emit zeros for every label so a previously-non-zero gauge for an
+    /// age bucket / state / network key clears out when nothing falls in that bucket anymore.
+    pub(crate) fn refresh_observability_metrics(&self) {
+        let m = &self.dwallet_mpc_metrics;
+        let now = std::time::Instant::now();
+
+        // ----- active sessions by (session_type, age_bucket) -----
+        let mut user_counts = vec![0i64; AGE_BUCKETS.len() + 1];
+        let mut system_counts = vec![0i64; AGE_BUCKETS.len() + 1];
+        // ----- session state counts -----
+        let mut state_active = 0i64;
+        let mut state_waiting = 0i64;
+        let mut state_comp_completed = 0i64;
+        let mut state_completed = 0i64;
+        let mut state_failed = 0i64;
+
+        for session in self.sessions.values() {
+            // For age, only Active sessions are meaningful — Completed/Failed sessions are
+            // tracked separately and don't represent in-flight work.
+            match &session.status {
+                SessionStatus::Active { request, .. } => {
+                    state_active += 1;
+                    let age = now.saturating_duration_since(session.created_at);
+                    let counts = match request.session_type {
+                        SessionType::User => &mut user_counts,
+                        SessionType::System => &mut system_counts,
+                    };
+                    let mut placed = false;
+                    for (idx, (_, threshold)) in AGE_BUCKETS.iter().enumerate() {
+                        if age < *threshold {
+                            counts[idx] += 1;
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if !placed {
+                        counts[AGE_BUCKETS.len()] += 1;
+                    }
+                }
+                SessionStatus::WaitingForSessionRequest => state_waiting += 1,
+                SessionStatus::ComputationCompleted => state_comp_completed += 1,
+                SessionStatus::Completed => state_completed += 1,
+                SessionStatus::Failed => state_failed += 1,
+            }
+        }
+
+        // Emit per (session_type, age_bucket). We emit a 0 explicitly for empty buckets so a
+        // stale "1" from a previous tick doesn't linger.
+        for (idx, (bucket_label, _)) in AGE_BUCKETS.iter().enumerate() {
+            m.active_sessions_by_age
+                .with_label_values(&[SESSION_TYPE_USER, bucket_label])
+                .set(user_counts[idx]);
+            m.active_sessions_by_age
+                .with_label_values(&[SESSION_TYPE_SYSTEM, bucket_label])
+                .set(system_counts[idx]);
+        }
+        m.active_sessions_by_age
+            .with_label_values(&[SESSION_TYPE_USER, AGE_BUCKET_OVERFLOW])
+            .set(user_counts[AGE_BUCKETS.len()]);
+        m.active_sessions_by_age
+            .with_label_values(&[SESSION_TYPE_SYSTEM, AGE_BUCKET_OVERFLOW])
+            .set(system_counts[AGE_BUCKETS.len()]);
+
+        m.session_state_count
+            .with_label_values(&[SESSION_STATE_ACTIVE])
+            .set(state_active);
+        m.session_state_count
+            .with_label_values(&[SESSION_STATE_WAITING_FOR_REQUEST])
+            .set(state_waiting);
+        m.session_state_count
+            .with_label_values(&[SESSION_STATE_COMPUTATION_COMPLETED])
+            .set(state_comp_completed);
+        m.session_state_count
+            .with_label_values(&[SESSION_STATE_COMPLETED])
+            .set(state_completed);
+        m.session_state_count
+            .with_label_values(&[SESSION_STATE_FAILED])
+            .set(state_failed);
+
+        // ----- parking lots -----
+        for (key_id, requests) in &self.requests_pending_for_network_key {
+            m.requests_pending_for_network_key
+                .with_label_values(&[&key_id.to_string()])
+                .set(requests.len() as i64);
+        }
+        m.requests_pending_for_next_active_committee
+            .set(self.requests_pending_for_next_active_committee.len() as i64);
+
+        // Keep malicious_actors_size fresh in case the only update path
+        // (record_malicious_actors) hasn't fired this epoch.
+        m.malicious_actors_size
+            .set(self.malicious_actors.len() as i64);
     }
 }

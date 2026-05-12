@@ -48,6 +48,11 @@ pub(crate) struct DWalletSession {
     pub(super) computation_type: SessionComputationType,
 
     outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
+
+    /// Monotonic-clock timestamp of when this session entry was first created on this validator.
+    /// Used to surface "session has been Active for N seconds" in metrics. Reset when a session
+    /// is recreated for a new epoch.
+    pub(super) created_at: std::time::Instant,
 }
 
 /// Possible statuses of a session:
@@ -117,6 +122,7 @@ impl DWalletSession {
             party_id,
             validator_name,
             computation_type,
+            created_at: std::time::Instant::now(),
         }
     }
 

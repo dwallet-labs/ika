@@ -272,6 +272,10 @@ impl DWalletMPCService {
         self.process_cryptographic_computations().await;
         self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
             .await;
+
+        // Recompute the in-memory observability gauges once per tick. Cheap relative to the rest
+        // of the loop, and it's the only signal that exposes "session has been Active for >2h".
+        self.dwallet_mpc_manager.refresh_observability_metrics();
     }
 
     async fn process_cryptographic_computations(&mut self) {
@@ -724,15 +728,23 @@ impl DWalletMPCService {
         party_id: u16,
         error: DwalletMPCError,
     ) {
+        let protocol_metric_data = DWalletSessionRequestMetricData::from(&request.protocol_data);
         error!(
             ?session_identifier,
+            session_sequence_number = request.session_sequence_number,
             validator=?validator_name,
             party_id,
             session_type=?request.session_type,
-            protocol_data=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+            protocol_data=?protocol_metric_data.to_string(),
             error=?error,
+            error_kind = error.kind(),
             "rejecting session."
         );
+        // Reason label uses the error kind — bounded cardinality, stable strings.
+        self.dwallet_mpc_metrics
+            .sessions_rejected_total
+            .with_label_values(&[protocol_metric_data.name(), error.kind()])
+            .inc();
 
         let consensus_adapter = self.dwallet_submit_to_consensus.clone();
         let rejected = true;
@@ -746,6 +758,7 @@ impl DWalletMPCService {
         {
             error!(
                 ?session_identifier,
+                session_sequence_number = request.session_sequence_number,
                 validator=?validator_name,
                 error=?err,
                 "failed to submit an MPC SessionFailed message to consensus"
