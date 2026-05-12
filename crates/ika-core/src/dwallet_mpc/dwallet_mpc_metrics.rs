@@ -21,8 +21,9 @@
 
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use prometheus::{
-    GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    GaugeVec, IntCounterVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
+    register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry,
 };
 use std::sync::Arc;
 
@@ -97,6 +98,43 @@ pub struct DWalletMPCMetrics {
     pub number_of_unexpected_sign_sessions: IntGauge,
     /// The last process MPC consensus round.
     pub last_process_mpc_consensus_round: IntGauge,
+
+    /// Histogram-by-bucket of how long each currently-tracked session has been Active for.
+    /// Labels: `session_type` ("user" / "system"), `age_bucket` (`<30s`, `<5m`, `<30m`, `<2h`, `>=2h`).
+    /// A non-zero `>=2h` bucket for user sessions is the smoking gun of an MPC deadlock.
+    pub active_sessions_by_age: IntGaugeVec,
+
+    /// Counts of sessions currently tracked by the manager grouped by status.
+    /// Labels: `state` in {`active`, `waiting_for_session_request`, `computation_completed`,
+    /// `completed`, `failed`}.
+    pub session_state_count: IntGaugeVec,
+
+    /// Counter for the outcome of every `try_ready_to_advance` invocation.
+    /// Labels: `protocol`, `result` in {`ready`, `not_ready`, `err`}.
+    /// A growing `not_ready` or `err` count for a specific protocol/round explains why
+    /// `dwallet_mpc_advance_completions` is stuck.
+    pub ready_to_advance_result_total: IntCounterVec,
+
+    /// Counter for `generate_protocol_cryptographic_data` errors that would otherwise be
+    /// silently swallowed by `.ok()?` in `perform_cryptographic_computation`.
+    /// Labels: `protocol`, `error` (a stable short string for the error class).
+    pub protocol_data_generation_errors_total: IntCounterVec,
+
+    /// Counter for every call into `submit_failed_session` in dwallet_mpc_service.
+    /// Labels: `protocol`, `reason` (e.g. `mpc_error`, `failed_to_create_session`).
+    pub sessions_rejected_total: IntCounterVec,
+
+    /// Size of `DWalletMPCManager.malicious_actors`. Reset to 0 on each new epoch.
+    /// When this approaches a threshold-relevant fraction of stake, user MPC may deadlock.
+    pub malicious_actors_size: IntGauge,
+
+    /// Size of each parking lot in `DWalletMPCManager.requests_pending_for_network_key`.
+    /// Labels: `network_encryption_key_id`. Sustained non-zero values indicate the validator
+    /// is missing the key data needed to process incoming sessions.
+    pub requests_pending_for_network_key: IntGaugeVec,
+
+    /// Size of `DWalletMPCManager.requests_pending_for_next_active_committee`.
+    pub requests_pending_for_next_active_committee: IntGauge,
 }
 
 impl DWalletMPCMetrics {
@@ -214,9 +252,90 @@ impl DWalletMPCMetrics {
                 registry
             )
             .unwrap(),
+            active_sessions_by_age: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_active_sessions_by_age",
+                "Active session count by session type and age bucket",
+                &["session_type", "age_bucket"],
+                registry,
+            )
+            .unwrap(),
+            session_state_count: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_session_state_count",
+                "Number of sessions currently tracked, grouped by status",
+                &["state"],
+                registry,
+            )
+            .unwrap(),
+            ready_to_advance_result_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_ready_to_advance_result_total",
+                "Counts of try_ready_to_advance outcomes per protocol",
+                &["protocol", "result"],
+                registry,
+            )
+            .unwrap(),
+            protocol_data_generation_errors_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_protocol_data_generation_errors_total",
+                "Count of generate_protocol_cryptographic_data errors, by protocol and error class",
+                &["protocol", "error"],
+                registry,
+            )
+            .unwrap(),
+            sessions_rejected_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_sessions_rejected_total",
+                "Count of submit_failed_session calls, by protocol and reason",
+                &["protocol", "reason"],
+                registry,
+            )
+            .unwrap(),
+            malicious_actors_size: register_int_gauge_with_registry!(
+                "dwallet_mpc_malicious_actors_size",
+                "Size of the manager's in-memory malicious_actors set",
+                registry,
+            )
+            .unwrap(),
+            requests_pending_for_network_key: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_requests_pending_for_network_key",
+                "Per-key pending session-request parking lot size",
+                &["network_encryption_key_id"],
+                registry,
+            )
+            .unwrap(),
+            requests_pending_for_next_active_committee: register_int_gauge_with_registry!(
+                "dwallet_mpc_requests_pending_for_next_active_committee",
+                "Sessions parked waiting for the next active committee",
+                registry,
+            )
+            .unwrap(),
         })
     }
 }
+
+/// Age buckets used by `active_sessions_by_age`. Order matters: we bucket into the FIRST
+/// matching bucket. Keep label strings stable — alerts depend on them.
+pub(crate) const AGE_BUCKETS: &[(&str, std::time::Duration)] = &[
+    ("<30s", std::time::Duration::from_secs(30)),
+    ("<5m", std::time::Duration::from_secs(300)),
+    ("<30m", std::time::Duration::from_secs(1800)),
+    ("<2h", std::time::Duration::from_secs(7200)),
+];
+/// Open-ended bucket label for ages >= last threshold.
+pub(crate) const AGE_BUCKET_OVERFLOW: &str = ">=2h";
+
+/// Stable label strings for `session_state_count`.
+pub(crate) const SESSION_STATE_ACTIVE: &str = "active";
+pub(crate) const SESSION_STATE_WAITING_FOR_REQUEST: &str = "waiting_for_session_request";
+pub(crate) const SESSION_STATE_COMPUTATION_COMPLETED: &str = "computation_completed";
+pub(crate) const SESSION_STATE_COMPLETED: &str = "completed";
+pub(crate) const SESSION_STATE_FAILED: &str = "failed";
+
+/// Stable label strings for `ready_to_advance_result_total`.
+pub(crate) const READY_RESULT_READY: &str = "ready";
+pub(crate) const READY_RESULT_NOT_READY: &str = "not_ready";
+pub(crate) const READY_RESULT_ERR: &str = "err";
+
+/// Stable label strings for the `session_type` label.
+pub(crate) const SESSION_TYPE_USER: &str = "user";
+pub(crate) const SESSION_TYPE_SYSTEM: &str = "system";
 
 impl DWalletMPCMetrics {
     /// Records the completion of an MPC protocol session.

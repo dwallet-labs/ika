@@ -77,6 +77,22 @@ struct EpochSwitchState {
     calculated_protocol_pricing: bool,
 }
 
+/// Label values for `SuiConnectorMetrics::epoch_switch_step_done`. The set is closed and shared
+/// with dashboards/alerts — adding a step here means updating the dashboard too.
+const EPOCH_SWITCH_STEP_MID_EPOCH: &str = "mid_epoch";
+const EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG: &str =
+    "network_encryption_key_mid_epoch_reconfiguration";
+const EPOCH_SWITCH_STEP_CALC_PRICING: &str = "calculate_protocols_pricing";
+const EPOCH_SWITCH_STEP_LOCK_LAST_SESSION: &str = "lock_last_session";
+const EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH: &str = "request_advance_epoch";
+const EPOCH_SWITCH_STEPS: &[&str] = &[
+    EPOCH_SWITCH_STEP_MID_EPOCH,
+    EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG,
+    EPOCH_SWITCH_STEP_CALC_PRICING,
+    EPOCH_SWITCH_STEP_LOCK_LAST_SESSION,
+    EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH,
+];
+
 impl<C> SuiExecutor<C>
 where
     C: SuiClientInner + 'static,
@@ -145,6 +161,7 @@ where
                     sui_notifier,
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
+                    self.metrics.clone(),
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -156,6 +173,10 @@ where
             }
             info!("Successfully processed mid-epoch");
             epoch_switch_state.ran_mid_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_MID_EPOCH])
+                .set(1);
         }
         let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
             self.sui_client.get_dwallet_coordinator_inner().await
@@ -197,6 +218,7 @@ where
                         network_encryption_for_reconfiguration_key_ids.clone(),
                         sui_notifier,
                         self.notifier_tx_lock.clone(),
+                        self.metrics.clone(),
                     ),
                     Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
@@ -209,6 +231,10 @@ where
                 info!("Successfully network encryption key mid-epoch reconfiguration");
             }
             epoch_switch_state.network_encryption_key_mid_epoch_reconfiguration = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_NETWORK_KEY_RECONFIG])
+                .set(1);
         }
 
         if clock.timestamp_ms > mid_epoch_time
@@ -251,7 +277,8 @@ where
                         ika_dwallet_2pc_mpc_package_id,
                         sui_notifier,
                         self.notifier_tx_lock.clone(),
-                        default_pricing_keys_chunk
+                        default_pricing_keys_chunk,
+                        self.metrics.clone(),
                     ),
                     Duration::from_secs(ONE_HOUR_IN_SECONDS)
                 );
@@ -264,6 +291,10 @@ where
             }
             info!("Successfully calculated protocols pricing");
             epoch_switch_state.calculated_protocol_pricing = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_CALC_PRICING])
+                .set(1);
         }
 
         let SystemInner::V1(system_inner_v1) = &ika_system_state_inner;
@@ -290,6 +321,7 @@ where
                     sui_notifier,
                     &self.sui_client,
                     self.notifier_tx_lock.clone(),
+                    self.metrics.clone(),
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -300,6 +332,10 @@ where
                 );
             }
             epoch_switch_state.ran_lock_last_session = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_LOCK_LAST_SESSION])
+                .set(1);
             info!("Successfully locked last session in current epoch");
         }
         if coordinator_inner.received_end_of_publish
@@ -314,6 +350,7 @@ where
                     sui_notifier,
                     &self.sui_client.clone(),
                     self.notifier_tx_lock.clone(),
+                    self.metrics.clone(),
                 ),
                 Duration::from_secs(ONE_HOUR_IN_SECONDS)
             );
@@ -325,6 +362,10 @@ where
             }
             info!("Successfully requested advance epoch");
             epoch_switch_state.ran_request_advance_epoch = true;
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[EPOCH_SWITCH_STEP_REQUEST_ADVANCE_EPOCH])
+                .set(1);
         }
     }
 
@@ -360,6 +401,14 @@ where
             network_encryption_key_mid_epoch_reconfiguration: false,
             calculated_protocol_pricing: false,
         };
+        // Zero every step at the start of the epoch so a stale `1` from the previous epoch's run
+        // can't mislead an operator into thinking we already advanced for this epoch.
+        for step in EPOCH_SWITCH_STEPS {
+            self.metrics
+                .epoch_switch_step_done
+                .with_label_values(&[step])
+                .set(0);
+        }
 
         loop {
             interval.tick().await;
@@ -604,6 +653,7 @@ where
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
@@ -637,7 +687,7 @@ where
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, &metrics).await?)
     }
 
     async fn calculate_protocols_pricing(
@@ -646,6 +696,7 @@ where
         sui_notifier: &SuiNotifier,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
         default_pricing_keys: &[PricingInfoKey],
+        metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
@@ -692,33 +743,64 @@ where
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, &metrics).await?)
     }
 
     async fn submit_tx_to_sui(
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
         transaction: Transaction,
         sui_client: &Arc<SuiClient<C>>,
+        metrics: &Arc<SuiConnectorMetrics>,
     ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
         let mut last_submitted_tx_digest = notifier_tx_lock.lock().await;
         if let Some(prev_digest) = *last_submitted_tx_digest {
+            // We loop until the previous tx digest becomes visible via `get_events_by_tx_digest`,
+            // which is the notifier's serialization point. A long wait here means the notifier
+            // is bottlenecked on RPC visibility (not on tx execution); the histogram surfaces it.
+            let started = std::time::Instant::now();
+            let mut warned_30s = false;
+            let mut warned_5min = false;
             while sui_client
                 .get_events_by_tx_digest(prev_digest)
                 .await
                 .is_err()
             {
-                info!(
-                    transaction_digest = ?prev_digest,
-                    "The last submitted transaction has not been processed yet, retrying..."
-                );
+                let elapsed = started.elapsed();
+                if elapsed >= Duration::from_secs(300) && !warned_5min {
+                    error!(
+                        transaction_digest = ?prev_digest,
+                        elapsed_seconds = elapsed.as_secs(),
+                        "Notifier tx-lock has been waiting on previous tx for >= 5 minutes — Sui RPC may be lagging or the tx never landed"
+                    );
+                    warned_5min = true;
+                } else if elapsed >= Duration::from_secs(30) && !warned_30s {
+                    warn!(
+                        transaction_digest = ?prev_digest,
+                        elapsed_seconds = elapsed.as_secs(),
+                        "Notifier tx-lock has been waiting on previous tx for >= 30 seconds"
+                    );
+                    warned_30s = true;
+                } else {
+                    info!(
+                        transaction_digest = ?prev_digest,
+                        elapsed_seconds = elapsed.as_secs(),
+                        "The last submitted transaction has not been processed yet, retrying..."
+                    );
+                }
                 // Small delay to avoid spamming the node.
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
+            let wait_seconds = started.elapsed().as_secs_f64();
+            metrics
+                .notifier_tx_lock_wait_seconds
+                .observe(wait_seconds);
+
             info!(
-            transaction_digest = ?prev_digest,
-            "The last submitted transaction has been processed, submitting the next one",
-                        );
+                transaction_digest = ?prev_digest,
+                wait_seconds,
+                "The last submitted transaction has been processed, submitting the next one",
+            );
         }
 
         info!(
@@ -766,6 +848,7 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_mid_epoch()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
@@ -830,7 +913,7 @@ where
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, &metrics).await?)
     }
 
     async fn lock_last_session_to_complete_in_current_epoch(
@@ -839,6 +922,7 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Process `lock_last_active_session_sequence_number()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
@@ -896,7 +980,7 @@ where
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, &metrics).await?)
     }
 
     async fn process_request_advance_epoch(
@@ -905,6 +989,7 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_request_advance_epoch()`");
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
@@ -970,7 +1055,7 @@ where
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
+        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, &metrics).await?)
     }
 
     async fn handle_dwallet_checkpoint_execution_task(
@@ -983,6 +1068,7 @@ where
         metrics: &Arc<SuiConnectorMetrics>,
         notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
+        // metrics is already on this fn — pass it down to submit_tx_to_sui
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
@@ -1049,7 +1135,7 @@ where
         )
         .await;
 
-        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
+        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, metrics).await {
             Ok(result) => Ok(result),
             Err(err) => {
                 error!(error=?err, "failed to submit dwallet checkpoint to sui",);
@@ -1127,7 +1213,7 @@ where
         )
         .await;
 
-        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
+        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client, metrics).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 error!(error=?err, "failed to submit a system checkpoint to consensus");

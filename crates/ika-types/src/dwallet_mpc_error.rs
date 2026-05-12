@@ -219,6 +219,109 @@ pub enum DwalletMPCError {
     InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
 }
 
+impl DwalletMPCError {
+    /// Returns a short, stable label suitable for use as a Prometheus metric label value.
+    /// Cardinality is bounded: one variant ⇒ one label. Keep these strings stable —
+    /// alerts depend on them.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            DwalletMPCError::MPCSessionNotFound { .. } => "mpc_session_not_found",
+            DwalletMPCError::AggregatedSignStateNotFound { .. } => "aggregated_sign_state_not_found",
+            DwalletMPCError::MPCSessionError { .. } => "mpc_session_error",
+            DwalletMPCError::EpochEnded(_) => "epoch_ended",
+            DwalletMPCError::AuthorityNameNotFound(_) => "authority_name_not_found",
+            DwalletMPCError::AuthorityIndexNotFound(_) => "authority_index_not_found",
+            DwalletMPCError::BcsError(_) => "bcs_error",
+            DwalletMPCError::InvalidMPCPartyType(_) => "invalid_mpc_party_type",
+            DwalletMPCError::MaliciousParties(_) => "malicious_parties",
+            DwalletMPCError::MessageDigest(_) => "message_digest",
+            DwalletMPCError::MPCManagerError(_) => "mpc_manager_error",
+            DwalletMPCError::MissingDwalletMPCClassGroupsDecryptionShares => {
+                "missing_class_groups_decryption_shares"
+            }
+            DwalletMPCError::MissingDwalletMPCOutputsVerifier => "missing_outputs_verifier",
+            DwalletMPCError::MissingDWalletMPCBatchesManager => "missing_batches_manager",
+            DwalletMPCError::MissingDWalletMPCSender => "missing_mpc_sender",
+            DwalletMPCError::MissingRootSeed => "missing_root_seed",
+            DwalletMPCError::DWalletMPCSenderSendFailed(_) => "mpc_sender_send_failed",
+            DwalletMPCError::DwalletMPCClassGroupsDecryptionShareMissing(_) => {
+                "class_groups_decryption_share_missing"
+            }
+            DwalletMPCError::MissingDwalletMPCDecryptionSharesPublicParameters => {
+                "missing_decryption_shares_public_parameters"
+            }
+            DwalletMPCError::TwoPCMPCError(_) => "twopc_mpc_error",
+            DwalletMPCError::MPCError(_) => "mpc_error",
+            DwalletMPCError::MissingMessageInBatch(_) => "missing_message_in_batch",
+            DwalletMPCError::MissingDwalletMPCDecryptionKeyShares(_) => {
+                "missing_decryption_key_shares"
+            }
+            DwalletMPCError::NetworkDecryptionKeyNotReady => "network_decryption_key_not_ready",
+            DwalletMPCError::LockError => "lock_error",
+            DwalletMPCError::EncryptedUserShareVerificationFailed(_) => {
+                "encrypted_user_share_verification_failed"
+            }
+            DwalletMPCError::SecretShareVerificationFailed(_) => "secret_share_verification_failed",
+            DwalletMPCError::EncryptedUserSharePublicKeyDoesNotMatchAddress => {
+                "encrypted_user_share_pubkey_mismatch"
+            }
+            DwalletMPCError::DwalletNetworkMPCError(_) => "network_mpc_error",
+            DwalletMPCError::ClassGroups(_) => "class_groups",
+            DwalletMPCError::FailedToReadSeed(_) => "failed_to_read_seed",
+            DwalletMPCError::FailedToWriteSeed(_) => "failed_to_write_seed",
+            DwalletMPCError::MissingMPCPrivateInput => "missing_mpc_private_input",
+            DwalletMPCError::InvalidPartyPublicKey(_) => "invalid_party_public_key",
+            DwalletMPCError::DwalletMPCNetworkKeysNotFound => "network_keys_not_found",
+            DwalletMPCError::SignatureVerificationFailed(_) => "signature_verification_failed",
+            DwalletMPCError::FailedToGetAvailableParallelism(_) => {
+                "failed_to_get_available_parallelism"
+            }
+            DwalletMPCError::InsufficientCPUCores => "insufficient_cpu_cores",
+            DwalletMPCError::SerdeError(_) => "serde_error",
+            DwalletMPCError::PresignRoundDataNotFound => "presign_round_data_not_found",
+            DwalletMPCError::UnsupportedNetworkDKGKeyScheme => "unsupported_network_dkg_key_scheme",
+            DwalletMPCError::MessageForFirstMPCStep => "message_for_first_mpc_step",
+            DwalletMPCError::MissingNextActiveCommittee(_) => "missing_next_active_committee",
+            DwalletMPCError::MissingEventDrivenData => "missing_event_driven_data",
+            DwalletMPCError::ClassGroupsKeyPairNotFound => "class_groups_keypair_not_found",
+            DwalletMPCError::NetworkDKGNotCompleted => "network_dkg_not_completed",
+            DwalletMPCError::ValidatorIDNotFound(_) => "validator_id_not_found",
+            DwalletMPCError::IkaError(_) => "ika_error",
+            DwalletMPCError::WaitingForNetworkKey(_) => "waiting_for_network_key",
+            DwalletMPCError::DWalletSecretNotMatchedDWalletOutput => {
+                "dwallet_secret_not_matched_output"
+            }
+            DwalletMPCError::DecryptionKeyEpochMismatch { .. } => "decryption_key_epoch_mismatch",
+            DwalletMPCError::InvalidSessionPublicInput => "invalid_session_public_input",
+            DwalletMPCError::TokioRecv => "tokio_recv",
+            DwalletMPCError::CheckpointMessageIsEmpty => "checkpoint_message_is_empty",
+            DwalletMPCError::InvalidDWalletProtocolType => "invalid_dwallet_protocol_type",
+            DwalletMPCError::InvalidHashScheme => "invalid_hash_scheme",
+            DwalletMPCError::InternalError(_) => "internal_error",
+            DwalletMPCError::InvalidInput(_) => "invalid_input",
+            DwalletMPCError::MissingProtocolPublicParametersForCurve(_) => {
+                "missing_protocol_public_parameters_for_curve"
+            }
+            DwalletMPCError::CentralizedSecretKeyShareProofVerificationFailed(_) => {
+                "centralized_secret_key_share_proof_verification_failed"
+            }
+            DwalletMPCError::FailedToAdvanceMPC(_) => "failed_to_advance_mpc",
+            DwalletMPCError::PublicInputMismatch => "public_input_mismatch",
+            DwalletMPCError::MPCParametersMissmatchInputToRequest(_, _) => {
+                "mpc_parameters_mismatch_input_to_request"
+            }
+            DwalletMPCError::CurveToProtocolMismatch { .. } => "curve_to_protocol_mismatch",
+            DwalletMPCError::UnsupportedProtocolVersion(_) => "unsupported_protocol_version",
+            DwalletMPCError::InvalidPartiallySignedMessageVersion => {
+                "invalid_partially_signed_message_version"
+            }
+            DwalletMPCError::InvalidCentralizedPartyImportedDWalletPublicOutputVersion => {
+                "invalid_centralized_party_imported_dwallet_public_output_version"
+            }
+        }
+    }
+}
+
 /// A wrapper type for the result of a runtime operation.
 pub type DwalletMPCResult<T> = Result<T, DwalletMPCError>;
 

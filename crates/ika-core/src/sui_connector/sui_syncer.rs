@@ -93,9 +93,11 @@ where
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
+                sui_client_clone.clone(),
                 system_object_receiver.clone(),
                 dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
+                self.metrics.clone(),
             ));
             info!("Syncing last session to complete in current epoch");
             tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
@@ -444,12 +446,24 @@ where
     }
 
     async fn sync_dwallet_end_of_publish(
+        sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         end_of_publish_sender: Sender<Option<u64>>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
+        // The reason labels we publish are stable identifiers — a dashboard query like
+        // `sui_connector_end_of_publish_blocked_reason{reason!=""} == 1` enumerates the blockers.
+        const REASONS: &[&str] = &[
+            "not_locked",
+            "user_sessions_lag",
+            "system_sessions_lag",
+            "next_committee_missing",
+            "network_keys_reconfig_lag",
+            "pricing_votes_open",
+        ];
         loop {
             time::sleep(Duration::from_secs(10)).await;
 
@@ -467,40 +481,116 @@ where
                 continue;
             };
             let DWalletCoordinatorInner::V1(coordinator) = coordinator_inner;
-            // Check if we can advance the epoch.
-            let all_epoch_sessions_finished = coordinator
+
+            // --- Mirror raw chain state on the notifier so an operator can see it without
+            //     a Sui RPC round-trip from a dashboard. These are exposed even if we can't
+            //     reach a decision below.
+            metrics.chain_received_end_of_publish.with_label_values(&["system"]).set(
+                if system_inner_v1.received_end_of_publish { 1 } else { 0 },
+            );
+            metrics.chain_received_end_of_publish.with_label_values(&["coordinator"]).set(
+                if coordinator.received_end_of_publish { 1 } else { 0 },
+            );
+            metrics
+                .chain_active_user_sessions_count
+                .set(coordinator.sessions_manager.user_sessions_keeper.sessions.size as i64);
+            metrics
+                .chain_active_system_sessions_count
+                .set(coordinator.sessions_manager.system_sessions_keeper.sessions.size as i64);
+
+            // user_sessions_lag = target - completed; can be negative if completed > target
+            // (which would itself be a bug, hence the signed gauge).
+            let lock_target = coordinator
+                .sessions_manager
+                .last_user_initiated_session_to_complete_in_current_epoch
+                as i64;
+            let completed_user_sessions = coordinator
+                .sessions_manager
+                .user_sessions_keeper
+                .completed_sessions_count as i64;
+            metrics
+                .chain_user_sessions_lag
+                .set(lock_target - completed_user_sessions);
+
+            // chain_epoch_overdue_seconds — best effort; if the clock fetch fails we just leave the
+            // previous value in place rather than zeroing it (zero is meaningful here).
+            if let Ok(clock) = sui_client.get_clock().await {
+                let epoch_end_ms = system_inner_v1
+                    .epoch_start_timestamp_ms
+                    .saturating_add(system_inner_v1.epoch_duration_ms);
+                let overdue_ms = clock.timestamp_ms.saturating_sub(epoch_end_ms);
+                metrics.chain_epoch_overdue_seconds.set((overdue_ms / 1000) as i64);
+            }
+
+            // --- Compute the six gating conditions individually so we can attribute "blocked".
+            // A `true` here means "this condition is currently blocking end-of-publish".
+            let not_locked = !coordinator
+                .sessions_manager
+                .locked_last_user_initiated_session_to_complete_in_current_epoch;
+            let user_sessions_lag = coordinator
                 .sessions_manager
                 .user_sessions_keeper
                 .completed_sessions_count
-                == coordinator
+                != coordinator
                     .sessions_manager
                     .last_user_initiated_session_to_complete_in_current_epoch;
-            let all_immediate_sessions_completed = coordinator
+            let system_sessions_lag = coordinator
                 .sessions_manager
                 .system_sessions_keeper
                 .started_sessions_count
-                == coordinator
+                != coordinator
                     .sessions_manager
                     .system_sessions_keeper
                     .completed_sessions_count;
-            let next_epoch_committee_exists =
-                system_inner_v1.validator_set.next_epoch_committee.is_some();
-            let all_network_encryption_keys_reconfiguration_completed =
-                coordinator.dwallet_network_encryption_keys.size
-                    == coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
-            if coordinator
-                .sessions_manager
-                .locked_last_user_initiated_session_to_complete_in_current_epoch
-                && all_epoch_sessions_finished
-                && all_immediate_sessions_completed
-                && next_epoch_committee_exists
-                && all_network_encryption_keys_reconfiguration_completed
-                && coordinator
-                    .pricing_and_fee_management
-                    .calculation_votes
-                    .is_none()
-                && let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch))
-            {
+            let next_committee_missing =
+                system_inner_v1.validator_set.next_epoch_committee.is_none();
+            let network_keys_reconfig_lag = coordinator.dwallet_network_encryption_keys.size
+                != coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
+            let pricing_votes_open = coordinator
+                .pricing_and_fee_management
+                .calculation_votes
+                .is_some();
+
+            let blocked_by = [
+                ("not_locked", not_locked),
+                ("user_sessions_lag", user_sessions_lag),
+                ("system_sessions_lag", system_sessions_lag),
+                ("next_committee_missing", next_committee_missing),
+                ("network_keys_reconfig_lag", network_keys_reconfig_lag),
+                ("pricing_votes_open", pricing_votes_open),
+            ];
+            for (reason, is_blocking) in blocked_by {
+                metrics
+                    .end_of_publish_blocked_reason
+                    .with_label_values(&[reason])
+                    .set(if is_blocking { 1 } else { 0 });
+            }
+            // Also explicitly zero out any reason we don't currently publish, so a dashboard
+            // showing stale labels from a previous build doesn't mislead.
+            for reason in REASONS {
+                if !blocked_by.iter().any(|(r, _)| r == reason) {
+                    metrics
+                        .end_of_publish_blocked_reason
+                        .with_label_values(&[reason])
+                        .set(0);
+                }
+            }
+
+            let any_blocking = blocked_by.iter().any(|(_, b)| *b);
+            if any_blocking {
+                let blocking_reasons: Vec<&str> =
+                    blocked_by.iter().filter(|(_, b)| *b).map(|(r, _)| *r).collect();
+                debug!(
+                    epoch = system_inner_v1.epoch,
+                    ?blocking_reasons,
+                    completed_user_sessions,
+                    lock_target,
+                    "end_of_publish gating: still blocked"
+                );
+                continue;
+            }
+
+            if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
                 error!(error=?err, "failed to send end of publish epoch to the channel");
             }
         }

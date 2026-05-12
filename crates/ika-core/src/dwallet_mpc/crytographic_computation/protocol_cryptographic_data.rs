@@ -332,7 +332,7 @@ impl DWalletMPCManager {
         public_input: PublicInput,
         protocol_config: &ProtocolConfig,
     ) -> Result<Option<ProtocolCryptographicData>, DwalletMPCError> {
-        match session_type {
+        let result = match session_type {
             SessionComputationType::Native => {
                 ProtocolCryptographicData::try_new_native(protocol_data, public_input)
             }
@@ -354,6 +354,24 @@ impl DWalletMPCManager {
                 &self.network_keys,
                 protocol_config,
             ),
-        }
+        };
+
+        // Categorize the outcome (ready / not_ready / err) by protocol so a stuck session can
+        // be attributed to either repeated NotReady (Path A) or repeated Err (Path B). The
+        // caller would otherwise treat all three identically and emit no signal.
+        let protocol_metric_data =
+            crate::dwallet_session_request::DWalletSessionRequestMetricData::from(protocol_data);
+        let protocol_name = protocol_metric_data.name();
+        let result_label = match &result {
+            Ok(Some(_)) => crate::dwallet_mpc::dwallet_mpc_metrics::READY_RESULT_READY,
+            Ok(None) => crate::dwallet_mpc::dwallet_mpc_metrics::READY_RESULT_NOT_READY,
+            Err(_) => crate::dwallet_mpc::dwallet_mpc_metrics::READY_RESULT_ERR,
+        };
+        self.dwallet_mpc_metrics
+            .ready_to_advance_result_total
+            .with_label_values(&[protocol_name, result_label])
+            .inc();
+
+        result
     }
 }
