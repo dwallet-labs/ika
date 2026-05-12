@@ -90,6 +90,12 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) decryption_key_reconfiguration_third_round_delay: u64,
     sui_data_receivers: SuiDataReceivers,
     pub(crate) protocol_config: ProtocolConfig,
+
+    /// User-session sequence numbers that were last emitted to
+    /// `dwallet_mpc_user_session_state`. Used to zero out series for sessions that have left
+    /// `self.sessions` (e.g. after epoch advance) so dashboards don't read stale "this
+    /// session is still in state X" forever.
+    previously_emitted_user_session_seqs: HashSet<u64>,
 }
 
 impl DWalletMPCManager {
@@ -172,6 +178,7 @@ impl DWalletMPCManager {
             network_dkg_third_round_delay,
             decryption_key_reconfiguration_third_round_delay,
             protocol_config,
+            previously_emitted_user_session_seqs: HashSet::new(),
         })
     }
 
@@ -769,11 +776,17 @@ impl DWalletMPCManager {
         &mut self,
         session_identifier: &SessionIdentifier,
         session_type: SessionComputationType,
+        session_sequence_number: Option<u64>,
+        on_chain_session_type: Option<ika_types::messages_dwallet_mpc::SessionType>,
     ) {
         match self.sessions.entry(*session_identifier) {
-            Entry::Occupied(session) => session
-                .into_mut()
-                .mark_mpc_session_as_computation_completed(),
+            Entry::Occupied(session) => {
+                let session = session.into_mut();
+                session.mark_mpc_session_as_computation_completed();
+                if let (Some(seq), Some(ty)) = (session_sequence_number, on_chain_session_type) {
+                    session.set_request_metadata(seq, ty);
+                }
+            }
             Entry::Vacant(_) => {
                 // This can happen if the session is not in the active sessions,
                 // but we still want to store the message.
@@ -783,6 +796,11 @@ impl DWalletMPCManager {
                     SessionStatus::ComputationCompleted,
                     session_type,
                 );
+                if let (Some(seq), Some(ty)) = (session_sequence_number, on_chain_session_type) {
+                    if let Some(session) = self.sessions.get_mut(session_identifier) {
+                        session.set_request_metadata(seq, ty);
+                    }
+                }
             }
         };
     }
@@ -791,7 +809,7 @@ impl DWalletMPCManager {
     /// Cheap (O(sessions) per call) and idempotent; intended to be called once per service tick.
     /// We deliberately re-emit zeros for every label so a previously-non-zero gauge for an
     /// age bucket / state / network key clears out when nothing falls in that bucket anymore.
-    pub(crate) fn refresh_observability_metrics(&self) {
+    pub(crate) fn refresh_observability_metrics(&mut self) {
         let m = &self.dwallet_mpc_metrics;
         let now = std::time::Instant::now();
 
@@ -881,5 +899,63 @@ impl DWalletMPCManager {
         // (record_malicious_actors) hasn't fired this epoch.
         m.malicious_actors_size
             .set(self.malicious_actors.len() as i64);
+
+        // ----- per-user-session state, labeled by sequence number -----
+        // For every user session this validator is tracking, emit five series
+        // (one per state) where exactly one is 1. For sessions that have left
+        // `self.sessions` since the last tick, emit one final round of zeros so
+        // dashboards don't read a stale "1" forever.
+        const ALL_STATES: &[&str] = &[
+            SESSION_STATE_ACTIVE,
+            SESSION_STATE_WAITING_FOR_REQUEST,
+            SESSION_STATE_COMPUTATION_COMPLETED,
+            SESSION_STATE_COMPLETED,
+            SESSION_STATE_FAILED,
+        ];
+        let mut current_seqs: HashSet<u64> = HashSet::new();
+        for session in self.sessions.values() {
+            let (Some(seq), Some(ty)) =
+                (session.session_sequence_number, session.session_type)
+            else {
+                // Session entry exists but hasn't seen a request yet — we can't label it
+                // by sequence number. It will be exposed once its request arrives.
+                continue;
+            };
+            if !matches!(ty, ika_types::messages_dwallet_mpc::SessionType::User) {
+                continue;
+            }
+            let current_state = match &session.status {
+                SessionStatus::Active { .. } => SESSION_STATE_ACTIVE,
+                SessionStatus::WaitingForSessionRequest => SESSION_STATE_WAITING_FOR_REQUEST,
+                SessionStatus::ComputationCompleted => SESSION_STATE_COMPUTATION_COMPLETED,
+                SessionStatus::Completed => SESSION_STATE_COMPLETED,
+                SessionStatus::Failed => SESSION_STATE_FAILED,
+            };
+            let seq_str = seq.to_string();
+            for state in ALL_STATES {
+                let value = if *state == current_state { 1 } else { 0 };
+                m.user_session_state
+                    .with_label_values(&[seq_str.as_str(), state])
+                    .set(value);
+            }
+            current_seqs.insert(seq);
+        }
+
+        // Sessions that disappeared from `self.sessions` between this tick and the previous
+        // — flip them all to zero so the dashboard reflects "no longer tracked here".
+        for stale_seq in self
+            .previously_emitted_user_session_seqs
+            .difference(&current_seqs)
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            let seq_str = stale_seq.to_string();
+            for state in ALL_STATES {
+                m.user_session_state
+                    .with_label_values(&[seq_str.as_str(), state])
+                    .set(0);
+            }
+        }
+        self.previously_emitted_user_session_seqs = current_seqs;
     }
 }

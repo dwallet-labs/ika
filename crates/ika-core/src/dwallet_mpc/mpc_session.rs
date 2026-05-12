@@ -7,7 +7,9 @@ use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier, SessionType,
+};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
 use tracing::{debug, error, info, warn};
@@ -53,6 +55,16 @@ pub(crate) struct DWalletSession {
     /// Used to surface "session has been Active for N seconds" in metrics. Reset when a session
     /// is recreated for a new epoch.
     pub(super) created_at: std::time::Instant,
+
+    /// Sequence number of this session on chain. `None` if the session was first observed
+    /// via a stray message/output (i.e. created in `WaitingForSessionRequest`) and no
+    /// request has arrived since. Populated as soon as we ever see a `DWalletSessionRequest`
+    /// for this session, and *preserved* across status transitions to ComputationCompleted /
+    /// Completed / Failed (whose variants are unit). Used by metrics to label sessions by seq.
+    pub(super) session_sequence_number: Option<u64>,
+
+    /// Same idea — set to `Some(_)` once we've seen a request, preserved across transitions.
+    pub(super) session_type: Option<SessionType>,
 }
 
 /// Possible statuses of a session:
@@ -115,6 +127,14 @@ impl DWalletSession {
         party_id: PartyID,
         computation_type: SessionComputationType,
     ) -> Self {
+        // If the new session was created with an Active status the request is right there;
+        // pull seq/type out of it so they survive any later transition to a unit variant.
+        let (session_sequence_number, session_type) = match &status {
+            SessionStatus::Active { request, .. } => {
+                (Some(request.session_sequence_number), Some(request.session_type))
+            }
+            _ => (None, None),
+        };
         Self {
             status,
             outputs_by_consensus_round: HashMap::new(),
@@ -123,7 +143,17 @@ impl DWalletSession {
             validator_name,
             computation_type,
             created_at: std::time::Instant::now(),
+            session_sequence_number,
+            session_type,
         }
+    }
+
+    /// Records the session's on-chain identity (sequence number + type) on this session entry.
+    /// Idempotent — first non-None write wins, subsequent calls re-confirm but never clobber
+    /// with `None`. Called whenever a session learns its `DWalletSessionRequest`.
+    pub(crate) fn set_request_metadata(&mut self, seq: u64, ty: SessionType) {
+        self.session_sequence_number = Some(seq);
+        self.session_type = Some(ty);
     }
 
     pub(crate) fn clear_data(&mut self) {
@@ -535,6 +565,10 @@ impl DWalletMPCManager {
 
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
+            // Record seq + type on the session entry so they survive future transitions to
+            // unit-variant states (ComputationCompleted/Completed/Failed) which would
+            // otherwise discard this information.
+            session.set_request_metadata(request.session_sequence_number, request.session_type);
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -550,7 +584,15 @@ impl DWalletMPCManager {
                 session.computation_type = new_type;
             }
         } else {
+            // new_session() pulls seq+type out of the Active status itself, so we only need
+            // to forward metadata explicitly on the non-Active creation path below.
             self.new_session(&session_identifier, status.clone(), new_type);
+            if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                session.set_request_metadata(
+                    request.session_sequence_number,
+                    request.session_type,
+                );
+            }
         }
         Some(status)
     }

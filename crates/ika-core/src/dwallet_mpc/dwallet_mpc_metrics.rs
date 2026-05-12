@@ -135,6 +135,16 @@ pub struct DWalletMPCMetrics {
 
     /// Size of `DWalletMPCManager.requests_pending_for_next_active_committee`.
     pub requests_pending_for_next_active_committee: IntGauge,
+
+    /// One series per user session currently tracked in `DWalletMPCManager.sessions`,
+    /// labeled by `session_sequence_number` (as a string) and `state`. Value is 1 for the
+    /// state the session is currently in, 0 for the other four states. Sessions that leave
+    /// the tracking map have all five state series flipped to 0 (one final emission).
+    ///
+    /// Cardinality is bounded by `max_active_sessions_buffer` on chain (~100 in practice),
+    /// times 5 states. Lets an operator answer "is session 6713 on this validator?" from
+    /// `curl /metrics | grep session_seq=\"6713\"`.
+    pub user_session_state: IntGaugeVec,
 }
 
 impl DWalletMPCMetrics {
@@ -303,6 +313,13 @@ impl DWalletMPCMetrics {
             requests_pending_for_next_active_committee: register_int_gauge_with_registry!(
                 "dwallet_mpc_requests_pending_for_next_active_committee",
                 "Sessions parked waiting for the next active committee",
+                registry,
+            )
+            .unwrap(),
+            user_session_state: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_state",
+                "1 if user session is in this state on this validator, 0 otherwise (one series per (seq, state))",
+                &["session_seq", "state"],
                 registry,
             )
             .unwrap(),
