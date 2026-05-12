@@ -330,10 +330,13 @@ impl DWalletMPCService {
                             .complete_computation_mpc_session_and_create_if_not_exists(
                                 &session_identifier,
                                 SessionComputationType::from(&request.protocol_data),
+                                Some(request.session_sequence_number),
+                                Some(request.session_type),
                             );
 
                         info!(
                             ?session_identifier,
+                            session_sequence_number = request.session_sequence_number,
                             "Got a request for a session that was previously computation completed, marking it as computation completed"
                         );
                     }
