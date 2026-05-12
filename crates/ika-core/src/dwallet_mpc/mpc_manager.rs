@@ -220,6 +220,25 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Stamp the quorum round on the session *before* `complete_mpc_session`
+                    // clears its data — first-write-wins so retries don't overwrite the
+                    // original quorum point. This feeds the
+                    // `dwallet_mpc_user_session_quorum_consensus_round` per-seq gauge.
+                    if let Some(session) = self.sessions.get_mut(&session_identifier) {
+                        let was_already_recorded = session.quorum_consensus_round.is_some();
+                        session.quorum_consensus_round.get_or_insert(consensus_round);
+                        // Observe self → quorum latency only on the first transition, and only
+                        // for sessions where we submitted our own output (otherwise the
+                        // latency is meaningless from this node's perspective).
+                        if !was_already_recorded {
+                            if let Some(self_round) = session.self_output_consensus_round {
+                                let delta = consensus_round.saturating_sub(self_round);
+                                self.dwallet_mpc_metrics
+                                    .self_output_to_quorum_consensus_rounds
+                                    .observe(delta as f64);
+                            }
+                        }
+                    }
                     self.complete_mpc_session(&session_identifier);
                     let output_digest = output_result.iter().map(|m| m.digest()).collect_vec();
                     checkpoint_messages.extend(output_result);
@@ -913,6 +932,7 @@ impl DWalletMPCManager {
             SESSION_STATE_FAILED,
         ];
         let mut current_seqs: HashSet<u64> = HashSet::new();
+        let mut sessions_with_self_output_no_quorum: i64 = 0;
         for session in self.sessions.values() {
             let (Some(seq), Some(ty)) =
                 (session.session_sequence_number, session.session_type)
@@ -938,11 +958,58 @@ impl DWalletMPCManager {
                     .with_label_values(&[seq_str.as_str(), state])
                     .set(value);
             }
+
+            // Per-session timing gauges — emit as i64 with -1 as the "not set" sentinel.
+            let first_output = session
+                .first_output_consensus_round
+                .map(|v| v as i64)
+                .unwrap_or(-1);
+            let self_output = session
+                .self_output_consensus_round
+                .map(|v| v as i64)
+                .unwrap_or(-1);
+            let quorum_round = session
+                .quorum_consensus_round
+                .map(|v| v as i64)
+                .unwrap_or(-1);
+            let rejected_int = match session.local_output_rejected {
+                None => -1,
+                Some(false) => 0,
+                Some(true) => 1,
+            };
+            m.user_session_first_output_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(first_output);
+            m.user_session_self_output_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(self_output);
+            m.user_session_quorum_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(quorum_round);
+            m.user_session_distinct_output_authorities
+                .with_label_values(&[seq_str.as_str()])
+                .set(session.distinct_output_authorities.len() as i64);
+            m.user_session_local_output_rejected
+                .with_label_values(&[seq_str.as_str()])
+                .set(rejected_int);
+
+            // "Submitted but no quorum" aggregate — counts sessions where we did our part
+            // and have not seen quorum during this process. The single most useful gauge
+            // for "are we stuck waiting on quorum from peers".
+            if session.self_output_consensus_round.is_some()
+                && session.quorum_consensus_round.is_none()
+            {
+                sessions_with_self_output_no_quorum += 1;
+            }
+
             current_seqs.insert(seq);
         }
+        m.sessions_with_self_output_no_quorum
+            .set(sessions_with_self_output_no_quorum);
 
         // Sessions that disappeared from `self.sessions` between this tick and the previous
-        // — flip them all to zero so the dashboard reflects "no longer tracked here".
+        // — flip the state series to zero and the timing gauges to -1 so dashboards
+        // reflect "no longer tracked here".
         for stale_seq in self
             .previously_emitted_user_session_seqs
             .difference(&current_seqs)
@@ -955,6 +1022,21 @@ impl DWalletMPCManager {
                     .with_label_values(&[seq_str.as_str(), state])
                     .set(0);
             }
+            m.user_session_first_output_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(-1);
+            m.user_session_self_output_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(-1);
+            m.user_session_quorum_consensus_round
+                .with_label_values(&[seq_str.as_str()])
+                .set(-1);
+            m.user_session_distinct_output_authorities
+                .with_label_values(&[seq_str.as_str()])
+                .set(0);
+            m.user_session_local_output_rejected
+                .with_label_values(&[seq_str.as_str()])
+                .set(-1);
         }
         self.previously_emitted_user_session_seqs = current_seqs;
     }

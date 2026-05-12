@@ -27,6 +27,14 @@ pub struct DWalletCheckpointMetrics {
     pub split_brain_dwallet_checkpoint_forks: IntCounter,
     pub last_created_dwallet_checkpoint_age: Histogram,
     pub last_certified_dwallet_checkpoint_age: Histogram,
+
+    /// Per-user-session: the dwallet checkpoint sequence number the response for this session
+    /// was written into. Set the first time a message with that `session_sequence_number`
+    /// flows through `write_checkpoints`. -1 / absent before that.
+    ///
+    /// Cardinality: bounded by total user-session count this epoch (~max_active_sessions_buffer
+    /// plus some headroom).
+    pub user_session_written_at_seq: IntGaugeVec,
 }
 
 impl DWalletCheckpointMetrics {
@@ -133,6 +141,13 @@ impl DWalletCheckpointMetrics {
             split_brain_dwallet_checkpoint_forks: register_int_counter_with_registry!(
                 "split_brain_dwallet_checkpoint_forks",
                 "Number of dwallet checkpoints that have resulted in a split brain",
+                registry
+            )
+            .unwrap(),
+            user_session_written_at_seq: register_int_gauge_vec_with_registry!(
+                "dwallet_checkpoint_user_session_written_at_seq",
+                "Dwallet checkpoint sequence number a session's response was written into. Labeled by session_seq.",
+                &["session_seq"],
                 registry
             )
             .unwrap(),
