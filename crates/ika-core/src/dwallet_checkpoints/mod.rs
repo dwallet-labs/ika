@@ -480,12 +480,16 @@ impl DWalletCheckpointBuilder {
             .expect("epoch should not have ended");
         let mut last_height = checkpoint_message.clone().and_then(|s| s.checkpoint_height);
 
-        let checkpoints_iter = self
+        let pending_entries = self
             .epoch_store
             .get_pending_dwallet_checkpoints(last_height)
-            .expect("unexpected epoch store error")
-            .into_iter()
-            .peekable();
+            .expect("unexpected epoch store error");
+        // Surface the builder's input queue depth — if this stays high while
+        // `last_constructed_dwallet_checkpoint` is flat, the builder is stuck.
+        self.metrics
+            .pending_dwallet_checkpoint_queue_depth
+            .set(pending_entries.len() as i64);
+        let checkpoints_iter = pending_entries.into_iter().peekable();
         for (height, pending) in checkpoints_iter {
             last_height = Some(height);
             debug!(
@@ -874,6 +878,38 @@ impl DWalletCheckpointAggregator {
         Ok(())
     }
 
+    /// Snapshot the in-flight aggregator's stake distribution into the metrics. Called after
+    /// every signature ingest plus once per outer loop iteration so the gauges stay live even
+    /// when no new signatures arrive. Resets to default-empty when `current` is None.
+    fn refresh_aggregator_metrics(&self) {
+        match &self.current {
+            Some(curr) => {
+                self.metrics
+                    .aggregator_current_seq
+                    .set(curr.checkpoint_message.sequence_number as i64);
+                self.metrics
+                    .aggregator_committed_stake
+                    .set(curr.signatures_by_digest.total_votes() as i64);
+                self.metrics
+                    .aggregator_uncommitted_stake
+                    .set(curr.signatures_by_digest.uncommitted_stake() as i64);
+                self.metrics
+                    .aggregator_plurality_stake
+                    .set(curr.signatures_by_digest.plurality_stake() as i64);
+                self.metrics.aggregator_distinct_digests.set(
+                    curr.signatures_by_digest.get_all_unique_values().keys().len() as i64,
+                );
+            }
+            None => {
+                self.metrics.aggregator_current_seq.set(-1);
+                self.metrics.aggregator_committed_stake.set(0);
+                self.metrics.aggregator_uncommitted_stake.set(0);
+                self.metrics.aggregator_plurality_stake.set(0);
+                self.metrics.aggregator_distinct_digests.set(0);
+            }
+        }
+    }
+
     async fn run_inner(&mut self) -> IkaResult<Vec<CertifiedDWalletCheckpointMessage>> {
         let _scope = monitored_scope("DWalletCheckpointAggregator");
         let mut result = vec![];
@@ -998,9 +1034,14 @@ impl DWalletCheckpointAggregator {
                     current.next_index = index + 1;
                 }
             }
+            // After draining the current pending-signatures iterator (whether we certified or
+            // ran out), refresh the metrics so the dashboard reflects the latest state.
+            self.refresh_aggregator_metrics();
             tokio::task::yield_now().await;
             break;
         }
+        // One more refresh on exit so the gauges aren't left stale across notify waits.
+        self.refresh_aggregator_metrics();
         Ok(result)
     }
 

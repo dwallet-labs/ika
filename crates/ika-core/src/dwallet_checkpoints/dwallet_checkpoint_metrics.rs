@@ -35,6 +35,32 @@ pub struct DWalletCheckpointMetrics {
     /// Cardinality: bounded by total user-session count this epoch (~max_active_sessions_buffer
     /// plus some headroom).
     pub user_session_written_at_seq: IntGaugeVec,
+
+    /// Number of entries in `pending_dwallet_checkpoints` table that the builder hasn't yet
+    /// consumed. A persistent non-zero value with stale `last_constructed_dwallet_checkpoint`
+    /// ≡ the builder is stuck.
+    pub pending_dwallet_checkpoint_queue_depth: IntGauge,
+
+    /// Sequence number of the checkpoint currently being aggregated for signatures.
+    /// `-1` if no current aggregator. Pair with the stake gauges below.
+    pub aggregator_current_seq: IntGauge,
+
+    /// Total stake (across all digests) that's signed for the in-flight checkpoint.
+    /// Compare to the committee's quorum_threshold to see how close we are.
+    pub aggregator_committed_stake: IntGauge,
+
+    /// Stake of validators who haven't yet signed any digest for the in-flight checkpoint.
+    /// Falling toward zero with multiple distinct digests ⇒ split brain locking in.
+    pub aggregator_uncommitted_stake: IntGauge,
+
+    /// Largest single-digest stake for the in-flight checkpoint. If
+    /// `uncommitted_stake + plurality_stake < quorum_threshold`, quorum is unreachable.
+    pub aggregator_plurality_stake: IntGauge,
+
+    /// Number of *distinct* digests being signed for the in-flight checkpoint. `1` is healthy;
+    /// `>1` ⇒ split-brain (the existing `split_brain_dwallet_checkpoint_forks` counter logs
+    /// once per detection — this gauge shows the current live state).
+    pub aggregator_distinct_digests: IntGauge,
 }
 
 impl DWalletCheckpointMetrics {
@@ -148,6 +174,42 @@ impl DWalletCheckpointMetrics {
                 "dwallet_checkpoint_user_session_written_at_seq",
                 "Dwallet checkpoint sequence number a session's response was written into. Labeled by session_seq.",
                 &["session_seq"],
+                registry
+            )
+            .unwrap(),
+            pending_dwallet_checkpoint_queue_depth: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_pending_queue_depth",
+                "Pending dwallet checkpoint entries not yet consumed by the builder.",
+                registry
+            )
+            .unwrap(),
+            aggregator_current_seq: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_aggregator_current_seq",
+                "Sequence number being aggregated for signatures right now (-1 if none).",
+                registry
+            )
+            .unwrap(),
+            aggregator_committed_stake: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_aggregator_committed_stake",
+                "Total stake (across all digests) that's signed the in-flight checkpoint.",
+                registry
+            )
+            .unwrap(),
+            aggregator_uncommitted_stake: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_aggregator_uncommitted_stake",
+                "Stake yet to sign any digest for the in-flight checkpoint.",
+                registry
+            )
+            .unwrap(),
+            aggregator_plurality_stake: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_aggregator_plurality_stake",
+                "Largest single-digest stake for the in-flight checkpoint.",
+                registry
+            )
+            .unwrap(),
+            aggregator_distinct_digests: register_int_gauge_with_registry!(
+                "dwallet_checkpoint_aggregator_distinct_digests",
+                "Distinct digests being signed for the in-flight checkpoint (>1 ⇒ split brain).",
                 registry
             )
             .unwrap(),

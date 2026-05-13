@@ -170,6 +170,33 @@ pub struct DWalletMPCMetrics {
     /// Label: `session_seq`.
     pub user_session_local_output_rejected: IntGaugeVec,
 
+    /// Per (session, authority): 1 if we've received an output for this session from this
+    /// authority during the current process lifetime, 0 otherwise. Authority label uses the
+    /// concise (4-byte prefix) form, the same one used in tracing logs.
+    /// Cardinality: ~max_active_sessions_buffer × committee_size (≤ ~15k series).
+    /// Answers "which validators failed to submit for session N?" without log access.
+    pub user_session_output_received_from: IntGaugeVec,
+
+    /// Per session: number of *distinct* output digests observed this lifetime. `1` ⇒ all
+    /// submitters agreed on a single value (typical happy path even pre-quorum). `>1` ⇒ a
+    /// vote split — different validators are submitting different outputs. Compare with the
+    /// `_distinct_output_authorities` count and quorum_threshold to see if a split has
+    /// stalled quorum. Label: `session_seq`.
+    pub user_session_distinct_output_digests: IntGaugeVec,
+
+    /// Mirror of `DWalletMPCService.end_of_publish` — 0 or 1. Once it flips to 1, the service
+    /// stops persisting new pending dwallet checkpoints (`dwallet_mpc_service.rs:494-509`),
+    /// silently dropping any quorum-reached output that arrives after. A value of 1 paired
+    /// with chain-side `received_end_of_publish == 0` means: this validator declared
+    /// end-of-publish locally but the network never confirmed it — checkpoint messages are
+    /// being eaten.
+    pub service_end_of_publish_local: IntGauge,
+
+    /// Per-network-encryption-key: the `epoch` of the loaded public data on this validator.
+    /// If it doesn't match `epoch_id`, the validator will silently skip sessions targeting
+    /// this key (`mpc_manager.rs:527`). Labels: `network_encryption_key_id`.
+    pub network_key_loaded_epoch: IntGaugeVec,
+
     /// How many user sessions on this validator are stuck in the
     /// `self_output set && quorum_consensus_round = None` state — i.e., we submitted but
     /// nobody (us included) has seen quorum. Per-tick gauge.
@@ -389,6 +416,33 @@ impl DWalletMPCMetrics {
                 "dwallet_mpc_user_session_local_output_rejected",
                 "-1 if this validator hasn't submitted an output, 0 if submitted success, 1 if submitted rejected.",
                 &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            user_session_output_received_from: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_output_received_from",
+                "1 if we've received an output for this (session, authority) this lifetime, 0 otherwise.",
+                &["session_seq", "authority"],
+                registry,
+            )
+            .unwrap(),
+            user_session_distinct_output_digests: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_user_session_distinct_output_digests",
+                "Number of distinct output digests observed for the session this lifetime. >1 = vote split.",
+                &["session_seq"],
+                registry,
+            )
+            .unwrap(),
+            service_end_of_publish_local: register_int_gauge_with_registry!(
+                "dwallet_mpc_service_end_of_publish_local",
+                "1 if DWalletMPCService.end_of_publish has been set this lifetime; checkpoint messages after this are dropped",
+                registry,
+            )
+            .unwrap(),
+            network_key_loaded_epoch: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_network_key_loaded_epoch",
+                "Loaded epoch of the network encryption key public data per key_id",
+                &["network_encryption_key_id"],
                 registry,
             )
             .unwrap(),

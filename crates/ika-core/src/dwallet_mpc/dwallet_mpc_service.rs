@@ -276,6 +276,13 @@ impl DWalletMPCService {
         // Recompute the in-memory observability gauges once per tick. Cheap relative to the rest
         // of the loop, and it's the only signal that exposes "session has been Active for >2h".
         self.dwallet_mpc_manager.refresh_observability_metrics();
+
+        // Keep the end-of-publish-local gauge fresh — particularly so it appears in /metrics
+        // before the first transition (Prometheus client libs don't emit a series until it's
+        // been touched). Sticky at 1 once flipped; never goes back to 0 within an epoch.
+        self.dwallet_mpc_metrics
+            .service_end_of_publish_local
+            .set(if self.end_of_publish { 1 } else { 0 });
     }
 
     async fn process_cryptographic_computations(&mut self) {
@@ -498,6 +505,10 @@ impl DWalletMPCService {
                     .is_some_and(|msg| matches!(msg, DWalletCheckpointMessageKind::EndOfPublish));
                 if final_round {
                     self.end_of_publish = true;
+                    // Expose the flip as a gauge — distinguishing "we never declared EoP"
+                    // from "we declared EoP and are now dropping subsequent checkpoint
+                    // messages" is critical for diagnosing checkpoint-content loss.
+                    self.dwallet_mpc_metrics.service_end_of_publish_local.set(1);
 
                     info!(
                         authority=?self.name,

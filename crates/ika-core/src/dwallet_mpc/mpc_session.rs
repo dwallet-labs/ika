@@ -95,6 +95,13 @@ pub(crate) struct DWalletSession {
     /// `None` until we submit an output; `Some(true)` for an MPC failure / `submit_failed_session`
     /// path; `Some(false)` for a normal `Finalize`.
     pub(super) local_output_rejected: Option<bool>,
+
+    /// Distinct output digests seen this lifetime for this session. `len() > 1` ⇒ vote split:
+    /// validators submitted different output content. The digest is computed via `default_hash`
+    /// over the full `Vec<DWalletCheckpointMessageKind>` — same routine the rest of the
+    /// codebase uses, so digests here are comparable to those flowing through the checkpoint
+    /// aggregator.
+    pub(super) distinct_output_digests: std::collections::HashSet<[u8; 32]>,
 }
 
 /// Possible statuses of a session:
@@ -181,6 +188,7 @@ impl DWalletSession {
             quorum_consensus_round: None,
             distinct_output_authorities: std::collections::HashSet::new(),
             local_output_rejected: None,
+            distinct_output_digests: std::collections::HashSet::new(),
         }
     }
 
@@ -327,6 +335,17 @@ impl DWalletSession {
             );
 
             self.mark_mpc_session_as_computation_completed()
+        }
+
+        // Hash the output content (excluding sender + malicious-authorities envelope) so
+        // identical outputs from different validators collapse to the same digest. This is the
+        // split-vote signal — when two senders disagree, two distinct hashes show up.
+        if let Ok(output_bytes) = bcs::to_bytes(&output.output) {
+            use fastcrypto::hash::HashFunction;
+            let mut hasher = ika_types::crypto::DefaultHash::default();
+            hasher.update(&output_bytes);
+            let digest: [u8; 32] = hasher.finalize().digest;
+            self.distinct_output_digests.insert(digest);
         }
 
         let consensus_round_output_map = self

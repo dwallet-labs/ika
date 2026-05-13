@@ -89,6 +89,11 @@ pub struct SuiConnectorMetrics {
     /// `next_committee_missing`, `network_keys_reconfig_lag`, `pricing_votes_open`}.
     /// 1 means that condition is currently *blocking* end-of-publish from firing.
     pub(crate) end_of_publish_blocked_reason: IntGaugeVec,
+
+    /// Number of uncompleted session events fetched from chain on the most recent
+    /// `pull_dwallet_mpc_uncompleted_events` call. Persistent non-zero ≡ session backlog
+    /// (validators are missing things). Drops to 0 once chain processes the responses.
+    pub(crate) uncompleted_events_backlog: IntGauge,
 }
 
 impl SuiConnectorMetrics {
@@ -224,6 +229,12 @@ impl SuiConnectorMetrics {
                 "sui_connector_end_of_publish_blocked_reason",
                 "Per-condition gauge (0/1) indicating which gating condition in sync_dwallet_end_of_publish is currently false",
                 &["reason"],
+                registry,
+            )
+            .unwrap(),
+            uncompleted_events_backlog: register_int_gauge_with_registry!(
+                "sui_connector_uncompleted_events_backlog",
+                "Uncompleted session events fetched from chain on the most recent pull",
                 registry,
             )
             .unwrap(),

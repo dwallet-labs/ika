@@ -109,6 +109,7 @@ where
                 sui_client_clone,
                 dwallet_coordinator_object_receiver.clone(),
                 uncompleted_requests_sender,
+                self.metrics.clone(),
             ));
         }
 
@@ -197,6 +198,7 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         loop {
@@ -215,6 +217,11 @@ where
                 .await
             {
                 Ok((events, epoch)) => {
+                    // Expose backlog as a single gauge so operators can see "chain has N
+                    // uncompleted sessions from this validator's perspective" at a glance.
+                    metrics
+                        .uncompleted_events_backlog
+                        .set(events.len() as i64);
                     let requests = events.iter().filter_map(|event| {
                         debug!(
                             event_type=?event.type_.clone(),

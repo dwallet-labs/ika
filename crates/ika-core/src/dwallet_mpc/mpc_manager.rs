@@ -33,6 +33,7 @@ use ika_types::messages_dwallet_mpc::{
 };
 use itertools::Itertools;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
+use sui_types::base_types::ConciseableName;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -919,6 +920,16 @@ impl DWalletMPCManager {
         m.malicious_actors_size
             .set(self.malicious_actors.len() as i64);
 
+        // Per-network-encryption-key loaded-epoch. Drift between this and `epoch_id` is the
+        // silent-skip cause in `mpc_manager.rs:527` ("Network key epoch does not match
+        // current epoch, ignoring"). Operators can alert on:
+        //   abs(dwallet_mpc_network_key_loaded_epoch - <current epoch>) > 0
+        for (key_id, data) in self.network_keys.network_encryption_keys.iter() {
+            m.network_key_loaded_epoch
+                .with_label_values(&[&key_id.to_string()])
+                .set(data.epoch() as i64);
+        }
+
         // ----- per-user-session state, labeled by sequence number -----
         // For every user session this validator is tracking, emit five series
         // (one per state) where exactly one is 1. For sessions that have left
@@ -992,6 +1003,22 @@ impl DWalletMPCManager {
             m.user_session_local_output_rejected
                 .with_label_values(&[seq_str.as_str()])
                 .set(rejected_int);
+            m.user_session_distinct_output_digests
+                .with_label_values(&[seq_str.as_str()])
+                .set(session.distinct_output_digests.len() as i64);
+
+            // Per (session, authority) gauge — 1 if we received an output from this authority
+            // for this session in our current process lifetime, 0 otherwise. Iterates the
+            // *entire* committee so "missing submitters" can be queried directly.
+            for authority_name in self.committee.names() {
+                let received = session
+                    .distinct_output_authorities
+                    .contains(authority_name);
+                let authority_label = authority_name.concise().to_string();
+                m.user_session_output_received_from
+                    .with_label_values(&[seq_str.as_str(), authority_label.as_str()])
+                    .set(if received { 1 } else { 0 });
+            }
 
             // "Submitted but no quorum" aggregate — counts sessions where we did our part
             // and have not seen quorum during this process. The single most useful gauge
@@ -1037,6 +1064,15 @@ impl DWalletMPCManager {
             m.user_session_local_output_rejected
                 .with_label_values(&[seq_str.as_str()])
                 .set(-1);
+            m.user_session_distinct_output_digests
+                .with_label_values(&[seq_str.as_str()])
+                .set(0);
+            for authority_name in self.committee.names() {
+                let authority_label = authority_name.concise().to_string();
+                m.user_session_output_received_from
+                    .with_label_values(&[seq_str.as_str(), authority_label.as_str()])
+                    .set(0);
+            }
         }
         self.previously_emitted_user_session_seqs = current_seqs;
     }
