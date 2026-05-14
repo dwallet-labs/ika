@@ -81,39 +81,54 @@ pulled in transitively through `twopc_mpc` where needed; ika's
 
 Update `Cargo.lock` via `cargo build` after this phase.
 
-### Phase 2 — fix two `mpc::Error::ThresholdNotReached` match arms
+### Phase 2 — preserve two `ThresholdNotReached` match arms across the `Error→ErrorKind` rewrap
 
 `mpc::Error` and `twopc_mpc::Error` are now struct wrappers around an
-`ErrorKind` enum. Matching on the bare enum variant breaks. The actual
-ika surface, confirmed by grep, is **two sites**, both on the same
-variant:
+`ErrorKind` enum. Matching on the bare enum variant
+(`Err(mpc::Error::ThresholdNotReached) => …`) no longer compiles. The
+actual ika surface, confirmed by grep, is **two sites**, both on the
+same variant:
 
-- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:654`
-- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:1715`
+- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:654` (in
+  `compute_idle_status_majority_vote`)
+- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:1715` (in
+  `outputs_to_finalize`)
 
-Both look like:
+Both call `weighted_majority_vote(...)`. Both deliberately treat
+`ThresholdNotReached` as a **silent "not enough votes yet, try again"
+signal** distinct from real errors:
 
 ```rust
-match … {
-    Ok(…) => …,
-    Err(mpc::Error::ThresholdNotReached) => …,
-    Err(e) => { error!(…); … }
+match … weighted_majority_vote(&self.access_structure) {
+    Ok((_, majority_vote)) => majority_vote,
+    Err(mpc::Error::ThresholdNotReached) => false,        // SILENT, no log
+    Err(e) => {
+        error!(error = %e, "Failed to compute idle status majority vote");
+        false
+    }
 }
 ```
 
-Rewrite to a guard against the wrapped kind:
+That distinction must be preserved. The fix is a guard, not a collapse
+into the catch-all:
 
 ```rust
-match … {
-    Ok(…) => …,
-    Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => …,
-    Err(e) => { error!(…); … }
+match … weighted_majority_vote(&self.access_structure) {
+    Ok((_, majority_vote)) => majority_vote,
+    Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => false,  // still SILENT
+    Err(e) => {
+        error!(error = %e, "Failed to compute idle status majority vote");
+        false
+    }
 }
 ```
 
 (Exact accessor — `e.kind` direct field vs `e.kind()` method — verify
 against `mpc/src/lib.rs` at `9d35fa76` line ~42; the struct is small,
 look at it once.)
+
+Apply the same shape to site 2 with its `None` and its
+`"Failed to build outputs to finalize"` log.
 
 No other ika code needs to change for the `Error→ErrorKind` rewrap:
 
@@ -126,12 +141,15 @@ No other ika code needs to change for the `Error→ErrorKind` rewrap:
   `twopc_mpc::Error::from(…)?`. `From` impls on the struct cover the
   same source types as before; works unchanged.
 
-The new `ErrorKind` variants (`DecryptionFailed`, `IdentityEphemeralKey`,
-`TorsionEphemeralKey`, `MaliciousMessageAsync`,
-`MaliciousMessagePreventsAdvance`, `Serialization`, `InvalidSignatureShare`)
-need no per-variant handling — both match sites already have a catch-all
-`Err(e) => { error!(…); … }` that logs and bails. The new variants
-fall through and produce the same observable behavior.
+Behavior of the new `ErrorKind` variants in these two match sites:
+both call into `weighted_majority_vote`, a vote-counting helper that is
+not expected to surface protocol-level error variants like
+`DecryptionFailed`, `MaliciousMessagePreventsAdvance`, etc. — those
+come from advance-protocol functions, not from majority-vote
+aggregation. If one ever did surface here, it would land in the
+existing catch-all arm (logged + return the "not ready" sentinel),
+which is an acceptable failure mode but not a normal flow path; revisit
+if it's observed in practice.
 
 ### Phase 3 — fix relocated module paths
 
