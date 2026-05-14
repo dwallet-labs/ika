@@ -72,21 +72,12 @@ group                  = { git = "https://github.com/dwallet-labs/cryptography-p
 homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76" }
 ```
 
-Add the two new standalone crates that hold what used to be
-`proof::aggregation` and `maurer::aggregation`:
-
-```toml
-proof_aggregation  = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76" }
-maurer_aggregation = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76" }
-```
-
-These ARE workspace members at the new rev (verified in
-`inkrypto-bump-diff.md` §0). ika may not need to import them directly
-(no current `use proof::aggregation::*` / `use maurer::aggregation::*`
-exists in ika), but they need to be declared as workspace deps so any
-crate's `Cargo.toml` that does end up depending on them works. If after
-the build it turns out nothing references them, drop them from the
-workspace deps and the lockfile entries vanish — harmless.
+Do NOT add `proof_aggregation` / `maurer_aggregation` to ika's workspace
+deps. They're new standalone crates upstream (holding what used to be
+`proof::aggregation` and `maurer::aggregation`), but ika doesn't import
+them directly — confirmed by grep across `crates/` and `sdk/`. They get
+pulled in transitively through `twopc_mpc` where needed; ika's
+`Cargo.toml` does not list them.
 
 Update `Cargo.lock` via `cargo build` after this phase.
 
