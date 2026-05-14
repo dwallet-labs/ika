@@ -564,6 +564,52 @@ complete the sign cycle without the input-handler thread blocking for
 multi-second windows. Compare wall-clock latency vs. dev (which today
 takes seconds per NOA-ECDSA sign).
 
+#### 4g. Restore ECDSA NOA tests
+
+`crates/ika-core/src/dwallet_mpc/integration_tests/network_owned_address_sign.rs`
+has two `#[ignore]`'d end-to-end NOA tests for ECDSA — the bump
+unblocks both:
+
+- `test_network_owned_address_sign_ecdsa_secp256k1` (line 270)
+- `test_network_owned_address_sign_ecdsa_secp256r1` (line 283)
+
+Both are `#[ignore = "ECDSA centralized party emulation with ZeroRng
+fails: Commitment(InvalidPublicParameters)"]`. The explanatory comment
+block at lines 248-266 is precise about both blockers:
+
+1. **Correctness**: ika's emulator with `ZeroRng` fails ECDSA's commitment
+   public-parameter validation. Schnorr's commitment scheme tolerates the
+   zero secret key share, ECDSA's does not.
+2. **Performance**: even if (1) were fixed, ECDSA emulation in
+   `mpc_session/input.rs` runs synchronously off-Rayon at O(seconds).
+
+The comment block then names two candidate fixes; the second is verbatim:
+
+> "Adapt the Sign protocol to accept a flag that makes it compute the
+> centralized party partial signature internally (within its own Rayon
+> task), eliminating the need to pre-compute it in
+> `session_input_from_request`."
+
+That fix is `SignData::ToBeEmulated`. PR #448 ("Threshold mode: t-out-of-n
+signing without centralized party") made the upstream commitment scheme
+handle the zero-secret math correctly (per the comment at
+`ecdsa/sign/decentralized_party/class_groups.rs:1014`: "ToBeEmulated mode
+requires $x_A = 0$, so $X_A$ must be neutral") and moves the emulation
+into the rayon-dispatched protocol advance. Both blockers go away.
+
+Actions:
+
+1. Remove both `#[ignore = …]` attributes.
+2. Delete the explanatory comment block at lines 248-266 — it documents
+   a problem that no longer exists. The two tests can keep brief
+   per-test doc comments if useful.
+3. Run them. They must pass as part of this bump's verification.
+4. Sanity-check wall-clock: ECDSA NOA sign in the local swarm should
+   complete with the same order-of-magnitude latency as ECDSA
+   user-driven sign (no off-Rayon multi-second stall).
+
+The bump's Definition of Done gains: ECDSA NOA tests pass.
+
 ### Phase 5 — `presign::Protocol` adapter changes
 
 **File touch list:**
@@ -846,7 +892,17 @@ Acknowledged-broken at this step:
 3. `cd sdk/typescript && pnpm test` is green.
 4. A local single-version swarm completes a DKG/Presign/Sign for
    secp256k1 ECDSA.
-5. `docs/inkrypto-bump-diff.md` is referenced from this plan as the
+5. **ECDSA NOA tests pass** — `test_network_owned_address_sign_ecdsa_secp256k1`
+   and `test_network_owned_address_sign_ecdsa_secp256r1` no longer
+   `#[ignore]`'d, and run green. (Phase 4g.) This is a real capability
+   gain unlocked by the bump — ECDSA NOA was never functional on dev.
+6. **NOA-ECDSA sign wall-clock**: in the local swarm, ECDSA NOA sign
+   completes with the same order-of-magnitude latency as user-driven
+   ECDSA sign. No multi-second off-Rayon stall in the input handler.
+7. `network_owned_address_sign_dkg_emulation.rs` is deleted or reduced
+   to thin bookkeeping (Phase 4f); its prior ~700 lines of emulation
+   code are gone.
+8. `docs/inkrypto-bump-diff.md` is referenced from this plan as the
    authoritative API-change catalog, and no item in it goes unaddressed
    in the diff this branch produces (or is explicitly deferred with a
    comment in the relevant Cargo.toml/source).
