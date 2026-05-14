@@ -651,7 +651,7 @@ impl DWalletMPCManager {
             .weighted_majority_vote(&self.access_structure)
         {
             Ok((_, majority_vote)) => majority_vote,
-            Err(mpc::Error::ThresholdNotReached) => false,
+            Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => false,
             Err(e) => {
                 error!(
                     error = %e,
@@ -1712,7 +1712,7 @@ impl DWalletMPCManager {
 
                 Some((malicious_authorities, output))
             }
-            Err(mpc::Error::ThresholdNotReached) => None,
+            Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => None,
             Err(e) => {
                 error!(
                     ?session_identifier,

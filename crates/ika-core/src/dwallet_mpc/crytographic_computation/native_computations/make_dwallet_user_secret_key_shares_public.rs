@@ -114,8 +114,8 @@ fn verify_centralized_party_secret_key_share_v2(
 /// matches the given dWallet's secret share.
 fn verify_centralized_party_secret_key_share<P: dkg::Protocol>(
     secret_share: &[u8],
-    decentralized_dkg_output: P::DecentralizedPartyDKGOutput,
-    protocol_public_parameters: &P::ProtocolPublicParameters,
+    decentralized_dkg_output: <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+    protocol_public_parameters: &<P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
 ) -> anyhow::Result<()> {
     P::verify_centralized_party_public_key_share(
         protocol_public_parameters,
