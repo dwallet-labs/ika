@@ -130,7 +130,9 @@ look at it once.)
 Apply the same shape to site 2 with its `None` and its
 `"Failed to build outputs to finalize"` log.
 
-No other ika code needs to change for the `Error→ErrorKind` rewrap:
+No other ika code needs to change for the `Error→ErrorKind` rewrap. The
+remaining `mpc::Error` / `twopc_mpc::Error` reach-points all compile
+unchanged because nothing else pattern-destructures them:
 
 - `crates/ika-types/src/dwallet_mpc_error.rs` has
   `#[from] mpc::Error` / `#[from] twopc_mpc::Error` and a
@@ -140,16 +142,53 @@ No other ika code needs to change for the `Error→ErrorKind` rewrap:
 - `crates/dwallet-mpc-centralized-party/src/lib.rs:974` calls
   `twopc_mpc::Error::from(…)?`. `From` impls on the struct cover the
   same source types as before; works unchanged.
+- The eight `FailedToAdvanceMPC(e.into())` wrap sites
+  (`mpc_computations.rs`, `mpc_computations/{dwallet_dkg,sign,presign}.rs`)
+  use `.into()` to convert the upstream `mpc::Error` into ika's
+  `DwalletMPCError::FailedToAdvanceMPC(mpc::Error)` field. Type is
+  unchanged; works.
 
-Behavior of the new `ErrorKind` variants in these two match sites:
-both call into `weighted_majority_vote`, a vote-counting helper that is
-not expected to surface protocol-level error variants like
-`DecryptionFailed`, `MaliciousMessagePreventsAdvance`, etc. — those
-come from advance-protocol functions, not from majority-vote
-aggregation. If one ever did surface here, it would land in the
-existing catch-all arm (logged + return the "not ready" sentinel),
-which is an acceptable failure mode but not a normal flow path; revisit
-if it's observed in practice.
+**The third reach-point that's worth calling out explicitly**:
+`crates/ika-core/src/dwallet_mpc/dwallet_mpc_service.rs:1597` — the
+"advance failed catch" that consumes the propagated
+`DwalletMPCResult<GuaranteedOutputDeliveryRoundResult>`:
+
+```rust
+Err(err) => match request.session_type {
+    SessionType::InternalPresign | SessionType::NetworkOwnedAddressSign => {
+        error!(should_never_happen = true, …, error=?err, "internal session failed");
+    }
+    _ => self.submit_failed_session(…, err).await,
+}
+```
+
+`err` here is `DwalletMPCError` (typically
+`FailedToAdvanceMPC(mpc::Error)`). Nothing destructures variants — the
+arm logs and either marks the session permanently failed (regular
+sessions) or treats it as `should_never_happen` (internal sessions).
+This compiles unchanged across the rewrap.
+
+Behavior question to flag (NOT a code change for this bump):
+
+- For the two `mpc_manager.rs` majority-vote sites: the new ErrorKind
+  variants (`DecryptionFailed`, `MaliciousMessagePreventsAdvance`, etc.)
+  are not expected to surface from `weighted_majority_vote`, which is a
+  vote-counting helper. If one ever did, it would land in the existing
+  catch-all arm (logged + return the "not ready" sentinel) — acceptable
+  fallback.
+- For the `dwallet_mpc_service.rs:1597` catch:
+  - `DecryptionFailed`, `IdentityEphemeralKey`, `TorsionEphemeralKey`,
+    `Serialization`, `InvalidSignatureShare`, `MaliciousMessageAsync` —
+    all genuinely fatal; routing to `submit_failed_session` matches
+    today's behavior.
+  - `MaliciousMessagePreventsAdvance` ("at this round" wording) MIGHT
+    mean "wait and retry, not permanent failure." Today's code marks the
+    session permanently failed for any Err. The upstream protocol with
+    guaranteed output delivery is expected to surface that case via
+    `GuaranteedOutputDeliveryRoundResult::Advance { malicious_parties, … }`
+    on the success path, not as Err — but verify against the upstream
+    code if behavior diverges in testing. Leave alone for this bump;
+    revisit if it shows up.
 
 ### Phase 3 — fix relocated module paths
 
