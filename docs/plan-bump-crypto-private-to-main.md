@@ -324,7 +324,7 @@ the old call site got the `Arc<…>` value.
 
 #### 4d. New presign-private-output → sign-private-input shape
 
-Main introduces a conversion-point between presign and sign:
+Main exposes a conversion-point between presign and sign:
 
 ```rust
 // 2pc-mpc/src/sign.rs ~5603 / 5794 / 5980 (3 protocol surfaces):
@@ -334,10 +334,13 @@ fn(
 ) -> HashMap<PartyID, P::SignDecentralizedPartyPrivateInput>
 ```
 
-The sign protocol now expects `private_inputs: HashMap<PartyID,
-P::SignDecentralizedPartyPrivateInput>` derived from per-party presign
-private outputs and the presign artifact itself. For ika's AHE-mode
-protocols today:
+The `HashMap<PartyID, PresignPrivateOutput>` shape here is a **test /
+orchestrator harness shape** — one entity simulating all parties. In
+production each validator's `advance_with_guaranteed_output` call
+carries a `PrivateInput` derived from values it locally holds, not a
+cross-party map.
+
+For ika's AHE-mode protocols today, the concrete shapes are:
 
 - `<P::PresignParty as mpc::Party>::PrivateOutput = ()` (verified in
   `2pc-mpc/src/ecdsa/presign/decentralized_party/class_groups.rs:174`)
@@ -345,21 +348,47 @@ protocols today:
   — the same data ika gets from
   `network_encryption_keys → decrypt_decryption_key_shares()`.
 
-The conversion function is therefore a no-op for AHE: it ignores its
-per-party presign-private-output input (`()`) and returns the
-already-known decryption-key-shares map. ika does NOT receive presign
-private outputs (they're `()`); ika just plumbs in the existing
-decryption-key-shares map at the call site to `advance_with_guaranteed_output`.
-
-In practice this surfaces as: the existing
+**For this bump: change nothing in ika's plumbing.** Keep the
 `decryption_key_shares: Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>`
-parameter (sign.rs:942/1004) keeps working without semantic change.
-What changes is at the upstream API: any helper above the
-`advance_with_guaranteed_output` boundary that expects to receive
-`(presign_private_outputs, presign)` and produce sign private inputs
-needs to have its bound satisfied. For AHE, `()` for presign private
-outputs means there's nothing to thread through — just pass the
-already-built decryption-key-shares map.
+parameter (sign.rs:942/1004) exactly as today. For AHE its concrete
+type resolves to `Option<HashMap<PartyID, SecretKeyShareSizedInteger>>`;
+ika's existing source for that value (the network-DKG decryption-key-shares
+map) is the same source as before. No new storage path, no new
+persistence, no new call shape.
+
+**Forward-looking seam for VSS.** When VSS lands the meaningful work
+will be at ika's session boundaries, not at the generic helper
+signature:
+
+- Presign sessions must persist each validator's own
+  `<P::PresignParty as mpc::Party>::PrivateOutput` (a concrete VSS type
+  containing nonce shares / HPKE blobs / etc.), keyed by `(presign_id,
+  validator_id)`. Presign and sign happen in separate consensus
+  sessions, potentially separated in time — this is real session-
+  spanning state ika does not track today.
+- Sign sessions must read the corresponding presign private output and
+  combine it with any other locally-held inputs to construct the sign
+  `PrivateInput`.
+- The generic helper signature
+  `Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>`
+  is the right seam: it abstracts AHE vs VSS at the type level. Only
+  the *source* of the value changes per protocol; the call shape stays
+  identical.
+
+What this bump deliberately does NOT do, and why:
+
+- **No `()`-carrying presign-private-output storage path.** For AHE it
+  would carry meaningless state; not worth adding to "exercise the seam"
+  before there's a real type to carry.
+- **No `SignPrivateInputByProtocol` enum yet.** Today ika's only sign
+  protocols are AHE-mode; the type indirection through
+  `<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput` is enough.
+  When the first VSS sign protocol arrives the natural pattern
+  (mirroring `PresignPublicInputByProtocol` etc.) is to add the
+  protocol-keyed enum then.
+- **No commitment to a VSS storage format.** The upstream VSS surface
+  is still in flux (per the open work in `2pc-mpc/src/schnorr/vss/`);
+  pinning a storage shape now would prejudice that PR.
 
 #### 4e. `verify_centralized_party_partial_signature` return type changed
 
