@@ -470,45 +470,99 @@ a scope call (it touches consensus message types). At minimum: capture
 the value, surface it on the helper's return signature, and leave the
 wiring to a follow-up. Do NOT `let _ = …?;` — that buries the work.
 
-#### 4f. Replace ika's NOA emulation with `SignData::ToBeEmulated` + `threshold_dkg_output`
+#### 4f. Delete ika's NOA emulation in full — DKG side AND sign-centralized side
 
-Currently ika maintains ~734 lines of network-owned-address (NOA)
-emulation in
-`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_owned_address_sign_dkg_emulation.rs`.
-The upstream rev provides native equivalents for the load-bearing
-parts of that file, designed to delete it:
+This is a **mandatory** part of the bump, not a deferrable cleanup.
+Reason: the sign-centralized emulation is a known performance hole, and
+the upstream rev now provides the exact fix ika's own team predicted
+two years ago. Shipping the bump without this deletion ships a worse
+regression (ika's slow emulator runs AND THEN the upstream protocol's
+fast emulator runs on top).
 
-| ika function (today) | Upstream replacement |
-|---|---|
-| `emulate_centralized_party_partial_signature` (line 282) | Pass `SignData::ToBeEmulated` as the sign data in the sign public input. Upstream's `resolve_sign_data` / `emulate_or_verify_or_unpack_sign_data` calls `emulate_threshold_verified_sign_data` internally to produce the verified data with `ZeroRng` semantics. |
-| `emulate_sign_centralized` (line 358) | Same. The per-curve `match` dispatch ika does today is absorbed by the protocol generic. |
-| `emulate_centralized_dkg_for_network_owned_address_sign` (line 108) | Call `<DKGProtocol as dkg::Protocol>::threshold_dkg_output(protocol_public_parameters, session_id)` (the new required method on `dkg::Protocol`; see Phase 6). Its doc spells out the equivalence: "uses neutral for the centralized party's public key share and default proof bytes in the Fiat-Shamir transcript, derives the randomized decentralized party public key share and encryption of secret key share." |
-| `emulate_centralized_dkg_v2` (line 152) | Same. |
-| `get_zero_centralized_secret` (line 220) | Inlineable if the only remaining caller is the upstream `ToBeEmulated` path (which internally enforces $x_A = 0$); confirm by grep before deleting. |
-| `compute_decentralized_dkg_output` (line 508) / `compute_network_owned_address_sign_dkg_output` (line 655) | Thin orchestration that composes the above. Reduces to: call `threshold_dkg_output`, advance, finalize. Keep the orchestration shape, delete the emulation internals. |
-| `network_owned_address_sign_dkg_session_identifier` (line 612) | ika-side bookkeeping; keep. |
+**The performance issue ika's own comment already calls out.**
+`crates/ika-core/src/dwallet_mpc/mpc_session/input.rs:295-299`:
 
-Estimated reduction: ~600 lines from this file. Plus the call sites
-that today construct synthetic `SignMessage` values for NOA flow will
-change from `SignMessage { … }` construction to literal
-`SignData::ToBeEmulated`.
+```rust
+// Emulate the centralized party's partial signature using ZeroRng.
+// All validators will produce identical output.
+// NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
+// Currently, we are using schnorr signatures for which it is cheap;
+// if in the future we should support other signature algorithms for network-owned-address sign,
+// e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally,
+// or compute it separately within a rayon context.
+```
 
-**Scope call.** This phase is genuinely larger than the rest of the
-bump. Options:
+For ECDSA NOA sign, that emulation runs on the order of *seconds*,
+synchronously on the input-handler thread, outside the rayon pool — a
+hard blocker for any production NOA-ECDSA flow. `SignData::ToBeEmulated`
+is precisely "an option to the Sign protocol to emulate the message
+internally" the comment predicted: the emulation moves inside the
+protocol's advance code, which runs through the computation
+orchestrator (rayon-dispatched, properly budgeted).
 
-- (a) Land in this bump. Pro: avoids shipping dead emulation code
-  alongside its native upstream replacement; avoids confusion when
-  reading the codebase; sets a clean baseline for VSS work.
-- (b) Defer to immediate follow-up PR on the same branch. Pro: keeps
-  the bump diff focused on "make it compile"; reduces review surface.
+**File targeted for full deletion** (or near-full):
 
-Recommend (a) because: the deletion is straightforward given the
-1:1 upstream replacements; the alternative ships ika in a state where
-the NOA path triggers ika's emulator AND THEN feeds a synthetic
-SignMessage into a protocol that already knows how to emulate, which
-is wasteful and observably wrong on wire. Make the call before
-starting; if (b), wire ToBeEmulated minimally as a compile fix and
-schedule the deletion immediately.
+`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_owned_address_sign_dkg_emulation.rs`
+(734 lines). Complete inventory:
+
+| Item (file:line) | Action | Replacement |
+|---|---|---|
+| `EmulatedCentralizedDKGResult` struct (59) | **Delete** | Upstream `threshold_dkg_output` returns `DecentralizedPartyDKGOutput` directly; the ika-side wrapper is dead weight. |
+| `NetworkOwnedAddressSignDKGOutput` struct (75) | **Delete or shrink** | Inspect contents; if it just bundles `(decentralized_dkg_public_output, centralized_dkg_result)`, replace consumer sites with using the upstream output directly. Keep only fields that carry ika-bookkeeping that doesn't exist upstream. |
+| `emulate_centralized_dkg_for_network_owned_address_sign` (108) | **Delete** | `<DKGProtocol as dkg::Protocol>::threshold_dkg_output(pp, session_id)` |
+| `emulate_centralized_dkg_v2` (152) | **Delete** | Same. The per-curve dispatch goes away; pick the right `DKGProtocol` type alias at the call site (Phase 4a). |
+| `get_zero_centralized_secret` (220) | **Delete** | Upstream `ToBeEmulated` path enforces `x_A = 0` internally (`ecdsa/sign/decentralized_party/class_groups.rs:1014`: "`ToBeEmulated` mode requires $x_A = 0$, so $X_A$ must be neutral"). |
+| `get_zero_centralized_secret_internal` (241) | **Delete** | Same. |
+| `emulate_centralized_party_partial_signature` (282) | **Delete** | `SignData::ToBeEmulated` in the sign public input. The synchronous-outside-rayon path goes with it. |
+| `emulate_sign_centralized` (358) | **Delete** | Same. This is the function that took seconds for ECDSA — kill it. |
+| `advance_and_finalize_decentralized_party_dkg` (413) | **Inline or delete** | Inspect: if it's just a thin wrapper around the normal decentralized-party advance loop, fold into the caller (or use the existing orchestration in `network_dkg.rs` / `dwallet_dkg.rs`). |
+| `compute_decentralized_dkg_output` (508) | **Inline or delete** | Same; reduces to: call `threshold_dkg_output`, then run the standard decentralized DKG advance loop. The standard loop is already in ika; no duplication needed. |
+| `network_owned_address_sign_dkg_session_identifier` (612) | **Keep, relocate** | Pure ika-side session-id derivation. Move to a small `noa.rs` (or fold into `mpc_session/input.rs` where the only production caller lives, alongside the integration-test caller). |
+| `compute_network_owned_address_sign_dkg_output` (655) | **Inline or delete** | Same; reduces to `threshold_dkg_output` + standard DKG advance. |
+
+Net deletion: ~700 of the 734 lines. The file may end up empty enough
+to delete entirely; if so, do.
+
+**Caller updates** (external to the emulation file):
+
+1. **`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_dkg.rs:387`** —
+   currently calls `compute_network_owned_address_sign_dkg_output(network_key_id, curve, &protocol_pp, access_structure, party_id)` after network DKG completes, then deserializes into `NetworkOwnedAddressSignDKGOutput` and pulls out `centralized_dkg_result.public_key` for the per-curve NOA public key. Rewrite to: call `<DKGProtocol as dkg::Protocol>::threshold_dkg_output(pp, noa_session_id)` directly, run the decentralized-party DKG advance with the resulting public input, and read the public key off the resulting `DecentralizedPartyDKGOutput`. The `noa_session_id` comes from the kept `network_owned_address_sign_dkg_session_identifier`. The `NetworkOwnedAddressSignDKGOutput` type is gone; use the upstream `DecentralizedPartyDKGOutput` directly (or wrap it in a thin ika-side bookkeeping struct only if other consumers need fields the upstream type doesn't expose).
+
+2. **`crates/ika-core/src/dwallet_mpc/mpc_session/input.rs:300`** —
+   currently builds `message_centralized_signature` via the slow-path emulator and passes it into `SignPublicInputByProtocol::try_new(...)`. Rewrite: drop the `emulate_centralized_party_partial_signature` call entirely; `SignPublicInputByProtocol::try_new` (or its successor) takes `SignData::ToBeEmulated` for NOA paths and `SignData::Unverified(msg)` for normal user-driven paths. The five-line comment at line 295 also goes — the regression it warned about is fixed.
+
+3. **`crates/ika-core/src/dwallet_mpc/integration_tests/network_owned_address_sign.rs`** —
+   tests that exercised the emulator (`test_network_owned_address_sign_dkg_session_identifier_determinism` is fine; tests that touch `emulate_centralized_party_partial_signature` need rework or deletion). Keep the session-id determinism tests; rewrite end-to-end NOA tests to drive the new `ToBeEmulated` path; delete tests of the deleted emulator helpers.
+
+4. **`SignPublicInputByProtocol::try_new`** (in `mpc_computations/sign.rs` /
+   wherever it lives) — its current signature takes a
+   `message_centralized_signature: &[u8]` (or similar bytes-of-SignMessage).
+   New signature should take `sign_data: SignData<SignMessage, VerifiedSignData>`
+   (or, for ika ergonomics, an enum-of-enum variant that distinguishes
+   `Unverified(bytes)` / `ToBeEmulated` and constructs the upstream
+   `SignData` inside). Update all callers, NOA and user-driven alike.
+
+**Scope is mandatory.** No deferral option. Reasons:
+
+- The sign-centralized emulator's *only* production caller is
+  `mpc_session/input.rs:300`. If we keep it and also pass
+  `SignData::Unverified(synthetic_message)`, the upstream protocol will
+  run its OWN emulation on top, producing wire-incompatible output
+  versus what ika's synthetic message expected. That's not a "small
+  rough edge"; that's a wrong-result bug.
+- Even if we hack around that by skipping the upstream emulation, ika's
+  emulator's `ZeroRng` semantics may not bit-match what
+  `emulate_threshold_verified_sign_data` produces upstream (different
+  hands wrote them at different times). Validators on the new build
+  would disagree with each other on the synthetic message bytes.
+- The performance hole the comment warned about (O(seconds) ECDSA
+  blocking the input-handler thread) is unacceptable for any production
+  NOA-ECDSA flow; fixing it is the whole point of the upstream change.
+
+**Verification.** A local swarm running an NOA-ECDSA sign should
+complete the sign cycle without the input-handler thread blocking for
+multi-second windows. Compare wall-clock latency vs. dev (which today
+takes seconds per NOA-ECDSA sign).
 
 ### Phase 5 — `presign::Protocol` adapter changes
 
