@@ -133,6 +133,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         );
 
 
+                        // Phase 4 of crypto bump: 3 trailing PVSS encryption-keys/proofs args
+                        // for HPKE/PVSS validator key generation (deferred — see plan). Empty
+                        // HashMaps as placeholders.
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
@@ -142,6 +145,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_tangible_party_id_to_upcoming,
                                 bcs::from_bytes(&network_dkg_public_output)?,
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                                HashMap::new(),
+                                HashMap::new(),
+                                HashMap::new(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -158,7 +164,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
                             "network_dkg_public_output",
-                            &network_dkg_public_output
+                            &network_dkg_public_output,
                         );
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -169,6 +175,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 current_tangible_party_id_to_upcoming,
                                 public_output,
+                                HashMap::new(),
+                                HashMap::new(),
+                                HashMap::new(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -191,13 +200,13 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
                             "network_dkg_public_output",
-                            &network_dkg_public_output
+                            &network_dkg_public_output,
                         );
 
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
                             "latest_reconfiguration_public_output",
-                            &latest_reconfiguration_public_output
+                            &latest_reconfiguration_public_output,
                         );
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -209,6 +218,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_tangible_party_id_to_upcoming,
                                 public_output.into(),
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                                HashMap::new(),
+                                HashMap::new(),
+                                HashMap::new(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 

@@ -21,8 +21,9 @@ use group::CsRng;
 use group::{HashScheme, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
+    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{AsynchronouslyAdvanceable, GuaranteesOutputDelivery};
@@ -32,10 +33,322 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
+use twopc_mpc::sign::SignData as UpstreamSignData;
 use twopc_mpc::{dkg, sign};
 
 pub(crate) type SignParty<P> = <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type DKGAndSignParty<P> = <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;
+
+/// Local extension trait that names the per-curve `DecryptionKeySharePublicParameters`
+/// (which `twopc_mpc::sign::Protocol` no longer exposes as an associated type at
+/// `9d35fa76`) and provides per-protocol struct-literal constructors for the sign
+/// public inputs (since the upstream `From<(tuple)>` impls were removed).
+///
+/// All five sign protocols ika uses are AHE-mode at this bump; the `sign_data`
+/// parameter is `SignData::Unverified(sign_message)` for user-driven sign and
+/// `SignData::ToBeEmulated` for network-owned-address sign (per Phase 9).
+///
+/// TODO(vss): when VSS-mode sign protocols are activated, the sign-protocol private
+/// input changes shape (HPKE blobs / nonce shares derived from the presign
+/// `PrivateOutput`). Sign sessions will need to read each validator's own presign
+/// `<P::PresignParty as mpc::Party>::PrivateOutput` (a concrete VSS type, not `()`)
+/// keyed by `(presign_id, validator_id)` — that storage path does not exist today.
+/// The generic shape stays the same; only the source of the value changes per
+/// protocol. See `docs/plan-bump-crypto-private-to-main.md` §4d.
+pub(crate) trait SignProtocolExt: twopc_mpc::sign::Protocol {
+    type DecryptionKeySharePublicParameters: Send + Sync;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput;
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput;
+}
+
+impl SignProtocolExt for Secp256k1ECDSAProtocol {
+    type DecryptionKeySharePublicParameters =
+        class_groups::Secp256k1DecryptionKeySharePublicParameters;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput {
+        twopc_mpc::ecdsa::sign::decentralized_party::PublicInput {
+            expected_decrypters,
+            message,
+            hash_type: hash_scheme,
+            dkg_output,
+            presign,
+            sign_message: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput {
+        twopc_mpc::ecdsa::sign::decentralized_party::DKGSignPublicInput {
+            expected_decrypters,
+            message,
+            hash_type: hash_scheme,
+            dkg_public_input,
+            presign,
+            sign_message: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+}
+
+impl SignProtocolExt for Secp256r1ECDSAProtocol {
+    type DecryptionKeySharePublicParameters =
+        class_groups::Secp256r1DecryptionKeySharePublicParameters;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput {
+        twopc_mpc::ecdsa::sign::decentralized_party::PublicInput {
+            expected_decrypters,
+            message,
+            hash_type: hash_scheme,
+            dkg_output,
+            presign,
+            sign_message: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput {
+        twopc_mpc::ecdsa::sign::decentralized_party::DKGSignPublicInput {
+            expected_decrypters,
+            message,
+            hash_type: hash_scheme,
+            dkg_public_input,
+            presign,
+            sign_message: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+}
+
+impl SignProtocolExt for Secp256k1TaprootProtocol {
+    type DecryptionKeySharePublicParameters =
+        class_groups::Secp256k1DecryptionKeySharePublicParameters;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::PublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_output,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::DKGSignPublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_public_input,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+}
+
+impl SignProtocolExt for Curve25519EdDSAProtocol {
+    type DecryptionKeySharePublicParameters =
+        class_groups::Curve25519DecryptionKeySharePublicParameters;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::PublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_output,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::DKGSignPublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_public_input,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+}
+
+impl SignProtocolExt for RistrettoSchnorrkelSubstrateProtocol {
+    type DecryptionKeySharePublicParameters =
+        class_groups::RistrettoDecryptionKeySharePublicParameters;
+
+    fn build_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_output: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::SignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::PublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_output,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+
+    fn build_dkg_and_sign_public_input(
+        expected_decrypters: HashSet<PartyID>,
+        protocol_public_parameters: Arc<
+            <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
+        >,
+        message: Vec<u8>,
+        hash_scheme: HashScheme,
+        dkg_public_input: <Self::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
+        presign: <Self as twopc_mpc::presign::Protocol>::Presign,
+        sign_data: UpstreamSignData<Self::SignMessage, Self::VerifiedSignData>,
+        decryption_pp: Arc<Self::DecryptionKeySharePublicParameters>,
+    ) -> Self::DKGSignDecentralizedPartyPublicInput {
+        twopc_mpc::schnorr::ahe::sign::decentralized_party::DKGSignPublicInput {
+            expected_decrypters,
+            message,
+            hash_scheme,
+            dkg_public_input,
+            presign,
+            centralized_party_partial_signature: sign_data,
+            decryption_key_share_public_parameters: decryption_pp,
+            protocol_public_parameters,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
 #[allow(clippy::large_enum_variant)]
@@ -374,7 +687,7 @@ impl SignPublicInputByProtocol {
 
                             let decentralized_dkg_output = match dkg_output {
                                 VersionedDwalletDKGPublicOutput::V1(output) => {
-                                    bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
+                                    bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice()).map_err(
                                         |_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V1"
                                                 .to_string(),
@@ -382,7 +695,7 @@ impl SignPublicInputByProtocol {
                                     )?.into()
                                 }
                                 VersionedDwalletDKGPublicOutput::V2{dkg_output, ..} => {
-                                    bcs::from_bytes::<<Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice()).map_err(
+                                    bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice()).map_err(
                                         |_| DwalletMPCError::BcsError(bcs::Error::Custom(
                                             "Failed to deserialize decentralized DKG output V2"
                                                 .to_string(),
@@ -407,20 +720,26 @@ impl SignPublicInputByProtocol {
                                 ))
                             })?;
 
-                            <SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput::from((
+                            let sign_message = bcs::from_bytes::<
+                                <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage,
+                            >(
+                                &centralized_signed_message
+                            )
+                            .map_err(|_| {
+                                DwalletMPCError::BcsError(bcs::Error::Custom(
+                                    "Failed to deserialize sign message".to_string(),
+                                ))
+                            })?;
+                            <Secp256k1ECDSAProtocol as SignProtocolExt>::build_sign_public_input(
                                 expected_decrypters,
                                 protocol_public_parameters,
                                 message,
                                 hash_scheme,
                                 decentralized_dkg_output,
                                 presign.into(),
-                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignMessage>(
-                                    &centralized_signed_message,
-                                ).map_err(|_| DwalletMPCError::BcsError(bcs::Error::Custom(
-                                    "Failed to deserialize sign message".to_string(),
-                                )))?,
+                                UpstreamSignData::Unverified(sign_message),
                                 decryption_pp,
-                            ))
+                            )
                         }
                         VersionedPresignOutput::V2(_) => {
                             generate_sign_public_input::<Secp256k1ECDSAProtocol>(
@@ -661,7 +980,7 @@ impl DKGAndSignPublicInputByProtocol {
     }
 }
 
-fn generate_sign_public_input<P: twopc_mpc::sign::Protocol>(
+fn generate_sign_public_input<P: SignProtocolExt>(
     protocol_public_parameters: Arc<
         <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
     >,
@@ -673,19 +992,89 @@ fn generate_sign_public_input<P: twopc_mpc::sign::Protocol>(
     expected_decrypters: HashSet<PartyID>,
     hash_scheme: HashScheme,
 ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
-    <SignParty<P> as SignPartyPublicInputGenerator<P>>::generate_public_input(
-        protocol_public_parameters,
-        dwallet_decentralized_public_output,
-        message,
-        presign,
-        message_centralized_signature,
-        decryption_pp,
+    let presign_bytes = match bcs::from_bytes(presign).map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "Failed to deserialize presign output: {e}"
+        )))
+    })? {
+        VersionedPresignOutput::V1(_) => {
+            unreachable!("Presign V1 should have been handled separately")
+        }
+        VersionedPresignOutput::V2(p) => p,
+    };
+
+    let dkg_output_bytes = bcs::from_bytes(dwallet_decentralized_public_output).map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "Failed to deserialize decentralized DKG versioned output: {e}"
+        )))
+    })?;
+
+    let decentralized_dkg_output = match dkg_output_bytes {
+        VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
+            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
+        >(output.as_slice())
+        .map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize decentralized DKG output V1: {e}"
+            )))
+        })?
+        .into(),
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => bcs::from_bytes::<
+            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+        >(dkg_output.as_slice())
+        .map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize presign: {e}"
+            )))
+        })?,
+    };
+
+    let presign_value: <P as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(&presign_bytes).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize presign: {e}"
+            )))
+        })?;
+
+    // Phase 9 + Phase 4f: empty `message_centralized_signature` means NOA — no centralized
+    // party participated; dispatch SignData::ToBeEmulated so the upstream protocol emulates
+    // the partial signature internally (in Rayon, not synchronously off-Rayon as ika's
+    // deleted emulator did). Otherwise this is user-driven sign — wrap as Unverified.
+    let sign_data: UpstreamSignData<
+        <P as twopc_mpc::sign::Protocol>::SignMessage,
+        <P as twopc_mpc::sign::Protocol>::VerifiedSignData,
+    > = if message_centralized_signature.is_empty() {
+        UpstreamSignData::ToBeEmulated
+    } else {
+        let centralized_signed_message =
+            bcs::from_bytes(message_centralized_signature).map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize centralized signed message: {e}"
+                )))
+            })?;
+        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+        let sign_message: <P as twopc_mpc::sign::Protocol>::SignMessage =
+            bcs::from_bytes(&centralized_signed_message).map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize sign message: {e}"
+                )))
+            })?;
+        UpstreamSignData::Unverified(sign_message)
+    };
+
+    Ok(P::build_sign_public_input(
         expected_decrypters,
+        protocol_public_parameters,
+        message,
         hash_scheme,
-    )
+        decentralized_dkg_output,
+        presign_value,
+        sign_data,
+        decryption_pp,
+    ))
 }
 
-fn generate_dkg_and_sign_public_input<P: twopc_mpc::sign::Protocol>(
+fn generate_dkg_and_sign_public_input<P: SignProtocolExt>(
     protocol_public_parameters: Arc<
         <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
     >,
@@ -697,16 +1086,31 @@ fn generate_dkg_and_sign_public_input<P: twopc_mpc::sign::Protocol>(
     expected_decrypters: HashSet<PartyID>,
     hash_scheme: HashScheme,
 ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
-    <DKGAndSignParty<P> as DKGAndSignPartyPublicInputGenerator<P>>::generate_public_input(
-        protocol_public_parameters,
-        dwallet_dkg_public_input,
-        message,
-        presign,
-        message_centralized_signature,
-        decryption_pp,
+    let presign_bytes = match bcs::from_bytes(presign)? {
+        VersionedPresignOutput::V1(_) => {
+            unreachable!("Presign V1 should have been handled separately")
+        }
+        VersionedPresignOutput::V2(p) => p,
+    };
+
+    let centralized_signed_message = bcs::from_bytes(message_centralized_signature)?;
+    let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
+
+    let presign_value: <P as twopc_mpc::presign::Protocol>::Presign =
+        bcs::from_bytes(&presign_bytes)?;
+    let sign_message: <P as twopc_mpc::sign::Protocol>::SignMessage =
+        bcs::from_bytes(&centralized_signed_message)?;
+
+    Ok(P::build_dkg_and_sign_public_input(
         expected_decrypters,
+        protocol_public_parameters,
+        message,
         hash_scheme,
-    )
+        dwallet_dkg_public_input,
+        presign_value,
+        UpstreamSignData::Unverified(sign_message),
+        decryption_pp,
+    ))
 }
 
 /// Update metrics on whether we are in the expected or unexpected case during threshold decryption.
@@ -731,171 +1135,6 @@ pub(crate) fn update_expected_decrypters_metrics(
         dwallet_mpc_metrics.number_of_expected_sign_sessions.inc();
     } else {
         dwallet_mpc_metrics.number_of_unexpected_sign_sessions.inc();
-    }
-}
-
-/// A trait for generating the public input for decentralized `Sign` round in the MPC protocol.
-///
-/// This trait is implemented to resolve compiler type ambiguities that arise in the 2PC-MPC library
-/// when accessing [`Party::PublicInput`].
-pub(crate) trait SignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>: Party {
-    fn generate_public_input(
-        protocol_public_parameters: Arc<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-        >,
-        dkg_output: &SerializedWrappedMPCPublicOutput,
-        message: Vec<u8>,
-        presign: &SerializedWrappedMPCPublicOutput,
-        centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: Arc<P::DecryptionKeySharePublicParameters>,
-        expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashScheme,
-    ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput>;
-}
-
-pub(crate) trait DKGAndSignPartyPublicInputGenerator<P: twopc_mpc::sign::Protocol>:
-    Party
-{
-    fn generate_public_input(
-        protocol_public_parameters: Arc<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-        >,
-        dwallet_dkg_public_input: <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
-        message: Vec<u8>,
-        presign: &SerializedWrappedMPCPublicOutput,
-        centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: Arc<P::DecryptionKeySharePublicParameters>,
-        expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashScheme,
-    ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput>;
-}
-
-impl<P: twopc_mpc::sign::Protocol> SignPartyPublicInputGenerator<P> for SignParty<P> {
-    fn generate_public_input(
-        protocol_public_parameters: Arc<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-        >,
-        dkg_output: &SerializedWrappedMPCPublicOutput,
-        message: Vec<u8>,
-        presign: &SerializedWrappedMPCPublicOutput,
-        centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: Arc<P::DecryptionKeySharePublicParameters>,
-        expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashScheme,
-    ) -> DwalletMPCResult<<SignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes(presign).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "Failed to deserialize presign output: {e}"
-            )))
-        })? {
-            VersionedPresignOutput::V1(_) => {
-                unreachable!("Presign V1 should have been handled separately ")
-            }
-            VersionedPresignOutput::V2(presign) => presign,
-        };
-
-        let dkg_output = bcs::from_bytes(dkg_output).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "Failed to deserialize decentralized DKG versioned output: {e}"
-            )))
-        })?;
-
-        let centralized_signed_message =
-            bcs::from_bytes(centralized_signed_message).map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize centralized signed message: {e}"
-                )))
-            })?;
-
-        let decentralized_dkg_output = match dkg_output {
-            VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
-                <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-            >(output.as_slice())
-            .map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize decentralized DKG output V1: {e}"
-                )))
-            })?
-            .into(),
-            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
-                bcs::from_bytes::<
-                    <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
-                >(dkg_output.as_slice())
-                .map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V2: {e}"
-                    )))
-                })?
-            }
-        };
-
-        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
-
-        let public_input = <SignParty<P> as Party>::PublicInput::from((
-            expected_decrypters,
-            protocol_public_parameters,
-            message,
-            hash_scheme,
-            decentralized_dkg_output,
-            bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign).map_err(
-                |e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize presign: {e}"
-                    )))
-                },
-            )?,
-            bcs::from_bytes::<<P as twopc_mpc::sign::Protocol>::SignMessage>(
-                &centralized_signed_message,
-            )
-            .map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize sign message: {e}"
-                )))
-            })?,
-            decryption_key_share_public_parameters,
-        ));
-
-        Ok(public_input)
-    }
-}
-
-impl<P: twopc_mpc::sign::Protocol> DKGAndSignPartyPublicInputGenerator<P> for DKGAndSignParty<P> {
-    fn generate_public_input(
-        protocol_public_parameters: Arc<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-        >,
-        dwallet_dkg_public_input: <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DKGDecentralizedPartyPublicInput,
-        message: Vec<u8>,
-        presign: &MPCPublicOutput,
-        centralized_signed_message: &SerializedWrappedMPCPublicOutput,
-        decryption_key_share_public_parameters: Arc<P::DecryptionKeySharePublicParameters>,
-        expected_decrypters: HashSet<PartyID>,
-        hash_scheme: HashScheme,
-    ) -> DwalletMPCResult<<DKGAndSignParty<P> as Party>::PublicInput> {
-        let presign = match bcs::from_bytes(presign)? {
-            VersionedPresignOutput::V1(_) => {
-                unreachable!("Presign V1 should have been handled separately")
-            }
-            VersionedPresignOutput::V2(presign) => presign,
-        };
-
-        let centralized_signed_message = bcs::from_bytes(centralized_signed_message)?;
-        let VersionedUserSignedMessage::V1(centralized_signed_message) = centralized_signed_message;
-
-        let public_input = <DKGAndSignParty<P> as Party>::PublicInput::from((
-            expected_decrypters,
-            protocol_public_parameters,
-            message,
-            hash_scheme,
-            dwallet_dkg_public_input,
-            bcs::from_bytes::<<P as twopc_mpc::presign::Protocol>::Presign>(&presign)?,
-            bcs::from_bytes::<<P as twopc_mpc::sign::Protocol>::SignMessage>(
-                &centralized_signed_message,
-            )?,
-            decryption_key_share_public_parameters,
-        ));
-
-        Ok(public_input)
     }
 }
 
@@ -935,16 +1174,23 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
         bcs::from_bytes(&partially_signed_message)?;
 
-    <P as sign::Protocol>::verify_centralized_party_partial_signature(
-        message,
-        *hash_scheme,
-        decentralized_dkg_output,
-        presign,
-        partial,
-        protocol_public_parameters,
-        &mut OsCsRng,
-    )
-    .map_err(DwalletMPCError::from)
+    // Phase 4e: capture VerifiedSignData (upstream return type changed Result<()> →
+    // Result<P::VerifiedSignData>) but discard for now; verifier-only call site. A follow-up
+    // PR can surface it on this function's return signature so callers can pass
+    // SignData::Verified(...) into the next sign-public-input construction (skipping
+    // re-verification and shrinking wire size — see plan §4e).
+    let _verified: <P as sign::Protocol>::VerifiedSignData =
+        <P as sign::Protocol>::verify_centralized_party_partial_signature(
+            message,
+            *hash_scheme,
+            decentralized_dkg_output,
+            presign,
+            partial,
+            protocol_public_parameters,
+            &mut OsCsRng,
+        )
+        .map_err(DwalletMPCError::from)?;
+    Ok(())
 }
 
 pub fn compute_sign<P: twopc_mpc::sign::Protocol>(

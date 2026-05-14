@@ -18,8 +18,8 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256r1ECDSAProtocol, SessionIdentifier,
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol,
+    Secp256k1ECDSAProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
@@ -111,10 +111,10 @@ impl ProtocolCryptographicData {
                     let hash_scheme = data.hash_scheme;
                     let decentralized_dkg_output = match dkg_output {
                             VersionedDwalletDKGPublicOutput::V1(output) => {
-                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+                                bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
                             }
                             VersionedDwalletDKGPublicOutput::V2{dkg_output, ..} => {
-                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
+                                bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
                             }
                         };
 
