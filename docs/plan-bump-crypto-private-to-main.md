@@ -221,52 +221,88 @@ shows zero direct ika imports of these paths.
 - `crates/dwallet-mpc-centralized-party/src/lib.rs`
 - `crates/ika-types/src/messages_dwallet_mpc.rs`
 
-#### 4a. DKG types now accessed via `<Self::DKGProtocol as dkg::Protocol>::…`
+#### 4a. Bind DKG via the per-curve aliases, not via `<P::DKGProtocol as dkg::Protocol>::…`
 
-Every place ika has `<P as sign::Protocol>::DKGOutput` or refers to
-`P::DecentralizedPartyDKGOutput` through the sign trait must adapt to
-the new indirection. Concretely:
+Upstream, `sign::Protocol` no longer extends `dkg::Protocol`; DKG types
+are reachable through the `DKGProtocol` associated type that lives on
+`presign::Protocol`. The seemingly-natural rewrite for code generic
+over `sign::Protocol` is to chase types through that associated type:
 
-Old:
 ```rust
-fn foo<P: sign::Protocol>() {
-    let _: P::DecentralizedPartyDKGOutput = …;
-    let _: P::ProtocolPublicParameters = …;
+let _: <P::DKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput = …;
+```
+
+**We deliberately don't do that.** There is exactly one DKG protocol
+per curve, shared across all signature algorithms on that curve. ika
+already exposes the bindings:
+
+```rust
+// crates/ika-types/src/messages_dwallet_mpc.rs
+pub type Secp256k1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
+pub type Secp256r1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
+pub type Curve25519AsyncDKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
+pub type RistrettoAsyncDKGProtocol    = twopc_mpc::ristretto::class_groups::DKGProtocol;
+```
+
+Use those directly. Generic helpers that today are generic over
+`<P: sign::Protocol>` and reach for `P::DecentralizedPartyDKGOutput`
+should be reshaped to take the DKG protocol as a separate, explicit
+generic parameter (or to bind the per-curve concrete DKG type at the
+call site). Two acceptable shapes:
+
+```rust
+// (preferred) explicit second generic, paired by curve at the call site:
+fn foo<P, D>()
+where
+    P: sign::Protocol,
+    D: dkg::Protocol,                              // = Secp256k1AsyncDKGProtocol, etc.
+{
+    let _: D::DecentralizedPartyDKGOutput = …;
+}
+
+// or: bind the curve concretely where the generic isn't load-bearing:
+fn foo_secp256k1() {
+    let _: <Secp256k1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput = …;
 }
 ```
 
-New:
-```rust
-fn foo<P: sign::Protocol>() {
-    let _: <P::DKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput = …;
-    let _: <P::DKGProtocol as dkg::Protocol>::ProtocolPublicParameters = …;
-}
-```
-
-In ika's `sign.rs` the type names `Secp256k1ECDSAProtocol` etc. (which
-implement `sign::Protocol`) must now have a `type DKGProtocol = …` that
-points at the corresponding curve's `DKGProtocol`. These impls live
-upstream in twopc_mpc; ika just consumes them. Update bounds in ika's
-generic helpers to express `DKGProtocol` linkage via the `presign::Protocol`
-supertrait.
+Rationale: routing through `<P::DKGProtocol as dkg::Protocol>::…`
+re-couples sign-protocol-generic code to a particular DKG-protocol
+choice via an associated-type chain, when the design intent is "there's
+just one DKG per curve, every signature algorithm uses it." Naming the
+DKG type directly makes that intent visible at the type-system level
+and keeps the call sites readable.
 
 #### 4b. `DecryptionKeyShare` / `DecryptionKeySharePublicParameters` removed
 
-These two associated types are gone from `sign::Protocol`. Find ika uses:
+These two `sign::Protocol` associated types are gone at main. ika
+references them in `mpc_computations/sign.rs`:
+
+- `decryption_pp: Arc<P::DecryptionKeySharePublicParameters>` parameter
+  on multiple helpers (lines 670, 692, 744, 759, 772, 858) — drop the
+  parameter. Its data now lives inside the sign public input struct
+  directly; callers should construct the public input with that field
+  populated (see 4c) and read it from there inside the helpers if they
+  still need it.
+- `Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>`
+  parameter (line 942, also 1004 for `DKGAndSignParty<P>`) — keep the
+  type indirection. At main, this resolves to
+  `Option<HashMap<PartyID, P::SignDecentralizedPartyPrivateInput>>`,
+  which for AHE protocols is `Option<HashMap<PartyID, SecretKeyShareSizedInteger>>`
+  — the same data ika already produces via `decrypt_decryption_key_shares()`
+  on the network DKG output. No new data to source; same `Option<HashMap<…>>`
+  shape; just a different concrete type underneath.
+
+If any other ika site names `DecryptionKeyShare` or
+`DecryptionKeySharePublicParameters` by their bare type names, surface
+it via grep before starting:
+
 ```bash
 grep -rE '(DecryptionKeyShare|DecryptionKeySharePublicParameters)' --include='*.rs' crates/ sdk/
 ```
 
-For AHE-mode protocols (which is all ika has today), the concrete shapes
-are still the same:
-- `DecryptionKeyShare` was `HashMap<PartyID, SecretKeyShareSizedInteger>`.
-  At main this becomes the value type carried by
-  `Self::SignDecentralizedPartyPrivateInput` for AHE protocols.
-- `DecryptionKeySharePublicParameters` data is now embedded inside the
-  v2 sign public input struct directly.
-
-Sites that named the old types need to be rewritten to use the new
-PrivateInput type or extract from the public input.
+and rewrite each to either the per-curve concrete type or to traversal
+through `SignDecentralizedPartyPrivateInput` / the public input.
 
 #### 4c. `From<(tuple)>` removed from `SignDecentralizedPartyPublicInput`, `DKGSignDecentralizedPartyPublicInput`, `SignCentralizedPartyPublicInput`
 
@@ -281,7 +317,51 @@ reading the new struct definition in
 `2pc-mpc/src/ecdsa/sign/decentralized_party/class_groups.rs` and sibling
 files. Expect ~10 such sites in ika.
 
-#### 4d. `verify_centralized_party_partial_signature` return type changed
+Note: the public input struct now embeds the data that used to be
+plumbed separately as `DecryptionKeySharePublicParameters` (per 4b).
+When constructing the struct literal, populate that field from where
+the old call site got the `Arc<…>` value.
+
+#### 4d. New presign-private-output → sign-private-input shape
+
+Main introduces a conversion-point between presign and sign:
+
+```rust
+// 2pc-mpc/src/sign.rs ~5603 / 5794 / 5980 (3 protocol surfaces):
+fn(
+    &HashMap<PartyID, <P::PresignParty as mpc::Party>::PrivateOutput>,
+    &P::Presign,
+) -> HashMap<PartyID, P::SignDecentralizedPartyPrivateInput>
+```
+
+The sign protocol now expects `private_inputs: HashMap<PartyID,
+P::SignDecentralizedPartyPrivateInput>` derived from per-party presign
+private outputs and the presign artifact itself. For ika's AHE-mode
+protocols today:
+
+- `<P::PresignParty as mpc::Party>::PrivateOutput = ()` (verified in
+  `2pc-mpc/src/ecdsa/presign/decentralized_party/class_groups.rs:174`)
+- `P::SignDecentralizedPartyPrivateInput = HashMap<PartyID, SecretKeyShareSizedInteger>`
+  — the same data ika gets from
+  `network_encryption_keys → decrypt_decryption_key_shares()`.
+
+The conversion function is therefore a no-op for AHE: it ignores its
+per-party presign-private-output input (`()`) and returns the
+already-known decryption-key-shares map. ika does NOT receive presign
+private outputs (they're `()`); ika just plumbs in the existing
+decryption-key-shares map at the call site to `advance_with_guaranteed_output`.
+
+In practice this surfaces as: the existing
+`decryption_key_shares: Option<<SignParty<P> as AsynchronouslyAdvanceable>::PrivateInput>`
+parameter (sign.rs:942/1004) keeps working without semantic change.
+What changes is at the upstream API: any helper above the
+`advance_with_guaranteed_output` boundary that expects to receive
+`(presign_private_outputs, presign)` and produce sign private inputs
+needs to have its bound satisfied. For AHE, `()` for presign private
+outputs means there's nothing to thread through — just pass the
+already-built decryption-key-shares map.
+
+#### 4e. `verify_centralized_party_partial_signature` return type changed
 
 Old: `Result<()>`. New: `Result<P::VerifiedSignData>`.
 
