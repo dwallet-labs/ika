@@ -356,6 +356,33 @@ ika's existing source for that value (the network-DKG decryption-key-shares
 map) is the same source as before. No new storage path, no new
 persistence, no new call shape.
 
+**Document the VSS seam in code, not just in this plan.** At each of
+the two helper definitions in `sign.rs` that take this parameter (the
+`SignParty<P>` and `DKGAndSignParty<P>` variants), add a doc-comment
+naming what changes when VSS lands:
+
+```rust
+/// `decryption_key_shares` is the sign-protocol private input.
+///
+/// For AHE-mode protocols this resolves to
+/// `Option<HashMap<PartyID, SecretKeyShareSizedInteger>>` and is
+/// sourced from the network DKG's decryption-key-shares map (i.e. the
+/// output of `decrypt_decryption_key_shares` on the network DKG
+/// output).
+///
+/// TODO(vss): when VSS-mode sign protocols are activated, this
+/// parameter's concrete type will resolve to a different shape
+/// (containing nonce shares / HPKE blobs / etc. derived from the
+/// presign protocol's `PrivateOutput`). The generic shape stays the
+/// same; only the source of the value changes. The presign session
+/// must persist each validator's own `<P::PresignParty as mpc::Party>::PrivateOutput`
+/// keyed by `(presign_id, validator_id)` so the sign session can
+/// recover it. That storage path does not exist today.
+```
+
+Same comment at `DKGAndSignParty<P>` site. The TODO marker keeps the
+future PR honest about what work it implies.
+
 **Forward-looking seam for VSS.** When VSS lands the meaningful work
 will be at ika's session boundaries, not at the generic helper
 signature:
@@ -390,26 +417,98 @@ What this bump deliberately does NOT do, and why:
   is still in flux (per the open work in `2pc-mpc/src/schnorr/vss/`);
   pinning a storage shape now would prejudice that PR.
 
-#### 4e. `verify_centralized_party_partial_signature` return type changed
+#### 4e. `verify_centralized_party_partial_signature` return type changed — capture the value, don't discard
 
 Old: `Result<()>`. New: `Result<P::VerifiedSignData>`.
 
-Find sites:
+This is not a cosmetic signature change — it's an enablement for two
+related optimizations the upstream rev was designed around. Capture the
+returned `VerifiedSignData` and keep it alive; do not `let _ = …?;`.
+
+**Why it matters: `VerifiedSignData` is much smaller than `SignMessage`.**
+Reading `ecdsa/sign/decentralized_party/class_groups.rs:745`, the
+verified form for ECDSA is three ciphertext / nonce fields:
+
+```rust
+VerifiedSignDataRaw {
+    public_signature_nonce,
+    encryption_of_partial_signature,
+    encryption_of_displaced_decentralized_party_nonce_share,
+}
+```
+
+— three group / ciphertext values, vs. `SignMessage` which additionally
+carries the full ZK proofs ($\pi_k, \pi_\alpha, \pi_\beta$, commitment-
+equality proof, encryption proofs) that justify those fields. Once a
+validator has verified the proofs, persisting / re-transmitting the
+verified form is a real wire and storage shrink for any follow-up
+round, broadcast, or future-tx replay.
+
+**Where this surfaces in ika.**
+
+Find call sites:
 ```bash
 grep -rE 'verify_centralized_party_partial_signature' --include='*.rs' crates/ sdk/
 ```
 
-Callers either:
-1. Discard the returned `VerifiedSignData` (use `let _ = …?;`) — fine
-   for callers that only cared about the boolean validity.
-2. Capture and pass through. The new `SignData` enum's `Verified(...)`
-   variant wraps `VerifiedSignData`; any code that constructs
-   `SignData::Unverified(SignMessage)` from a verified context should
-   use `SignData::Verified(verified_sign_data)` instead.
+For each site, classify:
 
-For this bump's scope, option (1) is sufficient — ika doesn't currently
-use the verified-data optimization. Document the discarded data as a
-follow-up optimization.
+1. **Verifier-only call (boolean validity check)**: capture the value
+   into a local binding even if not yet used downstream — at minimum
+   so a follow-up can wire it through. A bare `let _ = …?;` discards
+   the entire optimization opportunity.
+2. **Verifier-as-precursor-to-sign-input call**: feed the captured
+   `VerifiedSignData` into the next sign-public-input construction as
+   `SignData::Verified(verified_sign_data)` instead of re-wrapping
+   the original `SignMessage` as `SignData::Unverified(...)`. The
+   upstream protocol's `emulate_or_verify_or_unpack_sign_data` short-
+   circuits the `Verified` case as "return as-is, no re-verification"
+   (per `ecdsa/sign/decentralized_party/class_groups.rs:756`).
+
+Whether this bump fully wires the wire-size optimization end-to-end is
+a scope call (it touches consensus message types). At minimum: capture
+the value, surface it on the helper's return signature, and leave the
+wiring to a follow-up. Do NOT `let _ = …?;` — that buries the work.
+
+#### 4f. Replace ika's NOA emulation with `SignData::ToBeEmulated` + `threshold_dkg_output`
+
+Currently ika maintains ~734 lines of network-owned-address (NOA)
+emulation in
+`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_owned_address_sign_dkg_emulation.rs`.
+The upstream rev provides native equivalents for the load-bearing
+parts of that file, designed to delete it:
+
+| ika function (today) | Upstream replacement |
+|---|---|
+| `emulate_centralized_party_partial_signature` (line 282) | Pass `SignData::ToBeEmulated` as the sign data in the sign public input. Upstream's `resolve_sign_data` / `emulate_or_verify_or_unpack_sign_data` calls `emulate_threshold_verified_sign_data` internally to produce the verified data with `ZeroRng` semantics. |
+| `emulate_sign_centralized` (line 358) | Same. The per-curve `match` dispatch ika does today is absorbed by the protocol generic. |
+| `emulate_centralized_dkg_for_network_owned_address_sign` (line 108) | Call `<DKGProtocol as dkg::Protocol>::threshold_dkg_output(protocol_public_parameters, session_id)` (the new required method on `dkg::Protocol`; see Phase 6). Its doc spells out the equivalence: "uses neutral for the centralized party's public key share and default proof bytes in the Fiat-Shamir transcript, derives the randomized decentralized party public key share and encryption of secret key share." |
+| `emulate_centralized_dkg_v2` (line 152) | Same. |
+| `get_zero_centralized_secret` (line 220) | Inlineable if the only remaining caller is the upstream `ToBeEmulated` path (which internally enforces $x_A = 0$); confirm by grep before deleting. |
+| `compute_decentralized_dkg_output` (line 508) / `compute_network_owned_address_sign_dkg_output` (line 655) | Thin orchestration that composes the above. Reduces to: call `threshold_dkg_output`, advance, finalize. Keep the orchestration shape, delete the emulation internals. |
+| `network_owned_address_sign_dkg_session_identifier` (line 612) | ika-side bookkeeping; keep. |
+
+Estimated reduction: ~600 lines from this file. Plus the call sites
+that today construct synthetic `SignMessage` values for NOA flow will
+change from `SignMessage { … }` construction to literal
+`SignData::ToBeEmulated`.
+
+**Scope call.** This phase is genuinely larger than the rest of the
+bump. Options:
+
+- (a) Land in this bump. Pro: avoids shipping dead emulation code
+  alongside its native upstream replacement; avoids confusion when
+  reading the codebase; sets a clean baseline for VSS work.
+- (b) Defer to immediate follow-up PR on the same branch. Pro: keeps
+  the bump diff focused on "make it compile"; reduces review surface.
+
+Recommend (a) because: the deletion is straightforward given the
+1:1 upstream replacements; the alternative ships ika in a state where
+the NOA path triggers ika's emulator AND THEN feeds a synthetic
+SignMessage into a protocol that already knows how to emulate, which
+is wasteful and observably wrong on wire. Make the call before
+starting; if (b), wire ToBeEmulated minimally as a compile fix and
+schedule the deletion immediately.
 
 ### Phase 5 — `presign::Protocol` adapter changes
 
@@ -536,24 +635,55 @@ Hard part: callers must have a `&group::PublicParameters<…CommitmentSpaceGroup
 in scope. Where the existing call site doesn't have one, plumb the value
 through from the appropriate Protocol or PublicInput it has access to.
 
-### Phase 9 — `SignData` enum wraps `SignMessage` in sign public inputs
+### Phase 9 — `SignData` enum wraps `SignMessage` in sign public inputs (per-site classification)
 
-The new struct shape (visible in `2pc-mpc/src/ecdsa/sign/decentralized_party/class_groups.rs`
-fields) accepts `SignData<SignMessage, VerifiedSignData>` where the old
-shape accepted `SignMessage` directly.
+The new sign public input struct (visible in
+`2pc-mpc/src/ecdsa/sign/decentralized_party/class_groups.rs`) carries
+a `SignData<SignMessage, VerifiedSignData>` field where the old shape
+took a `SignMessage` directly. Three variants, three semantics:
 
-For this bump's scope, every `SignMessage` value flowing into a sign
-public input from ika should be wrapped as
-`SignData::Unverified(sign_message)`. This is the variant that triggers
-the verifier inside the protocol, preserving today's behavior.
-
-Find sites:
-```bash
-grep -rE 'sign_message|SignMessage' crates/ika-core/src/dwallet_mpc/ sdk/typescript/
-# focus on construction sites for SignDecentralizedPartyPublicInput / DKGSignDecentralizedPartyPublicInput.
+```rust
+pub enum SignData<SignMessage, VerifiedSignData> {
+    Unverified(SignMessage),     // full message with ZK proofs; protocol verifies internally
+    Verified(VerifiedSignData),  // post-verification compact form; protocol short-circuits verification
+    ToBeEmulated,                // no centralized party participated; protocol emulates internally
+}
 ```
 
-Wrap each in `SignData::Unverified(...)`.
+Find all construction sites:
+```bash
+grep -rE 'sign_message|SignMessage' crates/ika-core/src/dwallet_mpc/ sdk/typescript/
+# Focus on SignDecentralizedPartyPublicInput / DKGSignDecentralizedPartyPublicInput construction.
+```
+
+Classify each site:
+
+| Call origin | SignData variant |
+|---|---|
+| User-driven sign (dWallet owned by an external user; the centralized party produced a real `SignMessage`) | `SignData::Unverified(sign_message)` — same effective semantics as today's flow. |
+| Network-owned-address (NOA) sign (no real centralized party; today: synthetic `SignMessage` from ika's emulator) | `SignData::ToBeEmulated` — replaces the synthetic-message construction entirely. See Phase 4f for the corresponding emulator deletion. |
+| Post-verification re-construction (e.g. if ika persists a sign attempt across sessions and reconstructs the public input later) | `SignData::Verified(verified_sign_data)` from the captured `VerifiedSignData` (Phase 4e) — protocol skips re-verification. |
+
+Don't blanket-wrap every site as `SignData::Unverified(...)` — that
+would mask the NOA simplification opportunity (Phase 4f) and ship the
+wire-size optimization unused (Phase 4e).
+
+For the NOA → `ToBeEmulated` conversion specifically: the call sites
+that currently look like:
+
+```rust
+let sign_message = emulate_centralized_party_partial_signature(…)?;
+let public_input = SignDecentralizedPartyPublicInput { …, sign_message, … };
+```
+
+become:
+
+```rust
+let public_input = SignDecentralizedPartyPublicInput { …, sign_data: SignData::ToBeEmulated, … };
+```
+
+and the `emulate_*` calls (and their 600-line emulator file) are
+deleted in Phase 4f.
 
 ### Phase 10 — wire-format Versioned enum variants (deferred)
 
