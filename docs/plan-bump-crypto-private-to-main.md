@@ -81,58 +81,57 @@ pulled in transitively through `twopc_mpc` where needed; ika's
 
 Update `Cargo.lock` via `cargo build` after this phase.
 
-### Phase 2 — fix error-handling refactor (`Error → ErrorKind`)
+### Phase 2 — fix two `mpc::Error::ThresholdNotReached` match arms
 
-**Scope:** `mpc::Error` and `twopc_mpc::Error` are now struct wrappers
-around an `ErrorKind` enum. Match arms on the bare enum break.
+`mpc::Error` and `twopc_mpc::Error` are now struct wrappers around an
+`ErrorKind` enum. Matching on the bare enum variant breaks. The actual
+ika surface, confirmed by grep, is **two sites**, both on the same
+variant:
 
-**Find sites:**
-```bash
-grep -rE 'mpc::Error::' --include='*.rs' crates/ sdk/
-grep -rE 'twopc_mpc::Error::' --include='*.rs' crates/ sdk/
-grep -rE 'use mpc::Error[^A-Za-z]' --include='*.rs' crates/ sdk/
-```
+- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:654`
+- `crates/ika-core/src/dwallet_mpc/mpc_manager.rs:1715`
 
-**Rewrite pattern:**
+Both look like:
 
-Old:
 ```rust
-match err {
-    mpc::Error::ThresholdNotReached => …,
-    mpc::Error::MaliciousMessage(parties) => …,
-    _ => …,
+match … {
+    Ok(…) => …,
+    Err(mpc::Error::ThresholdNotReached) => …,
+    Err(e) => { error!(…); … }
 }
 ```
 
-New (the accessor pattern depends on what `main` exposes — verify by
-reading `mpc/src/lib.rs` at `9d35fa76` line ~42 for the `Error` struct
-definition, e.g. `pub kind: ErrorKind` direct access, or via accessor):
+Rewrite to a guard against the wrapped kind:
+
 ```rust
-match err.kind {
-    mpc::ErrorKind::ThresholdNotReached => …,
-    mpc::ErrorKind::MaliciousMessage(parties) => …,
-    mpc::ErrorKind::MaliciousMessageAsync => …,                       // new
-    mpc::ErrorKind::MaliciousMessagePreventsAdvance => …,             // new
-    mpc::ErrorKind::DecryptionFailed => …,                            // new
-    mpc::ErrorKind::IdentityEphemeralKey => …,                        // new
-    mpc::ErrorKind::TorsionEphemeralKey => …,                         // new
-    mpc::ErrorKind::Serialization(_) => …,                            // new
-    _ => …,
+match … {
+    Ok(…) => …,
+    Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => …,
+    Err(e) => { error!(…); … }
 }
 ```
 
-For each match site, the new `ErrorKind` variants need decisions:
-- `DecryptionFailed`, `IdentityEphemeralKey`, `TorsionEphemeralKey` —
-  generally treat as fatal protocol errors; route to existing fatal-error
-  paths.
-- `MaliciousMessageAsync` — treat like `MaliciousMessage` for accountability
-  purposes.
-- `MaliciousMessagePreventsAdvance` — treat as a wait-for-more-messages
-  signal, similar to `ThresholdNotReached`.
-- `Serialization(_)` — bcs-style error; treat as a fatal data error.
+(Exact accessor — `e.kind` direct field vs `e.kind()` method — verify
+against `mpc/src/lib.rs` at `9d35fa76` line ~42; the struct is small,
+look at it once.)
 
-Apply the same pattern for `twopc_mpc::Error` / `twopc_mpc::ErrorKind`.
-Cover the new variant `InvalidSignatureShare`.
+No other ika code needs to change for the `Error→ErrorKind` rewrap:
+
+- `crates/ika-types/src/dwallet_mpc_error.rs` has
+  `#[from] mpc::Error` / `#[from] twopc_mpc::Error` and a
+  `FailedToAdvanceMPC(mpc::Error)` field. These store / convert from
+  the struct type and work unchanged — thiserror's `#[from]` doesn't
+  care that the source went from enum to struct.
+- `crates/dwallet-mpc-centralized-party/src/lib.rs:974` calls
+  `twopc_mpc::Error::from(…)?`. `From` impls on the struct cover the
+  same source types as before; works unchanged.
+
+The new `ErrorKind` variants (`DecryptionFailed`, `IdentityEphemeralKey`,
+`TorsionEphemeralKey`, `MaliciousMessageAsync`,
+`MaliciousMessagePreventsAdvance`, `Serialization`, `InvalidSignatureShare`)
+need no per-variant handling — both match sites already have a catch-all
+`Err(e) => { error!(…); … }` that logs and bails. The new variants
+fall through and produce the same observable behavior.
 
 ### Phase 3 — fix relocated module paths
 
