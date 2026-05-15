@@ -1107,14 +1107,18 @@ pub(crate) fn update_expected_decrypters_metrics(
 /// can be persisted/re-transmitted as `SignData::Verified(...)` for any follow-up sign or
 /// rebroadcast, skipping re-verification and shrinking wire size. Surface it on the helper's
 /// return signature here; callers that don't yet plumb it through can discard locally.
-pub(crate) fn verify_partial_signature<P: sign::Protocol>(
+pub(crate) fn verify_partial_signature<P, D>(
     message: &[u8],
     hash_scheme: &HashScheme,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
-    protocol_public_parameters: &<P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-) -> DwalletMPCResult<<P as sign::Protocol>::VerifiedSignData> {
+    protocol_public_parameters: &D::ProtocolPublicParameters,
+) -> DwalletMPCResult<<P as sign::Protocol>::VerifiedSignData>
+where
+    P: sign::Protocol + twopc_mpc::presign::Protocol<DKGProtocol = D>,
+    D: twopc_mpc::dkg::Protocol,
+{
     let presign = match bcs::from_bytes::<VersionedPresignOutput>(presign)? {
         VersionedPresignOutput::V1(_) => {
             unreachable!("Presign V1 should have been handled separately")
@@ -1125,14 +1129,13 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
         bcs::from_bytes(dwallet_decentralized_output)?;
     let partially_signed_message: VersionedUserSignedMessage =
         bcs::from_bytes(partially_signed_message)?;
-    let decentralized_dkg_output = match dkg_output {
-        VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-        >(output.as_slice())?
-        .into(),
-        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => bcs::from_bytes::<
-            <P::DKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
-        >(dkg_output.as_slice())?,
+    let decentralized_dkg_output: D::DecentralizedPartyDKGOutput = match dkg_output {
+        VersionedDwalletDKGPublicOutput::V1(output) => {
+            bcs::from_bytes::<D::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+        }
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes::<D::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
+        }
     };
 
     let presign: <P as twopc_mpc::presign::Protocol>::Presign = bcs::from_bytes(&presign)?;
@@ -1152,6 +1155,20 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     .map_err(DwalletMPCError::from)
 }
 
+/// `decryption_key_shares` is the sign-protocol private input.
+///
+/// For AHE-mode protocols (all five sign protocols ika uses at this bump) this resolves to
+/// `Option<HashMap<PartyID, SecretKeyShareSizedInteger>>` and is sourced from the network
+/// DKG's decryption-key-shares map (i.e. the output of `decrypt_decryption_key_shares` on
+/// the network DKG output).
+///
+/// TODO(vss): when VSS-mode sign protocols are activated, this parameter's concrete type
+/// will resolve to a different shape (containing nonce shares / HPKE blobs / etc. derived
+/// from the presign protocol's `PrivateOutput`). The generic shape stays the same; only
+/// the source of the value changes. The presign session must persist each validator's own
+/// `<P::PresignParty as mpc::Party>::PrivateOutput` keyed by `(presign_id, validator_id)`
+/// so the sign session can recover it. That storage path does not exist today. See
+/// `docs/plan-bump-crypto-private-to-main.md` §4d.
 pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
@@ -1213,6 +1230,9 @@ pub fn compute_sign<P: twopc_mpc::sign::Protocol>(
     }
 }
 
+/// `decryption_key_shares` is the sign-protocol private input. See `compute_sign` for the
+/// AHE-mode source and the TODO(vss) note on what changes when VSS-mode sign protocols
+/// activate (the same plumbing applies to the combined DKG-and-sign path).
 pub fn compute_dwallet_dkg_and_sign<P: twopc_mpc::sign::Protocol>(
     curve: DWalletCurve,
     party_id: PartyID,
