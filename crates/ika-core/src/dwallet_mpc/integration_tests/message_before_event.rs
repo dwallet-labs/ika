@@ -99,9 +99,13 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         )
         .await
         {
+            // 7-round network DKG at cryptography-private @ 9d35fa76 (was 4 pre-bump:
+            // upstream activated the threshold-encryption-to-sharing sub-protocol).
+            // consensus_round starts at 1; +1 round added for delayed parties; completion
+            // lands at 9 (= 7 dkg + 1 finalize + 1 delay).
             assert_eq!(
-                consensus_round, 6,
-                "Network DKG should complete after 4 rounds, and one round was added for the delayed parties"
+                consensus_round, 9,
+                "Network DKG should complete after 7 rounds, and one round was added for the delayed parties"
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
