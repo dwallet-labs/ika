@@ -1138,9 +1138,15 @@ pub(crate) fn update_expected_decrypters_metrics(
     }
 }
 
-/// Verifies that a single partial signature — i.e., a message that has only been signed by the
-/// client side in the 2PC-MPC protocol — is valid regarding the given dWallet DKG output.
-/// Returns Ok if the message is valid, Err otherwise.
+/// Verifies a single partial signature (centralized-party-only signed message) against the
+/// given dWallet DKG output and returns the post-verification compact `VerifiedSignData`.
+///
+/// Phase 4e of the crypto bump: upstream's `verify_centralized_party_partial_signature` now
+/// returns `Result<P::VerifiedSignData>` instead of `Result<()>` — that compact form
+/// (3 ciphertext / nonce fields for ECDSA, vs. the full `SignMessage` with all ZK proofs)
+/// can be persisted/re-transmitted as `SignData::Verified(...)` for any follow-up sign or
+/// rebroadcast, skipping re-verification and shrinking wire size. Surface it on the helper's
+/// return signature here; callers that don't yet plumb it through can discard locally.
 pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     message: &[u8],
     hash_scheme: &HashScheme,
@@ -1148,7 +1154,7 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
     protocol_public_parameters: &<P::DKGProtocol as twopc_mpc::dkg::Protocol>::ProtocolPublicParameters,
-) -> DwalletMPCResult<()> {
+) -> DwalletMPCResult<<P as sign::Protocol>::VerifiedSignData> {
     let presign = match bcs::from_bytes::<VersionedPresignOutput>(presign)? {
         VersionedPresignOutput::V1(_) => {
             unreachable!("Presign V1 should have been handled separately")
@@ -1174,23 +1180,16 @@ pub(crate) fn verify_partial_signature<P: sign::Protocol>(
     let partial: <P as twopc_mpc::sign::Protocol>::SignMessage =
         bcs::from_bytes(&partially_signed_message)?;
 
-    // Phase 4e: capture VerifiedSignData (upstream return type changed Result<()> →
-    // Result<P::VerifiedSignData>) but discard for now; verifier-only call site. A follow-up
-    // PR can surface it on this function's return signature so callers can pass
-    // SignData::Verified(...) into the next sign-public-input construction (skipping
-    // re-verification and shrinking wire size — see plan §4e).
-    let _verified: <P as sign::Protocol>::VerifiedSignData =
-        <P as sign::Protocol>::verify_centralized_party_partial_signature(
-            message,
-            *hash_scheme,
-            decentralized_dkg_output,
-            presign,
-            partial,
-            protocol_public_parameters,
-            &mut OsCsRng,
-        )
-        .map_err(DwalletMPCError::from)?;
-    Ok(())
+    <P as sign::Protocol>::verify_centralized_party_partial_signature(
+        message,
+        *hash_scheme,
+        decentralized_dkg_output,
+        presign,
+        partial,
+        protocol_public_parameters,
+        &mut OsCsRng,
+    )
+    .map_err(DwalletMPCError::from)
 }
 
 pub fn compute_sign<P: twopc_mpc::sign::Protocol>(

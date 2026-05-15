@@ -416,13 +416,22 @@ fn compute_network_owned_address_dkg_and_public_key(
                 .map_err(|e| {
                     DwalletMPCError::InternalError(format!("threshold_dkg_output secp256k1: {e}"))
                 })?;
-            let bytes = bcs::to_bytes(&out)?;
+            let raw_bytes = bcs::to_bytes(&out)?;
             let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
                 curve,
-                &bytes,
+                &raw_bytes,
             )
             .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract secp256k1: {e}")))?;
-            (bytes, pk)
+            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+            // round-trip through the standard user-driven sign path.
+            let wrapped = bcs::to_bytes(
+                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
+                    public_key_bytes: pk.clone(),
+                    dkg_output: raw_bytes,
+                },
+            )?;
+            (wrapped, pk)
         }
         DWalletCurve::Secp256r1 => {
             let out =
@@ -433,13 +442,22 @@ fn compute_network_owned_address_dkg_and_public_key(
                 .map_err(|e| {
                     DwalletMPCError::InternalError(format!("threshold_dkg_output secp256r1: {e}"))
                 })?;
-            let bytes = bcs::to_bytes(&out)?;
+            let raw_bytes = bcs::to_bytes(&out)?;
             let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
                 curve,
-                &bytes,
+                &raw_bytes,
             )
             .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract secp256r1: {e}")))?;
-            (bytes, pk)
+            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+            // round-trip through the standard user-driven sign path.
+            let wrapped = bcs::to_bytes(
+                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
+                    public_key_bytes: pk.clone(),
+                    dkg_output: raw_bytes,
+                },
+            )?;
+            (wrapped, pk)
         }
         DWalletCurve::Ristretto => {
             let out =
@@ -450,13 +468,22 @@ fn compute_network_owned_address_dkg_and_public_key(
                 .map_err(|e| {
                     DwalletMPCError::InternalError(format!("threshold_dkg_output ristretto: {e}"))
                 })?;
-            let bytes = bcs::to_bytes(&out)?;
+            let raw_bytes = bcs::to_bytes(&out)?;
             let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
                 curve,
-                &bytes,
+                &raw_bytes,
             )
             .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract ristretto: {e}")))?;
-            (bytes, pk)
+            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+            // round-trip through the standard user-driven sign path.
+            let wrapped = bcs::to_bytes(
+                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
+                    public_key_bytes: pk.clone(),
+                    dkg_output: raw_bytes,
+                },
+            )?;
+            (wrapped, pk)
         }
         DWalletCurve::Curve25519 => {
             let out =
@@ -467,13 +494,22 @@ fn compute_network_owned_address_dkg_and_public_key(
                 .map_err(|e| {
                     DwalletMPCError::InternalError(format!("threshold_dkg_output curve25519: {e}"))
                 })?;
-            let bytes = bcs::to_bytes(&out)?;
+            let raw_bytes = bcs::to_bytes(&out)?;
             let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
                 curve,
-                &bytes,
+                &raw_bytes,
             )
             .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract curve25519: {e}")))?;
-            (bytes, pk)
+            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+            // round-trip through the standard user-driven sign path.
+            let wrapped = bcs::to_bytes(
+                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
+                    public_key_bytes: pk.clone(),
+                    dkg_output: raw_bytes,
+                },
+            )?;
+            (wrapped, pk)
         }
     };
 
