@@ -5,8 +5,8 @@ use enum_dispatch::enum_dispatch;
 use std::collections::HashMap;
 
 use crate::committee::{
-    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeWithNetworkMetadata, NetworkMetadata,
-    StakeUnit,
+    Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit,
+    ValidatorEncryptionKeysAndProofs,
 };
 use crate::crypto::{AuthorityName, AuthorityPublicKey, NetworkPublicKey};
 use anemo::PeerId;
@@ -143,10 +143,36 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .map(|validator| {
-                let class_groups_public_key_and_proof =
-                    validator.mpc_data.clone().and_then(|mpc_data| {
-                        bcs::from_bytes(&mpc_data.class_groups_public_key_and_proof()).ok()
-                    });
+                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Per the
+                // `cryptography-private` bump (9d35fa76), the Move-side
+                // `class_groups_public_key_and_proof` byte field is overloaded
+                // to carry the new `ValidatorEncryptionKeysAndProofs` (class
+                // groups + 3 PVSS keys), NOT the bare `ClassGroupsEncryption-
+                // KeyAndProof` mainnet uses. See `ValidatorEncryptionKeysAnd-
+                // Proofs`'s docstring. Decoding falls back to None on bytes
+                // that don't deserialize as the new shape; this surfaces as
+                // "no MPC data" rather than as a decode panic.
+                let combined = validator.mpc_data.clone().and_then(|mpc_data| {
+                    bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
+                        &mpc_data.class_groups_public_key_and_proof(),
+                    )
+                    .ok()
+                });
+
+                let (
+                    class_groups_public_key_and_proof,
+                    secp256k1_pvss_public_key_and_proof,
+                    secp256r1_pvss_public_key_and_proof,
+                    ristretto_pvss_public_key_and_proof,
+                ) = match combined {
+                    Some(v) => (
+                        Some(v.class_groups),
+                        Some(v.secp256k1_pvss),
+                        Some(v.secp256r1_pvss),
+                        Some(v.ristretto_pvss),
+                    ),
+                    None => (None, None, None, None),
+                };
 
                 (
                     validator.authority_name(),
@@ -158,6 +184,9 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                             consensus_address: validator.consensus_address.clone(),
                             network_public_key: Some(validator.network_pubkey.clone()),
                             class_groups_public_key_and_proof,
+                            secp256k1_pvss_public_key_and_proof,
+                            secp256r1_pvss_public_key_and_proof,
+                            ristretto_pvss_public_key_and_proof,
                         },
                     ),
                 )
@@ -173,21 +202,22 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .iter()
             .map(|validator| (validator.authority_name(), validator.voting_power))
             .collect();
-        let class_groups_public_keys_and_proofs = self
+
+        // Decode the overloaded Move field per validator into the combined
+        // `ValidatorEncryptionKeysAndProofs` struct. See the wire-incompat
+        // warning in `get_ika_committee_with_network_metadata`.
+        let combined_per_validator: Vec<_> = self
             .active_validators
             .iter()
             .filter_map(|validator| {
                 validator.mpc_data.clone().and_then(|mpc_data| {
-                    let class_groups_public_key_and_proof =
-                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.class_groups_public_key_and_proof(),
-                        );
-
-                    match class_groups_public_key_and_proof {
-                        Ok(key_and_proof) => Some((validator.authority_name(), key_and_proof)),
+                    match bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
+                        &mpc_data.class_groups_public_key_and_proof(),
+                    ) {
+                        Ok(combined) => Some((validator.authority_name(), combined)),
                         Err(e) => {
                             error!(
-                                "Failed to deserialize class groups public key and proof: {}",
+                                "Failed to deserialize ValidatorEncryptionKeysAndProofs: {}",
                                 e
                             );
                             None
@@ -196,10 +226,31 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                 })
             })
             .collect();
+
+        let class_groups_public_keys_and_proofs = combined_per_validator
+            .iter()
+            .map(|(name, v)| (*name, v.class_groups.clone()))
+            .collect();
+        let secp256k1_pvss_public_keys_and_proofs = combined_per_validator
+            .iter()
+            .map(|(name, v)| (*name, v.secp256k1_pvss.clone()))
+            .collect();
+        let secp256r1_pvss_public_keys_and_proofs = combined_per_validator
+            .iter()
+            .map(|(name, v)| (*name, v.secp256r1_pvss.clone()))
+            .collect();
+        let ristretto_pvss_public_keys_and_proofs = combined_per_validator
+            .iter()
+            .map(|(name, v)| (*name, v.ristretto_pvss.clone()))
+            .collect();
+
         Committee::new(
             self.epoch,
             voting_rights,
             class_groups_public_keys_and_proofs,
+            secp256k1_pvss_public_keys_and_proofs,
+            secp256r1_pvss_public_keys_and_proofs,
+            ristretto_pvss_public_keys_and_proofs,
             self.quorum_threshold,
             self.validity_threshold,
         )

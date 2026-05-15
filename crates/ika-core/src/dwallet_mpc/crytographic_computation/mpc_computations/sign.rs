@@ -13,7 +13,7 @@ use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, MPCPublicOutput, NetworkEncryptionKeyPublicData,
+    DWalletCurve, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
     SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS;
-use twopc_mpc::{dkg, sign};
+use twopc_mpc::sign;
 
 pub(crate) type SignParty<P> = <P as twopc_mpc::sign::Protocol>::SignDecentralizedParty;
 pub(crate) type DKGAndSignParty<P> = <P as twopc_mpc::sign::Protocol>::DKGSignDecentralizedParty;

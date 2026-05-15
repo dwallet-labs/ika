@@ -9,6 +9,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
+use crate::dwallet_mpc::ValidatorsEncryptionKeysByPartyId;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -17,14 +18,10 @@ use crate::request_protocol_data::{
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, ReconfigurationParty, VersionedPresignOutput,
-};
-use group::PartyID;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
+use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -55,10 +52,7 @@ pub(crate) fn session_input_from_request(
     committee: &Committee,
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
-    validators_class_groups_public_keys_and_proofs: HashMap<
-        PartyID,
-        ClassGroupsEncryptionKeyAndProof,
-    >,
+    validators_encryption_keys_by_party_id: ValidatorsEncryptionKeysByPartyId,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -158,7 +152,10 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
-                    validators_class_groups_public_keys_and_proofs,
+                    validators_encryption_keys_by_party_id.class_groups,
+                    validators_encryption_keys_by_party_id.secp256k1_pvss,
+                    validators_encryption_keys_by_party_id.secp256r1_pvss,
+                    validators_encryption_keys_by_party_id.ristretto_pvss,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))

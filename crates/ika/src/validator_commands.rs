@@ -428,9 +428,12 @@ impl IkaValidatorCommand {
 
                 let class_groups_public_key_and_proof =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
+                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ See
+                // `ValidatorEncryptionKeysAndProofs`'s docstring — this byte field is now
+                // overloaded to carry the combined struct (class groups + 3 PVSS keys).
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
                     class_groups_public_key_and_proof: bcs::to_bytes(
-                        &class_groups_public_key_and_proof.encryption_key_and_proof(),
+                        &class_groups_public_key_and_proof.validator_encryption_keys_and_proofs(),
                     )?,
                 });
 
@@ -946,13 +949,17 @@ impl IkaValidatorCommand {
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
-                // Create a new MPC root seed and class groups key
+                // Create a new MPC root seed and the combined validator-key payload.
+                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ The Move-side
+                // `class_groups_public_key_and_proof` byte field is overloaded to carry
+                // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) post-bump;
+                // see that struct's docstring.
                 let mpc_root_seed = RootSeed::random_seed();
-                let new_class_groups_key = ClassGroupsKeyPairAndProof::from_seed(&mpc_root_seed)
-                    .encryption_key_and_proof();
+                let new_validator_keys = ClassGroupsKeyPairAndProof::from_seed(&mpc_root_seed)
+                    .validator_encryption_keys_and_proofs();
 
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: bcs::to_bytes(&new_class_groups_key)?,
+                    class_groups_public_key_and_proof: bcs::to_bytes(&new_validator_keys)?,
                 });
 
                 let response = set_next_epoch_mpc_data_bytes(

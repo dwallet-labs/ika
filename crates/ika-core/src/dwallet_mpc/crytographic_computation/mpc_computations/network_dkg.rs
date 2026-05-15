@@ -16,7 +16,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
-    public_key_from_centralized_dkg_output_by_curve,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
@@ -303,18 +302,25 @@ pub(crate) fn advance_network_dkg_v2(
 pub(crate) fn network_dkg_v2_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+    secp256k1_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::Secp256k1PvssEncryptionKeyAndProof,
+    >,
+    secp256r1_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::Secp256r1PvssEncryptionKeyAndProof,
+    >,
+    ristretto_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
+    >,
 ) -> DwalletMPCResult<<dkg::Party as mpc::Party>::PublicInput> {
-    // Phase 4 of crypto bump: the new PublicInput::new takes PVSS encryption-keys/proofs
-    // per curve to support the threshold_encryption_to_sharing sub-protocol. ika does not
-    // yet wire HPKE/PVSS validator keys (deferred per docs/plan-bump-crypto-private-to-main.md);
-    // pass empty HashMaps so the protocol type compiles. Wiring the real PVSS keys is a
-    // separate plan (HPKE + PVSS validator key generation).
     let public_input = <dkg::Party as mpc::Party>::PublicInput::new(
         access_structure,
         encryption_keys_and_proofs,
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
+        secp256k1_pvss_encryption_keys_and_proofs,
+        ristretto_pvss_encryption_keys_and_proofs,
+        secp256r1_pvss_encryption_keys_and_proofs,
     )
     .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
 

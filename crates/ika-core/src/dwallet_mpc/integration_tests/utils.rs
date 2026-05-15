@@ -516,6 +516,22 @@ pub fn create_dwallet_mpc_services(
             *authority_name,
             class_groups_key_pair.encryption_key_and_proof(),
         );
+        // PVSS HPKE per-curve public keys + proofs (added at the cryptography-private @
+        // 9d35fa76 bump). The integration-test committee mirrors what `Committee::new`
+        // expects post-bump so `network_dkg_v2_public_input` and the reconfiguration
+        // PublicInput constructors get real per-curve maps instead of empty placeholders.
+        committee.secp256k1_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.secp256k1_pvss_encryption_key_and_proof(),
+        );
+        committee.secp256r1_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.secp256r1_pvss_encryption_key_and_proof(),
+        );
+        committee.ristretto_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
+        );
     }
     let dwallet_mpc_services = committee
         .names()

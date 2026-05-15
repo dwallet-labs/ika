@@ -43,6 +43,20 @@ pub struct Committee {
     pub voting_rights: Vec<(AuthorityName, StakeUnit)>,
     pub class_groups_public_keys_and_proofs:
         HashMap<AuthorityName, ClassGroupsEncryptionKeyAndProof>,
+    /// Per-validator PVSS HPKE encryption key + UC-secure proof of knowledge of
+    /// the corresponding decryption key, parameterised for the secp256k1
+    /// plaintext space. Sibling of `class_groups_public_keys_and_proofs`; new at
+    /// the `cryptography-private @ 9d35fa76` bump. See
+    /// `Secp256k1PvssEncryptionKeyAndProof` and `ValidatorEncryptionKeysAndProofs`
+    /// for the shape and the mainnet-incompat warning.
+    pub secp256k1_pvss_public_keys_and_proofs:
+        HashMap<AuthorityName, Secp256k1PvssEncryptionKeyAndProof>,
+    /// Per-validator PVSS HPKE encryption key + proof, secp256r1 plaintext space.
+    pub secp256r1_pvss_public_keys_and_proofs:
+        HashMap<AuthorityName, Secp256r1PvssEncryptionKeyAndProof>,
+    /// Per-validator PVSS HPKE encryption key + proof, ristretto plaintext space.
+    pub ristretto_pvss_public_keys_and_proofs:
+        HashMap<AuthorityName, RistrettoPvssEncryptionKeyAndProof>,
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
@@ -58,18 +72,23 @@ impl Committee {
             AuthorityName,
             ClassGroupsEncryptionKeyAndProof,
         >,
+        secp256k1_pvss_public_keys_and_proofs: HashMap<
+            AuthorityName,
+            Secp256k1PvssEncryptionKeyAndProof,
+        >,
+        secp256r1_pvss_public_keys_and_proofs: HashMap<
+            AuthorityName,
+            Secp256r1PvssEncryptionKeyAndProof,
+        >,
+        ristretto_pvss_public_keys_and_proofs: HashMap<
+            AuthorityName,
+            RistrettoPvssEncryptionKeyAndProof,
+        >,
         quorum_threshold: u64,
         validity_threshold: u64,
     ) -> Self {
-        // let mut voting_rights: Vec<(AuthorityName, StakeUnit)> =
-        //     voting_rights.iter().map(|(a, s)| (*a, *s)).collect();
-
         assert!(!voting_rights.is_empty());
         assert!(voting_rights.iter().any(|(_, s)| *s != 0));
-
-        //voting_rights.sort_by_key(|(a, _)| *a);
-        //let total_votes: StakeUnit = voting_rights.iter().map(|(_, votes)| *votes).sum();
-        //assert_eq!(total_votes, TOTAL_VOTING_POWER);
 
         let (expanded_keys, index_map) = Self::load_inner(&voting_rights);
 
@@ -77,6 +96,9 @@ impl Committee {
             epoch,
             voting_rights,
             class_groups_public_keys_and_proofs,
+            secp256k1_pvss_public_keys_and_proofs,
+            secp256r1_pvss_public_keys_and_proofs,
+            ristretto_pvss_public_keys_and_proofs,
             expanded_keys,
             index_map,
             quorum_threshold,
@@ -112,6 +134,9 @@ impl Committee {
         Self::new(
             epoch,
             voting_weights.into_iter().collect(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
             HashMap::new(),
             quorum_threshold,
             validity_threshold,
@@ -407,6 +432,15 @@ pub struct NetworkMetadata {
     pub consensus_address: Multiaddr,
     pub network_public_key: Option<NetworkPublicKey>,
     pub class_groups_public_key_and_proof: Option<ClassGroupsEncryptionKeyAndProof>,
+    /// Per-validator PVSS HPKE encryption key + proof for the secp256k1
+    /// plaintext space. Sibling of `class_groups_public_key_and_proof`; new at
+    /// the `cryptography-private @ 9d35fa76` bump. See
+    /// `Secp256k1PvssEncryptionKeyAndProof` and `ValidatorEncryptionKeysAndProofs`.
+    pub secp256k1_pvss_public_key_and_proof: Option<Secp256k1PvssEncryptionKeyAndProof>,
+    /// PVSS HPKE encryption key + proof, secp256r1 plaintext space.
+    pub secp256r1_pvss_public_key_and_proof: Option<Secp256r1PvssEncryptionKeyAndProof>,
+    /// PVSS HPKE encryption key + proof, ristretto plaintext space.
+    pub ristretto_pvss_public_key_and_proof: Option<RistrettoPvssEncryptionKeyAndProof>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -449,3 +483,92 @@ pub type ClassGroupsEncryptionKeyAndProof = [(
     CompactIbqf<{ CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
     ClassGroupsProof,
 ); MAX_PRIMES];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PVSS HPKE encryption keys and proofs
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Per-curve publicly-verifiable-secret-sharing (PVSS) HPKE encryption keys plus
+// UC-secure proofs of knowledge of the corresponding decryption key. Required by
+// `cryptography-private @ 9d35fa76`'s decentralized DKG / reconfiguration
+// `PublicInput::new` to wire the threshold_encryption_to_sharing sub-protocol;
+// generated per validator at startup from the validator's `RootSeed` (mirrors
+// the `class_groups_decryption_key` pattern, distinct domain-separation labels
+// per curve so the 3 per-curve keys never collide with each other or with the
+// existing class-groups CRT decryption key).
+//
+// All three curves currently use the SAME const-generic limbs
+// (`SECP256K1/SECP256R1/RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS == U2048::LIMBS`,
+// `*_FUNDAMENTAL_DISCRIMINANT_LIMBS == U1536::LIMBS`); the per-curve type
+// aliases nonetheless stay distinct so a future divergence in upstream's curve
+// parameter selection doesn't silently cross wires.
+
+/// PVSS encryption key + UC-secure proof of knowledge of the corresponding
+/// decryption key, parameterised for the secp256k1 plaintext space.
+pub type Secp256k1PvssEncryptionKeyAndProof = (
+    CompactIbqf<{ class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
+    class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::KnowledgeOfDecryptionKeyUCProof<
+        { class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::CRT_DECRYPTION_KEY_WITNESS_LIMBS },
+        { class_groups::SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    >,
+);
+
+/// PVSS encryption key + UC-secure proof of knowledge of the corresponding
+/// decryption key, parameterised for the secp256r1 plaintext space.
+pub type Secp256r1PvssEncryptionKeyAndProof = (
+    CompactIbqf<{ class_groups::SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
+    class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::KnowledgeOfDecryptionKeyUCProof<
+        { class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::CRT_DECRYPTION_KEY_WITNESS_LIMBS },
+        { class_groups::SECP256R1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    >,
+);
+
+/// PVSS encryption key + UC-secure proof of knowledge of the corresponding
+/// decryption key, parameterised for the ristretto plaintext space.
+pub type RistrettoPvssEncryptionKeyAndProof = (
+    CompactIbqf<{ class_groups::RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>,
+    class_groups::publicly_verifiable_secret_sharing::small_prime::encryption::KnowledgeOfDecryptionKeyUCProof<
+        { class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem::CRT_DECRYPTION_KEY_WITNESS_LIMBS },
+        { class_groups::RISTRETTO_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+    >,
+);
+
+/// Combined per-validator on-chain encryption-keys-and-proofs payload.
+///
+/// # ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️
+///
+/// This struct is BCS-serialized into the **same** Move-side validator field
+/// that historically carried only `ClassGroupsEncryptionKeyAndProof`
+/// (`ValidatorInfo.class_groups_public_key_and_proof` and the equivalent on
+/// `NetworkMetadata`). At this point in the `cryptography-private` bump:
+///
+/// - mainnet (`mainnet-v1.1.8`, `cryptography-private @ 37bb549f`) still
+///   serializes ONLY `ClassGroupsEncryptionKeyAndProof` into that field;
+/// - this branch (`cryptography-private @ 9d35fa76` and forward) serializes
+///   the full `ValidatorEncryptionKeysAndProofs` instead.
+///
+/// Validators on either side of this boundary CANNOT decode each other's
+/// `ValidatorInfo` payload; this is by design for the bump's local-network
+/// scope and resolved by the dual-pin / `_backward_compatible` follow-up plan
+/// (see `docs/plan-update-crypto-latest.md`). Do NOT deploy a binary using
+/// this serialization shape against mainnet validators.
+///
+/// The Move side is intentionally NOT changed: the field's storage type
+/// remains `vector<u8>`; the contents are now a different BCS payload.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ValidatorEncryptionKeysAndProofs {
+    /// Existing class-groups CRT-decryption-key encryption key + proof of
+    /// knowledge of discrete log (per CRT prime). Same shape as the field
+    /// historically held standalone; preserved here to keep callers that only
+    /// need this piece working.
+    pub class_groups: ClassGroupsEncryptionKeyAndProof,
+    /// PVSS HPKE key + proof for the secp256k1 plaintext space. New at this
+    /// bump; required by `decentralized_party::dkg::PublicInput::new` and the
+    /// reconfiguration-party constructors for the threshold-encryption-to-
+    /// sharing sub-protocol.
+    pub secp256k1_pvss: Secp256k1PvssEncryptionKeyAndProof,
+    /// PVSS HPKE key + proof for the secp256r1 plaintext space.
+    pub secp256r1_pvss: Secp256r1PvssEncryptionKeyAndProof,
+    /// PVSS HPKE key + proof for the ristretto plaintext space.
+    pub ristretto_pvss: RistrettoPvssEncryptionKeyAndProof,
+}
