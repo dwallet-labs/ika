@@ -122,6 +122,15 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("submit_mpc_data_announcement")
+                .route_name("SubmitMpcDataAnnouncement")
+                .request_type("crate::validator_metadata::SubmitMpcDataAnnouncementRequest")
+                .response_type("crate::validator_metadata::SubmitMpcDataAnnouncementResponse")
+                .codec_path(codec_path)
+                .build(),
+        )
         .build();
 
     anemo_build::manual::Builder::new()

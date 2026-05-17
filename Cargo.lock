@@ -6650,6 +6650,8 @@ dependencies = [
  "anemo-build",
  "anemo-tower",
  "anyhow",
+ "arc-swap",
+ "async-trait",
  "bcs",
  "dashmap 5.5.3",
  "ed25519-consensus",

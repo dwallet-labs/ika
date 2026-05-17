@@ -762,8 +762,12 @@ impl IkaNode {
                 ),
             }
         }
-        let validator_metadata_server =
-            ika_network::validator_metadata::build_server(mpc_data_blob_store.clone());
+        let mpc_announcement_relay =
+            ika_network::validator_metadata::AnnouncementRelayHandle::new();
+        let validator_metadata_server = ika_network::validator_metadata::build_server(
+            mpc_data_blob_store.clone(),
+            mpc_announcement_relay.clone(),
+        );
 
         let discovery_config = config.p2p_config.discovery.clone().unwrap_or_default();
         let known_peers: HashMap<PeerId, String> = discovery_config

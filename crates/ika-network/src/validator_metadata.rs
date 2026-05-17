@@ -11,7 +11,9 @@
 
 use anemo::Network;
 use anemo::PeerId;
+use arc_swap::ArcSwapOption;
 use fastcrypto::hash::{Blake2b256, HashFunction};
+use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -37,12 +39,78 @@ pub struct MpcDataBlob {
     pub bytes: Vec<u8>,
 }
 
+/// Wrapped by a joining validator (not yet in the consensus committee)
+/// to ask a current-committee peer to relay their `mpc_data`
+/// announcement into consensus. The peer verifies the signature
+/// against the `PendingActiveSet` before relaying (see step 6); for
+/// transport here the wire format is just the signed announcement.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitMpcDataAnnouncementRequest {
+    pub announcement: SignedValidatorMpcDataAnnouncement,
+}
+
+/// Result of a relay attempt. `Accepted` means the relayer queued the
+/// announcement for consensus submission; it does NOT guarantee
+/// inclusion. `Rejected { reason }` means the relayer is unwilling
+/// (e.g. no epoch store yet, signature didn't verify, etc.).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SubmitMpcDataAnnouncementResponse {
+    Accepted,
+    Rejected { reason: String },
+}
+
 /// Storage backing for the server: a content-addressed blob lookup.
 /// Implementations are expected to be cheap (in-memory) — the server
 /// is called on the request hot path.
 pub trait MpcDataBlobStorage: Send + Sync + 'static {
     fn get(&self, blob_hash: &[u8; 32]) -> Option<Vec<u8>>;
     fn insert_blob(&self, blob_hash: [u8; 32], blob: Vec<u8>);
+}
+
+/// Wraps the consensus-submission side of the relay. Implemented by
+/// the node once the per-epoch store + consensus adapter are up;
+/// before that, the server holds `None` and rejects requests.
+///
+/// Implementations are responsible for:
+/// - verifying the announcement (sig against current committee OR
+///   pending active set, depending on whether the signer is a member
+///   of the current consensus committee or a joiner — see step 6),
+/// - bouncing duplicates by the latest-by-timestamp rule,
+/// - submitting the resulting `ConsensusTransaction` via the adapter.
+#[async_trait::async_trait]
+pub trait AnnouncementRelay: Send + Sync + 'static {
+    async fn relay(&self, announcement: SignedValidatorMpcDataAnnouncement) -> Result<(), String>;
+}
+
+/// Late-bindable holder for the announcement relay. The Anemo server
+/// is constructed at node startup, well before the first epoch store
+/// exists; the node installs a relay impl once the epoch state is up
+/// and re-installs across epoch transitions.
+#[derive(Default)]
+pub struct AnnouncementRelayHandle {
+    inner: ArcSwapOption<Box<dyn AnnouncementRelay>>,
+}
+
+impl AnnouncementRelayHandle {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn install(&self, relay: Box<dyn AnnouncementRelay>) {
+        self.inner.store(Some(Arc::new(relay)));
+    }
+
+    pub fn clear(&self) {
+        self.inner.store(None);
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.inner.load().is_some()
+    }
+
+    pub(crate) fn current(&self) -> Option<Arc<Box<dyn AnnouncementRelay>>> {
+        self.inner.load_full()
+    }
 }
 
 /// In-memory content-addressed cache of MPC data blobs. Producer
@@ -94,9 +162,14 @@ pub fn mpc_data_blob_hash(blob: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Build a `ValidatorMetadataServer` backed by `storage`.
-pub fn build_server<S: MpcDataBlobStorage>(storage: Arc<S>) -> ValidatorMetadataServer<Server<S>> {
-    ValidatorMetadataServer::new(Server { storage })
+/// Build a `ValidatorMetadataServer` backed by `storage` and an
+/// announcement-relay handle. The handle starts empty; the node
+/// installs a relay impl into it once per-epoch state is up.
+pub fn build_server<S: MpcDataBlobStorage>(
+    storage: Arc<S>,
+    relay: Arc<AnnouncementRelayHandle>,
+) -> ValidatorMetadataServer<Server<S>> {
+    ValidatorMetadataServer::new(Server { storage, relay })
 }
 
 /// Fetch a blob by hash from `peer`. Returns `Ok(None)` if the peer
@@ -119,9 +192,51 @@ pub async fn fetch_blob(
     Ok(response.into_inner().map(|b| b.bytes))
 }
 
+/// Ask `peer` to relay `announcement` into consensus on behalf of
+/// the signer. Used by a joining validator that isn't yet a member of
+/// the consensus committee: it fans this RPC out to every current-
+/// committee peer it can reach, and one honest relayer is enough.
+pub async fn submit_announcement_to_peer(
+    network: &Network,
+    peer_id: PeerId,
+    announcement: SignedValidatorMpcDataAnnouncement,
+) -> anyhow::Result<SubmitMpcDataAnnouncementResponse> {
+    let peer = network
+        .peer(peer_id)
+        .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
+    let mut client = ValidatorMetadataClient::new(peer);
+    let response = client
+        .submit_mpc_data_announcement(SubmitMpcDataAnnouncementRequest { announcement })
+        .await
+        .map_err(|status| anyhow::anyhow!("submit_mpc_data_announcement failed: {status:?}"))?;
+    Ok(response.into_inner())
+}
+
+/// Fan out a single announcement to every supplied peer concurrently.
+/// Returns the per-peer outcomes for telemetry; the joiner can stop
+/// once it sees enough `Accepted`s. We never block reconfig on this
+/// — the joiner is best-effort and current-committee validators
+/// don't need every relay attempt to succeed.
+pub async fn submit_announcement_to_committee(
+    network: &Network,
+    peers: &[PeerId],
+    announcement: SignedValidatorMpcDataAnnouncement,
+) -> Vec<(PeerId, anyhow::Result<SubmitMpcDataAnnouncementResponse>)> {
+    let futures = peers.iter().map(|peer_id| {
+        let peer_id = *peer_id;
+        let announcement = announcement.clone();
+        async move {
+            let result = submit_announcement_to_peer(network, peer_id, announcement).await;
+            (peer_id, result)
+        }
+    });
+    futures::future::join_all(futures).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn in_memory_blob_store_roundtrip() {
@@ -144,5 +259,71 @@ mod tests {
         // Different input → different hash.
         let h3 = mpc_data_blob_hash(b"different");
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn relay_handle_starts_empty_then_installs_and_clears() {
+        let handle = AnnouncementRelayHandle::new();
+        assert!(!handle.is_installed());
+        assert!(handle.current().is_none());
+
+        struct StubRelay;
+        #[async_trait::async_trait]
+        impl AnnouncementRelay for StubRelay {
+            async fn relay(&self, _: SignedValidatorMpcDataAnnouncement) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        handle.install(Box::new(StubRelay));
+        assert!(handle.is_installed());
+        assert!(handle.current().is_some());
+
+        handle.clear();
+        assert!(!handle.is_installed());
+        assert!(handle.current().is_none());
+    }
+
+    #[test]
+    fn relay_handle_install_drops_previous_relay() {
+        // Re-installing replaces the previously-installed relay.
+        // This is used at every epoch boundary to re-bind the
+        // relay to the freshly-built epoch store. We verify by
+        // observing that the first relay's Drop runs as soon as
+        // the second one is installed.
+        struct DropCounter(Arc<AtomicU32>);
+        #[async_trait::async_trait]
+        impl AnnouncementRelay for DropCounter {
+            async fn relay(&self, _: SignedValidatorMpcDataAnnouncement) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let first_drops = Arc::new(AtomicU32::new(0));
+        let second_drops = Arc::new(AtomicU32::new(0));
+        let handle = AnnouncementRelayHandle::new();
+
+        handle.install(Box::new(DropCounter(first_drops.clone())));
+        assert_eq!(first_drops.load(Ordering::SeqCst), 0);
+
+        handle.install(Box::new(DropCounter(second_drops.clone())));
+        assert_eq!(
+            first_drops.load(Ordering::SeqCst),
+            1,
+            "first relay dropped on swap"
+        );
+        assert_eq!(second_drops.load(Ordering::SeqCst), 0);
+
+        handle.clear();
+        assert_eq!(
+            second_drops.load(Ordering::SeqCst),
+            1,
+            "second relay dropped on clear"
+        );
     }
 }
