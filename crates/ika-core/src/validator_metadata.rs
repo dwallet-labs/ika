@@ -15,15 +15,20 @@
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
-use ika_types::committee::EpochId;
+use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey, Ed25519Signature};
+use fastcrypto::hash::{Blake2b256, HashFunction};
+use fastcrypto::traits::{Signer, VerifyingKey};
+use ika_types::committee::{Committee, CommitteeTrait, EpochId, StakeUnit};
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName, AuthoritySignInfo};
 use ika_types::error::{IkaError, IkaResult};
-use ika_types::intent::{Intent, IntentScope};
+use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
-    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
+    CertifiedHandoffAttestation, EpochMpcDataReadySignal, HandoffAttestation, HandoffItemKey,
+    HandoffSignatureMessage, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Look up whether a given authority is registered as a next-epoch
@@ -190,6 +195,286 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
 ) -> ConsensusTransaction {
     let signal = EpochMpcDataReadySignal { authority, epoch };
     ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
+}
+
+/// Builds a `HandoffAttestation` from a (possibly unsorted) list of
+/// items. Items are sorted strictly ascending by `HandoffItemKey`
+/// before storage so the canonical encoding is identical across all
+/// signers (BCS-encoded sorted Vec). Duplicate keys are rejected —
+/// the handoff layer treats two entries for the same key as a
+/// protocol violation, not a "latest wins".
+pub fn build_handoff_attestation(
+    epoch: EpochId,
+    next_committee_pubkey_set_hash: [u8; 32],
+    items: Vec<(HandoffItemKey, [u8; 32])>,
+) -> IkaResult<HandoffAttestation> {
+    let mut sorted = items;
+    sorted.sort_by(|left, right| left.0.cmp(&right.0));
+    if sorted.windows(2).any(|w| w[0].0 == w[1].0) {
+        return Err(IkaError::Unknown(
+            "duplicate HandoffItemKey in handoff attestation items".to_string(),
+        ));
+    }
+    Ok(HandoffAttestation {
+        epoch,
+        next_committee_pubkey_set_hash,
+        items: sorted,
+    })
+}
+
+/// Blake2b256 digest of the next committee's BLS pubkey set. Pubkeys
+/// are deduplicated and sorted strictly ascending before BCS encoding,
+/// so callers don't need to normalize beforehand. This is the value
+/// embedded in `HandoffAttestation.next_committee_pubkey_set_hash`;
+/// verifiers recompute it from the next committee they observe and
+/// reject any cert whose hash doesn't match.
+pub fn hash_next_committee_pubkey_set(
+    pubkeys: impl IntoIterator<Item = AuthorityName>,
+) -> [u8; 32] {
+    let mut sorted: Vec<AuthorityName> = pubkeys.into_iter().collect();
+    sorted.sort();
+    sorted.dedup();
+    let bytes = bcs::to_bytes(&sorted).expect("AuthorityName Vec is always BCS-encodable");
+    let mut hasher = Blake2b256::default();
+    hasher.update(&bytes);
+    hasher.finalize().into()
+}
+
+/// Signs a `HandoffAttestation` with the validator's **consensus**
+/// (Ed25519) keypair — *not* the BLS authority key. Cross-validator
+/// off-chain attestations like this one use the consensus key, which
+/// joiners look up against the previous committee's on-chain validator
+/// info as `consensus_pubkey`.
+///
+/// The signing domain is
+/// `bcs(IntentMessage::new(Intent::ika_app(HandoffAttestation), attestation))`;
+/// the attestation itself carries the epoch, so we don't bind the
+/// signature to an external epoch parameter.
+pub fn sign_handoff_attestation(
+    attestation: HandoffAttestation,
+    signer: AuthorityName,
+    consensus_keypair: &Ed25519KeyPair,
+) -> HandoffSignatureMessage {
+    let intent_msg = IntentMessage::new(
+        Intent::ika_app(IntentScope::HandoffAttestation),
+        attestation.clone(),
+    );
+    let bytes = bcs::to_bytes(&intent_msg).expect("intent message BCS-encodable");
+    let signature: Ed25519Signature = consensus_keypair.sign(&bytes);
+    HandoffSignatureMessage {
+        attestation,
+        signer,
+        signature,
+    }
+}
+
+/// Provider for looking up a signer's **consensus pubkey** (Ed25519).
+/// Backed off-chain by Sui RPC over the previous-epoch committee's
+/// `StakingPool.validator_info.consensus_pubkey_bytes`. Returning
+/// `None` means "I don't have a consensus pubkey for this signer" —
+/// the caller drops the signature.
+pub trait ConsensusPubkeyProvider: Send + Sync + 'static {
+    fn consensus_pubkey(&self, signer: &AuthorityName) -> Option<Ed25519PublicKey>;
+}
+
+/// In-memory `ConsensusPubkeyProvider` for tests and as the empty
+/// default before the syncer is up.
+pub struct StaticConsensusPubkeyProvider {
+    keys: BTreeMap<AuthorityName, Ed25519PublicKey>,
+}
+
+impl StaticConsensusPubkeyProvider {
+    pub fn empty() -> Self {
+        Self {
+            keys: BTreeMap::new(),
+        }
+    }
+
+    pub fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(items: I) -> Self {
+        Self {
+            keys: items.into_iter().collect(),
+        }
+    }
+}
+
+impl ConsensusPubkeyProvider for StaticConsensusPubkeyProvider {
+    fn consensus_pubkey(&self, signer: &AuthorityName) -> Option<Ed25519PublicKey> {
+        self.keys.get(signer).cloned()
+    }
+}
+
+/// Outcome of verifying a single `HandoffSignatureMessage`. Anything
+/// other than `Accept` is non-fatal — the caller drops the message
+/// and waits for the next one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandoffSignatureVerdict {
+    Accept,
+    /// The provider doesn't know about `signer`'s consensus pubkey.
+    UnknownSigner,
+    /// `signer != msg.signer`, or signature failed to verify.
+    InvalidSignature,
+    /// `msg.attestation` doesn't equal the expected attestation —
+    /// the signer attested to a different bundle than this validator
+    /// computed. Could mean a software bug, a divergent view, or a
+    /// stale signature from before a freeze decision.
+    AttestationMismatch,
+}
+
+/// Verifies a single handoff signature against the expected attestation
+/// and a consensus pubkey provider. The attestation parameter is what
+/// THIS validator computed; `msg.attestation` must equal it.
+pub fn verify_handoff_signature(
+    msg: &HandoffSignatureMessage,
+    expected: &HandoffAttestation,
+    provider: &dyn ConsensusPubkeyProvider,
+) -> HandoffSignatureVerdict {
+    if &msg.attestation != expected {
+        return HandoffSignatureVerdict::AttestationMismatch;
+    }
+    let Some(pubkey) = provider.consensus_pubkey(&msg.signer) else {
+        return HandoffSignatureVerdict::UnknownSigner;
+    };
+    let intent_msg = IntentMessage::new(
+        Intent::ika_app(IntentScope::HandoffAttestation),
+        msg.attestation.clone(),
+    );
+    let bytes = bcs::to_bytes(&intent_msg).expect("intent message BCS-encodable");
+    match pubkey.verify(&bytes, &msg.signature) {
+        Ok(()) => HandoffSignatureVerdict::Accept,
+        Err(_) => HandoffSignatureVerdict::InvalidSignature,
+    }
+}
+
+/// Accumulates per-signer handoff signatures for a fixed attestation
+/// and emits a `CertifiedHandoffAttestation` once stake reaches the
+/// committee's quorum threshold. Aggregation is one-shot — once
+/// certified, subsequent inserts are ignored.
+///
+/// Ed25519 doesn't aggregate, so the cert is a list of
+/// `(signer, signature)` pairs rather than a single aggregate sig.
+pub struct HandoffAggregator {
+    committee: Arc<Committee>,
+    attestation: HandoffAttestation,
+    signatures: BTreeMap<AuthorityName, Ed25519Signature>,
+    accumulated_stake: StakeUnit,
+    certified: Option<CertifiedHandoffAttestation>,
+}
+
+impl HandoffAggregator {
+    pub fn new(committee: Arc<Committee>, attestation: HandoffAttestation) -> Self {
+        Self {
+            committee,
+            attestation,
+            signatures: BTreeMap::new(),
+            accumulated_stake: 0,
+            certified: None,
+        }
+    }
+
+    pub fn attestation(&self) -> &HandoffAttestation {
+        &self.attestation
+    }
+
+    pub fn certified(&self) -> Option<&CertifiedHandoffAttestation> {
+        self.certified.as_ref()
+    }
+
+    /// Inserts a signature. Caller is responsible for having already
+    /// run `verify_handoff_signature` against this validator's
+    /// expected attestation — `insert_verified` trusts that. Returns
+    /// `Some(cert)` the *first* time the running stake crosses the
+    /// committee's quorum threshold; subsequent calls return `None`
+    /// (and don't mutate `self.certified`).
+    pub fn insert_verified(
+        &mut self,
+        signer: AuthorityName,
+        signature: Ed25519Signature,
+    ) -> Option<&CertifiedHandoffAttestation> {
+        if self.certified.is_some() {
+            return None;
+        }
+        let weight = self.committee.weight(&signer);
+        if weight == 0 {
+            // Not a member of the committee that's signing this
+            // handoff; reject silently rather than mutate state.
+            return None;
+        }
+        if self.signatures.insert(signer, signature).is_some() {
+            // Replaced an existing signature for the same signer —
+            // don't double-count their stake. (Replacement is
+            // tolerated for resilience: a flaky signer could
+            // re-submit a fresher signature.)
+            return None;
+        }
+        self.accumulated_stake = self.accumulated_stake.saturating_add(weight);
+        if self.accumulated_stake >= self.committee.quorum_threshold() {
+            let signatures = self
+                .signatures
+                .iter()
+                .map(|(name, sig)| (*name, sig.clone()))
+                .collect();
+            self.certified = Some(CertifiedHandoffAttestation {
+                attestation: self.attestation.clone(),
+                signatures,
+            });
+            self.certified.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+/// Independently re-verifies a `CertifiedHandoffAttestation` against
+/// a committee and a consensus pubkey provider. Used by joiners
+/// during bootstrap (where the relevant committee is the *previous*
+/// committee, the one that produced this cert).
+///
+/// Returns `Ok(())` iff every listed signature verifies against the
+/// claimed signer's consensus pubkey AND the summed stake reaches
+/// the committee's quorum threshold. Otherwise an `IkaError`
+/// describes the failure.
+pub fn verify_certified_handoff_attestation(
+    cert: &CertifiedHandoffAttestation,
+    committee: &Committee,
+    provider: &dyn ConsensusPubkeyProvider,
+) -> IkaResult<()> {
+    let intent_msg = IntentMessage::new(
+        Intent::ika_app(IntentScope::HandoffAttestation),
+        cert.attestation.clone(),
+    );
+    let bytes = bcs::to_bytes(&intent_msg)
+        .map_err(|e| IkaError::Unknown(format!("bcs encode handoff intent message: {e}")))?;
+    let mut seen = HashSet::new();
+    let mut stake: StakeUnit = 0;
+    for (signer, signature) in &cert.signatures {
+        if !seen.insert(*signer) {
+            return Err(IkaError::Unknown(format!(
+                "duplicate signer {signer:?} in certified handoff attestation"
+            )));
+        }
+        let weight = committee.weight(signer);
+        if weight == 0 {
+            return Err(IkaError::Unknown(format!(
+                "signer {signer:?} is not a member of the verifying committee"
+            )));
+        }
+        let pubkey = provider.consensus_pubkey(signer).ok_or_else(|| {
+            IkaError::Unknown(format!("no consensus pubkey for handoff signer {signer:?}"))
+        })?;
+        pubkey
+            .verify(&bytes, signature)
+            .map_err(|e| IkaError::InvalidSignature {
+                error: format!("handoff signature verify failed for {signer:?}: {e}"),
+            })?;
+        stake = stake.saturating_add(weight);
+    }
+    if stake < committee.quorum_threshold() {
+        return Err(IkaError::Unknown(format!(
+            "certified handoff attestation stake {stake} below quorum threshold {}",
+            committee.quorum_threshold()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -368,5 +653,256 @@ mod tests {
             assert!(provider.is_registered_joiner(n));
         }
         assert!(!provider.is_registered_joiner(&unknown_name));
+    }
+
+    // ---- Handoff attestation helpers ----
+
+    use fastcrypto::ed25519::Ed25519PrivateKey;
+    use fastcrypto::traits::ToFromBytes;
+    use ika_types::committee::Committee;
+    use ika_types::validator_metadata::HandoffItemKey;
+    use sui_types::base_types::ObjectID;
+
+    fn make_consensus_keys(count: usize) -> Vec<Ed25519KeyPair> {
+        // Build deterministic Ed25519 keypairs from a counter seed.
+        // Avoids the multiple-rand-version conflict that bites
+        // direct `KeyPair::generate` calls from ika-core tests.
+        (0..count)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                let sk = Ed25519PrivateKey::from_bytes(&seed)
+                    .expect("32-byte seed produces a valid Ed25519 private key");
+                Ed25519KeyPair::from(sk)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn build_handoff_attestation_sorts_items() {
+        let kp = random_committee_key_pairs_of_size(1).remove(0);
+        let validator = name_of(&kp);
+        let key_id_a = ObjectID::random();
+        let key_id_b = ObjectID::random();
+        // Pass items in non-canonical order; build_handoff_attestation
+        // must return them sorted so all signers' bytes match.
+        let items = vec![
+            (HandoffItemKey::ValidatorMpcData { validator }, [0x33; 32]),
+            (
+                HandoffItemKey::NetworkDkgOutput { key_id: key_id_a },
+                [0x11; 32],
+            ),
+            (
+                HandoffItemKey::NetworkReconfigurationOutput { key_id: key_id_b },
+                [0x22; 32],
+            ),
+        ];
+        let att = build_handoff_attestation(9, [0xAA; 32], items).expect("build");
+        assert_eq!(att.epoch, 9);
+        assert!(matches!(
+            att.items[0].0,
+            HandoffItemKey::NetworkDkgOutput { .. }
+        ));
+        assert!(matches!(
+            att.items[1].0,
+            HandoffItemKey::NetworkReconfigurationOutput { .. }
+        ));
+        assert!(matches!(
+            att.items[2].0,
+            HandoffItemKey::ValidatorMpcData { .. }
+        ));
+    }
+
+    #[test]
+    fn build_handoff_attestation_rejects_duplicate_keys() {
+        let key_id = ObjectID::random();
+        let items = vec![
+            (HandoffItemKey::NetworkDkgOutput { key_id }, [0x11; 32]),
+            (HandoffItemKey::NetworkDkgOutput { key_id }, [0x22; 32]),
+        ];
+        assert!(build_handoff_attestation(1, [0; 32], items).is_err());
+    }
+
+    #[test]
+    fn hash_next_committee_pubkey_set_is_order_independent() {
+        let kps = random_committee_key_pairs_of_size(3);
+        let names: Vec<AuthorityName> = kps.iter().map(name_of).collect();
+        let h1 = hash_next_committee_pubkey_set(names.iter().copied());
+        let h2 = hash_next_committee_pubkey_set(names.iter().copied().rev());
+        assert_eq!(h1, h2);
+        // Duplicates are deduped — adding a duplicate doesn't change the hash.
+        let mut with_dup = names.clone();
+        with_dup.push(names[0]);
+        let h3 = hash_next_committee_pubkey_set(with_dup);
+        assert_eq!(h1, h3);
+    }
+
+    #[test]
+    fn sign_and_verify_handoff_signature_round_trips() {
+        let kps = random_committee_key_pairs_of_size(1);
+        let bls = &kps[0];
+        let signer = name_of(bls);
+        let consensus_kps = make_consensus_keys(1);
+        let consensus_kp = &consensus_kps[0];
+        let consensus_pub = consensus_kp.public().clone();
+
+        let att = build_handoff_attestation(11, [0xBB; 32], vec![]).expect("build");
+        let msg = sign_handoff_attestation(att.clone(), signer, consensus_kp);
+        let provider = StaticConsensusPubkeyProvider::from_iter([(signer, consensus_pub.clone())]);
+        assert_eq!(
+            verify_handoff_signature(&msg, &att, &provider),
+            HandoffSignatureVerdict::Accept
+        );
+
+        // Different attestation → AttestationMismatch.
+        let other_att = build_handoff_attestation(11, [0xCC; 32], vec![]).expect("build");
+        assert_eq!(
+            verify_handoff_signature(&msg, &other_att, &provider),
+            HandoffSignatureVerdict::AttestationMismatch
+        );
+
+        // Missing pubkey in provider → UnknownSigner.
+        let empty_provider = StaticConsensusPubkeyProvider::empty();
+        assert_eq!(
+            verify_handoff_signature(&msg, &att, &empty_provider),
+            HandoffSignatureVerdict::UnknownSigner
+        );
+
+        // Wrong pubkey in provider → InvalidSignature.
+        let other_consensus_kp = &make_consensus_keys(2)[1];
+        let wrong_provider = StaticConsensusPubkeyProvider::from_iter([(
+            signer,
+            other_consensus_kp.public().clone(),
+        )]);
+        assert_eq!(
+            verify_handoff_signature(&msg, &att, &wrong_provider),
+            HandoffSignatureVerdict::InvalidSignature
+        );
+    }
+
+    fn build_quorum_test_fixture(
+        size: usize,
+    ) -> (
+        Arc<Committee>,
+        Vec<AuthorityName>,
+        Vec<Ed25519KeyPair>,
+        StaticConsensusPubkeyProvider,
+    ) {
+        let bls_kps = random_committee_key_pairs_of_size(size);
+        let names: Vec<AuthorityName> = bls_kps.iter().map(name_of).collect();
+        let consensus_kps = make_consensus_keys(size);
+        let consensus_pubs: Vec<Ed25519PublicKey> =
+            consensus_kps.iter().map(|kp| kp.public().clone()).collect();
+        let voting_rights: Vec<(AuthorityName, u64)> = names.iter().map(|n| (*n, 1u64)).collect();
+        // quorum_threshold = 2f+1 over 3f+1; for size=4, f=1, q=3.
+        let q = (2 * size / 3) as u64 + 1;
+        let v = (size / 3) as u64 + 1;
+        let committee = Arc::new(Committee::new(
+            5,
+            voting_rights,
+            std::collections::HashMap::new(),
+            q,
+            v,
+        ));
+        let provider = StaticConsensusPubkeyProvider::from_iter(
+            names.iter().copied().zip(consensus_pubs.into_iter()),
+        );
+        (committee, names, consensus_kps, provider)
+    }
+
+    #[test]
+    fn aggregator_certifies_only_after_quorum() {
+        let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0xDD; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        // First two inserts: under quorum (q=3 with size=4, stake=1 each).
+        for i in 0..2 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            assert!(agg.insert_verified(names[i], msg.signature).is_none());
+        }
+        assert!(agg.certified().is_none());
+
+        // Third insert crosses quorum → cert returned, and from then
+        // on it stays the same.
+        let msg = sign_handoff_attestation(att.clone(), names[2], &consensus_kps[2]);
+        let cert = agg.insert_verified(names[2], msg.signature).cloned();
+        let cert = cert.expect("crossed quorum");
+        assert_eq!(cert.attestation, att);
+        assert_eq!(cert.signatures.len(), 3);
+
+        // Fourth insert post-cert is a no-op.
+        let msg = sign_handoff_attestation(att.clone(), names[3], &consensus_kps[3]);
+        assert!(agg.insert_verified(names[3], msg.signature).is_none());
+        assert_eq!(agg.certified().unwrap().signatures.len(), 3);
+    }
+
+    #[test]
+    fn aggregator_ignores_non_committee_signer() {
+        // The committee is built from the first 4 keypairs of the
+        // size-5 fixture; the 5th is our "outsider" who is not in
+        // the committee.
+        let mut bls_kps = random_committee_key_pairs_of_size(5);
+        let outsider_kp = bls_kps.pop().unwrap();
+        let outsider_name = name_of(&outsider_kp);
+        let names: Vec<AuthorityName> = bls_kps.iter().map(name_of).collect();
+        let voting_rights: Vec<(AuthorityName, u64)> = names.iter().map(|n| (*n, 1u64)).collect();
+        let committee = Arc::new(Committee::new(
+            5,
+            voting_rights,
+            std::collections::HashMap::new(),
+            3,
+            2,
+        ));
+        let att = build_handoff_attestation(5, [0xEE; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee, att.clone());
+
+        let outsider_consensus = &make_consensus_keys(1)[0];
+        let msg = sign_handoff_attestation(att.clone(), outsider_name, outsider_consensus);
+        // weight==0 path: insert silently ignored.
+        assert!(agg.insert_verified(outsider_name, msg.signature).is_none());
+        assert!(agg.certified().is_none());
+
+        // One legitimate signer alone is below quorum (q=3), so
+        // aggregator still uncertified.
+        let consensus_kps = make_consensus_keys(4);
+        let in_committee_msg = sign_handoff_attestation(att.clone(), names[0], &consensus_kps[0]);
+        assert!(
+            agg.insert_verified(names[0], in_committee_msg.signature)
+                .is_none()
+        );
+        assert!(agg.certified().is_none());
+    }
+
+    #[test]
+    fn aggregator_replacement_does_not_double_count() {
+        let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0xFF; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee, att.clone());
+        let first_msg = sign_handoff_attestation(att.clone(), names[0], &consensus_kps[0]);
+        agg.insert_verified(names[0], first_msg.signature.clone());
+        // Same signer submits again — accumulated_stake must not grow.
+        agg.insert_verified(names[0], first_msg.signature);
+        // We've only seen one signer at stake=1, q=3, so still uncertified.
+        assert!(agg.certified().is_none());
+    }
+
+    #[test]
+    fn verify_certified_handoff_attestation_round_trip() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x12; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+        verify_certified_handoff_attestation(&cert, &committee, &provider)
+            .expect("verify against producing committee");
+
+        // Tamper one of the signatures — verification must fail.
+        let mut bad = cert.clone();
+        let zero_sig = make_consensus_keys(1)[0].sign(b"garbage");
+        bad.signatures[0].1 = zero_sig;
+        assert!(verify_certified_handoff_attestation(&bad, &committee, &provider).is_err());
     }
 }
