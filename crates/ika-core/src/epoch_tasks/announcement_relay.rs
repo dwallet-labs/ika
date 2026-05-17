@@ -24,7 +24,7 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::validator_metadata::{JoinerAnnouncementVerdict, verify_joiner_announcement};
-use ika_network::validator_metadata::AnnouncementRelay;
+use ika_network::mpc_artifacts::AnnouncementRelay;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
 use std::sync::{Arc, Weak};

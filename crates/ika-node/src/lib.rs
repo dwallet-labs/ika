@@ -113,7 +113,7 @@ pub struct P2pComponents {
     known_peers: HashMap<PeerId, String>,
     discovery_handle: discovery::Handle,
     state_sync_handle: state_sync::Handle,
-    mpc_announcement_relay: Arc<ika_network::validator_metadata::AnnouncementRelayHandle>,
+    mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
 }
 
 #[cfg(msim)]
@@ -200,7 +200,7 @@ pub struct IkaNode {
     /// the Anemo `SubmitMpcDataAnnouncement` server. Replaced per
     /// epoch so the relay always points at the current epoch
     /// store + consensus adapter.
-    mpc_announcement_relay: Arc<ika_network::validator_metadata::AnnouncementRelayHandle>,
+    mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
 
     _state_archive_handle: Option<broadcast::Sender<()>>,
 
@@ -765,7 +765,7 @@ impl IkaNode {
         // validator was serving to peers. Producer caching + cross-
         // node fetch are wired in later steps; for now this just
         // serves whatever's been persisted previously.
-        let mpc_data_blob_store = ika_network::validator_metadata::InMemoryBlobStore::new();
+        let mpc_data_blob_store = ika_network::mpc_artifacts::InMemoryBlobStore::new();
         for entry in perpetual_tables.iter_mpc_artifact_blobs() {
             match entry {
                 Ok((digest, bytes)) => mpc_data_blob_store.insert(digest, bytes),
@@ -775,9 +775,8 @@ impl IkaNode {
                 ),
             }
         }
-        let mpc_announcement_relay =
-            ika_network::validator_metadata::AnnouncementRelayHandle::new();
-        let validator_metadata_server = ika_network::validator_metadata::build_server(
+        let mpc_announcement_relay = ika_network::mpc_artifacts::AnnouncementRelayHandle::new();
+        let validator_metadata_server = ika_network::mpc_artifacts::build_server(
             mpc_data_blob_store.clone(),
             mpc_announcement_relay.clone(),
             perpetual_tables.clone(),
@@ -1424,25 +1423,23 @@ impl IkaNode {
                     .await?;
             }
 
-            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
-                components,
-            ) =
-                &*self.validator_components.lock().await
-            {
-                let end_of_publish_sender = EndOfPublishSender::new(
-                    Arc::downgrade(&cur_epoch_store),
-                    Arc::new(components.consensus_adapter.clone()),
-                    sui_data_receivers.end_of_publish_receiver.clone(),
-                    cur_epoch_store.epoch(),
-                );
-                let end_of_publish_handle = Some(tokio::spawn(async move {
-                    end_of_publish_sender.run().await;
-                }));
+            let (end_of_publish_sender_handle, handoff_signature_sender_handle) =
+                if let Some(components) = &*self.validator_components.lock().await {
+                    let end_of_publish_sender = EndOfPublishSender::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        Arc::new(components.consensus_adapter.clone()),
+                        sui_data_receivers.end_of_publish_receiver.clone(),
+                        cur_epoch_store.epoch(),
+                    );
+                    let end_of_publish_handle = Some(tokio::spawn(async move {
+                        end_of_publish_sender.run().await;
+                    }));
 
-                let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
-                let builders =
-                    ika_core::validator_metadata::default_handoff_items_builders(&cur_epoch_store);
-                let handoff_sender =
+                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
+                    let builders = ika_core::validator_metadata::default_handoff_items_builders(
+                        &cur_epoch_store,
+                    );
+                    let handoff_sender =
                     ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
@@ -1452,14 +1449,14 @@ impl IkaNode {
                         sui_data_receivers.next_epoch_committee_receiver.clone(),
                         builders,
                     );
-                let handoff_handle = Some(tokio::spawn(async move {
-                    handoff_sender.run().await;
-                }));
+                    let handoff_handle = Some(tokio::spawn(async move {
+                        handoff_sender.run().await;
+                    }));
 
-                (end_of_publish_handle, handoff_handle)
-            } else {
-                (None, None)
-            };
+                    (end_of_publish_handle, handoff_handle)
+                } else {
+                    (None, None)
+                };
 
             // Producer-side broadcaster: announces this validator's
             // own mpc_data and ready signals so the freeze quorum

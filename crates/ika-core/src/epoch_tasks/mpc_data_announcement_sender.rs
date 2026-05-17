@@ -28,7 +28,7 @@ use crate::validator_metadata::{
     derive_mpc_data_blob, now_ms, sign_validator_mpc_data_announcement,
 };
 use dwallet_rng::RootSeed;
-use ika_network::validator_metadata::mpc_data_blob_hash;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::committee::EpochId;
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};

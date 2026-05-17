@@ -990,7 +990,7 @@ pub fn verify_certified_handoff_attestation(
 mod tests {
     use super::*;
     use fastcrypto::traits::KeyPair;
-    use ika_network::validator_metadata::mpc_data_blob_hash;
+    use ika_network::mpc_artifacts::mpc_data_blob_hash;
     use ika_types::crypto::AuthoritySignInfoTrait;
     use ika_types::crypto::random_committee_key_pairs_of_size;
 

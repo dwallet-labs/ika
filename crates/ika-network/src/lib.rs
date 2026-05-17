@@ -6,9 +6,9 @@ use std::time::Duration;
 
 pub mod api;
 pub mod discovery;
+pub mod mpc_artifacts;
 pub mod state_sync;
 pub mod utils;
-pub mod validator_metadata;
 
 pub use tonic;
 

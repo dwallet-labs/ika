@@ -117,8 +117,8 @@ fn build_anemo_services(out_dir: &Path) {
             anemo_build::manual::Method::builder()
                 .name("get_mpc_data_blob")
                 .route_name("GetMpcDataBlob")
-                .request_type("crate::validator_metadata::GetMpcDataBlobRequest")
-                .response_type("Option<crate::validator_metadata::MpcDataBlob>")
+                .request_type("crate::mpc_artifacts::GetMpcDataBlobRequest")
+                .response_type("Option<crate::mpc_artifacts::MpcDataBlob>")
                 .codec_path(codec_path)
                 .build(),
         )
@@ -126,8 +126,8 @@ fn build_anemo_services(out_dir: &Path) {
             anemo_build::manual::Method::builder()
                 .name("submit_mpc_data_announcement")
                 .route_name("SubmitMpcDataAnnouncement")
-                .request_type("crate::validator_metadata::SubmitMpcDataAnnouncementRequest")
-                .response_type("crate::validator_metadata::SubmitMpcDataAnnouncementResponse")
+                .request_type("crate::mpc_artifacts::SubmitMpcDataAnnouncementRequest")
+                .response_type("crate::mpc_artifacts::SubmitMpcDataAnnouncementResponse")
                 .codec_path(codec_path)
                 .build(),
         )
@@ -135,7 +135,7 @@ fn build_anemo_services(out_dir: &Path) {
             anemo_build::manual::Method::builder()
                 .name("get_certified_handoff_attestation")
                 .route_name("GetCertifiedHandoffAttestation")
-                .request_type("crate::validator_metadata::GetCertifiedHandoffAttestationRequest")
+                .request_type("crate::mpc_artifacts::GetCertifiedHandoffAttestationRequest")
                 .response_type("Option<ika_types::handoff::CertifiedHandoffAttestation>")
                 .codec_path(codec_path)
                 .build(),

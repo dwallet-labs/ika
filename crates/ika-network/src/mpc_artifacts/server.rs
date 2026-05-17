@@ -1,19 +1,34 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use super::{
-    AnnouncementRelayHandle, GetCertifiedHandoffAttestationRequest, GetMpcDataBlobRequest,
-    HandoffCertStorage, MpcDataBlob, MpcDataBlobStorage, SubmitMpcDataAnnouncementRequest,
-    SubmitMpcDataAnnouncementResponse, ValidatorMetadata,
+use super::ValidatorMetadata;
+use super::announcement_relay::{
+    AnnouncementRelayHandle, SubmitMpcDataAnnouncementRequest, SubmitMpcDataAnnouncementResponse,
 };
+use super::blob_store::{GetMpcDataBlobRequest, MpcDataBlob, MpcDataBlobStorage};
+use super::handoff_cert::{GetCertifiedHandoffAttestationRequest, HandoffCertStorage};
 use anemo::{Request, Response, Result, rpc::Status};
 use ika_types::handoff::CertifiedHandoffAttestation;
 use std::sync::Arc;
 
 pub struct Server<S, C> {
-    pub(super) storage: Arc<S>,
-    pub(super) relay: Arc<AnnouncementRelayHandle>,
-    pub(super) cert_storage: Arc<C>,
+    storage: Arc<S>,
+    relay: Arc<AnnouncementRelayHandle>,
+    cert_storage: Arc<C>,
+}
+
+impl<S, C> Server<S, C> {
+    pub(super) fn new(
+        storage: Arc<S>,
+        relay: Arc<AnnouncementRelayHandle>,
+        cert_storage: Arc<C>,
+    ) -> Self {
+        Self {
+            storage,
+            relay,
+            cert_storage,
+        }
+    }
 }
 
 #[anemo::async_trait]
