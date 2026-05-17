@@ -59,6 +59,13 @@ pub struct SuiConnectorService {
     sui_connector_config: SuiConnectorConfig,
     #[allow(dead_code)]
     metrics: Arc<SuiConnectorMetrics>,
+    /// Late-bindable handle the network-keys sync task reads on each
+    /// fetch. Lets ika-node install (and replace, per epoch) the
+    /// off-chain `NetworkKeyBlobSource` used to overlay locally-
+    /// cached DKG/reconfig output blobs onto the chain copy. `None`
+    /// here disables the overlay; chain bytes flow through unchanged.
+    network_key_blob_source:
+        Arc<arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>>,
 }
 
 impl SuiConnectorService {
@@ -101,6 +108,10 @@ impl SuiConnectorService {
             sui_connector_metrics.clone(),
         );
 
+        let network_key_blob_source: Arc<
+            arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
+        > = Arc::new(arc_swap::ArcSwapOption::empty());
+
         let sui_modules_to_watch = vec![SESSIONS_MANAGER_MODULE_NAME.to_owned()];
         let task_handles = SuiSyncer::new(
             sui_client.clone(),
@@ -119,6 +130,7 @@ impl SuiConnectorService {
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
             noa_checkpoints_finalized,
+            network_key_blob_source.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
@@ -130,9 +142,21 @@ impl SuiConnectorService {
                 task_handles,
                 sui_connector_config,
                 metrics: sui_connector_metrics,
+                network_key_blob_source,
             }),
             network_keys_receiver,
         ))
+    }
+
+    /// Installs the off-chain `NetworkKeyBlobSource` the network-
+    /// keys sync task uses to overlay cached DKG / reconfig output
+    /// blobs onto the chain copy. Called once per epoch by ika-node
+    /// after the per-epoch store is up.
+    pub fn install_network_key_blob_source(
+        &self,
+        source: Box<dyn crate::validator_metadata::NetworkKeyBlobSource>,
+    ) {
+        self.network_key_blob_source.store(Some(Arc::new(source)));
     }
 
     pub async fn run_epoch(

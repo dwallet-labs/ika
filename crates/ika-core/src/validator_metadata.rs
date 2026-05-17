@@ -384,6 +384,44 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
     ) -> Option<Vec<u8>>;
 }
 
+/// Adapter that lets the long-lived `SuiConnectorService` hold a
+/// reference to a per-epoch `AuthorityPerEpochStore` for blob
+/// overlays. Holds a `Weak` so the per-epoch store can drop when
+/// the epoch ends; on each call, upgrades and delegates if the
+/// epoch is still alive, otherwise returns `None` (caller falls
+/// back to the chain blob).
+pub struct EpochStoreBlobSource {
+    inner: std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
+}
+
+impl EpochStoreBlobSource {
+    pub fn new(
+        inner: std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
+    ) -> Self {
+        Self { inner }
+    }
+}
+
+impl NetworkKeyBlobSource for EpochStoreBlobSource {
+    fn network_dkg_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>> {
+        self.inner
+            .upgrade()
+            .and_then(|store| store.network_dkg_output_blob(network_key_id))
+    }
+
+    fn network_reconfiguration_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>> {
+        self.inner
+            .upgrade()
+            .and_then(|store| store.network_reconfiguration_output_blob(network_key_id))
+    }
+}
+
 /// In-memory `NetworkKeyBlobSource` for tests and as a typed
 /// empty default. Keyed by `network_key_id`.
 #[derive(Default)]

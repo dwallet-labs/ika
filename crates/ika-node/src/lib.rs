@@ -1478,6 +1478,19 @@ impl IkaNode {
                 }))
             };
 
+            // Install the off-chain blob overlay so the network-
+            // keys sync task prefers locally-cached DKG / reconfig
+            // output bytes (populated by step 9's producer cache)
+            // over the chain blobs. Replaces the previous-epoch
+            // installation (if any); the `Weak` adapter naturally
+            // expires when the per-epoch store drops.
+            self.sui_connector_service
+                .install_network_key_blob_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
+                        &cur_epoch_store,
+                    )),
+                ));
+
             // Installs a `ConsensusPubkeyProvider` from the current
             // committee's on-chain `consensus_pubkey_bytes` so the
             // per-epoch store can verify incoming

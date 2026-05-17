@@ -70,6 +70,9 @@ where
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
+        network_key_blob_source: Arc<
+            arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
+        >,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!(?mode, "Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -82,6 +85,7 @@ where
             system_object_receiver.clone(),
             dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
+            network_key_blob_source,
         ));
 
         // Validator-only tasks: committee sync, end of publish, session tracking, uncompleted events
@@ -368,6 +372,9 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+        network_key_blob_source: Arc<
+            arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
+        >,
     ) {
         // Last fetched network keys (id to epoch) to avoid fetching the same keys repeatedly.
         let mut last_fetched_network_keys: HashMap<ObjectID, u64> = HashMap::new();
@@ -425,7 +432,25 @@ where
                     .await
                 {
                     Ok(key_full_data) => {
-                        all_fetched_network_keys_data.insert(key_id, key_full_data.clone());
+                        // Step 12 overlay: prefer locally-cached
+                        // protocol-output blobs (populated by
+                        // step 9's producer cache) over the chain
+                        // blobs. The lightweight metadata (id,
+                        // epoch, state, dkg_at_epoch) always
+                        // comes from chain. If no source is
+                        // installed or the source has neither
+                        // blob, the merged value equals the chain
+                        // copy byte-for-byte.
+                        let merged = match network_key_blob_source.load_full() {
+                            Some(source) => {
+                                crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(
+                                    key_full_data,
+                                    source.as_ref().as_ref(),
+                                )
+                            }
+                            None => key_full_data,
+                        };
+                        all_fetched_network_keys_data.insert(key_id, merged);
                         last_fetched_network_keys.insert(key_id, current_epoch);
                     }
                     Err(err) => {
