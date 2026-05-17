@@ -18,7 +18,8 @@ use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
 use crate::validator_metadata::{
-    EpochMpcDataReadySignal, HandoffSignatureMessage, SignedValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, HandoffSignatureMessage, NetworkKeyDKGReadySignal,
+    SignedValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;
@@ -98,6 +99,14 @@ pub enum ConsensusTransactionKey {
     /// A validator's "I'm ready for this epoch's MPC sessions" vote,
     /// keyed by signer + epoch (one vote per validator per epoch).
     EpochMpcDataReadySignal(AuthorityName, u64 /* epoch */),
+    /// A validator's per-network-key "I'm ready to DKG this key"
+    /// vote. Keyed by signer + network_key_id + epoch (one vote per
+    /// validator per key per epoch).
+    NetworkKeyDKGReadySignal(
+        AuthorityName,
+        sui_types::base_types::ObjectID, /* network_key_id */
+        u64,                             /* epoch */
+    ),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -216,6 +225,15 @@ impl Debug for ConsensusTransactionKey {
                     epoch
                 )
             }
+            ConsensusTransactionKey::NetworkKeyDKGReadySignal(authority, key_id, epoch) => {
+                write!(
+                    f,
+                    "NetworkKeyDKGReadySignal({:?}, key={:?}, epoch={})",
+                    authority.concise(),
+                    key_id,
+                    epoch
+                )
+            }
         }
     }
 }
@@ -298,6 +316,7 @@ pub enum ConsensusTransactionKind {
     ValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
     HandoffSignature(Box<HandoffSignatureMessage>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
+    NetworkKeyDKGReadySignal(NetworkKeyDKGReadySignal),
 }
 
 impl ConsensusTransaction {
@@ -528,6 +547,18 @@ impl ConsensusTransaction {
         }
     }
 
+    pub fn new_network_key_dkg_ready_signal(signal: NetworkKeyDKGReadySignal) -> Self {
+        let mut hasher = DefaultHasher::new();
+        signal.authority.hash(&mut hasher);
+        signal.network_key_id.hash(&mut hasher);
+        signal.epoch.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal),
+        }
+    }
+
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
             .read_u64::<BigEndian>()
@@ -607,6 +638,13 @@ impl ConsensusTransaction {
             }
             ConsensusTransactionKind::EpochMpcDataReadySignal(signal) => {
                 ConsensusTransactionKey::EpochMpcDataReadySignal(signal.authority, signal.epoch)
+            }
+            ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal) => {
+                ConsensusTransactionKey::NetworkKeyDKGReadySignal(
+                    signal.authority,
+                    signal.network_key_id,
+                    signal.epoch,
+                )
             }
         }
     }

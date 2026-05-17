@@ -131,6 +131,28 @@ pub struct EpochMpcDataReadySignal {
     pub epoch: EpochId,
 }
 
+/// Per-network-key counterpart to `EpochMpcDataReadySignal`:
+/// "I'm ready to participate in network DKG for `network_key_id`
+/// this epoch." Validators may broadcast this earlier than the
+/// epoch-wide signal because per-key readiness is a narrower
+/// commitment (the validator has the mpc_data it needs for *this*
+/// key's DKG, not necessarily all reconfig sessions).
+///
+/// First quorum of *either* signal kind freezes the same epoch-wide
+/// `frozen_validator_mpc_data_input_set` — there is only one frozen
+/// set per epoch, consumed by both genesis DKG and reconfig MPC.
+/// Subsequent quorums (or per-key quorums on the same epoch) don't
+/// re-freeze; `freeze_mpc_data_if_first` is idempotent.
+///
+/// Authentication: consensus authority binding (sender ==
+/// `authority`); no payload signature.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct NetworkKeyDKGReadySignal {
+    pub authority: AuthorityName,
+    pub network_key_id: ObjectID,
+    pub epoch: EpochId,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

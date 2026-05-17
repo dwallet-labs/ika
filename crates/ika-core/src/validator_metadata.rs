@@ -250,6 +250,24 @@ pub fn build_handoff_signature_transaction(msg: HandoffSignatureMessage) -> Cons
     ConsensusTransaction::new_handoff_signature(msg)
 }
 
+/// Builds the `ConsensusTransaction` that wraps a
+/// `NetworkKeyDKGReadySignal`. Per-network-key counterpart to
+/// `build_epoch_mpc_data_ready_signal_transaction`. Authentication
+/// is the consensus authority binding (sender == authority); no
+/// payload signature.
+pub fn build_network_key_dkg_ready_signal_transaction(
+    authority: AuthorityName,
+    network_key_id: sui_types::base_types::ObjectID,
+    epoch: EpochId,
+) -> ConsensusTransaction {
+    let signal = ika_types::validator_metadata::NetworkKeyDKGReadySignal {
+        authority,
+        network_key_id,
+        epoch,
+    };
+    ConsensusTransaction::new_network_key_dkg_ready_signal(signal)
+}
+
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
 /// before storage so the canonical encoding is identical across all

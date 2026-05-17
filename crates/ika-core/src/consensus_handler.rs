@@ -445,6 +445,7 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         }
         ConsensusTransactionKind::HandoffSignature(_) => "handoff_signature",
         ConsensusTransactionKind::EpochMpcDataReadySignal(_) => "epoch_mpc_data_ready_signal",
+        ConsensusTransactionKind::NetworkKeyDKGReadySignal(_) => "network_key_dkg_ready_signal",
     }
 }
 
