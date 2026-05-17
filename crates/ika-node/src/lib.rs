@@ -151,9 +151,9 @@ use ika_core::dwallet_mpc::dwallet_mpc_service::{
 };
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
+use ika_core::epoch_tasks::end_of_publish_sender::EndOfPublishSender;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
-use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
 use ika_core::sui_connector::sui_executor::StopReason;
 use ika_core::system_checkpoints::system_checkpoint_output::{
@@ -1454,7 +1454,7 @@ impl IkaNode {
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
                 let bls_keypair = Arc::new(self.config.protocol_key_pair().copy());
-                let sender = ika_core::sui_connector::mpc_data_announcement_sender::MpcDataAnnouncementSender::new(
+                let sender = ika_core::epoch_tasks::mpc_data_announcement_sender::MpcDataAnnouncementSender::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         cur_epoch_store.name,
@@ -1477,7 +1477,7 @@ impl IkaNode {
             // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
             // instead of silently dropping them.
             let joiner_pubkey_updater_handle = {
-                let updater = ika_core::sui_connector::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
+                let updater = ika_core::epoch_tasks::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         sui_data_receivers.next_epoch_committee_receiver.clone(),
@@ -1522,7 +1522,7 @@ impl IkaNode {
             // with "relay not installed".
             if let Some(components) = &*self.validator_components.lock().await {
                 self.mpc_announcement_relay.install(Box::new(
-                    ika_core::sui_connector::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                    ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
                         Arc::downgrade(&cur_epoch_store),
                         Arc::new(components.consensus_adapter.clone()),
                     ),
