@@ -1361,7 +1361,6 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.party_id,
                 )
                 .await;
 

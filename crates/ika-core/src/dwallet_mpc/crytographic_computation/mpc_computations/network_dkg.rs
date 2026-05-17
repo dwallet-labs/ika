@@ -15,13 +15,15 @@ use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, NetworkDecryptionKeyPublicOutputType,
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGPublicOutput,
+    VersionedNetworkDkgOutput, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    Curve25519AsyncDKGProtocol, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol, Secp256r1AsyncDKGProtocol,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party};
 use mpc::{
@@ -331,7 +333,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
@@ -346,7 +347,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
-                    party_id,
                 )
             }
         } else {
@@ -357,7 +357,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
-                party_id,
             )
         };
 
@@ -385,142 +384,44 @@ pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
     pub ristretto: PerCurveNetworkOwnedAddressDkgData,
 }
 
-/// Computes the DKG output and extracts the public key for a single curve.
+/// Runs the threshold-only DKG for a single curve, extracts the public key and
+/// wraps the output in `VersionedDwalletDKGPublicOutput::V2` for downstream
+/// sign-input construction.
 ///
-/// Computes the network-owned-address DKG for a given curve.
-/// The DKG output is curve-level and shared by all algorithms on the same curve.
-fn compute_network_owned_address_dkg_and_public_key(
+/// Phase 4f of crypto bump: ika's NOA emulator was deleted; this calls upstream's
+/// native `<D as dkg::Protocol>::threshold_dkg_output(pp, session_id)` directly
+/// to produce the decentralized-party DKG output for threshold (no centralized
+/// party) mode. The session id is derived from `network_key_id + curve`
+/// (curve-specific, sig-algo independent) per `network_owned_address_sign_dkg_session_identifier`.
+fn compute_noa_dkg<D>(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
-    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
-    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
-    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
-    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
-    access_structure: &WeightedThresholdAccessStructure,
-    party_id: group::PartyID,
-) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData> {
-    // Phase 4f of crypto bump: ika's NOA emulator was deleted. Use upstream's native
-    // `<DKGProtocol as dkg::Protocol>::threshold_dkg_output(pp, session_id)` directly to
-    // produce the decentralized-party DKG output for threshold (no centralized party) mode.
-    // The session id is derived from network_key_id + curve (curve-specific, sig-algo
-    // independent) per the surviving session_id helper.
-    use twopc_mpc::dkg::Protocol as DkgProtocol;
-
-    let _ = (party_id, access_structure);
+    protocol_public_parameters: &D::ProtocolPublicParameters,
+) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData>
+where
+    D: twopc_mpc::dkg::Protocol,
+{
     let session_identifier =
         network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
-    let session_id =
-        commitment::CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
+    let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
 
-    let (dkg_output_bytes, public_key) = match curve {
-        DWalletCurve::Secp256k1 => {
-            let out =
-                ika_types::messages_dwallet_mpc::Secp256k1AsyncDKGProtocol::threshold_dkg_output(
-                    secp256k1_protocol_public_parameters,
-                    session_id,
-                )
-                .map_err(|e| {
-                    DwalletMPCError::InternalError(format!("threshold_dkg_output secp256k1: {e}"))
-                })?;
-            let raw_bytes = bcs::to_bytes(&out)?;
-            let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
-                curve,
-                &raw_bytes,
-            )
-            .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract secp256k1: {e}")))?;
-            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
-            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
-            // round-trip through the standard user-driven sign path.
-            let wrapped = bcs::to_bytes(
-                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
-                    public_key_bytes: pk.clone(),
-                    dkg_output: raw_bytes,
-                },
-            )?;
-            (wrapped, pk)
-        }
-        DWalletCurve::Secp256r1 => {
-            let out =
-                ika_types::messages_dwallet_mpc::Secp256r1AsyncDKGProtocol::threshold_dkg_output(
-                    secp256r1_protocol_public_parameters,
-                    session_id,
-                )
-                .map_err(|e| {
-                    DwalletMPCError::InternalError(format!("threshold_dkg_output secp256r1: {e}"))
-                })?;
-            let raw_bytes = bcs::to_bytes(&out)?;
-            let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
-                curve,
-                &raw_bytes,
-            )
-            .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract secp256r1: {e}")))?;
-            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
-            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
-            // round-trip through the standard user-driven sign path.
-            let wrapped = bcs::to_bytes(
-                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
-                    public_key_bytes: pk.clone(),
-                    dkg_output: raw_bytes,
-                },
-            )?;
-            (wrapped, pk)
-        }
-        DWalletCurve::Ristretto => {
-            let out =
-                ika_types::messages_dwallet_mpc::RistrettoAsyncDKGProtocol::threshold_dkg_output(
-                    ristretto_protocol_public_parameters,
-                    session_id,
-                )
-                .map_err(|e| {
-                    DwalletMPCError::InternalError(format!("threshold_dkg_output ristretto: {e}"))
-                })?;
-            let raw_bytes = bcs::to_bytes(&out)?;
-            let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
-                curve,
-                &raw_bytes,
-            )
-            .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract ristretto: {e}")))?;
-            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
-            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
-            // round-trip through the standard user-driven sign path.
-            let wrapped = bcs::to_bytes(
-                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
-                    public_key_bytes: pk.clone(),
-                    dkg_output: raw_bytes,
-                },
-            )?;
-            (wrapped, pk)
-        }
-        DWalletCurve::Curve25519 => {
-            let out =
-                ika_types::messages_dwallet_mpc::Curve25519AsyncDKGProtocol::threshold_dkg_output(
-                    curve25519_protocol_public_parameters,
-                    session_id,
-                )
-                .map_err(|e| {
-                    DwalletMPCError::InternalError(format!("threshold_dkg_output curve25519: {e}"))
-                })?;
-            let raw_bytes = bcs::to_bytes(&out)?;
-            let pk = dwallet_mpc_types::dwallet_mpc::public_key_from_decentralized_dkg_output_by_curve_v2(
-                curve,
-                &raw_bytes,
-            )
-            .map_err(|e| DwalletMPCError::InternalError(format!("public_key extract curve25519: {e}")))?;
-            // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
-            // construction (which decodes via VersionedDwalletDKGPublicOutput) can
-            // round-trip through the standard user-driven sign path.
-            let wrapped = bcs::to_bytes(
-                &dwallet_mpc_types::dwallet_mpc::VersionedDwalletDKGPublicOutput::V2 {
-                    public_key_bytes: pk.clone(),
-                    dkg_output: raw_bytes,
-                },
-            )?;
-            (wrapped, pk)
-        }
-    };
-
+    let out = D::threshold_dkg_output(protocol_public_parameters, session_id).map_err(|e| {
+        DwalletMPCError::InternalError(format!("threshold_dkg_output {curve:?}: {e}"))
+    })?;
+    let raw_bytes = bcs::to_bytes(&out)?;
+    let public_key = public_key_from_decentralized_dkg_output_by_curve_v2(curve, &raw_bytes)
+        .map_err(|e| {
+            DwalletMPCError::InternalError(format!("public_key extract {curve:?}: {e}"))
+        })?;
+    // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+    // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+    // round-trip through the standard user-driven sign path.
+    let dkg_output = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+        public_key_bytes: public_key.clone(),
+        dkg_output: raw_bytes,
+    })?;
     Ok(PerCurveNetworkOwnedAddressDkgData {
-        dkg_output: dkg_output_bytes,
+        dkg_output,
         public_key,
     })
 }
@@ -532,48 +433,26 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
     ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
     curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
-    access_structure: &WeightedThresholdAccessStructure,
-    party_id: group::PartyID,
 ) -> DwalletMPCResult<AllCurvesNetworkOwnedAddressDkgData> {
-    let secp256k1 = compute_network_owned_address_dkg_and_public_key(
+    let secp256k1 = compute_noa_dkg::<Secp256k1AsyncDKGProtocol>(
         network_key_id,
         DWalletCurve::Secp256k1,
         secp256k1_protocol_public_parameters,
-        secp256r1_protocol_public_parameters,
-        ristretto_protocol_public_parameters,
-        curve25519_protocol_public_parameters,
-        access_structure,
-        party_id,
     )?;
-    let secp256r1 = compute_network_owned_address_dkg_and_public_key(
+    let secp256r1 = compute_noa_dkg::<Secp256r1AsyncDKGProtocol>(
         network_key_id,
         DWalletCurve::Secp256r1,
-        secp256k1_protocol_public_parameters,
         secp256r1_protocol_public_parameters,
-        ristretto_protocol_public_parameters,
-        curve25519_protocol_public_parameters,
-        access_structure,
-        party_id,
     )?;
-    let curve25519 = compute_network_owned_address_dkg_and_public_key(
+    let curve25519 = compute_noa_dkg::<Curve25519AsyncDKGProtocol>(
         network_key_id,
         DWalletCurve::Curve25519,
-        secp256k1_protocol_public_parameters,
-        secp256r1_protocol_public_parameters,
-        ristretto_protocol_public_parameters,
         curve25519_protocol_public_parameters,
-        access_structure,
-        party_id,
     )?;
-    let ristretto = compute_network_owned_address_dkg_and_public_key(
+    let ristretto = compute_noa_dkg::<RistrettoAsyncDKGProtocol>(
         network_key_id,
         DWalletCurve::Ristretto,
-        secp256k1_protocol_public_parameters,
-        secp256r1_protocol_public_parameters,
         ristretto_protocol_public_parameters,
-        curve25519_protocol_public_parameters,
-        access_structure,
-        party_id,
     )?;
     Ok(AllCurvesNetworkOwnedAddressDkgData {
         secp256k1,
@@ -649,7 +528,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -700,8 +578,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 &secp256r1_protocol_public_parameters,
                 &ristretto_protocol_public_parameters,
                 &curve25519_protocol_public_parameters,
-                access_structure,
-                party_id,
             )?;
 
             Ok(build_network_encryption_key_public_data(

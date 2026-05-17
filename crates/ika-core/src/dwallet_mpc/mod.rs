@@ -82,20 +82,6 @@ pub(crate) fn authority_name_to_party_id_from_committee(
     Ok(tangible_party_id)
 }
 
-pub(crate) fn get_validators_class_groups_public_keys_and_proofs(
-    committee: &Committee,
-) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
-    let mut validators_class_groups_public_keys_and_proofs = HashMap::new();
-    for (name, _) in committee.voting_rights.iter() {
-        let party_id = authority_name_to_party_id_from_committee(committee, name)?;
-        if let Ok(public_key) = committee.class_groups_public_key_and_proof(name) {
-            validators_class_groups_public_keys_and_proofs.insert(party_id, public_key);
-        }
-    }
-
-    Ok(validators_class_groups_public_keys_and_proofs)
-}
-
 /// Per-validator on-chain public-key payload, indexed by `PartyID`. Bundles the
 /// existing class-groups CRT encryption-key map with the three per-curve PVSS
 /// HPKE encryption-key maps that `decentralized_party::dkg::PublicInput::new`

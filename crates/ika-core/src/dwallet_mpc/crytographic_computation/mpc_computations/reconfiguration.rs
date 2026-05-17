@@ -286,7 +286,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -334,8 +333,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 &secp256r1_protocol_public_parameters,
                 &ristretto_protocol_public_parameters,
                 &curve25519_protocol_public_parameters,
-                access_structure,
-                party_id,
             )?;
 
             Ok(build_network_encryption_key_public_data(
