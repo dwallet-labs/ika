@@ -1765,6 +1765,46 @@ impl DWalletMPCService {
                 }
             },
             SessionType::User | SessionType::System => {
+                // Cache canonical (non-rejected) network DKG /
+                // reconfig output bytes locally before they get
+                // moved into the message builder. The handoff
+                // trigger reads these back at EndOfPublish.
+                if !rejected {
+                    match &session_request.protocol_data {
+                        ProtocolData::NetworkEncryptionKeyDkg {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_dkg_output(
+                                *dwallet_network_encryption_key_id,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network DKG output"
+                                );
+                            }
+                        }
+                        ProtocolData::NetworkEncryptionKeyReconfiguration {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_reconfiguration_output(
+                                *dwallet_network_encryption_key_id,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network reconfiguration output"
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
                     &session_identifier,
                     session_request,

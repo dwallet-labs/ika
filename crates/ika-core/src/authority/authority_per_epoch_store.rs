@@ -350,6 +350,27 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
     ) -> IkaResult<Option<AssignedPresign>>;
+
+    /// Caches the canonical output bytes of a network DKG session
+    /// locally so the handoff trigger can pin its digest at
+    /// EndOfPublish. Called by the MPC producer at the same point
+    /// it builds the output `ConsensusTransaction`. The implementer
+    /// is expected to be idempotent on identical bytes — protocols
+    /// can re-finalize the same output without changing the cached
+    /// digest.
+    fn cache_network_dkg_output(
+        &self,
+        dwallet_network_encryption_key_id: ObjectID,
+        output_bytes: &[u8],
+    ) -> IkaResult<()>;
+
+    /// Same as `cache_network_dkg_output`, but for reconfiguration
+    /// outputs (per-epoch, per-key).
+    fn cache_network_reconfiguration_output(
+        &self,
+        dwallet_network_encryption_key_id: ObjectID,
+        output_bytes: &[u8],
+    ) -> IkaResult<()>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -604,6 +625,38 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         let tables = self.tables()?;
         tables.pop_assigned_presign(signature_algorithm, session_identifier)
     }
+
+    fn cache_network_dkg_output(
+        &self,
+        dwallet_network_encryption_key_id: ObjectID,
+        output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        self.cache_protocol_output(
+            ProtocolOutputKind::Dkg,
+            dwallet_network_encryption_key_id,
+            output_bytes,
+        )
+    }
+
+    fn cache_network_reconfiguration_output(
+        &self,
+        dwallet_network_encryption_key_id: ObjectID,
+        output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        self.cache_protocol_output(
+            ProtocolOutputKind::Reconfiguration,
+            dwallet_network_encryption_key_id,
+            output_bytes,
+        )
+    }
+}
+
+/// Discriminator for the two protocol output caches that share an
+/// implementation in [`AuthorityPerEpochStore::cache_protocol_output`].
+#[derive(Copy, Clone)]
+enum ProtocolOutputKind {
+    Dkg,
+    Reconfiguration,
 }
 
 pub struct AuthorityPerEpochStore {
@@ -904,6 +957,20 @@ pub struct AuthorityEpochTables {
     /// `AuthorityPerpetualTables` (perpetual persist lands in step
     /// 7c).
     pub(crate) handoff_signatures: DBMap<AuthorityName, fastcrypto::ed25519::Ed25519Signature>,
+
+    /// Local cache of network DKG output digests for this epoch,
+    /// keyed by `dwallet_network_encryption_key_id`. Populated by
+    /// the MPC producer when it builds an output for consensus;
+    /// consumed by the handoff trigger when assembling the
+    /// attestation items list. Blob bytes go into the perpetual
+    /// `mpc_artifact_blobs` table so peers can fetch them by digest.
+    pub(crate) network_dkg_output_digests: DBMap<ObjectID, [u8; 32]>,
+
+    /// Local cache of network reconfiguration output digests for
+    /// this epoch — same shape and lifecycle as
+    /// `network_dkg_output_digests`. Per-epoch (not perpetual)
+    /// because a key's reconfig output is by definition per-epoch.
+    pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1781,33 +1848,89 @@ impl AuthorityPerEpochStore {
     }
 
     /// Assembles this validator's local handoff attestation from
-    /// the frozen mpc-data set + caller-supplied DKG/reconfig
-    /// digest maps + the next committee's pubkey set. Determinism
+    /// the frozen mpc-data set, cached DKG/reconfig digests for the
+    /// epoch, and the next committee's pubkey set. Determinism
     /// across validators is what guarantees agreement on the
     /// produced attestation: identical inputs → identical bytes.
-    ///
-    /// DKG and reconfig digest maps are caller-supplied because the
-    /// producer-side caching of those outputs (step 9) lives
-    /// elsewhere. While that step is unfinished, callers pass
-    /// empty maps, which is fine — `compute_handoff_items` handles
-    /// empty inputs and the resulting attestation is still
-    /// well-defined and signable.
     pub fn build_local_handoff_attestation(
         &self,
         next_committee_pubkeys: impl IntoIterator<Item = ika_types::crypto::AuthorityName>,
-        network_dkg_outputs: &std::collections::BTreeMap<ObjectID, [u8; 32]>,
-        network_reconfiguration_outputs: &std::collections::BTreeMap<ObjectID, [u8; 32]>,
     ) -> IkaResult<ika_types::validator_metadata::HandoffAttestation> {
         let frozen = self.get_frozen_validator_mpc_data_input_set()?;
         let frozen_btree: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
             frozen.into_iter().collect();
+        let network_dkg_outputs = self.get_network_dkg_output_digests()?;
+        let network_reconfiguration_outputs = self.get_network_reconfiguration_output_digests()?;
         let items = compute_handoff_items(
             &frozen_btree,
-            network_dkg_outputs,
-            network_reconfiguration_outputs,
+            &network_dkg_outputs,
+            &network_reconfiguration_outputs,
         );
         let next_committee_hash = hash_next_committee_pubkey_set(next_committee_pubkeys);
         build_handoff_attestation(self.epoch(), next_committee_hash, items)
+    }
+
+    /// Shared implementation behind `cache_network_dkg_output` and
+    /// `cache_network_reconfiguration_output`. Computes the
+    /// Blake2b256 digest of `output_bytes`, writes the digest into
+    /// the appropriate per-epoch table, and writes the blob into
+    /// perpetual `mpc_artifact_blobs` so peers can serve it by
+    /// digest. Both writes are idempotent on byte-identical inputs.
+    fn cache_protocol_output(
+        &self,
+        kind: ProtocolOutputKind,
+        dwallet_network_encryption_key_id: ObjectID,
+        output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        use fastcrypto::hash::{Blake2b256, HashFunction};
+        let mut hasher = Blake2b256::default();
+        hasher.update(output_bytes);
+        let digest: [u8; 32] = hasher.finalize().into();
+        let tables = self.tables()?;
+        match kind {
+            ProtocolOutputKind::Dkg => tables
+                .network_dkg_output_digests
+                .insert(&dwallet_network_encryption_key_id, &digest)?,
+            ProtocolOutputKind::Reconfiguration => tables
+                .network_reconfiguration_output_digests
+                .insert(&dwallet_network_encryption_key_id, &digest)?,
+        }
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full()
+            && let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes)
+        {
+            warn!(
+                error = ?e,
+                ?dwallet_network_encryption_key_id,
+                "failed to persist protocol output blob — cached digest may not be servable by P2P"
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns the per-epoch `key_id -> digest` map of cached
+    /// network DKG outputs.
+    pub fn get_network_dkg_output_digests(
+        &self,
+    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
+        let tables = self.tables()?;
+        tables
+            .network_dkg_output_digests
+            .safe_iter()
+            .map(|res| res.map_err(IkaError::from))
+            .collect()
+    }
+
+    /// Returns the per-epoch `key_id -> digest` map of cached
+    /// network reconfiguration outputs.
+    pub fn get_network_reconfiguration_output_digests(
+        &self,
+    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
+        let tables = self.tables()?;
+        tables
+            .network_reconfiguration_output_digests
+            .safe_iter()
+            .map(|res| res.map_err(IkaError::from))
+            .collect()
     }
 
     /// Builds the per-validator signed handoff message and wraps it
@@ -3594,5 +3717,63 @@ mod tests {
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
         let (_, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![200u8]);
+    }
+
+    #[tokio::test]
+    async fn network_dkg_output_digest_table_roundtrip() {
+        let tables = create_tables();
+        let key_a = ObjectID::random();
+        let key_b = ObjectID::random();
+        tables
+            .network_dkg_output_digests
+            .insert(&key_a, &[0x11; 32])
+            .unwrap();
+        tables
+            .network_dkg_output_digests
+            .insert(&key_b, &[0x22; 32])
+            .unwrap();
+        // Replays are idempotent: re-inserting the same digest is a
+        // no-op.
+        tables
+            .network_dkg_output_digests
+            .insert(&key_a, &[0x11; 32])
+            .unwrap();
+
+        let collected: std::collections::BTreeMap<ObjectID, [u8; 32]> = tables
+            .network_dkg_output_digests
+            .safe_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected.get(&key_a), Some(&[0x11; 32]));
+        assert_eq!(collected.get(&key_b), Some(&[0x22; 32]));
+    }
+
+    #[tokio::test]
+    async fn network_dkg_and_reconfig_caches_are_independent() {
+        // Same key id appearing in both caches doesn't collide —
+        // they're separate tables addressing different artifacts.
+        let tables = create_tables();
+        let key = ObjectID::random();
+        tables
+            .network_dkg_output_digests
+            .insert(&key, &[0xAA; 32])
+            .unwrap();
+        tables
+            .network_reconfiguration_output_digests
+            .insert(&key, &[0xBB; 32])
+            .unwrap();
+
+        assert_eq!(
+            tables.network_dkg_output_digests.get(&key).unwrap(),
+            Some([0xAA; 32])
+        );
+        assert_eq!(
+            tables
+                .network_reconfiguration_output_digests
+                .get(&key)
+                .unwrap(),
+            Some([0xBB; 32])
+        );
     }
 }

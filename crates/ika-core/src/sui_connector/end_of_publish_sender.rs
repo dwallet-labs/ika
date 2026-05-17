@@ -8,7 +8,6 @@ use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_consensus::ConsensusTransaction;
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -101,14 +100,11 @@ impl EndOfPublishSender {
             .map(|(name, _)| *name)
             .collect();
 
-        // DKG / reconfig output digests are populated by step 9's
-        // producer caching. Until then the attestation pins only
-        // the frozen validator mpc_data set, which is still a
-        // well-defined, signable attestation — every validator
-        // running this version computes the same one.
-        let empty: BTreeMap<sui_types::base_types::ObjectID, [u8; 32]> = BTreeMap::new();
+        // DKG / reconfig output digests are populated locally by
+        // the MPC producer's per-output cache and read back from
+        // the per-epoch store inside `build_local_handoff_attestation`.
         let attestation = epoch_store
-            .build_local_handoff_attestation(next_committee_pubkeys, &empty, &empty)
+            .build_local_handoff_attestation(next_committee_pubkeys)
             .map_err(DwalletMPCError::IkaError)?;
 
         let tx = epoch_store

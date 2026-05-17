@@ -418,6 +418,25 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .unwrap()
             .remove(&(signature_algorithm, session_identifier)))
     }
+
+    fn cache_network_dkg_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        // Testing impl: no-op. The integration test gate doesn't
+        // exercise handoff attestation contents, so we don't need
+        // a per-test in-memory mirror.
+        Ok(())
+    }
+
+    fn cache_network_reconfiguration_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        Ok(())
+    }
 }
 
 impl TestingSubmitToConsensus {
