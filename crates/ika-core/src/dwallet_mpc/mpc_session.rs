@@ -542,24 +542,18 @@ impl DWalletMPCManager {
             return None;
         }
 
-        // Off-chain mpc_data freeze gate (step 14): network DKG /
-        // reconfig sessions must wait until the per-epoch mpc_data
-        // input set is frozen by quorum, AND (for DKG specifically)
-        // the per-key DKG ready quorum is in. Reconfig only gates
-        // on the epoch-wide freeze.
+        // Off-chain mpc_data freeze gate: both network DKG and
+        // reconfig sessions wait until the per-epoch mpc_data input
+        // set is frozen by quorum. Per the design memo, *either*
+        // signal type — `EpochMpcDataReadySignal` or
+        // `NetworkKeyDKGReadySignal` — can drive the freeze, so
+        // gating on the freeze itself covers both cases without
+        // needing a per-key signal as a separate hard requirement.
+        // (Per-key signals remain useful as a narrower early
+        // commitment but aren't a kickoff prerequisite.)
         let off_chain_gate_passes = match &request.protocol_data {
-            ProtocolData::NetworkEncryptionKeyDkg {
-                dwallet_network_encryption_key_id,
-                ..
-            } => {
-                let frozen = self.epoch_store.is_mpc_data_frozen().unwrap_or(false);
-                let per_key_quorum = self
-                    .epoch_store
-                    .has_network_key_dkg_ready_quorum(dwallet_network_encryption_key_id)
-                    .unwrap_or(false);
-                frozen && per_key_quorum
-            }
-            ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+            ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
                 self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
             }
             _ => true,

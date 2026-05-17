@@ -1433,6 +1433,35 @@ impl IkaNode {
                     None
                 };
 
+            // Producer-side broadcaster: announces this validator's
+            // own mpc_data and ready signals so the freeze quorum
+            // can be reached. Without it, no validator publishes its
+            // mpc_data digest and the off-chain freeze never lands,
+            // which leaves the step-14 kickoff gate closed and stalls
+            // network DKG / reconfig.
+            let mpc_data_announcement_handle = if let Some(components) =
+                &*self.validator_components.lock().await
+                && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
+            {
+                let bls_keypair = Arc::new(self.config.protocol_key_pair().copy());
+                let sender = ika_core::sui_connector::mpc_data_announcement_sender::MpcDataAnnouncementSender::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        cur_epoch_store.name,
+                        Arc::new(components.consensus_adapter.clone()),
+                        self.state.perpetual_tables(),
+                        root_seed_kp.root_seed().clone(),
+                        bls_keypair,
+                        sui_data_receivers.network_keys_receiver.clone(),
+                    );
+                let sender = Arc::new(sender);
+                Some(tokio::spawn(async move {
+                    sender.run().await;
+                }))
+            } else {
+                None
+            };
+
             let stop_condition = self
                 .sui_connector_service
                 .run_epoch(cur_epoch_store.epoch(), run_with_range)
@@ -1455,6 +1484,10 @@ impl IkaNode {
                 }
             };
             end_of_publish_sender_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            mpc_data_announcement_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });
