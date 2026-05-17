@@ -13,7 +13,10 @@ use anemo::Network;
 use anemo::PeerId;
 use arc_swap::ArcSwapOption;
 use fastcrypto::hash::{Blake2b256, HashFunction};
-use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
+use ika_types::committee::EpochId;
+use ika_types::validator_metadata::{
+    CertifiedHandoffAttestation, SignedValidatorMpcDataAnnouncement,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -59,12 +62,31 @@ pub enum SubmitMpcDataAnnouncementResponse {
     Rejected { reason: String },
 }
 
+/// Asks for the `CertifiedHandoffAttestation` covering `epoch` — i.e.,
+/// the cert produced by the committee that was active *during*
+/// `epoch`, attesting to the handoff into `epoch + 1`. Joiners walk
+/// these in epoch order to bootstrap their off-chain artifact view.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct GetCertifiedHandoffAttestationRequest {
+    pub epoch: EpochId,
+}
+
 /// Storage backing for the server: a content-addressed blob lookup.
 /// Implementations are expected to be cheap (in-memory) — the server
 /// is called on the request hot path.
 pub trait MpcDataBlobStorage: Send + Sync + 'static {
     fn get(&self, blob_hash: &[u8; 32]) -> Option<Vec<u8>>;
     fn insert_blob(&self, blob_hash: [u8; 32], blob: Vec<u8>);
+}
+
+/// Read-only lookup of certified handoff attestations by the epoch
+/// they attest. Backed at runtime by
+/// `AuthorityPerpetualTables::certified_handoff_attestations`;
+/// returning `None` is "I don't have this epoch's cert", which is a
+/// normal response for joiners asking about epochs the server is
+/// too new to cover.
+pub trait HandoffCertStorage: Send + Sync + 'static {
+    fn get(&self, epoch: EpochId) -> Option<CertifiedHandoffAttestation>;
 }
 
 /// Wraps the consensus-submission side of the relay. Implemented by
@@ -162,14 +184,21 @@ pub fn mpc_data_blob_hash(blob: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Build a `ValidatorMetadataServer` backed by `storage` and an
-/// announcement-relay handle. The handle starts empty; the node
-/// installs a relay impl into it once per-epoch state is up.
-pub fn build_server<S: MpcDataBlobStorage>(
+/// Build a `ValidatorMetadataServer` backed by `storage`, an
+/// announcement-relay handle, and a certified-handoff store. The
+/// relay handle starts empty; the node installs a relay impl into
+/// it once per-epoch state is up. The cert store is wired directly
+/// to perpetual storage at construction time.
+pub fn build_server<S: MpcDataBlobStorage, C: HandoffCertStorage>(
     storage: Arc<S>,
     relay: Arc<AnnouncementRelayHandle>,
-) -> ValidatorMetadataServer<Server<S>> {
-    ValidatorMetadataServer::new(Server { storage, relay })
+    cert_storage: Arc<C>,
+) -> ValidatorMetadataServer<Server<S, C>> {
+    ValidatorMetadataServer::new(Server {
+        storage,
+        relay,
+        cert_storage,
+    })
 }
 
 /// Fetch a blob by hash from `peer`. Returns `Ok(None)` if the peer
@@ -209,6 +238,30 @@ pub async fn submit_announcement_to_peer(
         .submit_mpc_data_announcement(SubmitMpcDataAnnouncementRequest { announcement })
         .await
         .map_err(|status| anyhow::anyhow!("submit_mpc_data_announcement failed: {status:?}"))?;
+    Ok(response.into_inner())
+}
+
+/// Fetch a `CertifiedHandoffAttestation` for `epoch` from `peer`.
+/// Returns `Ok(None)` if the peer doesn't have a cert for that
+/// epoch (it may be too new); `Err` is reserved for transport
+/// failures. Callers MUST re-verify the returned cert against the
+/// committee that produced it before trusting it — the network
+/// layer doesn't.
+pub async fn fetch_certified_handoff_attestation(
+    network: &Network,
+    peer_id: PeerId,
+    epoch: EpochId,
+) -> anyhow::Result<Option<CertifiedHandoffAttestation>> {
+    let peer = network
+        .peer(peer_id)
+        .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
+    let mut client = ValidatorMetadataClient::new(peer);
+    let response = client
+        .get_certified_handoff_attestation(GetCertifiedHandoffAttestationRequest { epoch })
+        .await
+        .map_err(|status| {
+            anyhow::anyhow!("get_certified_handoff_attestation failed: {status:?}")
+        })?;
     Ok(response.into_inner())
 }
 

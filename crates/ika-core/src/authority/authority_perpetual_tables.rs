@@ -197,6 +197,25 @@ impl AuthorityPerpetualTables {
     }
 }
 
+/// Adapter so the Anemo `validator_metadata` server can read certs
+/// directly out of perpetual storage without taking on a dep on
+/// `ika-core` types beyond `ika-types`.
+impl ika_network::validator_metadata::HandoffCertStorage for AuthorityPerpetualTables {
+    fn get(&self, epoch: EpochId) -> Option<CertifiedHandoffAttestation> {
+        match self.get_certified_handoff_attestation(epoch) {
+            Ok(cert) => cert,
+            Err(e) => {
+                tracing::warn!(
+                    error = ?e,
+                    epoch,
+                    "perpetual read of certified handoff attestation failed"
+                );
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

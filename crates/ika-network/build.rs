@@ -131,6 +131,15 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("get_certified_handoff_attestation")
+                .route_name("GetCertifiedHandoffAttestation")
+                .request_type("crate::validator_metadata::GetCertifiedHandoffAttestationRequest")
+                .response_type("Option<ika_types::validator_metadata::CertifiedHandoffAttestation>")
+                .codec_path(codec_path)
+                .build(),
+        )
         .build();
 
     anemo_build::manual::Builder::new()

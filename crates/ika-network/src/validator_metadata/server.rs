@@ -2,21 +2,25 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use super::{
-    AnnouncementRelayHandle, GetMpcDataBlobRequest, MpcDataBlob, MpcDataBlobStorage,
-    SubmitMpcDataAnnouncementRequest, SubmitMpcDataAnnouncementResponse, ValidatorMetadata,
+    AnnouncementRelayHandle, GetCertifiedHandoffAttestationRequest, GetMpcDataBlobRequest,
+    HandoffCertStorage, MpcDataBlob, MpcDataBlobStorage, SubmitMpcDataAnnouncementRequest,
+    SubmitMpcDataAnnouncementResponse, ValidatorMetadata,
 };
 use anemo::{Request, Response, Result, rpc::Status};
+use ika_types::validator_metadata::CertifiedHandoffAttestation;
 use std::sync::Arc;
 
-pub struct Server<S> {
+pub struct Server<S, C> {
     pub(super) storage: Arc<S>,
     pub(super) relay: Arc<AnnouncementRelayHandle>,
+    pub(super) cert_storage: Arc<C>,
 }
 
 #[anemo::async_trait]
-impl<S> ValidatorMetadata for Server<S>
+impl<S, C> ValidatorMetadata for Server<S, C>
 where
     S: MpcDataBlobStorage,
+    C: HandoffCertStorage,
 {
     async fn get_mpc_data_blob(
         &self,
@@ -48,5 +52,13 @@ where
                 reason,
             })),
         }
+    }
+
+    async fn get_certified_handoff_attestation(
+        &self,
+        request: Request<GetCertifiedHandoffAttestationRequest>,
+    ) -> Result<Response<Option<CertifiedHandoffAttestation>>, Status> {
+        let GetCertifiedHandoffAttestationRequest { epoch } = request.into_inner();
+        Ok(Response::new(self.cert_storage.get(epoch)))
     }
 }

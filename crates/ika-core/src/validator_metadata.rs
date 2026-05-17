@@ -516,6 +516,37 @@ pub fn process_handoff_signature(
     }
 }
 
+/// Joiner-side single-hop bootstrap: fetch a cert for `prior_epoch`
+/// from a peer, verify it against the prior committee (the committee
+/// that produced it) and a consensus-pubkey provider sourced from
+/// that prior committee's on-chain validator info.
+///
+/// The verification rule (per the handoff design memo):
+/// - One hop only. Joiners verify against `prior_committee`, not all
+///   the way back to genesis. Anchoring trust to the prior committee
+///   is sufficient because that committee was reached through some
+///   earlier handoff chain that this joiner either already trusts
+///   (steady-state) or doesn't (initial sync — caller's job).
+/// - The cert's `attestation.next_committee_pubkey_set_hash` must
+///   match what the joiner expects for the committee they're joining
+///   into. This binding is what stops a malicious peer from serving
+///   a real cert for the wrong committee.
+pub fn verify_joiner_bootstrap_cert(
+    cert: &CertifiedHandoffAttestation,
+    prior_committee: &Committee,
+    prior_consensus_pubkeys: &dyn ConsensusPubkeyProvider,
+    expected_next_committee_pubkeys: impl IntoIterator<Item = AuthorityName>,
+) -> IkaResult<()> {
+    let expected_hash = hash_next_committee_pubkey_set(expected_next_committee_pubkeys);
+    if cert.attestation.next_committee_pubkey_set_hash != expected_hash {
+        return Err(IkaError::Unknown(format!(
+            "handoff cert next_committee_pubkey_set_hash mismatch: cert {:?} vs expected {:?}",
+            cert.attestation.next_committee_pubkey_set_hash, expected_hash
+        )));
+    }
+    verify_certified_handoff_attestation(cert, prior_committee, prior_consensus_pubkeys)
+}
+
 /// Independently re-verifies a `CertifiedHandoffAttestation` against
 /// a committee and a consensus pubkey provider. Used by joiners
 /// during bootstrap (where the relevant committee is the *previous*
@@ -1089,6 +1120,43 @@ mod tests {
         assert_eq!(
             process_handoff_signature(&msg, &att, &empty, &mut agg),
             HandoffSignatureRecordOutcome::Rejected(HandoffSignatureVerdict::UnknownSigner)
+        );
+    }
+
+    #[test]
+    fn verify_joiner_bootstrap_cert_round_trip_and_mismatch() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        // Pretend names[..2] are the next committee — joiner expects
+        // exactly these pubkeys in the handoff.
+        let next_pubkeys: Vec<AuthorityName> = names[..2].to_vec();
+        let att = build_handoff_attestation(
+            7,
+            hash_next_committee_pubkey_set(next_pubkeys.iter().copied()),
+            vec![],
+        )
+        .expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+
+        // Joiner verifies against the prior committee (which is
+        // `committee` in this fixture) and the same pubkey set the
+        // cert pinned. Should pass.
+        verify_joiner_bootstrap_cert(&cert, &committee, &provider, next_pubkeys.iter().copied())
+            .expect("verify");
+
+        // Joiner expects a different committee than what's pinned →
+        // refuse, even though signatures are individually valid.
+        let wrong_pubkeys = vec![names[2], names[3]];
+        let err = verify_joiner_bootstrap_cert(&cert, &committee, &provider, wrong_pubkeys)
+            .expect_err("should mismatch");
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("next_committee_pubkey_set_hash mismatch"),
+            "unexpected error: {msg}"
         );
     }
 

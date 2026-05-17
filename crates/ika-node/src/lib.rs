@@ -771,6 +771,7 @@ impl IkaNode {
         let validator_metadata_server = ika_network::validator_metadata::build_server(
             mpc_data_blob_store.clone(),
             mpc_announcement_relay.clone(),
+            perpetual_tables.clone(),
         );
 
         let discovery_config = config.p2p_config.discovery.clone().unwrap_or_default();
