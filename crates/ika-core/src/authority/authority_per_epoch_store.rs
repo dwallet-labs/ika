@@ -29,6 +29,9 @@ use crate::dwallet_checkpoints::{
     BuilderDWalletCheckpointMessage, DWalletCheckpointHeight, DWalletCheckpointServiceNotify,
     PendingDWalletCheckpoint,
 };
+use crate::validator_metadata::{
+    JoinerAnnouncementVerdict, JoinerPubkeyProvider, verify_joiner_announcement,
+};
 
 use crate::consensus_handler::{
     ConsensusCommitInfo, SequencedConsensusTransaction, SequencedConsensusTransactionKey,
@@ -651,6 +654,14 @@ pub struct AuthorityPerEpochStore {
     pub packages_config: IkaNetworkConfig,
     reconfig_state: RwLock<ReconfigState>,
     end_of_publish: Mutex<StakeAggregator<(), true>>,
+
+    /// Source of truth for which authorities are registered as
+    /// next-epoch joiners (members of `PendingActiveSet` whose next-
+    /// epoch pubkey is known). Populated by the `sui_syncer` task;
+    /// `None` while the syncer hasn't produced a snapshot yet, in
+    /// which case every next-epoch joiner announcement is dropped.
+    /// Current-epoch announcements are unaffected.
+    joiner_pubkey_provider: ArcSwapOption<Box<dyn JoinerPubkeyProvider>>,
 }
 
 /// The reconfiguration state of the authority.
@@ -1264,6 +1275,7 @@ impl AuthorityPerEpochStore {
                 status: ReconfigCertStatus::AcceptAllCerts,
             }),
             end_of_publish: Mutex::new(end_of_publish),
+            joiner_pubkey_provider: ArcSwapOption::empty(),
         });
 
         s.update_buffer_stake_metric();
@@ -1588,35 +1600,66 @@ impl AuthorityPerEpochStore {
                 );
                 return Ok(());
             }
-            let tables = self.tables()?;
-            if let Some(existing) = tables
-                .validator_mpc_data_announcements
-                .get(&signed.announcement.validator)?
-                && existing.announcement.timestamp_ms >= signed.announcement.timestamp_ms
-            {
+        } else if signed.announcement.epoch == next_epoch {
+            let Some(provider) = self.joiner_pubkey_provider.load_full() else {
                 debug!(
                     validator = ?signed.announcement.validator,
-                    incoming_ts = signed.announcement.timestamp_ms,
-                    stored_ts = existing.announcement.timestamp_ms,
-                    "older or equal-timestamp validator mpc data announcement — dropping"
+                    "no joiner pubkey provider installed — dropping next-epoch announcement"
                 );
                 return Ok(());
+            };
+            match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
+                JoinerAnnouncementVerdict::Accept => {}
+                verdict @ (JoinerAnnouncementVerdict::UnregisteredJoiner
+                | JoinerAnnouncementVerdict::InvalidSignature
+                | JoinerAnnouncementVerdict::InconsistentEnvelope) => {
+                    warn!(
+                        ?verdict,
+                        authority = ?signed.auth_sig.authority,
+                        "joiner mpc data announcement rejected — dropping"
+                    );
+                    return Ok(());
+                }
             }
-            tables
-                .validator_mpc_data_announcements
-                .insert(&signed.announcement.validator, signed)?;
-        } else if signed.announcement.epoch == next_epoch {
-            debug!(
-                validator = ?signed.announcement.validator,
-                "next-epoch validator mpc data announcement — sig verification not yet wired, dropping"
-            );
         } else {
             warn!(
                 announcement_epoch = signed.announcement.epoch,
                 current_epoch, "validator mpc data announcement epoch out of range — dropping"
             );
+            return Ok(());
         }
+        let tables = self.tables()?;
+        if let Some(existing) = tables
+            .validator_mpc_data_announcements
+            .get(&signed.announcement.validator)?
+            && existing.announcement.timestamp_ms >= signed.announcement.timestamp_ms
+        {
+            debug!(
+                validator = ?signed.announcement.validator,
+                incoming_ts = signed.announcement.timestamp_ms,
+                stored_ts = existing.announcement.timestamp_ms,
+                "older or equal-timestamp validator mpc data announcement — dropping"
+            );
+            return Ok(());
+        }
+        tables
+            .validator_mpc_data_announcements
+            .insert(&signed.announcement.validator, signed)?;
         Ok(())
+    }
+
+    /// Install the source of truth for next-epoch joiner registration.
+    /// Repeated calls swap the active provider atomically; the
+    /// previous provider is dropped. A `None` install (via
+    /// [`AuthorityPerEpochStore::clear_joiner_pubkey_provider`])
+    /// returns to the default behavior of dropping joiner
+    /// announcements.
+    pub fn install_joiner_pubkey_provider(&self, provider: Box<dyn JoinerPubkeyProvider>) {
+        self.joiner_pubkey_provider.store(Some(Arc::new(provider)));
+    }
+
+    pub fn clear_joiner_pubkey_provider(&self) {
+        self.joiner_pubkey_provider.store(None);
     }
 
     pub fn get_validator_mpc_data_announcement(
