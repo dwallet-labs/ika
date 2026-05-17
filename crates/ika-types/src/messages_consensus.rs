@@ -17,6 +17,9 @@ use crate::messages_system_checkpoints::{
 use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
+use crate::validator_metadata::{
+    EpochMpcDataReadySignal, HandoffSignatureMessage, SignedValidatorMpcDataAnnouncement,
+};
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;
 pub use consensus_types::block::TransactionIndex;
@@ -79,6 +82,22 @@ pub enum ConsensusTransactionKey {
     NetworkKeyData(AuthorityName, ObjectID),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
+    /// A validator's MPC data announcement, keyed by validator + epoch
+    /// + timestamp_ms. Timestamp acts as the version within
+    /// (validator, epoch); the consensus handler keeps the
+    /// latest-by-timestamp entry per validator.
+    ValidatorMpcDataAnnouncement(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* timestamp_ms */
+    ),
+    /// A per-validator Ed25519 signature on the outgoing-committee
+    /// handoff attestation, keyed by signer + epoch (one signature
+    /// per validator per epoch handoff).
+    HandoffSignature(AuthorityName, u64 /* epoch */),
+    /// A validator's "I'm ready for this epoch's MPC sessions" vote,
+    /// keyed by signer + epoch (one vote per validator per epoch).
+    EpochMpcDataReadySignal(AuthorityName, u64 /* epoch */),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -172,6 +191,31 @@ impl Debug for ConsensusTransactionKey {
                     hex::encode(nonce)
                 )
             }
+            ConsensusTransactionKey::ValidatorMpcDataAnnouncement(authority, epoch, ts) => {
+                write!(
+                    f,
+                    "ValidatorMpcDataAnnouncement({:?}, epoch={}, ts={})",
+                    authority.concise(),
+                    epoch,
+                    ts
+                )
+            }
+            ConsensusTransactionKey::HandoffSignature(authority, epoch) => {
+                write!(
+                    f,
+                    "HandoffSignature({:?}, epoch={})",
+                    authority.concise(),
+                    epoch
+                )
+            }
+            ConsensusTransactionKey::EpochMpcDataReadySignal(authority, epoch) => {
+                write!(
+                    f,
+                    "EpochMpcDataReadySignal({:?}, epoch={})",
+                    authority.concise(),
+                    epoch
+                )
+            }
         }
     }
 }
@@ -251,6 +295,9 @@ pub enum ConsensusTransactionKind {
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
     NetworkKeyData(ConsensusNetworkKeyData),
     NOAObservation(ConsensusNOAObservation),
+    ValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
+    HandoffSignature(Box<HandoffSignatureMessage>),
+    EpochMpcDataReadySignal(EpochMpcDataReadySignal),
 }
 
 impl ConsensusTransaction {
@@ -447,6 +494,40 @@ impl ConsensusTransaction {
         }
     }
 
+    pub fn new_validator_mpc_data_announcement(signed: SignedValidatorMpcDataAnnouncement) -> Self {
+        let mut hasher = DefaultHasher::new();
+        signed.announcement.validator.hash(&mut hasher);
+        signed.announcement.epoch.hash(&mut hasher);
+        signed.announcement.timestamp_ms.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
+        }
+    }
+
+    pub fn new_handoff_signature(message: HandoffSignatureMessage) -> Self {
+        let mut hasher = DefaultHasher::new();
+        message.attestation.hash(&mut hasher);
+        message.signer.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::HandoffSignature(Box::new(message)),
+        }
+    }
+
+    pub fn new_epoch_mpc_data_ready_signal(signal: EpochMpcDataReadySignal) -> Self {
+        let mut hasher = DefaultHasher::new();
+        signal.authority.hash(&mut hasher);
+        signal.epoch.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
+        }
+    }
+
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
             .read_u64::<BigEndian>()
@@ -513,6 +594,19 @@ impl ConsensusTransaction {
             }
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
+            }
+            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed) => {
+                ConsensusTransactionKey::ValidatorMpcDataAnnouncement(
+                    signed.announcement.validator,
+                    signed.announcement.epoch,
+                    signed.announcement.timestamp_ms,
+                )
+            }
+            ConsensusTransactionKind::HandoffSignature(message) => {
+                ConsensusTransactionKey::HandoffSignature(message.signer, message.attestation.epoch)
+            }
+            ConsensusTransactionKind::EpochMpcDataReadySignal(signal) => {
+                ConsensusTransactionKey::EpochMpcDataReadySignal(signal.authority, signal.epoch)
             }
         }
     }

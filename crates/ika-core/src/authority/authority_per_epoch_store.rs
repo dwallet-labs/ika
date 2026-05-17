@@ -1733,6 +1733,44 @@ impl AuthorityPerEpochStore {
                     return None;
                 }
             }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
+                ..
+            }) => {
+                // The wire authority binding is the *relayer*. For
+                // current-epoch announcements the relayer is the
+                // signer; for cross-epoch joiner announcements the
+                // relayer can be any current-committee member. Both
+                // cases pass the wire check trivially — the
+                // signer's BLS sig over the inner announcement is
+                // what authenticates the validator's intent and is
+                // checked downstream when the record handler runs.
+                let _ = signed;
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::HandoffSignature(message),
+                ..
+            }) => {
+                if transaction.sender_authority() != message.signer {
+                    warn!(
+                        "HandoffSignature signer {} does not match its author from consensus {}",
+                        message.signer, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
+                ..
+            }) => {
+                if transaction.sender_authority() != signal.authority {
+                    warn!(
+                        "EpochMpcDataReadySignal authority {} does not match its author from consensus {}",
+                        signal.authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
         }
         Some(VerifiedSequencedConsensusTransaction(transaction))
     }
@@ -2242,6 +2280,18 @@ impl AuthorityPerEpochStore {
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::NOAObservation(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::HandoffSignature(..),
+                ..
+            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::EpochMpcDataReadySignal(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
