@@ -1835,6 +1835,13 @@ impl AuthorityPerEpochStore {
         self.joiner_pubkey_provider.store(None);
     }
 
+    /// Currently-installed joiner pubkey provider, or `None` if
+    /// none is installed. Used by the joiner-relay path to verify
+    /// incoming announcements before forwarding them to consensus.
+    pub fn joiner_pubkey_provider(&self) -> Option<Arc<Box<dyn JoinerPubkeyProvider>>> {
+        self.joiner_pubkey_provider.load_full()
+    }
+
     /// Install the consensus-key (Ed25519) lookup used for handoff
     /// signature verification. Re-installable across epoch
     /// boundaries; safe to call from non-consensus tasks.

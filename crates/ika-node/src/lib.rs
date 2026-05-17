@@ -113,6 +113,7 @@ pub struct P2pComponents {
     known_peers: HashMap<PeerId, String>,
     discovery_handle: discovery::Handle,
     state_sync_handle: state_sync::Handle,
+    mpc_announcement_relay: Arc<ika_network::validator_metadata::AnnouncementRelayHandle>,
 }
 
 #[cfg(msim)]
@@ -194,6 +195,12 @@ pub struct IkaNode {
     sim_state: SimState,
 
     sui_connector_service: Arc<SuiConnectorService>,
+
+    /// Late-bindable holder for the joiner-relay impl mounted on
+    /// the Anemo `SubmitMpcDataAnnouncement` server. Replaced per
+    /// epoch so the relay always points at the current epoch
+    /// store + consensus adapter.
+    mpc_announcement_relay: Arc<ika_network::validator_metadata::AnnouncementRelayHandle>,
 
     _state_archive_handle: Option<broadcast::Sender<()>>,
 
@@ -473,6 +480,7 @@ impl IkaNode {
             known_peers,
             discovery_handle,
             state_sync_handle,
+            mpc_announcement_relay,
         } = Self::create_p2p_network(
             &config,
             state_sync_store.clone(),
@@ -647,6 +655,7 @@ impl IkaNode {
             sim_state: Default::default(),
 
             sui_connector_service,
+            mpc_announcement_relay,
             _state_archive_handle: state_archive_handle,
             shutdown_channel_tx: shutdown_channel,
             noa_dwallet_finalized,
@@ -896,6 +905,7 @@ impl IkaNode {
             known_peers,
             discovery_handle,
             state_sync_handle,
+            mpc_announcement_relay,
         })
     }
 
@@ -1504,6 +1514,20 @@ impl IkaNode {
                         self.state.perpetual_tables(),
                     ),
                 ));
+
+            // Install the joiner-announcement relay impl on the
+            // Anemo `SubmitMpcDataAnnouncement` server so a peer
+            // joiner's announcement gets verified locally and
+            // forwarded into consensus instead of being rejected
+            // with "relay not installed".
+            if let Some(components) = &*self.validator_components.lock().await {
+                self.mpc_announcement_relay.install(Box::new(
+                    ika_core::sui_connector::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        Arc::new(components.consensus_adapter.clone()),
+                    ),
+                ));
+            }
 
             // Installs a `ConsensusPubkeyProvider` from the current
             // committee's on-chain `consensus_pubkey_bytes` so the
