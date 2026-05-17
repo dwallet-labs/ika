@@ -123,7 +123,12 @@ async fn test_some_malicious_validators_flows_succeed() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 5 rounds");
+            // 7-round network DKG at cryptography-private @ 9d35fa76 (was 4 pre-bump:
+            // upstream activated the threshold-encryption-to-sharing sub-protocol so the
+            // protocol now emits 3 additional rounds even when the new sub-protocol's
+            // outputs aren't consumed by ika yet). `mpc_round` starts at 1 and is
+            // incremented after each round, so completion lands at mpc_round = 8.
+            assert_eq!(mpc_round, 8, "Network DKG should complete after 7 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -238,7 +243,9 @@ async fn test_party_copies_other_party_message_dkg_round() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            // 7-round network DKG at cryptography-private @ 9d35fa76 (see sibling
+            // assertion in this file for the rationale).
+            assert_eq!(mpc_round, 8, "Network DKG should complete after 7 rounds");
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }

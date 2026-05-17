@@ -1,8 +1,6 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::NetworkOwnedAddressSignDKGOutput;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
@@ -11,6 +9,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
+use crate::dwallet_mpc::ValidatorsEncryptionKeysByPartyId;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -19,14 +18,10 @@ use crate::request_protocol_data::{
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, ReconfigurationParty, VersionedPresignOutput,
-};
-use group::PartyID;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
+use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -57,10 +52,7 @@ pub(crate) fn session_input_from_request(
     committee: &Committee,
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
-    validators_class_groups_public_keys_and_proofs: HashMap<
-        PartyID,
-        ClassGroupsEncryptionKeyAndProof,
-    >,
+    validators_encryption_keys_by_party_id: ValidatorsEncryptionKeysByPartyId,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -160,7 +152,10 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
-                    validators_class_groups_public_keys_and_proofs,
+                    validators_encryption_keys_by_party_id.class_groups,
+                    validators_encryption_keys_by_party_id.secp256k1_pvss,
+                    validators_encryption_keys_by_party_id.secp256r1_pvss,
+                    validators_encryption_keys_by_party_id.ristretto_pvss,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
@@ -270,51 +265,23 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Get the stored network-owned-address sign DKG output for the specific curve
-            // (contains both centralized and decentralized DKG).
-            // This is pre-computed during network key construction.
+            // Phase 4f of crypto bump: ika no longer pre-emulates the centralized party's
+            // partial signature off-Rayon. The stored output is now just the decentralized
+            // DKG output bytes (network_dkg.rs writes it via `threshold_dkg_output`). Pass
+            // empty `message_centralized_signature` to signal NOA → SignPublicInputByProtocol
+            // dispatches `SignData::ToBeEmulated` so the upstream protocol emulates inside
+            // its Rayon-scheduled advance.
             let stored_dkg_output_bytes =
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
-            // Deserialize the stored network-owned-address sign DKG output.
-            let network_owned_address_sign_dkg_output: NetworkOwnedAddressSignDKGOutput =
-                bcs::from_bytes(stored_dkg_output_bytes).map_err(DwalletMPCError::BcsError)?;
-
-            // Get the serialized protocol public parameters for the curve
-            let protocol_pp_bytes = encryption_key_public_data
-                .serialized_protocol_public_parameters_for_curve(data.curve)
-                .map_err(DwalletMPCError::BcsError)?;
-
-            // Extract the presign bytes from the versioned presign output
-            let presign_bytes = match bcs::from_bytes::<VersionedPresignOutput>(presign)
-                .map_err(DwalletMPCError::BcsError)?
-            {
-                VersionedPresignOutput::V1(bytes) | VersionedPresignOutput::V2(bytes) => bytes,
-            };
-
-            // Emulate the centralized party's partial signature using ZeroRng.
-            // All validators will produce identical output.
-            // NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
-            // Currently, we are using schnorr signatures for which it is cheap;
-            // if in the future we should support other signature algorithms for network-owned-address sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
-            let message_centralized_signature = emulate_centralized_party_partial_signature(
-                data.signature_algorithm,
-                &network_owned_address_sign_dkg_output.centralized_dkg_result,
-                message.clone(),
-                data.hash_scheme,
-                &presign_bytes,
-                &protocol_pp_bytes,
-            )?;
-
-            // Use Sign protocol with the pre-computed decentralized DKG output.
-            // The DKG was computed during network key construction.
+            let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
-                    &network_owned_address_sign_dkg_output.decentralized_dkg_public_output,
+                    &stored_dkg_output_bytes,
                     message.clone(),
                     presign,
-                    &message_centralized_signature,
+                    &Vec::<u8>::new(),
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,

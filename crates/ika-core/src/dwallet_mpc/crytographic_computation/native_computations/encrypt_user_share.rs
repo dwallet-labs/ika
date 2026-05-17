@@ -14,7 +14,6 @@ use ika_types::messages_dwallet_mpc::{
 };
 use twopc_mpc::dkg;
 use twopc_mpc::dkg::Protocol;
-use twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
 /// Verifies that the given encrypted secret key share matches the encryption of the dWallet's
 /// secret share, validates the signature on the dWallet's public share,
@@ -82,7 +81,7 @@ fn verify_centralized_secret_key_share_proof_v1(
         bcs::Error::Custom(format!("Failed to deserialize encryption key value: {}", e))
     })?;
 
-    <ECDSAProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
+    <Secp256k1AsyncDKGProtocol as Protocol>::verify_encryption_of_centralized_party_share_proof(
         &protocol_public_parameters,
         decentralized_output,
         encryption_key_value,

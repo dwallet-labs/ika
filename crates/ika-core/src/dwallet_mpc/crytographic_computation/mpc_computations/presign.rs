@@ -17,8 +17,9 @@ use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol,
+    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol,
+    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1AsyncDKGProtocol,
+    Secp256r1ECDSAProtocol,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{
@@ -177,11 +178,11 @@ impl PresignPublicInputByProtocol {
         let protocol_public_parameters =
             network_encryption_key_public_data.secp256k1_protocol_public_parameters();
 
-        let public_input: <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput = (
-            protocol_public_parameters,
-            Some(decentralized_party_dkg_output),
-        )
-            .into();
+        let public_input: <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput =
+            twopc_mpc::ecdsa::presign::decentralized_party::PublicInput {
+                dkg_output: Some(decentralized_party_dkg_output),
+                protocol_public_parameters,
+            };
 
         Ok(PresignPublicInputByProtocol::Secp256k1ECDSA(public_input))
     }
@@ -195,129 +196,82 @@ impl PresignPublicInputByProtocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let protocol_public_parameters =
                     network_encryption_key_public_data.secp256k1_protocol_public_parameters();
-
-                let public_input =
-                    <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput::from((
+                let dkg_output = match dwallet_dkg_output {
+                    Some(dkg_output) => {
+                        let versioned_output = bcs::from_bytes::<
+                            <Secp256k1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                        >(&dkg_output)?;
+                        match versioned_output {
+                            VersionedOutput::TargetedPublicDKGOutput(output) => Some(output),
+                            VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                        }
+                    }
+                    None => None,
+                };
+                let public_input: <PresignParty<Secp256k1ECDSAProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::ecdsa::presign::decentralized_party::PublicInput {
+                        dkg_output,
                         protocol_public_parameters,
-                        match dwallet_dkg_output {
-                            Some(dkg_output) => {
-                                let versioned_output = bcs::from_bytes::<
-                                    <Secp256k1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
-                                >(&dkg_output)?;
-
-                                match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
-                                        Some(output)
-                                    }
-                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
-                                }
-                            }
-                            None => None,
-                        },
-                    ));
+                    };
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                // Schnorr AHE presign PublicInput has no dkg_output field; ignore the optional
+                // dwallet_dkg_output (the field is targeted-DKG-only and AHE-mode Schnorr
+                // doesn't use it). Phase-4 documents that Schnorr AHE presign carries only
+                // protocol_public_parameters per upstream.
+                let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.ristretto_protocol_public_parameters();
-
-                let pub_input =
-                    <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput::from((
+                let pub_input: <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::ahe::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
-                        match dwallet_dkg_output {
-                            Some(dkg_output) => {
-                                let versioned_output = bcs::from_bytes::<
-                                    <RistrettoSchnorrkelSubstrateProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
-                                >(&dkg_output)?;
-
-                                match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
-                                        Some(output)
-                                    }
-                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
-                                }
-                            }
-                            None => None,
-                        },
-                    ));
+                    };
 
                 PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
             }
             DWalletSignatureAlgorithm::EdDSA => {
+                let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.curve25519_protocol_public_parameters();
-
-                let pub_input =
-                    <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput::from((
+                let pub_input: <PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::ahe::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
-                        match dwallet_dkg_output {
-                            Some(dkg_output) => {
-                                let versioned_output = bcs::from_bytes::<
-                                    <Curve25519EdDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
-                                >(&dkg_output)?;
-
-                                match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
-                                        Some(output)
-                                    }
-                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
-                                }
-                            }
-                            None => None,
-                        },
-                    ));
+                    };
 
                 PresignPublicInputByProtocol::EdDSA(pub_input)
             }
             DWalletSignatureAlgorithm::ECDSASecp256r1 => {
                 let protocol_public_parameters =
                     network_encryption_key_public_data.secp256r1_protocol_public_parameters();
-
-                let pub_input =
-                    <PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput::from((
+                let dkg_output = match dwallet_dkg_output {
+                    Some(dkg_output) => {
+                        let versioned_output = bcs::from_bytes::<
+                            <Secp256r1AsyncDKGProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
+                        >(&dkg_output)?;
+                        match versioned_output {
+                            VersionedOutput::TargetedPublicDKGOutput(output) => Some(output),
+                            VersionedOutput::UniversalPublicDKGOutput { .. } => None,
+                        }
+                    }
+                    None => None,
+                };
+                let pub_input: <PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::ecdsa::presign::decentralized_party::PublicInput {
+                        dkg_output,
                         protocol_public_parameters,
-                        match dwallet_dkg_output {
-                            Some(dkg_output) => {
-                                let versioned_output = bcs::from_bytes::<
-                                    <Secp256r1ECDSAProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
-                                >(&dkg_output)?;
-
-                                match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
-                                        Some(output)
-                                    }
-                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
-                                }
-                            }
-                            None => None,
-                        },
-                    ));
+                    };
 
                 PresignPublicInputByProtocol::Secp256r1ECDSA(pub_input)
             }
             DWalletSignatureAlgorithm::Taproot => {
+                let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.secp256k1_protocol_public_parameters();
-
-                let pub_input =
-                    <PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput::from((
+                let pub_input: <PresignParty<Secp256k1TaprootProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::ahe::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
-                        match dwallet_dkg_output {
-                            Some(dkg_output) => {
-                                let versioned_output = bcs::from_bytes::<
-                                    <Secp256k1TaprootProtocol as dkg::Protocol>::DecentralizedPartyDKGOutput,
-                                >(&dkg_output)?;
-
-                                match versioned_output {
-                                    VersionedOutput::TargetedPublicDKGOutput(output) => {
-                                        Some(output)
-                                    }
-                                    VersionedOutput::UniversalPublicDKGOutput { .. } => None,
-                                }
-                            }
-                            None => None,
-                        },
-                    ));
+                    };
 
                 PresignPublicInputByProtocol::Taproot(pub_input)
             }

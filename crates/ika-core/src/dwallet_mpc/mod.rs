@@ -3,7 +3,10 @@
 
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
+use ika_types::committee::{
+    ClassGroupsEncryptionKeyAndProof, Committee, RistrettoPvssEncryptionKeyAndProof,
+    Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
+};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::{Weight, WeightedThresholdAccessStructure};
@@ -79,18 +82,68 @@ pub(crate) fn authority_name_to_party_id_from_committee(
     Ok(tangible_party_id)
 }
 
-pub(crate) fn get_validators_class_groups_public_keys_and_proofs(
+/// Per-validator on-chain public-key payload, indexed by `PartyID`. Bundles the
+/// existing class-groups CRT encryption-key map with the three per-curve PVSS
+/// HPKE encryption-key maps that `decentralized_party::dkg::PublicInput::new`
+/// and the reconfiguration-party constructors require post-`9d35fa76` bump.
+///
+/// Built once per session-input construction from the `Committee`'s 4 sibling
+/// HashMaps; passed as a single argument to `network_dkg_v2_public_input` and
+/// to the reconfiguration `generate_public_input` constructors so adding a new
+/// PVSS curve in the future requires touching only this struct + the
+/// extractor below, not every helper signature on the call path.
+#[derive(Clone, Debug)]
+pub(crate) struct ValidatorsEncryptionKeysByPartyId {
+    pub class_groups: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+    pub secp256k1_pvss: HashMap<PartyID, Secp256k1PvssEncryptionKeyAndProof>,
+    pub secp256r1_pvss: HashMap<PartyID, Secp256r1PvssEncryptionKeyAndProof>,
+    pub ristretto_pvss: HashMap<PartyID, RistrettoPvssEncryptionKeyAndProof>,
+}
+
+pub(crate) fn get_validators_encryption_keys_by_party_id(
     committee: &Committee,
-) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
-    let mut validators_class_groups_public_keys_and_proofs = HashMap::new();
+) -> DwalletMPCResult<ValidatorsEncryptionKeysByPartyId> {
+    let mut class_groups = HashMap::new();
+    let mut secp256k1_pvss = HashMap::new();
+    let mut secp256r1_pvss = HashMap::new();
+    let mut ristretto_pvss = HashMap::new();
     for (name, _) in committee.voting_rights.iter() {
         let party_id = authority_name_to_party_id_from_committee(committee, name)?;
-        if let Ok(public_key) = committee.class_groups_public_key_and_proof(name) {
-            validators_class_groups_public_keys_and_proofs.insert(party_id, public_key);
+        if let Some(k) = committee
+            .class_groups_public_keys_and_proofs
+            .get(name)
+            .cloned()
+        {
+            class_groups.insert(party_id, k);
+        }
+        if let Some(k) = committee
+            .secp256k1_pvss_public_keys_and_proofs
+            .get(name)
+            .cloned()
+        {
+            secp256k1_pvss.insert(party_id, k);
+        }
+        if let Some(k) = committee
+            .secp256r1_pvss_public_keys_and_proofs
+            .get(name)
+            .cloned()
+        {
+            secp256r1_pvss.insert(party_id, k);
+        }
+        if let Some(k) = committee
+            .ristretto_pvss_public_keys_and_proofs
+            .get(name)
+            .cloned()
+        {
+            ristretto_pvss.insert(party_id, k);
         }
     }
-
-    Ok(validators_class_groups_public_keys_and_proofs)
+    Ok(ValidatorsEncryptionKeysByPartyId {
+        class_groups,
+        secp256k1_pvss,
+        secp256r1_pvss,
+        ristretto_pvss,
+    })
 }
 
 /// Convert a `committee` to a `WeightedThresholdAccessStructure` that is used by the cryptographic library.

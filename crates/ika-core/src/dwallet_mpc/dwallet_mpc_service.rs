@@ -2187,11 +2187,16 @@ impl DWalletMPCService {
         // same as stored in the system state object onchain.
         // This makes sure the seed we are using is the same seed we used at setup
         // to create the encryption key, and thus it assures we will generate the same decryption key too.
+        //
+        // Post-bump: the on-chain bytes are now `ValidatorEncryptionKeysAndProofs` (class
+        // groups + 3 PVSS keys); compare against the same combined struct re-derived from
+        // the local key material. See the wire-incompat warning on
+        // `ValidatorEncryptionKeysAndProofs`.
         if onchain_validator
             .get_mpc_data()
             .unwrap()
             .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.encryption_key_and_proof())?
+            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
