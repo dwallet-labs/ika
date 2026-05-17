@@ -1462,6 +1462,22 @@ impl IkaNode {
                 None
             };
 
+            // Installs a `JoinerPubkeyProvider` derived from the
+            // next-epoch committee so the per-epoch store accepts
+            // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
+            // instead of silently dropping them.
+            let joiner_pubkey_updater_handle = {
+                let updater = ika_core::sui_connector::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        sui_data_receivers.next_epoch_committee_receiver.clone(),
+                    );
+                let updater = Arc::new(updater);
+                Some(tokio::spawn(async move {
+                    updater.run().await;
+                }))
+            };
+
             let stop_condition = self
                 .sui_connector_service
                 .run_epoch(cur_epoch_store.epoch(), run_with_range)
@@ -1488,6 +1504,10 @@ impl IkaNode {
                 Some(())
             });
             mpc_data_announcement_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            joiner_pubkey_updater_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });
