@@ -7,7 +7,7 @@ use futures::FutureExt;
 use futures::future::{Either, join_all, select};
 use ika_types::committee::Committee;
 use ika_types::committee::CommitteeTrait;
-use ika_types::crypto::AuthorityName;
+use ika_types::crypto::{AuthorityName, AuthoritySignInfoTrait};
 use ika_types::digests::ChainIdentifier;
 use ika_types::error::{IkaError, IkaResult};
 use parking_lot::{Mutex, RwLock};
@@ -69,6 +69,7 @@ use ika_types::messages_system_checkpoints::{
     SystemCheckpointSignatureMessage,
 };
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
+use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
 use mpc::WeightedThresholdAccessStructure;
 use mysten_common::sync::notify_once::NotifyOnce;
 use mysten_common::sync::notify_read::NotifyRead;
@@ -818,6 +819,16 @@ pub struct AuthorityEpochTables {
     assigned_presigns_taproot: DBMap<SessionIdentifier, AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_schnorrkel_substrate: DBMap<SessionIdentifier, AssignedPresign>,
+
+    /// Latest `ValidatorMpcDataAnnouncement` observed for each
+    /// current-committee validator this epoch, signed with their
+    /// authority BLS key. The consensus handler verifies the
+    /// signature against `self.committee()` before insert, and only
+    /// the strictly-newer-timestamp entry per validator wins (replays
+    /// and duplicates are dropped). Off-chain consumers (later steps)
+    /// freeze a snapshot of this table when 2f+1 ready signals land.
+    pub(crate) validator_mpc_data_announcements:
+        DBMap<AuthorityName, SignedValidatorMpcDataAnnouncement>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1500,6 +1511,102 @@ impl AuthorityPerEpochStore {
             .end_of_publish
             .insert(origin_authority, &())?;
         Ok(())
+    }
+
+    /// Verifies and stores a `SignedValidatorMpcDataAnnouncement`
+    /// received via consensus.
+    ///
+    /// Rules:
+    /// 1. `announcement.epoch == auth_sig.epoch` (sanity).
+    /// 2. `announcement.validator == auth_sig.authority` (sanity).
+    /// 3. For current-epoch announcements, the BLS sig is verified
+    ///    against `self.committee()` — only current-committee
+    ///    members can announce for this epoch.
+    /// 4. Latest-by-timestamp: the stored entry for a given
+    ///    `validator` is only replaced when the incoming
+    ///    announcement has a strictly newer `timestamp_ms`. Replays
+    ///    and stale duplicates are dropped silently.
+    ///
+    /// Cross-epoch (next-epoch joiner) announcements
+    /// (`announcement.epoch == current_epoch + 1`) need a separate
+    /// pubkey-lookup path (`PendingActiveSet`) that's wired in a
+    /// later step; they're logged and dropped here so a buggy or
+    /// malicious relayer can't smuggle in unverified state.
+    pub fn record_validator_mpc_data_announcement(
+        &self,
+        signed: &SignedValidatorMpcDataAnnouncement,
+    ) -> IkaResult {
+        use ika_types::intent::{Intent, IntentScope};
+        let current_epoch = self.epoch();
+        let next_epoch = current_epoch.saturating_add(1);
+        if signed.announcement.epoch != signed.auth_sig.epoch {
+            warn!(
+                announcement_epoch = signed.announcement.epoch,
+                auth_sig_epoch = signed.auth_sig.epoch,
+                "validator mpc data announcement epoch mismatch — dropping"
+            );
+            return Ok(());
+        }
+        if signed.announcement.validator != signed.auth_sig.authority {
+            warn!(
+                announcement_validator = ?signed.announcement.validator,
+                auth_sig_authority = ?signed.auth_sig.authority,
+                "validator mpc data announcement authority mismatch — dropping"
+            );
+            return Ok(());
+        }
+        if signed.announcement.epoch == current_epoch {
+            if let Err(e) = signed.auth_sig.verify_secure(
+                &signed.announcement,
+                Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
+                self.committee(),
+            ) {
+                warn!(
+                    error = ?e,
+                    authority = ?signed.auth_sig.authority,
+                    "invalid validator mpc data announcement signature — dropping"
+                );
+                return Ok(());
+            }
+            let tables = self.tables()?;
+            if let Some(existing) = tables
+                .validator_mpc_data_announcements
+                .get(&signed.announcement.validator)?
+                && existing.announcement.timestamp_ms >= signed.announcement.timestamp_ms
+            {
+                debug!(
+                    validator = ?signed.announcement.validator,
+                    incoming_ts = signed.announcement.timestamp_ms,
+                    stored_ts = existing.announcement.timestamp_ms,
+                    "older or equal-timestamp validator mpc data announcement — dropping"
+                );
+                return Ok(());
+            }
+            tables
+                .validator_mpc_data_announcements
+                .insert(&signed.announcement.validator, signed)?;
+        } else if signed.announcement.epoch == next_epoch {
+            debug!(
+                validator = ?signed.announcement.validator,
+                "next-epoch validator mpc data announcement — sig verification not yet wired, dropping"
+            );
+        } else {
+            warn!(
+                announcement_epoch = signed.announcement.epoch,
+                current_epoch, "validator mpc data announcement epoch out of range — dropping"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn get_validator_mpc_data_announcement(
+        &self,
+        validator: &AuthorityName,
+    ) -> IkaResult<Option<SignedValidatorMpcDataAnnouncement>> {
+        Ok(self
+            .tables()?
+            .validator_mpc_data_announcements
+            .get(validator)?)
     }
 
     pub async fn user_certs_closed_notify(&self) {
@@ -2283,9 +2390,12 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..),
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
                 ..
-            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            }) => {
+                self.record_validator_mpc_data_announcement(signed)?;
+                Ok(ConsensusCertificateResult::ConsensusMessage)
+            }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::HandoffSignature(..),
                 ..
