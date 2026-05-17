@@ -1478,6 +1478,23 @@ impl IkaNode {
                 }))
             };
 
+            // Installs a `ConsensusPubkeyProvider` from the current
+            // committee's on-chain `consensus_pubkey_bytes` so the
+            // per-epoch store can verify incoming
+            // `HandoffSignatureMessage`s (otherwise every one drops
+            // as `UnknownSigner`).
+            let consensus_pubkey_updater_handle = {
+                let updater = ika_core::sui_connector::consensus_pubkey_provider_updater::ConsensusPubkeyProviderUpdater::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        sui_client.clone(),
+                    );
+                let updater = Arc::new(updater);
+                Some(tokio::spawn(async move {
+                    updater.run().await;
+                }))
+            };
+
             let stop_condition = self
                 .sui_connector_service
                 .run_epoch(cur_epoch_store.epoch(), run_with_range)
@@ -1508,6 +1525,10 @@ impl IkaNode {
                 Some(())
             });
             joiner_pubkey_updater_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            consensus_pubkey_updater_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });
