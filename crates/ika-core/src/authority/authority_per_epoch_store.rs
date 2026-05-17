@@ -1859,26 +1859,49 @@ impl AuthorityPerEpochStore {
     }
 
     /// Assembles this validator's local handoff attestation from
-    /// the frozen mpc-data set, cached DKG/reconfig digests for the
-    /// epoch, and the next committee's pubkey set. Determinism
-    /// across validators is what guarantees agreement on the
-    /// produced attestation: identical inputs → identical bytes.
+    /// the *effective* mpc-data set (frozen ∩ V_e ∪ V_{e+1}),
+    /// cached DKG/reconfig digests for the epoch, and the next
+    /// committee's pubkey set. Determinism across validators is
+    /// what guarantees agreement on the produced attestation:
+    /// identical inputs → identical bytes.
     pub fn build_local_handoff_attestation(
         &self,
         next_committee_pubkeys: impl IntoIterator<Item = ika_types::crypto::AuthorityName>,
     ) -> IkaResult<ika_types::validator_metadata::HandoffAttestation> {
-        let frozen = self.get_frozen_validator_mpc_data_input_set()?;
-        let frozen_btree: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
-            frozen.into_iter().collect();
+        let next_committee_set: Vec<AuthorityName> = next_committee_pubkeys.into_iter().collect();
+        let effective =
+            self.get_effective_reconfig_input_set(next_committee_set.iter().copied())?;
         let network_dkg_outputs = self.get_network_dkg_output_digests()?;
         let network_reconfiguration_outputs = self.get_network_reconfiguration_output_digests()?;
         let items = compute_handoff_items(
-            &frozen_btree,
+            &effective,
             &network_dkg_outputs,
             &network_reconfiguration_outputs,
         );
-        let next_committee_hash = hash_next_committee_pubkey_set(next_committee_pubkeys);
+        let next_committee_hash = hash_next_committee_pubkey_set(next_committee_set);
         build_handoff_attestation(self.epoch(), next_committee_hash, items)
+    }
+
+    /// Computes `frozen ∩ (V_e ∪ V_{e+1})` — the effective
+    /// validator mpc_data set consumed by both the handoff cert and
+    /// reconfig MPC. Withdrawn announcers (frozen this epoch but
+    /// absent from both committees) are dropped.
+    pub fn get_effective_reconfig_input_set(
+        &self,
+        next_committee_pubkeys: impl IntoIterator<Item = AuthorityName>,
+    ) -> IkaResult<std::collections::BTreeMap<AuthorityName, [u8; 32]>> {
+        let frozen = self.get_frozen_validator_mpc_data_input_set()?;
+        let frozen_btree: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
+            frozen.into_iter().collect();
+        let current_committee_pubkeys =
+            self.committee().voting_rights.iter().map(|(name, _)| *name);
+        Ok(
+            crate::validator_metadata::compute_effective_reconfig_input_set(
+                &frozen_btree,
+                current_committee_pubkeys,
+                next_committee_pubkeys,
+            ),
+        )
     }
 
     /// Shared implementation behind `cache_network_dkg_output` and

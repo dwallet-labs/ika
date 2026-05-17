@@ -197,6 +197,29 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
     ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
 }
 
+/// Intersects the frozen `validator -> blob_hash` map with the union
+/// of the current and next committees (V_e ∪ V_{e+1}) — the
+/// "effective" set the handoff cert and reconfig MPC both consume.
+///
+/// Validators who announced mpc_data this epoch but withdrew before
+/// `next_committee` was selected are dropped. The cert thus pins
+/// only entries that have a place in either committee, and reconfig
+/// MPC won't waste effort on dead announcers.
+pub fn compute_effective_reconfig_input_set(
+    frozen: &BTreeMap<AuthorityName, [u8; 32]>,
+    current_committee: impl IntoIterator<Item = AuthorityName>,
+    next_committee: impl IntoIterator<Item = AuthorityName>,
+) -> BTreeMap<AuthorityName, [u8; 32]> {
+    let mut allowed: HashSet<AuthorityName> = HashSet::new();
+    allowed.extend(current_committee);
+    allowed.extend(next_committee);
+    frozen
+        .iter()
+        .filter(|(authority, _)| allowed.contains(*authority))
+        .map(|(authority, digest)| (*authority, *digest))
+        .collect()
+}
+
 /// Assembles the items list of a `HandoffAttestation` from the three
 /// digest sources every validator computes locally:
 /// - `validator_mpc_data` — frozen `validator -> blob_hash` snapshot
@@ -1117,6 +1140,47 @@ mod tests {
         for w in items.windows(2) {
             assert!(w[0].0 < w[1].0);
         }
+    }
+
+    #[test]
+    fn effective_reconfig_input_set_intersects_both_committees() {
+        // 4 announcers in `frozen`: 2 are in V_e, 1 is only in
+        // V_{e+1} (a joiner), 1 has withdrawn (in neither). The
+        // joiner is kept; the withdrawn announcer is dropped.
+        let kps = random_committee_key_pairs_of_size(4);
+        let staying = name_of(&kps[0]);
+        let leaving_into_no_one = name_of(&kps[1]); // not in V_e or V_{e+1}
+        let joiner = name_of(&kps[2]);
+        let leaving_to_next = name_of(&kps[3]); // in V_e and V_{e+1}
+
+        let mut frozen = BTreeMap::new();
+        frozen.insert(staying, [0xA0; 32]);
+        frozen.insert(leaving_into_no_one, [0xA1; 32]);
+        frozen.insert(joiner, [0xA2; 32]);
+        frozen.insert(leaving_to_next, [0xA3; 32]);
+
+        let current = vec![staying, leaving_to_next];
+        let next = vec![staying, joiner, leaving_to_next];
+
+        let effective = compute_effective_reconfig_input_set(&frozen, current, next);
+        assert_eq!(effective.len(), 3);
+        assert_eq!(effective.get(&staying), Some(&[0xA0; 32]));
+        assert_eq!(effective.get(&joiner), Some(&[0xA2; 32]));
+        assert_eq!(effective.get(&leaving_to_next), Some(&[0xA3; 32]));
+        assert!(effective.get(&leaving_into_no_one).is_none());
+    }
+
+    #[test]
+    fn effective_reconfig_input_set_empty_when_no_overlap() {
+        let kps = random_committee_key_pairs_of_size(2);
+        let alone = name_of(&kps[0]);
+        let nobody_in_committees = name_of(&kps[1]);
+        let mut frozen = BTreeMap::new();
+        frozen.insert(nobody_in_committees, [0x11; 32]);
+        // alone is the only one in V_e and V_{e+1}, but they never
+        // announced (not in `frozen`).
+        let effective = compute_effective_reconfig_input_set(&frozen, vec![alone], vec![alone]);
+        assert!(effective.is_empty());
     }
 
     #[test]
