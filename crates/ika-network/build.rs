@@ -109,7 +109,22 @@ fn build_anemo_services(out_dir: &Path) {
                 .build(),
         )
         .build();
+
+    let validator_metadata = anemo_build::manual::Service::builder()
+        .name("ValidatorMetadata")
+        .package("ika")
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("get_mpc_data_blob")
+                .route_name("GetMpcDataBlob")
+                .request_type("crate::validator_metadata::GetMpcDataBlobRequest")
+                .response_type("Option<crate::validator_metadata::MpcDataBlob>")
+                .codec_path(codec_path)
+                .build(),
+        )
+        .build();
+
     anemo_build::manual::Builder::new()
         .out_dir(out_dir)
-        .compile(&[discovery, state_sync]);
+        .compile(&[discovery, state_sync, validator_metadata]);
 }

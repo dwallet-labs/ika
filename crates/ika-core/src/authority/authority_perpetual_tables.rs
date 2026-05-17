@@ -24,6 +24,14 @@ pub struct AuthorityPerpetualTables {
     /// Holds the completed MPC session IDs, to avoid re-using them in the case of a bug
     /// or in the unlikely case of a malicious full-node/Move contract/Sui network.
     pub(crate) dwallet_mpc_computation_completed_sessions: DBMap<SessionIdentifier, ()>,
+
+    /// Content-addressed cache of MPC output blobs (validator mpc_data,
+    /// and in later steps: network DKG outputs and reconfiguration
+    /// outputs). Keyed by `Blake2b256(bytes)`. Survives restart so a
+    /// validator that produced a blob in the current epoch can keep
+    /// serving it to peers after a crash, before the next-epoch
+    /// handoff cert pins the same digest.
+    pub(crate) mpc_artifact_blobs: DBMap<[u8; 32], Vec<u8>>,
 }
 
 impl AuthorityPerpetualTables {
@@ -118,5 +126,29 @@ impl AuthorityPerpetualTables {
         )?;
         wb.write()?;
         Ok(())
+    }
+
+    /// Inserts an MPC artifact blob keyed by `digest = Blake2b256(bytes)`.
+    /// Idempotent — callers writing the same bytes produce the same
+    /// digest. Callers MUST compute the digest from the exact bytes
+    /// they pass in; the table does not re-verify.
+    pub fn insert_mpc_artifact_blob(&self, digest: [u8; 32], bytes: &[u8]) -> IkaResult {
+        self.mpc_artifact_blobs.insert(&digest, &bytes.to_vec())?;
+        Ok(())
+    }
+
+    pub fn get_mpc_artifact_blob(&self, digest: &[u8; 32]) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self.mpc_artifact_blobs.get(digest)?)
+    }
+
+    /// Iterator over every persisted artifact blob. Used at node
+    /// startup to hydrate the in-memory blob store so peers can serve
+    /// blobs immediately after restart.
+    pub fn iter_mpc_artifact_blobs(
+        &self,
+    ) -> impl Iterator<Item = IkaResult<([u8; 32], Vec<u8>)>> + '_ {
+        self.mpc_artifact_blobs
+            .safe_iter()
+            .map(|res| res.map_err(IkaError::from))
     }
 }

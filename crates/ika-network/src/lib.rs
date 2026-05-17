@@ -8,6 +8,7 @@ pub mod api;
 pub mod discovery;
 pub mod state_sync;
 pub mod utils;
+pub mod validator_metadata;
 
 pub use tonic;
 

@@ -477,6 +477,7 @@ impl IkaNode {
             archive_readers.clone(),
             &prometheus_registry,
             !epoch_store.committee().authority_exists(&authority_name),
+            perpetual_tables.clone(),
         )?;
 
         // We must explicitly send this instead of relying on the initial value to trigger
@@ -733,6 +734,7 @@ impl IkaNode {
         archive_readers: ArchiveReaderBalancer,
         prometheus_registry: &Registry,
         is_notifier: bool,
+        perpetual_tables: Arc<AuthorityPerpetualTables>,
     ) -> Result<P2pComponents> {
         let (state_sync, state_sync_server) = state_sync::Builder::new()
             .config(config.p2p_config.state_sync.clone().unwrap_or_default())
@@ -744,6 +746,24 @@ impl IkaNode {
         let (discovery, discovery_server) = discovery::Builder::new(trusted_peer_change_rx)
             .config(config.p2p_config.clone())
             .build();
+
+        // Content-addressed cache of MPC data blobs, hydrated from
+        // perpetual storage so a restart doesn't lose blobs the
+        // validator was serving to peers. Producer caching + cross-
+        // node fetch are wired in later steps; for now this just
+        // serves whatever's been persisted previously.
+        let mpc_data_blob_store = ika_network::validator_metadata::InMemoryBlobStore::new();
+        for entry in perpetual_tables.iter_mpc_artifact_blobs() {
+            match entry {
+                Ok((digest, bytes)) => mpc_data_blob_store.insert(digest, bytes),
+                Err(e) => warn!(
+                    error = ?e,
+                    "skipping corrupt mpc_artifact_blobs row during hydration"
+                ),
+            }
+        }
+        let validator_metadata_server =
+            ika_network::validator_metadata::build_server(mpc_data_blob_store.clone());
 
         let discovery_config = config.p2p_config.discovery.clone().unwrap_or_default();
         let known_peers: HashMap<PeerId, String> = discovery_config
@@ -760,7 +780,8 @@ impl IkaNode {
         let p2p_network = {
             let routes = anemo::Router::new()
                 .add_rpc_service(discovery_server)
-                .add_rpc_service(state_sync_server);
+                .add_rpc_service(state_sync_server)
+                .add_rpc_service(validator_metadata_server);
             let inbound_network_metrics =
                 mysten_network::metrics::NetworkMetrics::new("ika", "inbound", prometheus_registry);
             let outbound_network_metrics = mysten_network::metrics::NetworkMetrics::new(
