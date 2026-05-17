@@ -73,6 +73,11 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        class_groups_source: Arc<
+            arc_swap::ArcSwapOption<
+                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+            >,
+        >,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!(?mode, "Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -95,6 +100,7 @@ where
                 sui_client_clone.clone(),
                 system_object_receiver.clone(),
                 next_epoch_committee_sender.clone(),
+                class_groups_source.clone(),
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
@@ -267,6 +273,11 @@ where
         sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
+        class_groups_source: Arc<
+            arc_swap::ArcSwapOption<
+                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+            >,
+        >,
     ) {
         loop {
             time::sleep(Duration::from_secs(10)).await;
@@ -289,6 +300,7 @@ where
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
                 true,
+                class_groups_source.clone(),
             )
             .await
             {
@@ -314,7 +326,48 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
+        class_groups_source: Arc<
+            arc_swap::ArcSwapOption<
+                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+            >,
+        >,
     ) -> DwalletMPCResult<Committee> {
+        // Step 13 overlay: try the off-chain assembly first. The
+        // strict `Complete`/`Incomplete` gate inside the source
+        // means we only use the off-chain map when *every*
+        // committee member resolved successfully. Otherwise we
+        // fall back to the chain-read path below.
+        if let Some(source) = class_groups_source.load_full() {
+            let authorities: Vec<AuthorityName> =
+                committee.iter().map(|(_, (name, _))| *name).collect();
+            match source.try_assemble_class_groups(&authorities) {
+                crate::validator_metadata::OffChainClassGroupsAssembly::Complete(map) => {
+                    info!(
+                        epoch,
+                        members = map.len(),
+                        "assembled committee class-groups off-chain"
+                    );
+                    return Ok(Committee::new(
+                        epoch,
+                        committee
+                            .iter()
+                            .map(|(_, (name, stake))| (*name, *stake))
+                            .collect(),
+                        map,
+                        quorum_threshold,
+                        validity_threshold,
+                    ));
+                }
+                crate::validator_metadata::OffChainClassGroupsAssembly::Incomplete { missing } => {
+                    debug!(
+                        epoch,
+                        missing = missing.len(),
+                        "off-chain class-groups assembly incomplete; falling back to chain"
+                    );
+                }
+            }
+        }
+
         let validator_ids: Vec<_> = committee.iter().map(|(id, _)| *id).collect();
 
         let validators = sui_client

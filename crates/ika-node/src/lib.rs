@@ -1491,6 +1491,20 @@ impl IkaNode {
                     )),
                 ));
 
+            // Install the off-chain class-groups assembler so
+            // `sync_next_committee` builds the next `Committee`'s
+            // class_groups_public_keys_and_proofs from validators'
+            // own `mpc_data` announcements + the perpetual blob
+            // store instead of refetching from chain. Falls back
+            // to chain when the off-chain set is `Incomplete`.
+            self.sui_connector_service
+                .install_class_groups_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreClassGroupsSource::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        self.state.perpetual_tables(),
+                    ),
+                ));
+
             // Installs a `ConsensusPubkeyProvider` from the current
             // committee's on-chain `consensus_pubkey_bytes` so the
             // per-epoch store can verify incoming

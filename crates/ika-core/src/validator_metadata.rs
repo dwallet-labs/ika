@@ -384,6 +384,18 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
     ) -> Option<Vec<u8>>;
 }
 
+/// Try to build the committee's class-groups public-keys-and-
+/// proofs map from off-chain announcements + locally-cached
+/// blobs. Implementations return `Complete` only when every
+/// supplied authority resolved — partial maps are rejected
+/// upstream per step 13's strict gate.
+pub trait OffChainCommitteeClassGroupsSource: Send + Sync + 'static {
+    fn try_assemble_class_groups(
+        &self,
+        committee_authorities: &[AuthorityName],
+    ) -> OffChainClassGroupsAssembly;
+}
+
 /// Adapter that lets the long-lived `SuiConnectorService` hold a
 /// reference to a per-epoch `AuthorityPerEpochStore` for blob
 /// overlays. Holds a `Weak` so the per-epoch store can drop when
@@ -419,6 +431,67 @@ impl NetworkKeyBlobSource for EpochStoreBlobSource {
         self.inner
             .upgrade()
             .and_then(|store| store.network_reconfiguration_output_blob(network_key_id))
+    }
+}
+
+/// Off-chain class-groups assembler backed by a per-epoch store +
+/// the perpetual blob store. For each requested committee
+/// authority:
+/// 1. Read the validator's `mpc_data` announcement digest from the
+///    per-epoch `validator_mpc_data_announcements` table.
+/// 2. Look the blob up by digest in perpetual `mpc_artifact_blobs`.
+/// 3. Decode and accumulate into the class-groups map.
+///
+/// Any miss along the way produces `Incomplete` — partial maps are
+/// never returned (see step 13's design rationale).
+pub struct EpochStoreClassGroupsSource {
+    epoch_store:
+        std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
+    perpetual: Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+}
+
+impl EpochStoreClassGroupsSource {
+    pub fn new(
+        epoch_store: std::sync::Weak<
+            crate::authority::authority_per_epoch_store::AuthorityPerEpochStore,
+        >,
+        perpetual: Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+    ) -> Self {
+        Self {
+            epoch_store,
+            perpetual,
+        }
+    }
+}
+
+impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
+    fn try_assemble_class_groups(
+        &self,
+        committee_authorities: &[AuthorityName],
+    ) -> OffChainClassGroupsAssembly {
+        let Some(store) = self.epoch_store.upgrade() else {
+            // Epoch ended underneath us — caller falls back to chain.
+            return OffChainClassGroupsAssembly::Incomplete {
+                missing: committee_authorities.to_vec(),
+            };
+        };
+        let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
+        let mut missing: Vec<AuthorityName> = Vec::new();
+        for authority in committee_authorities {
+            match store.get_validator_mpc_data_announcement(authority) {
+                Ok(Some(signed)) => {
+                    pairs.push((*authority, signed.announcement.blob_hash));
+                }
+                _ => missing.push(*authority),
+            }
+        }
+        if !missing.is_empty() {
+            return OffChainClassGroupsAssembly::Incomplete { missing };
+        }
+        let perpetual = self.perpetual.clone();
+        assemble_committee_class_groups_off_chain(pairs, move |digest| {
+            perpetual.get_mpc_artifact_blob(digest).ok().flatten()
+        })
     }
 }
 

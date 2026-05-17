@@ -66,6 +66,16 @@ pub struct SuiConnectorService {
     /// here disables the overlay; chain bytes flow through unchanged.
     network_key_blob_source:
         Arc<arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>>,
+    /// Late-bindable off-chain class-groups assembler. When
+    /// installed and `Complete` for the next-epoch committee,
+    /// `sync_next_committee` builds the `Committee` from this
+    /// instead of from the on-chain mpc_data. `Incomplete` /
+    /// `None` paths fall through to the existing chain-read.
+    class_groups_source: Arc<
+        arc_swap::ArcSwapOption<
+            Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+        >,
+    >,
 }
 
 impl SuiConnectorService {
@@ -111,6 +121,11 @@ impl SuiConnectorService {
         let network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
+        let class_groups_source: Arc<
+            arc_swap::ArcSwapOption<
+                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+            >,
+        > = Arc::new(arc_swap::ArcSwapOption::empty());
 
         let sui_modules_to_watch = vec![SESSIONS_MANAGER_MODULE_NAME.to_owned()];
         let task_handles = SuiSyncer::new(
@@ -131,6 +146,7 @@ impl SuiConnectorService {
             uncompleted_requests_sender,
             noa_checkpoints_finalized,
             network_key_blob_source.clone(),
+            class_groups_source.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
@@ -143,6 +159,7 @@ impl SuiConnectorService {
                 sui_connector_config,
                 metrics: sui_connector_metrics,
                 network_key_blob_source,
+                class_groups_source,
             }),
             network_keys_receiver,
         ))
@@ -157,6 +174,16 @@ impl SuiConnectorService {
         source: Box<dyn crate::validator_metadata::NetworkKeyBlobSource>,
     ) {
         self.network_key_blob_source.store(Some(Arc::new(source)));
+    }
+
+    /// Installs the off-chain class-groups assembler the
+    /// next-committee sync uses before falling back to the chain
+    /// `get_mpc_data_from_validators_pool` path.
+    pub fn install_class_groups_source(
+        &self,
+        source: Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+    ) {
+        self.class_groups_source.store(Some(Arc::new(source)));
     }
 
     pub async fn run_epoch(
