@@ -21,11 +21,13 @@ use fastcrypto::traits::{Signer, VerifyingKey};
 use ika_types::committee::{Committee, CommitteeTrait, EpochId, StakeUnit};
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName, AuthoritySignInfo};
 use ika_types::error::{IkaError, IkaResult};
+use ika_types::handoff::{
+    CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey, HandoffSignatureMessage,
+};
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
-    CertifiedHandoffAttestation, EpochMpcDataReadySignal, HandoffAttestation, HandoffItemKey,
-    HandoffSignatureMessage, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
@@ -271,6 +273,73 @@ pub fn compute_handoff_items(
 /// ready for submission via the consensus adapter.
 pub fn build_handoff_signature_transaction(msg: HandoffSignatureMessage) -> ConsensusTransaction {
     ConsensusTransaction::new_handoff_signature(msg)
+}
+
+/// Per-feature contributor that produces its slice of items for the
+/// handoff attestation. The producer task collects from every
+/// registered builder, sorts + de-duplicates, and feeds the result
+/// into `build_handoff_attestation`. Implementations MUST be
+/// deterministic across honest validators given identical input
+/// state — otherwise the resulting attestations won't byte-match
+/// and the signature aggregation will never reach quorum.
+pub trait HandoffItemsBuilder: Send + Sync + 'static {
+    fn build(
+        &self,
+        epoch: EpochId,
+        next_committee_pubkeys: &[AuthorityName],
+    ) -> IkaResult<Vec<(HandoffItemKey, [u8; 32])>>;
+}
+
+/// The MPC-specific contributor: validator mpc_data of V_e ∪ V_{e+1},
+/// network DKG outputs, and network reconfiguration outputs — same
+/// content as the old hard-coded `build_local_handoff_attestation`
+/// produced.
+pub struct MpcDataHandoffItemsBuilder {
+    epoch_store:
+        std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
+}
+
+impl MpcDataHandoffItemsBuilder {
+    pub fn new(
+        epoch_store: std::sync::Weak<
+            crate::authority::authority_per_epoch_store::AuthorityPerEpochStore,
+        >,
+    ) -> Self {
+        Self { epoch_store }
+    }
+}
+
+impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
+    fn build(
+        &self,
+        _epoch: EpochId,
+        next_committee_pubkeys: &[AuthorityName],
+    ) -> IkaResult<Vec<(HandoffItemKey, [u8; 32])>> {
+        let Some(store) = self.epoch_store.upgrade() else {
+            // Epoch ended — empty contribution is safe; the
+            // overall attestation builder will surface this via an
+            // empty items list and signature collection won't
+            // succeed against peers' versions either.
+            return Ok(Vec::new());
+        };
+        let effective =
+            store.get_effective_reconfig_input_set(next_committee_pubkeys.iter().copied())?;
+        let dkg = store.get_network_dkg_output_digests()?;
+        let reconfig = store.get_network_reconfiguration_output_digests()?;
+        Ok(compute_handoff_items(&effective, &dkg, &reconfig))
+    }
+}
+
+/// Default builder set used by the handoff signature producer
+/// when no extra contributors are wired. Currently just the
+/// MPC-data builder; new features push their builder onto the
+/// returned Vec at task-spawn time.
+pub fn default_handoff_items_builders(
+    epoch_store: &Arc<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
+) -> Vec<Arc<dyn HandoffItemsBuilder>> {
+    vec![Arc::new(MpcDataHandoffItemsBuilder::new(Arc::downgrade(
+        epoch_store,
+    )))]
 }
 
 /// Builds the `ConsensusTransaction` that wraps a
@@ -1100,7 +1169,7 @@ mod tests {
     use fastcrypto::ed25519::Ed25519PrivateKey;
     use fastcrypto::traits::ToFromBytes;
     use ika_types::committee::Committee;
-    use ika_types::validator_metadata::HandoffItemKey;
+    use ika_types::handoff::HandoffItemKey;
     use sui_types::base_types::ObjectID;
 
     fn make_consensus_keys(count: usize) -> Vec<Ed25519KeyPair> {

@@ -136,7 +136,7 @@ fn build_anemo_services(out_dir: &Path) {
                 .name("get_certified_handoff_attestation")
                 .route_name("GetCertifiedHandoffAttestation")
                 .request_type("crate::validator_metadata::GetCertifiedHandoffAttestationRequest")
-                .response_type("Option<ika_types::validator_metadata::CertifiedHandoffAttestation>")
+                .response_type("Option<ika_types::handoff::CertifiedHandoffAttestation>")
                 .codec_path(codec_path)
                 .build(),
         )

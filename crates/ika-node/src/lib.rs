@@ -1424,24 +1424,42 @@ impl IkaNode {
                     .await?;
             }
 
-            let end_of_publish_sender_handle =
-                if let Some(components) = &*self.validator_components.lock().await {
-                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
-                    let end_of_publish_sender = EndOfPublishSender::new(
+            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
+                components,
+            ) =
+                &*self.validator_components.lock().await
+            {
+                let end_of_publish_sender = EndOfPublishSender::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    Arc::new(components.consensus_adapter.clone()),
+                    sui_data_receivers.end_of_publish_receiver.clone(),
+                    cur_epoch_store.epoch(),
+                );
+                let end_of_publish_handle = Some(tokio::spawn(async move {
+                    end_of_publish_sender.run().await;
+                }));
+
+                let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
+                let builders =
+                    ika_core::validator_metadata::default_handoff_items_builders(&cur_epoch_store);
+                let handoff_sender =
+                    ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
                         Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
                         Arc::new(components.consensus_adapter.clone()),
                         sui_data_receivers.end_of_publish_receiver.clone(),
-                        cur_epoch_store.epoch(),
                         consensus_keypair,
                         sui_data_receivers.next_epoch_committee_receiver.clone(),
+                        builders,
                     );
+                let handoff_handle = Some(tokio::spawn(async move {
+                    handoff_sender.run().await;
+                }));
 
-                    Some(tokio::spawn(async move {
-                        end_of_publish_sender.run().await;
-                    }))
-                } else {
-                    None
-                };
+                (end_of_publish_handle, handoff_handle)
+            } else {
+                (None, None)
+            };
 
             // Producer-side broadcaster: announces this validator's
             // own mpc_data and ready signals so the freeze quorum
@@ -1568,6 +1586,10 @@ impl IkaNode {
                 }
             };
             end_of_publish_sender_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            handoff_signature_sender_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });

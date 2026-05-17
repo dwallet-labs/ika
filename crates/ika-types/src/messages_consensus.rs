@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::crypto::AuthorityName;
+use crate::handoff::HandoffSignatureMessage;
 use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
@@ -18,8 +19,7 @@ use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
 use crate::validator_metadata::{
-    EpochMpcDataReadySignal, HandoffSignatureMessage, NetworkKeyDKGReadySignal,
-    SignedValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, NetworkKeyDKGReadySignal, SignedValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;

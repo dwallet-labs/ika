@@ -32,8 +32,8 @@ use crate::dwallet_checkpoints::{
 use crate::validator_metadata::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
     JoinerAnnouncementVerdict, JoinerPubkeyProvider, NetworkKeyBlobSource,
-    build_handoff_attestation, compute_handoff_items, hash_next_committee_pubkey_set,
-    process_handoff_signature, sign_handoff_attestation, verify_joiner_announcement,
+    build_handoff_attestation, hash_next_committee_pubkey_set, process_handoff_signature,
+    sign_handoff_attestation, verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -778,7 +778,7 @@ pub struct AuthorityPerEpochStore {
     /// when it has the frozen mpc-data input set plus the DKG /
     /// reconfig output digests. Until installed, incoming handoff
     /// signatures drop with `AttestationMismatch`.
-    expected_handoff_attestation: ArcSwapOption<ika_types::validator_metadata::HandoffAttestation>,
+    expected_handoff_attestation: ArcSwapOption<ika_types::handoff::HandoffAttestation>,
 
     /// In-memory stake-weighted accumulator over verified handoff
     /// signatures. Rebuilt from `handoff_signatures` + the installed
@@ -1863,7 +1863,7 @@ impl AuthorityPerEpochStore {
     /// discards the old aggregator state.
     pub fn install_expected_handoff_attestation(
         &self,
-        attestation: ika_types::validator_metadata::HandoffAttestation,
+        attestation: ika_types::handoff::HandoffAttestation,
     ) -> IkaResult {
         let attestation_arc = Arc::new(attestation.clone());
         let previous = self
@@ -1912,26 +1912,25 @@ impl AuthorityPerEpochStore {
             .store(Some(perpetual_tables));
     }
 
-    /// Assembles this validator's local handoff attestation from
-    /// the *effective* mpc-data set (frozen ∩ V_e ∪ V_{e+1}),
-    /// cached DKG/reconfig digests for the epoch, and the next
-    /// committee's pubkey set. Determinism across validators is
-    /// what guarantees agreement on the produced attestation:
-    /// identical inputs → identical bytes.
+    /// Assembles this validator's local handoff attestation by
+    /// asking each `HandoffItemsBuilder` for its contribution and
+    /// hashing the supplied next-committee pubkey set. Determinism
+    /// across validators is what guarantees agreement on the
+    /// produced attestation: identical inputs → identical bytes.
+    /// Caller controls which contributors are active (typically
+    /// the result of [`crate::validator_metadata::default_handoff_items_builders`]);
+    /// new features can append their own builders without touching
+    /// this code.
     pub fn build_local_handoff_attestation(
         &self,
         next_committee_pubkeys: impl IntoIterator<Item = ika_types::crypto::AuthorityName>,
-    ) -> IkaResult<ika_types::validator_metadata::HandoffAttestation> {
+        builders: &[Arc<dyn crate::validator_metadata::HandoffItemsBuilder>],
+    ) -> IkaResult<ika_types::handoff::HandoffAttestation> {
         let next_committee_set: Vec<AuthorityName> = next_committee_pubkeys.into_iter().collect();
-        let effective =
-            self.get_effective_reconfig_input_set(next_committee_set.iter().copied())?;
-        let network_dkg_outputs = self.get_network_dkg_output_digests()?;
-        let network_reconfiguration_outputs = self.get_network_reconfiguration_output_digests()?;
-        let items = compute_handoff_items(
-            &effective,
-            &network_dkg_outputs,
-            &network_reconfiguration_outputs,
-        );
+        let mut items: Vec<(ika_types::handoff::HandoffItemKey, [u8; 32])> = Vec::new();
+        for builder in builders {
+            items.extend(builder.build(self.epoch(), &next_committee_set)?);
+        }
         let next_committee_hash = hash_next_committee_pubkey_set(next_committee_set);
         build_handoff_attestation(self.epoch(), next_committee_hash, items)
     }
@@ -2052,7 +2051,7 @@ impl AuthorityPerEpochStore {
     /// (otherwise they'd be rejected with `AttestationMismatch`).
     pub fn build_local_handoff_signature_transaction(
         &self,
-        attestation: ika_types::validator_metadata::HandoffAttestation,
+        attestation: ika_types::handoff::HandoffAttestation,
         consensus_keypair: &fastcrypto::ed25519::Ed25519KeyPair,
     ) -> IkaResult<ika_types::messages_consensus::ConsensusTransaction> {
         self.install_expected_handoff_attestation(attestation.clone())?;
@@ -2077,8 +2076,8 @@ impl AuthorityPerEpochStore {
     /// writing the cert to perpetual storage.
     pub fn record_handoff_signature(
         &self,
-        msg: &ika_types::validator_metadata::HandoffSignatureMessage,
-    ) -> IkaResult<Option<ika_types::validator_metadata::CertifiedHandoffAttestation>> {
+        msg: &ika_types::handoff::HandoffSignatureMessage,
+    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
             debug!(
                 signer = ?msg.signer,

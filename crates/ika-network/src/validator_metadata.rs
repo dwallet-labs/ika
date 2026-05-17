@@ -14,9 +14,8 @@ use anemo::PeerId;
 use arc_swap::ArcSwapOption;
 use fastcrypto::hash::{Blake2b256, HashFunction};
 use ika_types::committee::EpochId;
-use ika_types::validator_metadata::{
-    CertifiedHandoffAttestation, SignedValidatorMpcDataAnnouncement,
-};
+use ika_types::handoff::CertifiedHandoffAttestation;
+use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

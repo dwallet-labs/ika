@@ -24,6 +24,7 @@ pub mod metrics;
 pub mod storage;
 
 pub mod dwallet_mpc_error;
+pub mod handoff;
 pub mod messages_dwallet_mpc;
 pub mod noa_checkpoint;
 pub mod quorum_driver_types;

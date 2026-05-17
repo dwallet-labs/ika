@@ -7,7 +7,7 @@ use super::{
     SubmitMpcDataAnnouncementResponse, ValidatorMetadata,
 };
 use anemo::{Request, Response, Result, rpc::Status};
-use ika_types::validator_metadata::CertifiedHandoffAttestation;
+use ika_types::handoff::CertifiedHandoffAttestation;
 use std::sync::Arc;
 
 pub struct Server<S, C> {

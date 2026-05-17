@@ -7,8 +7,8 @@ use std::path::Path;
 use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
-use ika_types::validator_metadata::CertifiedHandoffAttestation;
 use typed_store::DBMapUtils;
 use typed_store::rocks::{DBBatch, DBMap, MetricConf};
 use typed_store::rocksdb::Options;
@@ -219,7 +219,7 @@ impl ika_network::validator_metadata::HandoffCertStorage for AuthorityPerpetualT
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ika_types::validator_metadata::{CertifiedHandoffAttestation, HandoffAttestation};
+    use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation};
 
     fn open_tables() -> (tempfile::TempDir, AuthorityPerpetualTables) {
         let dir = tempfile::tempdir().unwrap();
