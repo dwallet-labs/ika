@@ -686,6 +686,15 @@ pub struct AuthorityPerEpochStore {
     /// `CertifiedHandoffAttestation` once stake crosses quorum;
     /// further inserts are no-ops (one-shot semantics).
     handoff_aggregator: parking_lot::Mutex<Option<HandoffAggregator>>,
+
+    /// Perpetual storage handle used to persist a fresh
+    /// `CertifiedHandoffAttestation` the moment the aggregator
+    /// crosses quorum. The handle is installed once at node startup
+    /// (after the perpetual DB is open). `None` here means the cert
+    /// is produced but not yet persisted; safe in this commit
+    /// because no consumer (joiner bootstrap) is wired up yet.
+    perpetual_tables_for_handoff:
+        ArcSwapOption<super::authority_perpetual_tables::AuthorityPerpetualTables>,
 }
 
 /// The reconfiguration state of the authority.
@@ -1313,6 +1322,7 @@ impl AuthorityPerEpochStore {
             consensus_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
             handoff_aggregator: parking_lot::Mutex::new(None),
+            perpetual_tables_for_handoff: ArcSwapOption::empty(),
         });
 
         s.update_buffer_stake_metric();
@@ -1754,6 +1764,21 @@ impl AuthorityPerEpochStore {
         *self.handoff_aggregator.lock() = None;
     }
 
+    /// Install the perpetual-tables handle used to persist a fresh
+    /// `CertifiedHandoffAttestation` once the aggregator crosses
+    /// quorum. Called once by `ika-node` at startup, after the
+    /// perpetual DB is open. Before this is installed, certs are
+    /// minted by the aggregator but not persisted; joiner-bootstrap
+    /// reads will miss them. Safe in steps 7c+ because no consumer
+    /// is wired yet.
+    pub fn install_perpetual_tables_for_handoff(
+        &self,
+        perpetual_tables: Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>,
+    ) {
+        self.perpetual_tables_for_handoff
+            .store(Some(perpetual_tables));
+    }
+
     /// Records an incoming `HandoffSignatureMessage` from consensus.
     ///
     /// Drops the message silently when:
@@ -1812,6 +1837,22 @@ impl AuthorityPerEpochStore {
                 self.tables()?
                     .handoff_signatures
                     .insert(&msg.signer, &msg.signature)?;
+                if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+                    if let Err(e) = perpetual
+                        .insert_certified_handoff_attestation(cert.attestation.epoch, &cert)
+                    {
+                        warn!(
+                            error = ?e,
+                            epoch = cert.attestation.epoch,
+                            "failed to persist CertifiedHandoffAttestation — cert remains in-memory only"
+                        );
+                    }
+                } else {
+                    debug!(
+                        epoch = cert.attestation.epoch,
+                        "perpetual tables not installed; handoff cert not persisted"
+                    );
+                }
                 Ok(Some(cert))
             }
             HandoffSignatureRecordOutcome::Rejected(verdict) => {

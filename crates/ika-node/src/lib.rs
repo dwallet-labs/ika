@@ -420,6 +420,10 @@ impl IkaNode {
             packages_config,
         )?;
 
+        // Allow the per-epoch handoff record path to persist freshly
+        // certified attestations into perpetual storage.
+        epoch_store.install_perpetual_tables_for_handoff(perpetual_tables.clone());
+
         info!("created epoch store");
 
         replay_log!(
