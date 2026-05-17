@@ -12,7 +12,7 @@ use ika_types::digests::ChainIdentifier;
 use ika_types::error::{IkaError, IkaResult};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -829,6 +829,26 @@ pub struct AuthorityEpochTables {
     /// freeze a snapshot of this table when 2f+1 ready signals land.
     pub(crate) validator_mpc_data_announcements:
         DBMap<AuthorityName, SignedValidatorMpcDataAnnouncement>,
+
+    /// Set of validators that have broadcast an
+    /// `EpochMpcDataReadySignal` for this epoch. The presence of an
+    /// entry is the only fact recorded — the value is unit because
+    /// the signal payload is already covered by the key + wire
+    /// authority binding. Re-broadcasts are no-ops. Once the
+    /// accumulated stake of signers reaches `quorum_threshold`, the
+    /// `frozen_validator_mpc_data_input_set` snapshot below is
+    /// taken exactly once.
+    pub(crate) epoch_mpc_data_ready_signals: DBMap<AuthorityName, ()>,
+
+    /// Frozen `validator -> blob_hash` snapshot taken at the consensus
+    /// position where the first quorum of `EpochMpcDataReadySignal`s
+    /// landed this epoch. This is the canonical mpc-data input set
+    /// every honest validator agrees on — both the network DKG / per-
+    /// network-key reconfiguration MPC (consumed in later steps) and
+    /// the handoff cert pin it. Empty until quorum; populated once
+    /// and never modified within the epoch (`freeze_mpc_data_if_first`
+    /// is idempotent on a non-empty table).
+    pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1607,6 +1627,91 @@ impl AuthorityPerEpochStore {
             .tables()?
             .validator_mpc_data_announcements
             .get(validator)?)
+    }
+
+    /// Records an `EpochMpcDataReadySignal`. Idempotent — repeat
+    /// signals from the same authority are dropped. The *first* time
+    /// the set of signers reaches the committee's `quorum_threshold`
+    /// (by stake), takes the `validator_mpc_data_announcements`
+    /// snapshot into `frozen_validator_mpc_data_input_set`. Subsequent
+    /// signals are recorded but the snapshot is not modified
+    /// (`freeze_mpc_data_if_first` is idempotent on a non-empty
+    /// frozen table).
+    pub fn record_epoch_mpc_data_ready_signal(
+        &self,
+        signal: &ika_types::validator_metadata::EpochMpcDataReadySignal,
+    ) -> IkaResult {
+        let current_epoch = self.epoch();
+        if signal.epoch != current_epoch {
+            warn!(
+                signal_epoch = signal.epoch,
+                current_epoch, "epoch mpc data ready signal epoch mismatch — dropping"
+            );
+            return Ok(());
+        }
+        let tables = self.tables()?;
+        if tables
+            .epoch_mpc_data_ready_signals
+            .contains_key(&signal.authority)?
+        {
+            return Ok(());
+        }
+        tables
+            .epoch_mpc_data_ready_signals
+            .insert(&signal.authority, &())?;
+
+        let committee = self.committee();
+        let total_stake: u64 = tables
+            .epoch_mpc_data_ready_signals
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(authority, _)| committee.weight(&authority))
+            .sum();
+        if total_stake >= committee.quorum_threshold() {
+            self.freeze_mpc_data_if_first(&tables)?;
+        }
+        Ok(())
+    }
+
+    /// Snapshots `validator_mpc_data_announcements` into
+    /// `frozen_validator_mpc_data_input_set` iff the latter is empty.
+    /// Idempotent — whichever signal type fires the first quorum
+    /// (today only `EpochMpcDataReadySignal`; later steps add
+    /// `NetworkKeyDKGReadySignal`) wins, and subsequent triggers
+    /// no-op.
+    fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
+        if !tables.frozen_validator_mpc_data_input_set.is_empty() {
+            return Ok(());
+        }
+        let mut snapshot: Vec<(AuthorityName, [u8; 32])> = Vec::new();
+        for entry in tables.validator_mpc_data_announcements.safe_iter() {
+            let (authority, signed) = entry?;
+            snapshot.push((authority, signed.announcement.blob_hash));
+        }
+        info!(
+            current_epoch = self.epoch(),
+            entries = snapshot.len(),
+            "ready quorum reached — freezing epoch mpc_data input set snapshot"
+        );
+        for (authority, blob_hash) in snapshot {
+            tables
+                .frozen_validator_mpc_data_input_set
+                .insert(&authority, &blob_hash)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the frozen `validator -> blob_hash` snapshot, or an
+    /// empty map if the freeze hasn't fired yet this epoch.
+    pub fn get_frozen_validator_mpc_data_input_set(
+        &self,
+    ) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
+        Ok(self
+            .tables()?
+            .frozen_validator_mpc_data_input_set
+            .safe_iter()
+            .filter_map(Result::ok)
+            .collect())
     }
 
     pub async fn user_certs_closed_notify(&self) {
@@ -2401,9 +2506,12 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::EpochMpcDataReadySignal(..),
+                kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
                 ..
-            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            }) => {
+                self.record_epoch_mpc_data_ready_signal(signal)?;
+                Ok(ConsensusCertificateResult::ConsensusMessage)
+            }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::DWalletCheckpointSignature(info),
                 ..

@@ -19,8 +19,9 @@ use ika_types::committee::EpochId;
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName, AuthoritySignInfo};
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::intent::{Intent, IntentScope};
+use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
-    SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -77,6 +78,19 @@ pub fn sign_validator_mpc_data_announcement(
         announcement,
         auth_sig,
     }
+}
+
+/// Builds the `ConsensusTransaction` that wraps an
+/// `EpochMpcDataReadySignal`. The signal carries no payload signature
+/// — the consensus authority binding (sender == authority) is the
+/// only authentication needed, and the consensus handler enforces it
+/// at message verification time.
+pub fn build_epoch_mpc_data_ready_signal_transaction(
+    authority: AuthorityName,
+    epoch: EpochId,
+) -> ConsensusTransaction {
+    let signal = EpochMpcDataReadySignal { authority, epoch };
+    ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
 }
 
 #[cfg(test)]
