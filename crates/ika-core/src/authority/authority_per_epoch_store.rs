@@ -384,6 +384,12 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// kickoff; reconfig sessions only gate on
     /// [`is_mpc_data_frozen`].
     fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool>;
+
+    /// Reflects the per-epoch `protocol_config` flag that gates
+    /// the entire off-chain validator-metadata pipeline. When
+    /// false, the kickoff gate and other off-chain hooks behave
+    /// as legacy (chain-only).
+    fn off_chain_validator_metadata_enabled(&self) -> bool;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -679,6 +685,11 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             .map(|authority| committee.weight(&authority))
             .sum();
         Ok(total_stake >= committee.quorum_threshold())
+    }
+
+    fn off_chain_validator_metadata_enabled(&self) -> bool {
+        self.protocol_config()
+            .off_chain_validator_metadata_enabled()
     }
 }
 
@@ -1741,6 +1752,12 @@ impl AuthorityPerEpochStore {
         &self,
         signed: &SignedValidatorMpcDataAnnouncement,
     ) -> IkaResult {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(());
+        }
         use ika_types::intent::{Intent, IntentScope};
         let current_epoch = self.epoch();
         let next_epoch = current_epoch.saturating_add(1);
@@ -2078,6 +2095,12 @@ impl AuthorityPerEpochStore {
         &self,
         msg: &ika_types::handoff::HandoffSignatureMessage,
     ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(None);
+        }
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
             debug!(
                 signer = ?msg.signer,
@@ -2164,6 +2187,12 @@ impl AuthorityPerEpochStore {
         &self,
         signal: &ika_types::validator_metadata::EpochMpcDataReadySignal,
     ) -> IkaResult {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(());
+        }
         let current_epoch = self.epoch();
         if signal.epoch != current_epoch {
             warn!(
@@ -2208,6 +2237,12 @@ impl AuthorityPerEpochStore {
         &self,
         signal: &ika_types::validator_metadata::NetworkKeyDKGReadySignal,
     ) -> IkaResult {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(());
+        }
         let current_epoch = self.epoch();
         if signal.epoch != current_epoch {
             warn!(

@@ -57,6 +57,17 @@ impl JoinerPubkeyProviderUpdater {
     }
 
     pub async fn run(self: Arc<Self>) {
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && !epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "off-chain validator metadata disabled; joiner pubkey updater exiting"
+            );
+            return;
+        }
         // Poll-based update: the watch channel may already hold a
         // value at task spawn time, so we read on each tick rather
         // than only on changes.

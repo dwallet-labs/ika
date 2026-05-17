@@ -60,6 +60,17 @@ where
     }
 
     pub async fn run(self: Arc<Self>) {
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && !epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "off-chain validator metadata disabled; consensus pubkey updater exiting"
+            );
+            return;
+        }
         loop {
             if let Err(err) = self.refresh().await {
                 warn!(error=?err, "consensus pubkey provider refresh failed; will retry");

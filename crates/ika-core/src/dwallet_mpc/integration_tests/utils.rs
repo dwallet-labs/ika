@@ -453,6 +453,12 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // Same rationale as `is_mpc_data_frozen`.
         Ok(true)
     }
+
+    fn off_chain_validator_metadata_enabled(&self) -> bool {
+        // Tests exercise the off-chain pipeline regardless of
+        // protocol-config version, so report enabled.
+        true
+    }
 }
 
 impl TestingSubmitToConsensus {

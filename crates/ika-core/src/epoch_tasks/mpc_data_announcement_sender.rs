@@ -89,6 +89,20 @@ impl MpcDataAnnouncementSender {
     }
 
     pub async fn run(self: Arc<Self>) {
+        // Off-chain feature gate. Read once at epoch start — the
+        // protocol config is fixed for the epoch, so we don't need
+        // to recheck on every loop tick.
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && !epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "off-chain validator metadata disabled by protocol config; task exiting"
+            );
+            return;
+        }
         loop {
             if !self.announcement_sent.load(Ordering::Acquire)
                 && let Err(err) = self.send_announcement().await

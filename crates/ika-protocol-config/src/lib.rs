@@ -160,6 +160,16 @@ struct FeatureFlags {
     // If true, enables NOA (Network Owned Address) MPC-signed checkpoints.
     #[serde(skip_serializing_if = "is_false")]
     noa_checkpoints: bool,
+
+    // If true, enables the off-chain validator-metadata pipeline:
+    // per-epoch `ValidatorMpcDataAnnouncement` + ready signals
+    // broadcast over consensus, the step-14 kickoff gate, the
+    // sui_syncer DKG/reconfig blob and class-groups overlays,
+    // and the handoff cert produced at EndOfPublish. False means
+    // legacy chain-only behavior; flipping to true at a protocol
+    // version boundary ensures every validator switches together.
+    #[serde(skip_serializing_if = "is_false")]
+    off_chain_validator_metadata: bool,
 }
 
 #[allow(unused)]
@@ -361,6 +371,10 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
+    }
+
+    pub fn off_chain_validator_metadata_enabled(&self) -> bool {
+        self.feature_flags.off_chain_validator_metadata
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -654,6 +668,9 @@ impl ProtocolConfig {
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
+                    cfg.feature_flags.off_chain_validator_metadata = true;
+                }
+                5 => {
                     cfg.feature_flags.noa_checkpoints = true;
                 }
                 // Use this template when making changes:

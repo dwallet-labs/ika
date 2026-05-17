@@ -59,6 +59,17 @@ impl HandoffSignatureSender {
     }
 
     pub async fn run(&self) {
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && !epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "off-chain validator metadata disabled; handoff signature sender exiting"
+            );
+            return;
+        }
         loop {
             if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id)
                 && !self.sent.load(Ordering::Acquire)

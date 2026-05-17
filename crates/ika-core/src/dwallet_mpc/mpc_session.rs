@@ -551,10 +551,14 @@ impl DWalletMPCManager {
         // needing a per-key signal as a separate hard requirement.
         // (Per-key signals remain useful as a narrower early
         // commitment but aren't a kickoff prerequisite.)
+        //
+        // Bypassed entirely when the off-chain validator metadata
+        // protocol feature is disabled — legacy chain-only behavior.
         let off_chain_gate_passes = match &request.protocol_data {
             ProtocolData::NetworkEncryptionKeyDkg { .. }
             | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
-                self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                !self.epoch_store.off_chain_validator_metadata_enabled()
+                    || self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
             }
             _ => true,
         };

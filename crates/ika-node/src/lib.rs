@@ -1423,40 +1423,57 @@ impl IkaNode {
                     .await?;
             }
 
-            let (end_of_publish_sender_handle, handoff_signature_sender_handle) =
-                if let Some(components) = &*self.validator_components.lock().await {
-                    let end_of_publish_sender = EndOfPublishSender::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        Arc::new(components.consensus_adapter.clone()),
-                        sui_data_receivers.end_of_publish_receiver.clone(),
-                        cur_epoch_store.epoch(),
-                    );
-                    let end_of_publish_handle = Some(tokio::spawn(async move {
-                        end_of_publish_sender.run().await;
-                    }));
+            // Off-chain validator-metadata pipeline gate. When the
+            // protocol config flag is off, skip every install/spawn
+            // below — handoff signing, mpc_data announcements,
+            // joiner relay, pubkey updaters, syncer overlay sources.
+            // The tasks themselves also self-gate at the top of
+            // `run()`, but checking once here avoids the spawn churn.
+            let off_chain_metadata_enabled = cur_epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled();
 
+            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
+                components,
+            ) =
+                &*self.validator_components.lock().await
+            {
+                let end_of_publish_sender = EndOfPublishSender::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    Arc::new(components.consensus_adapter.clone()),
+                    sui_data_receivers.end_of_publish_receiver.clone(),
+                    cur_epoch_store.epoch(),
+                );
+                let end_of_publish_handle = Some(tokio::spawn(async move {
+                    end_of_publish_sender.run().await;
+                }));
+
+                let handoff_handle = if off_chain_metadata_enabled {
                     let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
                     let builders = ika_core::validator_metadata::default_handoff_items_builders(
                         &cur_epoch_store,
                     );
                     let handoff_sender =
-                    ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        cur_epoch_store.epoch(),
-                        Arc::new(components.consensus_adapter.clone()),
-                        sui_data_receivers.end_of_publish_receiver.clone(),
-                        consensus_keypair,
-                        sui_data_receivers.next_epoch_committee_receiver.clone(),
-                        builders,
-                    );
-                    let handoff_handle = Some(tokio::spawn(async move {
+                        ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
+                            Arc::downgrade(&cur_epoch_store),
+                            cur_epoch_store.epoch(),
+                            Arc::new(components.consensus_adapter.clone()),
+                            sui_data_receivers.end_of_publish_receiver.clone(),
+                            consensus_keypair,
+                            sui_data_receivers.next_epoch_committee_receiver.clone(),
+                            builders,
+                        );
+                    Some(tokio::spawn(async move {
                         handoff_sender.run().await;
-                    }));
-
-                    (end_of_publish_handle, handoff_handle)
+                    }))
                 } else {
-                    (None, None)
+                    None
                 };
+
+                (end_of_publish_handle, handoff_handle)
+            } else {
+                (None, None)
+            };
 
             // Producer-side broadcaster: announces this validator's
             // own mpc_data and ready signals so the freeze quorum
@@ -1464,8 +1481,8 @@ impl IkaNode {
             // mpc_data digest and the off-chain freeze never lands,
             // which leaves the step-14 kickoff gate closed and stalls
             // network DKG / reconfig.
-            let mpc_data_announcement_handle = if let Some(components) =
-                &*self.validator_components.lock().await
+            let mpc_data_announcement_handle = if off_chain_metadata_enabled
+                && let Some(components) = &*self.validator_components.lock().await
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
                 let bls_keypair = Arc::new(self.config.protocol_key_pair().copy());
@@ -1491,7 +1508,7 @@ impl IkaNode {
             // next-epoch committee so the per-epoch store accepts
             // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
             // instead of silently dropping them.
-            let joiner_pubkey_updater_handle = {
+            let joiner_pubkey_updater_handle = if off_chain_metadata_enabled {
                 let updater = ika_core::epoch_tasks::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
@@ -1501,6 +1518,8 @@ impl IkaNode {
                 Some(tokio::spawn(async move {
                     updater.run().await;
                 }))
+            } else {
+                None
             };
 
             // Install the off-chain blob overlay so the network-
@@ -1509,39 +1528,41 @@ impl IkaNode {
             // over the chain blobs. Replaces the previous-epoch
             // installation (if any); the `Weak` adapter naturally
             // expires when the per-epoch store drops.
-            self.sui_connector_service
-                .install_network_key_blob_source(Box::new(
-                    ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
-                        &cur_epoch_store,
-                    )),
-                ));
+            if off_chain_metadata_enabled {
+                self.sui_connector_service
+                    .install_network_key_blob_source(Box::new(
+                        ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
+                            &cur_epoch_store,
+                        )),
+                    ));
 
-            // Install the off-chain class-groups assembler so
-            // `sync_next_committee` builds the next `Committee`'s
-            // class_groups_public_keys_and_proofs from validators'
-            // own `mpc_data` announcements + the perpetual blob
-            // store instead of refetching from chain. Falls back
-            // to chain when the off-chain set is `Incomplete`.
-            self.sui_connector_service
-                .install_class_groups_source(Box::new(
-                    ika_core::validator_metadata::EpochStoreClassGroupsSource::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        self.state.perpetual_tables(),
-                    ),
-                ));
+                // Install the off-chain class-groups assembler so
+                // `sync_next_committee` builds the next `Committee`'s
+                // class_groups_public_keys_and_proofs from validators'
+                // own `mpc_data` announcements + the perpetual blob
+                // store instead of refetching from chain. Falls back
+                // to chain when the off-chain set is `Incomplete`.
+                self.sui_connector_service
+                    .install_class_groups_source(Box::new(
+                        ika_core::validator_metadata::EpochStoreClassGroupsSource::new(
+                            Arc::downgrade(&cur_epoch_store),
+                            self.state.perpetual_tables(),
+                        ),
+                    ));
 
-            // Install the joiner-announcement relay impl on the
-            // Anemo `SubmitMpcDataAnnouncement` server so a peer
-            // joiner's announcement gets verified locally and
-            // forwarded into consensus instead of being rejected
-            // with "relay not installed".
-            if let Some(components) = &*self.validator_components.lock().await {
-                self.mpc_announcement_relay.install(Box::new(
-                    ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        Arc::new(components.consensus_adapter.clone()),
-                    ),
-                ));
+                // Install the joiner-announcement relay impl on the
+                // Anemo `SubmitMpcDataAnnouncement` server so a peer
+                // joiner's announcement gets verified locally and
+                // forwarded into consensus instead of being rejected
+                // with "relay not installed".
+                if let Some(components) = &*self.validator_components.lock().await {
+                    self.mpc_announcement_relay.install(Box::new(
+                        ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                            Arc::downgrade(&cur_epoch_store),
+                            Arc::new(components.consensus_adapter.clone()),
+                        ),
+                    ));
+                }
             }
 
             // Installs a `ConsensusPubkeyProvider` from the current
@@ -1549,7 +1570,7 @@ impl IkaNode {
             // per-epoch store can verify incoming
             // `HandoffSignatureMessage`s (otherwise every one drops
             // as `UnknownSigner`).
-            let consensus_pubkey_updater_handle = {
+            let consensus_pubkey_updater_handle = if off_chain_metadata_enabled {
                 let updater = ika_core::sui_connector::consensus_pubkey_provider_updater::ConsensusPubkeyProviderUpdater::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
@@ -1559,6 +1580,8 @@ impl IkaNode {
                 Some(tokio::spawn(async move {
                     updater.run().await;
                 }))
+            } else {
+                None
             };
 
             let stop_condition = self
