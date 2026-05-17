@@ -291,6 +291,78 @@ pub fn build_network_key_dkg_ready_signal_transaction(
     ConsensusTransaction::new_network_key_dkg_ready_signal(signal)
 }
 
+/// Outcome of trying to assemble the committee's class-groups
+/// public-keys map from off-chain announcements + the local blob
+/// store. `Complete` means every supplied authority resolved
+/// successfully; `Incomplete` means *at least one* didn't and the
+/// caller MUST fall back to the chain-read path — partial maps are
+/// load-bearing-broken because reconfig MPC reads
+/// `Committee.class_groups_public_keys_and_proofs` directly and an
+/// empty/partial entry silently drops that validator's share.
+#[derive(Debug)]
+pub enum OffChainClassGroupsAssembly {
+    Complete(
+        std::collections::HashMap<
+            AuthorityName,
+            ika_types::committee::ClassGroupsEncryptionKeyAndProof,
+        >,
+    ),
+    Incomplete {
+        missing: Vec<AuthorityName>,
+    },
+}
+
+/// Tries to assemble a committee's class-groups public-keys-and-
+/// proofs map from announcements + a local blob store. The map is
+/// keyed by `AuthorityName`; each entry's BCS-encoded
+/// `VersionedMPCData` blob is looked up by digest in the blob
+/// store, decoded, and the inner `ClassGroupsEncryptionKeyAndProof`
+/// is BCS-decoded out of it.
+///
+/// The completion gate is strict: even one authority missing a
+/// blob *or* failing decode aborts the assembly with `Incomplete`,
+/// because reconfig MPC consumes
+/// `Committee.class_groups_public_keys_and_proofs` directly and
+/// any gap silently drops that validator's share.
+///
+/// `blob_lookup` returns the bytes (e.g. from perpetual
+/// `mpc_artifact_blobs`) for a given digest, or `None`.
+pub fn assemble_committee_class_groups_off_chain<F>(
+    announcements: impl IntoIterator<Item = (AuthorityName, [u8; 32])>,
+    blob_lookup: F,
+) -> OffChainClassGroupsAssembly
+where
+    F: Fn(&[u8; 32]) -> Option<Vec<u8>>,
+{
+    use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
+    use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
+
+    let mut map = std::collections::HashMap::new();
+    let mut missing = Vec::new();
+    for (authority, digest) in announcements {
+        let Some(blob) = blob_lookup(&digest) else {
+            missing.push(authority);
+            continue;
+        };
+        let Ok(versioned) = bcs::from_bytes::<VersionedMPCData>(&blob) else {
+            missing.push(authority);
+            continue;
+        };
+        let inner_bytes = versioned.class_groups_public_key_and_proof();
+        let Ok(key_and_proof) = bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&inner_bytes)
+        else {
+            missing.push(authority);
+            continue;
+        };
+        map.insert(authority, key_and_proof);
+    }
+    if missing.is_empty() {
+        OffChainClassGroupsAssembly::Complete(map)
+    } else {
+        OffChainClassGroupsAssembly::Incomplete { missing }
+    }
+}
+
 /// Off-chain source of the large `DWalletNetworkEncryptionKeyData`
 /// blobs (DKG output, current reconfiguration output). Implemented
 /// at runtime by `AuthorityPerEpochStore`, which holds digest
@@ -1232,6 +1304,96 @@ mod tests {
         // Strictly ascending — no duplicate keys.
         for w in items.windows(2) {
             assert!(w[0].0 < w[1].0);
+        }
+    }
+
+    #[test]
+    fn assemble_committee_class_groups_off_chain_round_trip() {
+        // Two distinct seeds → two valid `VersionedMPCData::V1`
+        // blobs. Stash them in an in-memory lookup keyed by their
+        // hashes (matching the announcement digest contract), and
+        // verify that the assembler decodes both back into the
+        // committee map.
+        let kps = random_committee_key_pairs_of_size(2);
+        let name_a = name_of(&kps[0]);
+        let name_b = name_of(&kps[1]);
+
+        let seed_a = RootSeed::new([1u8; 32]);
+        let seed_b = RootSeed::new([2u8; 32]);
+        let blob_a = derive_mpc_data_blob(&seed_a).expect("derive A");
+        let blob_b = derive_mpc_data_blob(&seed_b).expect("derive B");
+        let digest_a = mpc_data_blob_hash(&blob_a);
+        let digest_b = mpc_data_blob_hash(&blob_b);
+
+        let mut store: std::collections::HashMap<[u8; 32], Vec<u8>> =
+            std::collections::HashMap::new();
+        store.insert(digest_a, blob_a);
+        store.insert(digest_b, blob_b);
+
+        let outcome = assemble_committee_class_groups_off_chain(
+            [(name_a, digest_a), (name_b, digest_b)],
+            |d| store.get(d).cloned(),
+        );
+        match outcome {
+            OffChainClassGroupsAssembly::Complete(map) => {
+                assert_eq!(map.len(), 2);
+                assert!(map.contains_key(&name_a));
+                assert!(map.contains_key(&name_b));
+            }
+            other => panic!("expected Complete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assemble_committee_class_groups_off_chain_reports_missing_blob() {
+        // One announcer's blob isn't in the store → Incomplete with
+        // that announcer listed. The whole assembly must abort
+        // (load-bearing rule: partial map is worse than no map).
+        let kps = random_committee_key_pairs_of_size(2);
+        let name_a = name_of(&kps[0]);
+        let name_b = name_of(&kps[1]);
+        let seed_a = RootSeed::new([3u8; 32]);
+        let blob_a = derive_mpc_data_blob(&seed_a).expect("derive A");
+        let digest_a = mpc_data_blob_hash(&blob_a);
+        let digest_b = [0u8; 32]; // never inserted
+
+        let mut store: std::collections::HashMap<[u8; 32], Vec<u8>> =
+            std::collections::HashMap::new();
+        store.insert(digest_a, blob_a);
+
+        let outcome = assemble_committee_class_groups_off_chain(
+            [(name_a, digest_a), (name_b, digest_b)],
+            |d| store.get(d).cloned(),
+        );
+        match outcome {
+            OffChainClassGroupsAssembly::Incomplete { missing } => {
+                assert_eq!(missing, vec![name_b]);
+            }
+            other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assemble_committee_class_groups_off_chain_reports_corrupt_blob() {
+        // Digest resolves but the bytes don't decode as
+        // `VersionedMPCData` → still Incomplete; that authority is
+        // listed as missing.
+        let kp = random_committee_key_pairs_of_size(1).remove(0);
+        let name = name_of(&kp);
+        let bogus_digest = [0xFF; 32];
+        let bogus_bytes = vec![0xFF; 8];
+        let mut store: std::collections::HashMap<[u8; 32], Vec<u8>> =
+            std::collections::HashMap::new();
+        store.insert(bogus_digest, bogus_bytes);
+
+        let outcome = assemble_committee_class_groups_off_chain([(name, bogus_digest)], |d| {
+            store.get(d).cloned()
+        });
+        match outcome {
+            OffChainClassGroupsAssembly::Incomplete { missing } => {
+                assert_eq!(missing, vec![name]);
+            }
+            other => panic!("expected Incomplete, got {other:?}"),
         }
     }
 
