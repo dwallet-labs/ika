@@ -31,8 +31,9 @@ use crate::dwallet_checkpoints::{
 };
 use crate::validator_metadata::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
-    JoinerAnnouncementVerdict, JoinerPubkeyProvider, process_handoff_signature,
-    verify_joiner_announcement,
+    JoinerAnnouncementVerdict, JoinerPubkeyProvider, build_handoff_attestation,
+    compute_handoff_items, hash_next_committee_pubkey_set, process_handoff_signature,
+    sign_handoff_attestation, verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -1777,6 +1778,51 @@ impl AuthorityPerEpochStore {
     ) {
         self.perpetual_tables_for_handoff
             .store(Some(perpetual_tables));
+    }
+
+    /// Assembles this validator's local handoff attestation from
+    /// the frozen mpc-data set + caller-supplied DKG/reconfig
+    /// digest maps + the next committee's pubkey set. Determinism
+    /// across validators is what guarantees agreement on the
+    /// produced attestation: identical inputs → identical bytes.
+    ///
+    /// DKG and reconfig digest maps are caller-supplied because the
+    /// producer-side caching of those outputs (step 9) lives
+    /// elsewhere. While that step is unfinished, callers pass
+    /// empty maps, which is fine — `compute_handoff_items` handles
+    /// empty inputs and the resulting attestation is still
+    /// well-defined and signable.
+    pub fn build_local_handoff_attestation(
+        &self,
+        next_committee_pubkeys: impl IntoIterator<Item = ika_types::crypto::AuthorityName>,
+        network_dkg_outputs: &std::collections::BTreeMap<ObjectID, [u8; 32]>,
+        network_reconfiguration_outputs: &std::collections::BTreeMap<ObjectID, [u8; 32]>,
+    ) -> IkaResult<ika_types::validator_metadata::HandoffAttestation> {
+        let frozen = self.get_frozen_validator_mpc_data_input_set()?;
+        let frozen_btree: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
+            frozen.into_iter().collect();
+        let items = compute_handoff_items(
+            &frozen_btree,
+            network_dkg_outputs,
+            network_reconfiguration_outputs,
+        );
+        let next_committee_hash = hash_next_committee_pubkey_set(next_committee_pubkeys);
+        build_handoff_attestation(self.epoch(), next_committee_hash, items)
+    }
+
+    /// Builds the per-validator signed handoff message and wraps it
+    /// in a `ConsensusTransaction` ready for submission. Also
+    /// installs the attestation locally so the per-epoch record
+    /// path will accept incoming peer signatures matching it
+    /// (otherwise they'd be rejected with `AttestationMismatch`).
+    pub fn build_local_handoff_signature_transaction(
+        &self,
+        attestation: ika_types::validator_metadata::HandoffAttestation,
+        consensus_keypair: &fastcrypto::ed25519::Ed25519KeyPair,
+    ) -> IkaResult<ika_types::messages_consensus::ConsensusTransaction> {
+        self.install_expected_handoff_attestation(attestation.clone())?;
+        let msg = sign_handoff_attestation(attestation, self.name, consensus_keypair);
+        Ok(crate::validator_metadata::build_handoff_signature_transaction(msg))
     }
 
     /// Records an incoming `HandoffSignatureMessage` from consensus.

@@ -197,6 +197,59 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
     ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
 }
 
+/// Assembles the items list of a `HandoffAttestation` from the three
+/// digest sources every validator computes locally:
+/// - `validator_mpc_data` — frozen `validator -> blob_hash` snapshot
+///   (effectively the intersection with V_e ∪ V_{e+1}; gating to
+///   that intersection happens at install time, not here).
+/// - `network_dkg_outputs` — per-network-key DKG output digests.
+/// - `network_reconfiguration_outputs` — per-network-key reconfig
+///   output digests produced *this* epoch.
+///
+/// Returns the items sorted strictly ascending by `HandoffItemKey`,
+/// ready to feed straight into `build_handoff_attestation`. Empty
+/// inputs are fine (yields an empty list), which is the state up
+/// until steps 9–11 populate the latter two.
+pub fn compute_handoff_items(
+    validator_mpc_data: &BTreeMap<AuthorityName, [u8; 32]>,
+    network_dkg_outputs: &BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
+    network_reconfiguration_outputs: &BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
+) -> Vec<(HandoffItemKey, [u8; 32])> {
+    let mut items = Vec::with_capacity(
+        validator_mpc_data.len()
+            + network_dkg_outputs.len()
+            + network_reconfiguration_outputs.len(),
+    );
+    for (key_id, digest) in network_dkg_outputs {
+        items.push((
+            HandoffItemKey::NetworkDkgOutput { key_id: *key_id },
+            *digest,
+        ));
+    }
+    for (key_id, digest) in network_reconfiguration_outputs {
+        items.push((
+            HandoffItemKey::NetworkReconfigurationOutput { key_id: *key_id },
+            *digest,
+        ));
+    }
+    for (validator, digest) in validator_mpc_data {
+        items.push((
+            HandoffItemKey::ValidatorMpcData {
+                validator: *validator,
+            },
+            *digest,
+        ));
+    }
+    items.sort_by(|left, right| left.0.cmp(&right.0));
+    items
+}
+
+/// Wraps a signed `HandoffSignatureMessage` in a `ConsensusTransaction`
+/// ready for submission via the consensus adapter.
+pub fn build_handoff_signature_transaction(msg: HandoffSignatureMessage) -> ConsensusTransaction {
+    ConsensusTransaction::new_handoff_signature(msg)
+}
+
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
 /// before storage so the canonical encoding is identical across all
@@ -967,6 +1020,62 @@ mod tests {
             HandoffSignatureRecordOutcome::Rejected(HandoffSignatureVerdict::AttestationMismatch)
         );
         assert!(agg.certified().is_none());
+    }
+
+    #[test]
+    fn compute_handoff_items_returns_sorted_combined_list() {
+        // Items are sorted strictly ascending by variant order
+        // (NetworkDkgOutput, NetworkReconfigurationOutput,
+        // ValidatorMpcData) then by inner key. Combine all three
+        // sources and confirm the output canonicalizes.
+        let kp = random_committee_key_pairs_of_size(1).remove(0);
+        let validator = name_of(&kp);
+        let key_id_a = ObjectID::random();
+        let key_id_b = ObjectID::random();
+        let (smaller, bigger) = if key_id_a < key_id_b {
+            (key_id_a, key_id_b)
+        } else {
+            (key_id_b, key_id_a)
+        };
+
+        let mut mpc_data = BTreeMap::new();
+        mpc_data.insert(validator, [0xAA; 32]);
+        let mut dkg = BTreeMap::new();
+        dkg.insert(bigger, [0xBB; 32]);
+        dkg.insert(smaller, [0xCC; 32]);
+        let mut reconfig = BTreeMap::new();
+        reconfig.insert(smaller, [0xDD; 32]);
+
+        let items = compute_handoff_items(&mpc_data, &dkg, &reconfig);
+        assert_eq!(items.len(), 4);
+        // DKG entries come first, ordered by inner key.
+        assert_eq!(
+            items[0].0,
+            HandoffItemKey::NetworkDkgOutput { key_id: smaller }
+        );
+        assert_eq!(
+            items[1].0,
+            HandoffItemKey::NetworkDkgOutput { key_id: bigger }
+        );
+        // Then reconfig.
+        assert_eq!(
+            items[2].0,
+            HandoffItemKey::NetworkReconfigurationOutput { key_id: smaller }
+        );
+        // Then validator mpc_data.
+        assert_eq!(items[3].0, HandoffItemKey::ValidatorMpcData { validator });
+        // Strictly ascending — no duplicate keys.
+        for w in items.windows(2) {
+            assert!(w[0].0 < w[1].0);
+        }
+    }
+
+    #[test]
+    fn compute_handoff_items_empty_inputs_yield_empty_list() {
+        let empty: BTreeMap<AuthorityName, [u8; 32]> = BTreeMap::new();
+        let empty_obj: BTreeMap<ObjectID, [u8; 32]> = BTreeMap::new();
+        let items = compute_handoff_items(&empty, &empty_obj, &empty_obj);
+        assert!(items.is_empty());
     }
 
     #[test]

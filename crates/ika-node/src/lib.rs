@@ -1415,11 +1415,14 @@ impl IkaNode {
 
             let end_of_publish_sender_handle =
                 if let Some(components) = &*self.validator_components.lock().await {
+                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
                     let end_of_publish_sender = EndOfPublishSender::new(
                         Arc::downgrade(&cur_epoch_store),
                         Arc::new(components.consensus_adapter.clone()),
                         sui_data_receivers.end_of_publish_receiver.clone(),
                         cur_epoch_store.epoch(),
+                        consensus_keypair,
+                        sui_data_receivers.next_epoch_committee_receiver.clone(),
                     );
 
                     Some(tokio::spawn(async move {
