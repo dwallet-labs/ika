@@ -437,6 +437,22 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     ) -> IkaResult<()> {
         Ok(())
     }
+
+    fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
+        // Testing impl: report frozen so the session-kickoff gate
+        // doesn't block tests that never produce the actual freeze
+        // signal flow. Production builds use the real per-epoch
+        // store, where this reflects the snapshot taken in step 4.
+        Ok(true)
+    }
+
+    fn has_network_key_dkg_ready_quorum(
+        &self,
+        _network_key_id: &sui_types::base_types::ObjectID,
+    ) -> IkaResult<bool> {
+        // Same rationale as `is_mpc_data_frozen`.
+        Ok(true)
+    }
 }
 
 impl TestingSubmitToConsensus {

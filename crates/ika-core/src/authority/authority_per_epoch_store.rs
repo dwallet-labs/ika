@@ -371,6 +371,19 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()>;
+
+    /// Returns whether the epoch-wide `mpc_data` input set has been
+    /// frozen — i.e., a quorum of `EpochMpcDataReadySignal` or
+    /// `NetworkKeyDKGReadySignal` has been observed in consensus
+    /// order this epoch. DKG/reconfig session kickoff defers until
+    /// this is `true`.
+    fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
+
+    /// Returns whether the per-key DKG ready quorum has been
+    /// reached for `network_key_id`. Specific to network DKG
+    /// kickoff; reconfig sessions only gate on
+    /// [`is_mpc_data_frozen`].
+    fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -648,6 +661,24 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             dwallet_network_encryption_key_id,
             output_bytes,
         )
+    }
+
+    fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
+        let tables = self.tables()?;
+        Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
+    }
+
+    fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool> {
+        let tables = self.tables()?;
+        let committee = self.committee();
+        let total_stake: u64 = tables
+            .network_key_dkg_ready_signals
+            .safe_iter()
+            .filter_map(Result::ok)
+            .filter_map(|((key_id, authority), _)| (&key_id == network_key_id).then_some(authority))
+            .map(|authority| committee.weight(&authority))
+            .sum();
+        Ok(total_stake >= committee.quorum_threshold())
     }
 }
 
@@ -2200,22 +2231,6 @@ impl AuthorityPerEpochStore {
             self.freeze_mpc_data_if_first(&tables)?;
         }
         Ok(())
-    }
-
-    /// Returns whether the network key has reached its per-key DKG
-    /// ready quorum this epoch. Consumed by step 14's session
-    /// kickoff gate.
-    pub fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool> {
-        let tables = self.tables()?;
-        let committee = self.committee();
-        let total_stake: u64 = tables
-            .network_key_dkg_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .filter_map(|((key_id, authority), _)| (&key_id == network_key_id).then_some(authority))
-            .map(|authority| committee.weight(&authority))
-            .sum();
-        Ok(total_stake >= committee.quorum_threshold())
     }
 
     /// Snapshots `validator_mpc_data_announcements` into

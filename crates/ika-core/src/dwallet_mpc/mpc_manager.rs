@@ -120,6 +120,14 @@ pub(crate) struct DWalletMPCManager {
     /// Once we get the network key, these events will be executed.
     pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
     pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
+
+    /// Network DKG / reconfig requests that arrived before the
+    /// off-chain freeze gate was satisfied. Drained on every
+    /// `handle_mpc_request_batch` by re-running each through
+    /// `handle_mpc_request`; once the per-epoch freeze (and
+    /// per-key DKG quorum, for DKG requests) is in place, they
+    /// pass the gate and run normally.
+    pub(crate) requests_pending_for_frozen_mpc_data: Vec<DWalletSessionRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
@@ -183,7 +191,7 @@ pub(crate) struct DWalletMPCManager {
         HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+    pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
     pub(crate) network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
@@ -286,6 +294,7 @@ impl DWalletMPCManager {
             sui_data_receivers,
             requests_pending_for_next_active_committee: Vec::new(),
             requests_pending_for_network_key: HashMap::new(),
+            requests_pending_for_frozen_mpc_data: Vec::new(),
             dwallet_mpc_metrics,
             next_active_committee: None,
             validator_name,
