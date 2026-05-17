@@ -264,9 +264,6 @@ pub(crate) fn advance_network_dkg_v2(
     class_groups_decryption_key: ClassGroupsDecryptionKey,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-    // Phase 4 of crypto bump: dkg::Party's PrivateInput is now a struct wrapping the
-    // CRT-decryption-key array (see decentralized_party/dkg.rs:52); previously it was the
-    // bare array. Wrap our existing class_groups_decryption_key value into the struct.
     let private_input = dkg::PrivateInput {
         decryption_key_per_crt_prime: class_groups_decryption_key,
     };
