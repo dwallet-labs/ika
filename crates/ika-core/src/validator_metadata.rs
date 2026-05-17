@@ -291,6 +291,99 @@ pub fn build_network_key_dkg_ready_signal_transaction(
     ConsensusTransaction::new_network_key_dkg_ready_signal(signal)
 }
 
+/// Off-chain source of the large `DWalletNetworkEncryptionKeyData`
+/// blobs (DKG output, current reconfiguration output). Implemented
+/// at runtime by `AuthorityPerEpochStore`, which holds digest
+/// indices into perpetual `mpc_artifact_blobs`. Returning `None`
+/// means "I don't have this blob off-chain" — the caller falls
+/// back to the chain read.
+///
+/// This is read-only on the hot path; producer caching (step 9)
+/// is the write side.
+pub trait NetworkKeyBlobSource: Send + Sync + 'static {
+    fn network_dkg_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>>;
+
+    fn network_reconfiguration_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>>;
+}
+
+/// In-memory `NetworkKeyBlobSource` for tests and as a typed
+/// empty default. Keyed by `network_key_id`.
+#[derive(Default)]
+pub struct StaticNetworkKeyBlobSource {
+    dkg: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
+    reconfig: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
+}
+
+impl StaticNetworkKeyBlobSource {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert_dkg(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
+        self.dkg.insert(key_id, bytes);
+    }
+
+    pub fn insert_reconfig(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
+        self.reconfig.insert(key_id, bytes);
+    }
+}
+
+impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {
+    fn network_dkg_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>> {
+        self.dkg.get(network_key_id).cloned()
+    }
+
+    fn network_reconfiguration_output_blob(
+        &self,
+        network_key_id: &sui_types::base_types::ObjectID,
+    ) -> Option<Vec<u8>> {
+        self.reconfig.get(network_key_id).cloned()
+    }
+}
+
+/// Loads `DWalletNetworkEncryptionKeyData` for `network_key_id` by:
+/// 1. Always taking the lightweight metadata (id, epoch, state,
+///    dkg_at_epoch) from `chain_data` — that's what's authoritative.
+/// 2. Preferring the off-chain `source` for the two large blobs
+///    (`network_dkg_public_output`,
+///    `current_reconfiguration_public_output`). If `source` doesn't
+///    have a blob, the corresponding field on `chain_data` is used
+///    as the fallback.
+///
+/// The chain blob is read by the caller and stitched into
+/// `chain_data` already; this function just chooses whether to
+/// overlay each large blob from off-chain. Returns a fresh
+/// `DWalletNetworkEncryptionKeyData` rather than mutating in place
+/// so callers can pass the on-chain copy by value or by clone.
+pub fn fetch_network_key_data_with_off_chain_blobs(
+    chain_data: ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
+    source: &dyn NetworkKeyBlobSource,
+) -> ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
+    let network_dkg_public_output = source
+        .network_dkg_output_blob(&chain_data.id)
+        .unwrap_or(chain_data.network_dkg_public_output);
+    let current_reconfiguration_public_output = source
+        .network_reconfiguration_output_blob(&chain_data.id)
+        .unwrap_or(chain_data.current_reconfiguration_public_output);
+    ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
+        id: chain_data.id,
+        current_epoch: chain_data.current_epoch,
+        dkg_at_epoch: chain_data.dkg_at_epoch,
+        network_dkg_public_output,
+        current_reconfiguration_public_output,
+        state: chain_data.state,
+    }
+}
+
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
 /// before storage so the canonical encoding is identical across all
@@ -1140,6 +1233,55 @@ mod tests {
         for w in items.windows(2) {
             assert!(w[0].0 < w[1].0);
         }
+    }
+
+    #[test]
+    fn fetch_network_key_data_overlays_off_chain_blobs_when_present() {
+        use ika_types::messages_dwallet_mpc::{
+            DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+        };
+        let key_id = ObjectID::random();
+        let chain = DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: 5,
+            dkg_at_epoch: 3,
+            network_dkg_public_output: vec![0xCC; 16],
+            current_reconfiguration_public_output: vec![0xDD; 16],
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        };
+
+        let mut source = StaticNetworkKeyBlobSource::new();
+        source.insert_dkg(key_id, vec![0x11; 8]);
+        // No reconfig blob in source → caller should keep chain's
+        // reconfig bytes.
+
+        let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
+        assert_eq!(merged.id, key_id);
+        assert_eq!(merged.current_epoch, 5);
+        assert_eq!(merged.dkg_at_epoch, 3);
+        assert_eq!(merged.network_dkg_public_output, vec![0x11; 8]);
+        assert_eq!(merged.current_reconfiguration_public_output, vec![0xDD; 16]);
+        assert_eq!(merged.state, chain.state);
+    }
+
+    #[test]
+    fn fetch_network_key_data_falls_back_to_chain_when_source_empty() {
+        use ika_types::messages_dwallet_mpc::{
+            DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+        };
+        let key_id = ObjectID::random();
+        let chain = DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: 1,
+            dkg_at_epoch: 1,
+            network_dkg_public_output: vec![0xAA; 4],
+            current_reconfiguration_public_output: vec![0xBB; 4],
+            state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,
+        };
+        let source = StaticNetworkKeyBlobSource::new();
+        let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
+        // Nothing overlayed; should be byte-identical to chain.
+        assert_eq!(merged, chain);
     }
 
     #[test]

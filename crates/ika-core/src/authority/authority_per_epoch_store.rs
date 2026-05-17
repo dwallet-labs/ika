@@ -31,9 +31,9 @@ use crate::dwallet_checkpoints::{
 };
 use crate::validator_metadata::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
-    JoinerAnnouncementVerdict, JoinerPubkeyProvider, build_handoff_attestation,
-    compute_handoff_items, hash_next_committee_pubkey_set, process_handoff_signature,
-    sign_handoff_attestation, verify_joiner_announcement,
+    JoinerAnnouncementVerdict, JoinerPubkeyProvider, NetworkKeyBlobSource,
+    build_handoff_attestation, compute_handoff_items, hash_next_committee_pubkey_set,
+    process_handoff_signature, sign_handoff_attestation, verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -657,6 +657,22 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
 enum ProtocolOutputKind {
     Dkg,
     Reconfiguration,
+}
+
+/// Read-only adapter so `validator_metadata::NetworkKeyBlobSource`
+/// can serve protocol output blobs straight out of this validator's
+/// own caches (`network_dkg_output_digests` /
+/// `network_reconfiguration_output_digests` + perpetual
+/// `mpc_artifact_blobs`). Returning `None` causes the caller's
+/// fallback chain-read path to kick in.
+impl NetworkKeyBlobSource for AuthorityPerEpochStore {
+    fn network_dkg_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
+        self.lookup_protocol_output_blob(ProtocolOutputKind::Dkg, network_key_id)
+    }
+
+    fn network_reconfiguration_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
+        self.lookup_protocol_output_blob(ProtocolOutputKind::Reconfiguration, network_key_id)
+    }
 }
 
 pub struct AuthorityPerEpochStore {
@@ -1965,6 +1981,30 @@ impl AuthorityPerEpochStore {
             .safe_iter()
             .map(|res| res.map_err(IkaError::from))
             .collect()
+    }
+
+    /// Looks up the cached blob for a given network key + protocol
+    /// output kind. Returns `None` if either (a) we have no digest
+    /// for this key/kind this epoch, or (b) the digest is known but
+    /// the perpetual blob store doesn't hold the bytes. Callers
+    /// fall back to the chain read on `None`.
+    fn lookup_protocol_output_blob(
+        &self,
+        kind: ProtocolOutputKind,
+        network_key_id: &ObjectID,
+    ) -> Option<Vec<u8>> {
+        let tables = self.tables().ok()?;
+        let digest = match kind {
+            ProtocolOutputKind::Dkg => {
+                tables.network_dkg_output_digests.get(network_key_id).ok()?
+            }
+            ProtocolOutputKind::Reconfiguration => tables
+                .network_reconfiguration_output_digests
+                .get(network_key_id)
+                .ok()?,
+        }?;
+        let perpetual = self.perpetual_tables_for_handoff.load_full()?;
+        perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 
     /// Builds the per-validator signed handoff message and wraps it
