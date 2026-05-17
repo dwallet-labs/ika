@@ -424,6 +424,45 @@ impl HandoffAggregator {
     }
 }
 
+/// Outcome of pushing one `HandoffSignatureMessage` through the
+/// per-epoch record path. `Recorded` means the signature verified
+/// and was added to the aggregator without crossing quorum; the
+/// caller should persist it. `Certified` is `Recorded` plus the
+/// freshly-minted cert (also persist the signature *and* the cert).
+/// Anything else is a non-fatal rejection — drop the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandoffSignatureRecordOutcome {
+    Recorded,
+    Certified(CertifiedHandoffAttestation),
+    Rejected(HandoffSignatureVerdict),
+}
+
+/// Pure helper that runs a single incoming `HandoffSignatureMessage`
+/// through `verify_handoff_signature` and, on `Accept`, inserts it
+/// into `aggregator`. Returns `Recorded` for under-quorum inserts
+/// and `Certified(cert)` the first time the aggregator crosses
+/// quorum. Subsequent calls after certification yield `Recorded`
+/// without mutating `aggregator.certified` (the aggregator's
+/// `insert_verified` enforces one-shot semantics).
+pub fn process_handoff_signature(
+    msg: &HandoffSignatureMessage,
+    expected: &HandoffAttestation,
+    provider: &dyn ConsensusPubkeyProvider,
+    aggregator: &mut HandoffAggregator,
+) -> HandoffSignatureRecordOutcome {
+    match verify_handoff_signature(msg, expected, provider) {
+        HandoffSignatureVerdict::Accept => {}
+        verdict => return HandoffSignatureRecordOutcome::Rejected(verdict),
+    }
+    let cert = aggregator
+        .insert_verified(msg.signer, msg.signature.clone())
+        .cloned();
+    match cert {
+        Some(cert) => HandoffSignatureRecordOutcome::Certified(cert),
+        None => HandoffSignatureRecordOutcome::Recorded,
+    }
+}
+
 /// Independently re-verifies a `CertifiedHandoffAttestation` against
 /// a committee and a consensus pubkey provider. Used by joiners
 /// during bootstrap (where the relevant committee is the *previous*
@@ -884,6 +923,64 @@ mod tests {
         agg.insert_verified(names[0], first_msg.signature);
         // We've only seen one signer at stake=1, q=3, so still uncertified.
         assert!(agg.certified().is_none());
+    }
+
+    #[test]
+    fn process_handoff_signature_records_then_certifies_at_quorum() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x21; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee, att.clone());
+        // First two: Recorded, no cert.
+        for i in 0..2 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            let outcome = process_handoff_signature(&msg, &att, &provider, &mut agg);
+            assert_eq!(outcome, HandoffSignatureRecordOutcome::Recorded);
+        }
+        // Third: Certified, with full cert.
+        let msg = sign_handoff_attestation(att.clone(), names[2], &consensus_kps[2]);
+        match process_handoff_signature(&msg, &att, &provider, &mut agg) {
+            HandoffSignatureRecordOutcome::Certified(cert) => {
+                assert_eq!(cert.attestation, att);
+                assert_eq!(cert.signatures.len(), 3);
+            }
+            other => panic!("expected Certified, got {other:?}"),
+        }
+        // Fourth, post-cert: aggregator is one-shot, so just Recorded.
+        let msg = sign_handoff_attestation(att.clone(), names[3], &consensus_kps[3]);
+        assert_eq!(
+            process_handoff_signature(&msg, &att, &provider, &mut agg),
+            HandoffSignatureRecordOutcome::Recorded
+        );
+    }
+
+    #[test]
+    fn process_handoff_signature_rejects_non_matching_attestation() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x21; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee, att.clone());
+
+        // Sign over a different attestation than what the validator expects.
+        let other_att = build_handoff_attestation(5, [0x42; 32], vec![]).expect("build");
+        let msg = sign_handoff_attestation(other_att.clone(), names[0], &consensus_kps[0]);
+        assert_eq!(
+            process_handoff_signature(&msg, &att, &provider, &mut agg),
+            HandoffSignatureRecordOutcome::Rejected(HandoffSignatureVerdict::AttestationMismatch)
+        );
+        assert!(agg.certified().is_none());
+    }
+
+    #[test]
+    fn process_handoff_signature_rejects_unknown_signer() {
+        // Provider doesn't know the signer's consensus key.
+        let (committee, names, consensus_kps, _full_provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x21; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee, att.clone());
+        let empty = StaticConsensusPubkeyProvider::empty();
+        let msg = sign_handoff_attestation(att.clone(), names[0], &consensus_kps[0]);
+        assert_eq!(
+            process_handoff_signature(&msg, &att, &empty, &mut agg),
+            HandoffSignatureRecordOutcome::Rejected(HandoffSignatureVerdict::UnknownSigner)
+        );
     }
 
     #[test]

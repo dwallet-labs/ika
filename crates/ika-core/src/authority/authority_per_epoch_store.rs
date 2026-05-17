@@ -30,7 +30,9 @@ use crate::dwallet_checkpoints::{
     PendingDWalletCheckpoint,
 };
 use crate::validator_metadata::{
-    JoinerAnnouncementVerdict, JoinerPubkeyProvider, verify_joiner_announcement,
+    ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
+    JoinerAnnouncementVerdict, JoinerPubkeyProvider, process_handoff_signature,
+    verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -662,6 +664,28 @@ pub struct AuthorityPerEpochStore {
     /// which case every next-epoch joiner announcement is dropped.
     /// Current-epoch announcements are unaffected.
     joiner_pubkey_provider: ArcSwapOption<Box<dyn JoinerPubkeyProvider>>,
+
+    /// Consensus-key (Ed25519) lookup for handoff signatures; the
+    /// sui_syncer populates it from current committee + pending-set
+    /// staking-pool `consensus_pubkey_bytes`. Empty until the syncer
+    /// runs, in which case incoming handoff signatures drop.
+    consensus_pubkey_provider: ArcSwapOption<Box<dyn ConsensusPubkeyProvider>>,
+
+    /// This validator's locally-computed handoff attestation for the
+    /// epoch — the value every honest validator must arrive at by
+    /// the time EndOfPublish fires. Installed by the producer side
+    /// when it has the frozen mpc-data input set plus the DKG /
+    /// reconfig output digests. Until installed, incoming handoff
+    /// signatures drop with `AttestationMismatch`.
+    expected_handoff_attestation: ArcSwapOption<ika_types::validator_metadata::HandoffAttestation>,
+
+    /// In-memory stake-weighted accumulator over verified handoff
+    /// signatures. Rebuilt from `handoff_signatures` + the installed
+    /// expected attestation on first use after install; recreated
+    /// when the installed attestation changes. Yields a
+    /// `CertifiedHandoffAttestation` once stake crosses quorum;
+    /// further inserts are no-ops (one-shot semantics).
+    handoff_aggregator: parking_lot::Mutex<Option<HandoffAggregator>>,
 }
 
 /// The reconfiguration state of the authority.
@@ -860,6 +884,16 @@ pub struct AuthorityEpochTables {
     /// and never modified within the epoch (`freeze_mpc_data_if_first`
     /// is idempotent on a non-empty table).
     pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
+
+    /// Per-signer Ed25519 signatures over this epoch's handoff
+    /// attestation, captured from consensus order. Verified against
+    /// the validator's locally-computed expected attestation +
+    /// `ConsensusPubkeyProvider` before insert; replays are no-ops.
+    /// On quorum, the in-memory `HandoffAggregator` produces a
+    /// `CertifiedHandoffAttestation` which is persisted forever in
+    /// `AuthorityPerpetualTables` (perpetual persist lands in step
+    /// 7c).
+    pub(crate) handoff_signatures: DBMap<AuthorityName, fastcrypto::ed25519::Ed25519Signature>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1276,6 +1310,9 @@ impl AuthorityPerEpochStore {
             }),
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
+            consensus_pubkey_provider: ArcSwapOption::empty(),
+            expected_handoff_attestation: ArcSwapOption::empty(),
+            handoff_aggregator: parking_lot::Mutex::new(None),
         });
 
         s.update_buffer_stake_metric();
@@ -1660,6 +1697,128 @@ impl AuthorityPerEpochStore {
 
     pub fn clear_joiner_pubkey_provider(&self) {
         self.joiner_pubkey_provider.store(None);
+    }
+
+    /// Install the consensus-key (Ed25519) lookup used for handoff
+    /// signature verification. Re-installable across epoch
+    /// boundaries; safe to call from non-consensus tasks.
+    pub fn install_consensus_pubkey_provider(&self, provider: Box<dyn ConsensusPubkeyProvider>) {
+        self.consensus_pubkey_provider
+            .store(Some(Arc::new(provider)));
+    }
+
+    pub fn clear_consensus_pubkey_provider(&self) {
+        self.consensus_pubkey_provider.store(None);
+    }
+
+    /// Install the locally-computed expected handoff attestation
+    /// for the epoch. Rebuilds the in-memory `HandoffAggregator`
+    /// from any signatures already persisted in
+    /// `handoff_signatures`, so prior consensus-ordered signatures
+    /// (e.g. ones drained from RocksDB at restart) get folded in
+    /// correctly. Re-installing with a different attestation
+    /// discards the old aggregator state.
+    pub fn install_expected_handoff_attestation(
+        &self,
+        attestation: ika_types::validator_metadata::HandoffAttestation,
+    ) -> IkaResult {
+        let attestation_arc = Arc::new(attestation.clone());
+        let previous = self
+            .expected_handoff_attestation
+            .swap(Some(attestation_arc.clone()));
+        let attestation_unchanged = previous
+            .as_ref()
+            .map(|p| p.as_ref() == attestation_arc.as_ref())
+            .unwrap_or(false);
+        let mut guard = self.handoff_aggregator.lock();
+        if attestation_unchanged && guard.is_some() {
+            return Ok(());
+        }
+        let mut aggregator = HandoffAggregator::new(self.committee.clone(), attestation);
+        // Replay persisted signatures into the fresh aggregator.
+        // They were verified once already on the way into the DB;
+        // re-inserting trusts that (no provider re-verification
+        // needed here). Order doesn't matter — the aggregator is
+        // stake-weighted.
+        let tables = self.tables()?;
+        for entry in tables.handoff_signatures.safe_iter() {
+            let (signer, signature) = entry?;
+            aggregator.insert_verified(signer, signature);
+        }
+        *guard = Some(aggregator);
+        Ok(())
+    }
+
+    pub fn clear_expected_handoff_attestation(&self) {
+        self.expected_handoff_attestation.store(None);
+        *self.handoff_aggregator.lock() = None;
+    }
+
+    /// Records an incoming `HandoffSignatureMessage` from consensus.
+    ///
+    /// Drops the message silently when:
+    /// - no expected attestation is installed yet (the producer
+    ///   side hasn't computed one for this validator),
+    /// - no consensus-pubkey provider is installed,
+    /// - the signature fails verification (any
+    ///   `HandoffSignatureVerdict` except `Accept`).
+    ///
+    /// On `Accept`, persists the signature into `handoff_signatures`
+    /// (replays no-op via the typed-store `insert` semantics — same
+    /// key, same value), drives the in-memory aggregator, and
+    /// returns the freshly-minted cert if quorum was just crossed.
+    /// Caller (the perpetual-persist step) is responsible for
+    /// writing the cert to perpetual storage.
+    pub fn record_handoff_signature(
+        &self,
+        msg: &ika_types::validator_metadata::HandoffSignatureMessage,
+    ) -> IkaResult<Option<ika_types::validator_metadata::CertifiedHandoffAttestation>> {
+        let Some(expected) = self.expected_handoff_attestation.load_full() else {
+            debug!(
+                signer = ?msg.signer,
+                "no expected handoff attestation installed — dropping signature"
+            );
+            return Ok(None);
+        };
+        let Some(provider) = self.consensus_pubkey_provider.load_full() else {
+            debug!(
+                signer = ?msg.signer,
+                "no consensus pubkey provider installed — dropping handoff signature"
+            );
+            return Ok(None);
+        };
+        let mut guard = self.handoff_aggregator.lock();
+        let Some(aggregator) = guard.as_mut() else {
+            // Aggregator wasn't initialized — should be impossible
+            // when `expected_handoff_attestation` is set, but bail
+            // safely rather than panic.
+            warn!("expected handoff attestation set but aggregator missing — dropping");
+            return Ok(None);
+        };
+        let outcome = process_handoff_signature(
+            msg,
+            expected.as_ref(),
+            provider.as_ref().as_ref(),
+            aggregator,
+        );
+        match outcome {
+            HandoffSignatureRecordOutcome::Recorded => {
+                self.tables()?
+                    .handoff_signatures
+                    .insert(&msg.signer, &msg.signature)?;
+                Ok(None)
+            }
+            HandoffSignatureRecordOutcome::Certified(cert) => {
+                self.tables()?
+                    .handoff_signatures
+                    .insert(&msg.signer, &msg.signature)?;
+                Ok(Some(cert))
+            }
+            HandoffSignatureRecordOutcome::Rejected(verdict) => {
+                warn!(?verdict, signer = ?msg.signer, "handoff signature rejected");
+                Ok(None)
+            }
+        }
     }
 
     pub fn get_validator_mpc_data_announcement(
@@ -2545,9 +2704,19 @@ impl AuthorityPerEpochStore {
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::HandoffSignature(..),
+                kind: ConsensusTransactionKind::HandoffSignature(message),
                 ..
-            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
+            }) => {
+                // Cert (if quorum just crossed) is intentionally
+                // not handled here; perpetual-persist plumbing
+                // (step 7c) hangs off the record outcome from a
+                // dedicated drain task. Dropping it on the floor
+                // for now is safe — the next ordered signature
+                // crossing quorum will mint it again, and
+                // restart-replay rebuilds the aggregator.
+                let _ = self.record_handoff_signature(message)?;
+                Ok(ConsensusCertificateResult::ConsensusMessage)
+            }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
                 ..

@@ -92,7 +92,7 @@ pub struct HandoffAttestation {
 /// protocol pubkey), but the `signature` is over
 /// `bcs(IntentMessage::new(Intent::ika_app(HandoffAttestation), attestation))`
 /// using `signer`'s consensus key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HandoffSignatureMessage {
     pub attestation: HandoffAttestation,
     pub signer: AuthorityName,
@@ -108,7 +108,7 @@ pub struct HandoffSignatureMessage {
 /// `committee.weight(signer)` reaches the committee's quorum
 /// threshold. Ed25519 doesn't aggregate, so this is a list rather
 /// than a single aggregate sig + bitmap.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CertifiedHandoffAttestation {
     pub attestation: HandoffAttestation,
     pub signatures: Vec<(AuthorityName, Ed25519Signature)>,
