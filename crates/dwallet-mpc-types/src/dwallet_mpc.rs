@@ -329,38 +329,42 @@ pub enum VersionedSignOutput {
 ///
 /// - `V1` — pre-mainnet shape; never on-chain in any shipped network. Decode
 ///   returns the "no longer supported" error.
-/// - `V2` — DKG output bytes. Both `decentralized_party_backward_compatible::dkg::Party::PublicOutput`
-///   (mainnet-v1.1.8 bwd-compat, used at `protocol_version <= 4`) and
-///   `decentralized_party::dkg::Party::PublicOutput` (post-PR-#1707 main, used
-///   at `protocol_version >= 5`) serialize to the same bytes — DKG `PublicOutput`
-///   is wire-stable across the cryptography-private bump (audit §4). The
-///   per-version Party dispatch (which determines the in-flight `Message`
-///   shape) is handled at the advance call site in `mpc_session/input.rs`
-///   and `mpc_computations.rs`, gated by `ProtocolConfig::is_network_encryption_key_version_v3()`.
+/// - `V2` — mainnet-v1.1.8 / bwd-compat shape; bytes from
+///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`.
+///   Written by `advance_network_dkg_bwd_compat` at `protocol_version <= 4`.
+/// - `V3` — post-PR-#1707 main shape; bytes from
+///   `twopc_mpc::decentralized_party::dkg::Party::PublicOutput`. The main
+///   `PublicOutput` adds a trailing `threshold_encryption_to_sharing_output`
+///   field that the bwd-compat shape doesn't carry, so the byte layouts differ
+///   and decoding requires the right Party type. Written by
+///   `advance_network_dkg_v2` at `protocol_version >= 5`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    V3(MPCPublicOutput),
 }
 
 impl VersionedNetworkDkgOutput {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::V1(bytes) | Self::V2(bytes) => bytes,
+            Self::V1(bytes) | Self::V2(bytes) | Self::V3(bytes) => bytes,
         }
     }
 }
 
 /// Wire-tagged decentralized-reconfiguration public output.
 ///
-/// Tag semantics mirror [`VersionedNetworkDkgOutput`]: `V2` carries bytes from
-/// either the bwd-compat or main `reconfiguration::Party::PublicOutput`
-/// (wire-stable across the bump per audit §4). Per-version Party dispatch is at
-/// the advance call site.
+/// Tag semantics mirror [`VersionedNetworkDkgOutput`]: `V2` ≡ bwd-compat shape
+/// (`decentralized_party_backward_compatible::reconfiguration::Party::PublicOutput`),
+/// `V3` ≡ post-PR-#1707 main shape
+/// (`decentralized_party::reconfiguration::Party::PublicOutput`). The two
+/// `PublicOutput` types diverge in trailing fields and are NOT byte-compatible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    V3(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

@@ -871,6 +871,7 @@ pub fn network_key_version_inner(
     match &network_dkg_public_output {
         VersionedNetworkDkgOutput::V1(_) => Ok(1),
         VersionedNetworkDkgOutput::V2(_) => Ok(2),
+        VersionedNetworkDkgOutput::V3(_) => Ok(3),
     }
 }
 
@@ -1070,6 +1071,28 @@ fn protocol_public_parameters(
             Ok(bcs::to_bytes(&protocol_public_parameters)?)
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
+            // bwd-compat (mainnet-v1.1.8) DKG output shape.
+            let network_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Ristretto => bcs::to_bytes(
+                    &network_dkg_public_output.ristretto_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(
+                    &network_dkg_public_output.curve25519_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256r1_protocol_public_parameters()?,
+                )?,
+            };
+
+            Ok(pp)
+        }
+        VersionedNetworkDkgOutput::V3(network_dkg_public_output) => {
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
@@ -1107,6 +1130,28 @@ fn protocol_public_parameters_from_reconfiguration_output(
             protocol_public_parameters(curve, versioned_network_dkg_output)
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
+            // bwd-compat reconfig output shape.
+            let public_output: <twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?)?
+                }
+            };
+
+            Ok(pp)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 

@@ -1230,9 +1230,12 @@ impl ProtocolCryptographicData {
                             malicious_parties,
                             private_output,
                         } => {
-                            // Wrap the public output with its version.
+                            // Wrap the public output with its version. Main
+                            // Reconfig writes V3 (post-PR-#1707 shape); the
+                            // bwd-compat path in `advance_network_reconfiguration_bwd_compat`
+                            // writes V2.
                             let public_output_value =
-                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V2(
+                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V3(
                                     public_output_value,
                                 ))?;
 

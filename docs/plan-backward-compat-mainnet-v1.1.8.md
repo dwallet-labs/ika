@@ -13,16 +13,49 @@
 - ✅ Item 8 (next commit): `PublicInput::NetworkEncryptionKey{Dkg, Reconfiguration}` wrapped in `…PublicInput::{BwdCompat, Main}` enums; `&ProtocolConfig` threaded into `session_input_from_request`; `ProtocolCryptographicData::NetworkEncryptionKey{Dkg, Reconfiguration}` holds `…AdvanceArgs::{BwdCompat, Main}`; `ready_to_advance` and `compute_mpc` match each enum. Dispatch is on `is_{network_encryption_key, reconfiguration_message}_version_v3()`.
 - ✅ PR #1707 review item 3 file rename (`23ba5e5f3d`).
 
-**Remaining**:
+**Critical correction shipped (in-flight commit)**: the audit's claim of
+"`dkg::PublicOutput` wire-stable" referred only to pre/post-bump main module
+parity. The bwd-compat module ships a *distinct* `PublicOutput` struct that
+is a structural subset of main (no trailing `threshold_encryption_to_sharing_output`),
+and `bcs::from_bytes` between them fails with `Eof`. Wire tag is now
+re-allocated:
 
-- 🛠 Item 9 (v2→v3 reconfig migration arm): the existing cross-version arm at
-  `reconfiguration.rs:115-167` handles the pre-mainnet v1→v2 transition. Once we're
-  ready to upgrade a live network from `network_encryption_key_version == 2` (v2 DKG
-  output bytes) to `version == 3`, add a symmetric arm that decodes the V2-tagged
-  DKG bytes and feeds them into the **main** `decentralized_party::reconfiguration::Party::PublicInput::new_from_dkg_output`, writing the result as V2 still (DKG output is wire-stable; only Party impl + Message shape differ). Currently the bwd-compat reconfig dispatcher's `(V2 dkg, None reconfig)` arm already handles the genesis-equivalent case under the bwd-compat Party; the upgrade arm would dispatch into the main Party instead. Practically tied to ProtocolConfig activation logic that the user's operations team controls.
-- 🛠 Item 10: integration tests for bwd-compat DKG/Reconfig swarms + v2→v3 migration —
-  the decode round-trip tests shipped in `23ba5e5f3d`; the swarm tests need writing
-  now that dispatch is wired end-to-end.
+- `V2` = bytes from `bwd_compat_dkg::Party::PublicOutput` / `bwd_compat_reconfig::Party::PublicOutput`.
+- `V3` (re-added) = bytes from `decentralized_party::dkg::Party::PublicOutput` / `decentralized_party::reconfiguration::Party::PublicOutput`.
+
+Decode sites in `network_dkg.rs` (`get_decryption_key_shares_from_public_output`,
+`instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output`)
+and in `reconfiguration.rs` (`instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output`)
+dispatch on the tag. Main DKG/Reconfig advance writes V3; bwd-compat writes V2.
+Consumers in `dwallet-mpc-centralized-party/lib.rs` and
+`dwallet_mpc_service.rs` updated.
+
+**Verification**: `test_bwd_compat_network_dkg_full_flow` integration test
+under a `ProtocolConfig` override pinning `_version == 2` runs end-to-end
+under `bwd_compat_dkg::Party`, produces V2-tagged output, validators install
+the network key successfully (157s).
+
+**Blocked on second upstream gap**:
+
+- ❌ Item 7 (bwd-compat Reconfig end-to-end) + Item 9 (v2→v3 migration):
+  upstream's `bwd_compat_reconfig::PublicInput::new_from_{dkg,reconfiguration}_output`
+  constructors take `universal_public_output: decentralized_party::dkg::PublicOutput`
+  (the post-bump main type) and read only the legacy fields. V2-tagged DKG
+  output decodes as `bwd_compat_dkg::Party::PublicOutput` (subset shape) —
+  Rust's type system blocks the call without a conversion. `cryptography-private
+  @ 7795eb45` doesn't ship one. Upstream needs either:
+  - `impl From<bwd_compat::dkg::PublicOutput> for decentralized_party::dkg::PublicOutput`
+    (synthesizes a placeholder `threshold_encryption_to_sharing_output`), or
+  - `bwd_compat_reconfig::PublicInput::new_from_bwd_compat_dkg_output(…)`
+    taking the bwd-compat shape directly.
+
+  Until one lands: `test_bwd_compat_network_key_reconfiguration` and
+  `test_v2_to_v3_reconfiguration_migration` are `#[ignore]`'d with explicit
+  pointer messages. The dispatcher returns an explicit error at the affected
+  call site so failures are loud, not silent.
+
+- 🛠 Item 10 partial: bwd-compat DKG swarm test shipped; reconfig + migration
+  tests written but ignored pending upstream.
 
 ## Context
 

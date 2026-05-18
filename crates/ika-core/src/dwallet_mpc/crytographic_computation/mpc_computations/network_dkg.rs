@@ -80,6 +80,22 @@ async fn get_decryption_key_shares_from_public_output(
                         "V1 Network keys no longer supported".to_string(),
                     )),
                     VersionedNetworkDkgOutput::V2(public_output) => {
+                        // mainnet-v1.1.8 / bwd-compat shape — decode under
+                        // `bwd_compat_dkg::Party::PublicOutput`.
+                        match bcs::from_bytes::<<bwd_compat_dkg::Party as mpc::Party>::PublicOutput>(
+                            public_output,
+                        ) {
+                            Ok(dkg_public_output) => dkg_public_output
+                                .decrypt_decryption_key_shares(
+                                    party_id,
+                                    &access_structure,
+                                    personal_decryption_key,
+                                )
+                                .map_err(DwalletMPCError::from),
+                            Err(e) => Err(e.into()),
+                        }
+                    }
+                    VersionedNetworkDkgOutput::V3(public_output) => {
                         match bcs::from_bytes::<<dkg::Party as mpc::Party>::PublicOutput>(
                             public_output,
                         ) {
@@ -104,6 +120,22 @@ async fn get_decryption_key_shares_from_public_output(
                         Err(DwalletMPCError::InternalError("V1 Network keys no longer supported".to_string()))
                     }
                     VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
+                        // bwd-compat reconfig output shape.
+                        match bcs::from_bytes::<
+                            <twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party as mpc::Party>::PublicOutput,
+                        >(public_output)
+                        {
+                            Ok(public_output) => public_output
+                                .decrypt_decryption_key_shares(
+                                    party_id,
+                                    &access_structure,
+                                    personal_decryption_key,
+                                )
+                                .map_err(DwalletMPCError::from),
+                            Err(e) => Err(e.into()),
+                        }
+                    }
+                    VersionedDecryptionKeyReconfigurationOutput::V3(public_output) => {
                         match bcs::from_bytes::<
                             <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput,
                         >(public_output)
@@ -348,7 +380,7 @@ pub(crate) fn advance_network_dkg_v2(
             private_output,
         }) => {
             let public_output_value =
-                bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?;
+                bcs::to_bytes(&VersionedNetworkDkgOutput::V3(public_output_value))?;
 
             Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                 public_output_value,
@@ -551,46 +583,36 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
-    match &mpc_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-            "V1 Network keys no longer supported".to_string(),
-        )),
-        VersionedNetworkDkgOutput::V2(public_output_bytes) => {
-            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
-                bcs::from_bytes(public_output_bytes)?;
-
+    // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
+    // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
+    // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
+    macro_rules! build_from_public_output {
+        ($public_output:expr) => {{
+            let public_output = $public_output;
             let secp256k1_protocol_public_parameters =
                 Arc::new(public_output.secp256k1_protocol_public_parameters()?);
-
             let secp256k1_decryption_key_share_public_parameters = Arc::new(
                 public_output
                     .secp256k1_decryption_key_share_public_parameters(access_structure)
                     .map_err(DwalletMPCError::from)?,
             );
-
-            let network_dkg_output = mpc_public_output;
-
             let secp256r1_protocol_public_parameters =
                 Arc::new(public_output.secp256r1_protocol_public_parameters()?);
             let secp256r1_decryption_key_share_public_parameters = Arc::new(
                 public_output.secp256r1_decryption_key_share_public_parameters(access_structure)?,
             );
-
             let ristretto_protocol_public_parameters =
                 Arc::new(public_output.ristretto_protocol_public_parameters()?);
             let ristretto_decryption_key_share_public_parameters = Arc::new(
                 public_output.ristretto_decryption_key_share_public_parameters(access_structure)?,
             );
-
             let curve25519_protocol_public_parameters =
                 Arc::new(public_output.curve25519_protocol_public_parameters()?);
-
             let curve25519_decryption_key_share_public_parameters = Arc::new(
                 public_output
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            // Compute DKG outputs and extract public keys for all 4 curves.
             let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
                 &network_key_id,
                 &secp256k1_protocol_public_parameters,
@@ -599,22 +621,41 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 &curve25519_protocol_public_parameters,
             )?;
 
-            Ok(build_network_encryption_key_public_data(
-                epoch,
-                dkg_at_epoch,
-                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                None,
-                network_dkg_output,
-                secp256k1_protocol_public_parameters,
-                secp256k1_decryption_key_share_public_parameters,
-                secp256r1_protocol_public_parameters,
-                secp256r1_decryption_key_share_public_parameters,
-                ristretto_protocol_public_parameters,
-                ristretto_decryption_key_share_public_parameters,
-                curve25519_protocol_public_parameters,
-                curve25519_decryption_key_share_public_parameters,
-                &noa_dkg_data,
-            ))
+            Ok::<NetworkEncryptionKeyPublicData, DwalletMPCError>(
+                build_network_encryption_key_public_data(
+                    epoch,
+                    dkg_at_epoch,
+                    NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                    None,
+                    mpc_public_output.clone(),
+                    secp256k1_protocol_public_parameters,
+                    secp256k1_decryption_key_share_public_parameters,
+                    secp256r1_protocol_public_parameters,
+                    secp256r1_decryption_key_share_public_parameters,
+                    ristretto_protocol_public_parameters,
+                    ristretto_decryption_key_share_public_parameters,
+                    curve25519_protocol_public_parameters,
+                    curve25519_decryption_key_share_public_parameters,
+                    &noa_dkg_data,
+                ),
+            )
+        }};
+    }
+
+    match &mpc_public_output {
+        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
+            "V1 Network keys no longer supported".to_string(),
+        )),
+        VersionedNetworkDkgOutput::V2(public_output_bytes) => {
+            // bwd-compat shape — decode under `bwd_compat_dkg::Party::PublicOutput`.
+            let public_output: <bwd_compat_dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            build_from_public_output!(public_output)
+        }
+        VersionedNetworkDkgOutput::V3(public_output_bytes) => {
+            let public_output: <dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+            build_from_public_output!(public_output)
         }
     }
 }
