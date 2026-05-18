@@ -14,7 +14,7 @@ use sui_types::{base_types::SuiAddress, multiaddr::Multiaddr};
 use crate::{IkaPackagesConfigFile, read_ika_sui_config_yaml};
 use clap::*;
 use colored::Colorize;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
@@ -428,9 +428,12 @@ impl IkaValidatorCommand {
 
                 let class_groups_public_key_and_proof =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
+                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ See
+                // `ValidatorEncryptionKeysAndProofs`'s docstring — this byte field is now
+                // overloaded to carry the combined struct (class groups + 3 PVSS keys).
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
                     class_groups_public_key_and_proof: bcs::to_bytes(
-                        &class_groups_public_key_and_proof.encryption_key_and_proof(),
+                        &class_groups_public_key_and_proof.validator_encryption_keys_and_proofs(),
                     )?,
                 });
 
@@ -946,13 +949,18 @@ impl IkaValidatorCommand {
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
-                // Create a new MPC root seed and class groups key
+                // Create a new MPC root seed and the combined validator-key payload.
+                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ The Move-side
+                // `class_groups_public_key_and_proof` byte field is overloaded to carry
+                // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) post-bump;
+                // see that struct's docstring.
                 let mpc_root_seed = RootSeed::random_seed();
-                let new_class_groups_key = ClassGroupsKeyPairAndProof::from_seed(&mpc_root_seed)
-                    .encryption_key_and_proof();
+                let new_validator_keys =
+                    ClassGroupsAndPvssKeyPairAndProof::from_seed(&mpc_root_seed)
+                        .validator_encryption_keys_and_proofs();
 
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: bcs::to_bytes(&new_class_groups_key)?,
+                    class_groups_public_key_and_proof: bcs::to_bytes(&new_validator_keys)?,
                 });
 
                 let response = set_next_epoch_mpc_data_bytes(
@@ -1208,9 +1216,11 @@ fn make_key_files(
     Ok(())
 }
 
-/// Generates the class groups a key pair and proof from a seed file if it exists,
-/// otherwise generates and saves the seed.
-fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ClassGroupsKeyPairAndProof>> {
+/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE)
+/// from a seed file if it exists, otherwise generates and saves the seed.
+fn read_or_generate_root_seed(
+    seed_path: PathBuf,
+) -> Result<Box<ClassGroupsAndPvssKeyPairAndProof>> {
     let seed = match RootSeed::from_file(seed_path.clone()) {
         Ok(seed) => {
             println!("Use existing seed: {seed_path:?}.",);
@@ -1224,9 +1234,9 @@ fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ClassGroupsKeyPa
         }
     };
 
-    let class_groups_public_key_and_proof = Box::new(ClassGroupsKeyPairAndProof::from_seed(&seed));
-
-    Ok(class_groups_public_key_and_proof)
+    Ok(Box::new(ClassGroupsAndPvssKeyPairAndProof::from_seed(
+        &seed,
+    )))
 }
 
 pub fn write_transaction_response(

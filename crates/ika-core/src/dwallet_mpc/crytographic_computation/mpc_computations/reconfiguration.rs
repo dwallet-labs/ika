@@ -46,10 +46,21 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
             generate_access_structure_from_committee(&upcoming_committee)?;
 
         let current_encryption_keys_per_crt_prime_and_proofs =
-            extract_encryption_keys_from_committee(&current_committee)?;
+            extract_class_groups_encryption_keys_from_committee(&current_committee)?;
 
         let upcoming_encryption_keys_per_crt_prime_and_proofs =
-            extract_encryption_keys_from_committee(&upcoming_committee)?;
+            extract_class_groups_encryption_keys_from_committee(&upcoming_committee)?;
+
+        // Per-curve PVSS HPKE encryption keys + proofs. Upstream's
+        // `new_from_dkg_output` / `new_from_reconfiguration_output` accept a
+        // single set of PVSS HashMaps keyed by `PartyID`; their internal use
+        // (`participating_parties_access_structure: upcoming_access_structure`
+        // in `2pc-mpc/src/decentralized_party/reconfiguration.rs:401, 689`)
+        // shows they correspond to the UPCOMING committee — the dealers send
+        // ciphertexts encrypted under each upcoming participating party's PVSS
+        // public key.
+        let upcoming_validators_pvss_hpke_keys_by_party_id =
+            crate::dwallet_mpc::get_validator_mpc_keys_by_party_id(&upcoming_committee)?;
 
         let current_tangible_party_id_to_upcoming =
             current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
@@ -133,6 +144,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         );
 
 
+                        // 3 trailing PVSS HPKE encryption-keys-and-proofs args (per-curve,
+                        // for upstream's threshold-encryption-to-sharing sub-protocol) sourced
+                        // from the UPCOMING committee.
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
                                 &current_access_structure,
@@ -142,6 +156,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_tangible_party_id_to_upcoming,
                                 bcs::from_bytes(&network_dkg_public_output)?,
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -158,7 +175,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
                             "network_dkg_public_output",
-                            &network_dkg_public_output
+                            &network_dkg_public_output,
                         );
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -169,6 +186,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 current_tangible_party_id_to_upcoming,
                                 public_output,
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -191,13 +211,13 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v2)]",
                             "network_dkg_public_output",
-                            &network_dkg_public_output
+                            &network_dkg_public_output,
                         );
 
                         debug_variable_chunks(
                             "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
                             "latest_reconfiguration_public_output",
-                            &latest_reconfiguration_public_output
+                            &latest_reconfiguration_public_output,
                         );
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -209,6 +229,9 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_tangible_party_id_to_upcoming,
                                 public_output.into(),
                                 bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
+                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
                             )
                                 .map_err(DwalletMPCError::from)?;
 
@@ -241,7 +264,7 @@ fn current_tangible_party_id_to_upcoming(
         .collect()
 }
 
-fn extract_encryption_keys_from_committee(
+fn extract_class_groups_encryption_keys_from_committee(
     committee: &Committee,
 ) -> DwalletMPCResult<HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>> {
     committee
@@ -263,7 +286,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
-    party_id: group::PartyID,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -311,8 +333,6 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 &secp256r1_protocol_public_parameters,
                 &ristretto_protocol_public_parameters,
                 &curve25519_protocol_public_parameters,
-                access_structure,
-                party_id,
             )?;
 
             Ok(build_network_encryption_key_public_data(

@@ -26,7 +26,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -2181,17 +2181,22 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
 
         // Verify that the validators local class-groups key is the
         // same as stored in the system state object onchain.
         // This makes sure the seed we are using is the same seed we used at setup
         // to create the encryption key, and thus it assures we will generate the same decryption key too.
+        //
+        // Post-bump: the on-chain bytes are now `ValidatorEncryptionKeysAndProofs` (class
+        // groups + 3 PVSS keys); compare against the same combined struct re-derived from
+        // the local key material. See the wire-incompat warning on
+        // `ValidatorEncryptionKeysAndProofs`.
         if onchain_validator
             .get_mpc_data()
             .unwrap()
             .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.encryption_key_and_proof())?
+            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
