@@ -41,9 +41,9 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-use sui_types::transaction::{Argument, CallArg, Transaction};
+use sui_types::transaction::{Argument, CallArg, ProgrammableTransaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
@@ -57,6 +57,18 @@ pub enum StopReason {
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
+/// Per-executor state guarded by a single mutex so all Sui submissions
+/// serialize. Holds the previous tx digest (so the next submission can
+/// wait for it to confirm) and the post-execution gas coin ObjectRef
+/// from that prior submission. Caching the gas ref from the effects
+/// response avoids the JSON-RPC indexer lag that otherwise causes a
+/// "object version is unavailable for consumption" rejection loop.
+#[derive(Default)]
+pub(crate) struct NotifierState {
+    last_submitted_tx_digest: Option<TransactionDigest>,
+    cached_gas: Option<Vec<ObjectRef>>,
+}
+
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
@@ -66,7 +78,7 @@ pub struct SuiExecutor<C> {
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
     metrics: Arc<SuiConnectorMetrics>,
-    notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+    notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
 }
 
 struct EpochSwitchState {
@@ -100,7 +112,7 @@ where
             sui_notifier,
             sui_client,
             metrics,
-            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierState::default())),
         }
     }
 
@@ -603,12 +615,8 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -628,29 +636,19 @@ where
             );
         }
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
+        Ok(
+            Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client)
+                .await?,
         )
-        .await;
-
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
     async fn calculate_protocols_pricing(
         sui_client: &Arc<SuiClient<C>>,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
         default_pricing_keys: &[PricingInfoKey],
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -683,54 +681,91 @@ where
             );
         }
 
+        Ok(
+            Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client)
+                .await?,
+        )
+    }
+
+    /// Submit a programmable transaction built by the caller.
+    ///
+    /// Holds `notifier_tx_lock` end-to-end so all Sui submissions from this
+    /// executor are serialized. The gas coin ObjectRef used for this tx is
+    /// taken from `state.cached_gas` when available — i.e. derived from the
+    /// previous successful tx's effects (`tx_response.effects.gas_object()`),
+    /// which is authoritative consensus-level data. Only on cold start (no
+    /// cache yet) or after an error invalidates the cache do we fall back to
+    /// `sui_client.get_gas_objects(...)`, which goes through the JSON-RPC
+    /// indexer and can lag the on-chain state by one or more versions.
+    /// That lag is what produced the runaway "object version 0xN is
+    /// unavailable for consumption, current 0xN+1" rejection loop.
+    async fn submit_tx_to_sui(
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
+        sui_notifier: &SuiNotifier,
+        pt: ProgrammableTransaction,
+        sui_client: &Arc<SuiClient<C>>,
+    ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
+        let mut state = notifier_tx_lock.lock().await;
+
+        // Resolve gas refs:
+        //   - cache hit (set from prior tx's post-execution effects): use it directly
+        //   - cache miss (cold start or after an error): query the RPC, but then
+        //     wait until the queried version is >= what consensus reported so we
+        //     don't ship a stale ref.
+        let gas_coins: Vec<ObjectRef> = if let Some(cached) = state.cached_gas.clone() {
+            cached
+        } else {
+            // Cold start: it's safe to also wait for the prev tx's events here, in case
+            // the caller chained tx submissions before the cache existed.
+            if let Some(prev_digest) = state.last_submitted_tx_digest {
+                while sui_client
+                    .get_events_by_tx_digest(prev_digest)
+                    .await
+                    .is_err()
+                {
+                    info!(
+                        transaction_digest = ?prev_digest,
+                        "The last submitted transaction has not been processed yet, retrying..."
+                    );
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                info!(
+                    transaction_digest = ?prev_digest,
+                    "The last submitted transaction has been processed, submitting the next one",
+                );
+            }
+            sui_client.get_gas_objects(sui_notifier.sui_address).await
+        };
+
         let transaction = super::build_sui_transaction(
             sui_notifier.sui_address,
-            ptb.finish(),
+            pt,
             sui_client,
             gas_coins,
             &sui_notifier.sui_key,
         )
         .await;
 
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
-    }
-
-    async fn submit_tx_to_sui(
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
-        transaction: Transaction,
-        sui_client: &Arc<SuiClient<C>>,
-    ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
-        let mut last_submitted_tx_digest = notifier_tx_lock.lock().await;
-        if let Some(prev_digest) = *last_submitted_tx_digest {
-            while sui_client
-                .get_events_by_tx_digest(prev_digest)
-                .await
-                .is_err()
-            {
-                info!(
-                    transaction_digest = ?prev_digest,
-                    "The last submitted transaction has not been processed yet, retrying..."
-                );
-                // Small delay to avoid spamming the node.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-
-            info!(
-            transaction_digest = ?prev_digest,
-            "The last submitted transaction has been processed, submitting the next one",
-                        );
-        }
-
         info!(
             transaction_digest = ?transaction.digest(),
             "Submitting a transaction to Sui"
         );
 
-        let tx_response = sui_client
+        let tx_response = match sui_client
             .execute_transaction_block_with_effects(transaction)
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Drop the cached gas ref so the next attempt re-reads the chain.
+                // Without this we'd resubmit the same stale ref forever.
+                state.cached_gas = None;
+                return Err(e.into());
+            }
+        };
 
         if !tx_response.errors.is_empty() {
+            state.cached_gas = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 format!("{:?}", tx_response.errors),
@@ -739,6 +774,7 @@ where
         }
 
         let Some(tx_effects) = tx_response.effects.clone() else {
+            state.cached_gas = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 "Transaction effects are missing".to_string(),
@@ -747,6 +783,7 @@ where
         };
 
         if let SuiExecutionStatus::Failure { error } = tx_effects.status() {
+            state.cached_gas = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 format!(
@@ -756,7 +793,12 @@ where
             .into());
         };
 
-        *last_submitted_tx_digest = Some(tx_response.digest);
+        // Cache the post-execution gas ObjectRef for the next submission.
+        // tx_effects.gas_object() is the authoritative post-execution view from
+        // consensus; for multi-coin gas payments, only the primary remains
+        // after smashing, so we cache exactly that one ref.
+        state.cached_gas = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
+        state.last_submitted_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
@@ -765,14 +807,9 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_mid_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
-
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let ika_system_state_arg = sui_client.get_mutable_system_arg_must_succeed().await;
@@ -821,16 +858,10 @@ where
             vec![coordinator_arg, system_current_status_info],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
+        Ok(
+            Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client)
+                .await?,
         )
-        .await;
-
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
     async fn lock_last_session_to_complete_in_current_epoch(
@@ -838,14 +869,9 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Process `lock_last_active_session_sequence_number()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
-
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let ika_system_state_arg = sui_client.get_mutable_system_arg_must_succeed().await;
@@ -887,16 +913,10 @@ where
             vec![coordinator_arg, system_current_status_info],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
+        Ok(
+            Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client)
+                .await?,
         )
-        .await;
-
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
     async fn process_request_advance_epoch(
@@ -904,14 +924,9 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_request_advance_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
-
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         let ika_system_state_arg = sui_client.get_mutable_system_arg_must_succeed().await;
@@ -961,16 +976,10 @@ where
             vec![system_arg, advance_epoch_approver, clock_arg],
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
+        Ok(
+            Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client)
+                .await?,
         )
-        .await;
-
-        Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
     async fn handle_dwallet_checkpoint_execution_task(
@@ -981,15 +990,9 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         let mut ptb = ProgrammableTransactionBuilder::new();
-
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        //merge_gas_coins(&mut ptb, &gas_coins)?;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let dwallet_2pc_mpc_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -1040,16 +1043,8 @@ where
             vec![gas_fee_reimbursement_sui],
         ));
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
-
-        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
+        match Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client).await
+        {
             Ok(result) => Ok(result),
             Err(err) => {
                 error!(error=?err, "failed to submit dwallet checkpoint to sui",);
@@ -1067,15 +1062,9 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierState>>,
     ) -> IkaResult<()> {
         let mut ptb = ProgrammableTransactionBuilder::new();
-
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
-        // merge_gas_coins(&mut ptb, &gas_coins)?;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         info!(
             "`signers_bitmap` @ handle_execution_task: {:?}",
@@ -1118,16 +1107,8 @@ where
             args,
         );
 
-        let transaction = super::build_sui_transaction(
-            sui_notifier.sui_address,
-            ptb.finish(),
-            sui_client,
-            gas_coins,
-            &sui_notifier.sui_key,
-        )
-        .await;
-
-        match Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await {
+        match Self::submit_tx_to_sui(notifier_tx_lock, sui_notifier, ptb.finish(), sui_client).await
+        {
             Ok(_) => Ok(()),
             Err(err) => {
                 error!(error=?err, "failed to submit a system checkpoint to consensus");
