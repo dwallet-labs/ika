@@ -406,11 +406,23 @@ impl DWalletMPCManager {
             }
         }
 
+        // Fallback: also pull keys directly from the Sui watch channel.
+        // The consensus-voted path can stall at epoch boundaries when the
+        // NetworkKeyData consensus round fails to land. Pulling from Sui keeps
+        // `requests_pending_for_network_key` drainable independently of consensus.
+        let sui_pulled_key_ids = self.maybe_update_network_keys_from_sui().await;
+
         // Now handle events for which we've just received the corresponding public data.
         // Since events are only queued in `events_pending_for_network_key` in `handle_mpc_request()` calls from this function,
         // receiving the network key ensures no further events will be pending for that key.
         // Therefore, it's safe to process them now, as the queue will remain empty afterward.
-        for key_id in newly_instantiated_network_key_ids {
+        let all_new_key_ids: Vec<ObjectID> = newly_instantiated_network_key_ids
+            .into_iter()
+            .chain(sui_pulled_key_ids)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        for key_id in all_new_key_ids {
             let events_pending_for_newly_updated_network_key = self
                 .requests_pending_for_network_key
                 .remove(&key_id)

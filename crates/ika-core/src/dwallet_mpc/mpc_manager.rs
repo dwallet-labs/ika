@@ -1329,6 +1329,95 @@ impl DWalletMPCManager {
         false
     }
 
+    /// Fallback path: instantiate network keys directly from the Sui watch channel.
+    ///
+    /// The consensus-voted path (`instantiate_agreed_keys_from_voted_data`) is the
+    /// primary mechanism for loading per-epoch network key data. It can stall at an
+    /// epoch boundary if the `ConsensusTransaction::NetworkKeyData` round fails to
+    /// land — leaving `requests_pending_for_network_key` undrainable and wedging the
+    /// chain (see EPOCH_12_WEDGE_ANALYSIS.md). This method mirrors `main`'s direct
+    /// Sui-pull instantiation so the validator can always make progress on the
+    /// network-key requirement even when consensus voting hasn't agreed yet.
+    pub(crate) async fn maybe_update_network_keys_from_sui(&mut self) -> Vec<ObjectID> {
+        let has_changed = match self.sui_data_receivers.network_keys_receiver.has_changed() {
+            Ok(changed) => changed,
+            Err(err) => {
+                error!(error=?err, "failed to check network keys receiver");
+                return vec![];
+            }
+        };
+        if !has_changed {
+            return vec![];
+        }
+
+        let new_keys: HashMap<ObjectID, DWalletNetworkEncryptionKeyData> = {
+            let snapshot = self
+                .sui_data_receivers
+                .network_keys_receiver
+                .borrow_and_update();
+            snapshot
+                .iter()
+                .map(|(&key_id, key_data)| (key_id, key_data.clone()))
+                .collect()
+        };
+
+        let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = new_keys
+            .into_iter()
+            .filter(|(key_id, _)| {
+                !self
+                    .network_keys
+                    .network_encryption_keys
+                    .contains_key(key_id)
+            })
+            .collect();
+
+        let mut new_key_ids = Vec::new();
+        for (key_id, key_data) in keys_to_instantiate {
+            info!(key_id=?key_id, "Instantiating network key from Sui watch channel (fallback)");
+
+            let res =
+                instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
+                    key_data.current_epoch,
+                    self.access_structure.clone(),
+                    key_data,
+                    self.party_id,
+                )
+                .await;
+
+            match res {
+                Ok(key) => {
+                    if key.epoch() != self.epoch_id {
+                        warn!(
+                            key_id=?key_id,
+                            key_epoch=?key.epoch(),
+                            current_epoch=?self.epoch_id,
+                            "Network key epoch does not match current epoch, ignoring"
+                        );
+                        continue;
+                    }
+                    if let Err(e) = self
+                        .network_keys
+                        .update_network_key(key_id, &key, &self.access_structure)
+                        .await
+                    {
+                        error!(error=?e, key_id=?key_id, "Failed to update network key from Sui watch channel");
+                    } else {
+                        new_key_ids.push(key_id);
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        error=?err,
+                        key_id=?key_id,
+                        "Failed to instantiate network key from Sui watch channel"
+                    );
+                }
+            }
+        }
+
+        new_key_ids
+    }
+
     /// Instantiates agreed network keys from consensus-voted data.
     /// For each key in `agreed_network_key_data` that is not yet loaded locally,
     /// instantiates the key from the consensus-voted data.
