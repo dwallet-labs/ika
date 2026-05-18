@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::dwallet_mpc::crytographic_computation::MPC_SIGN_SECOND_ROUND;
+use crate::dwallet_mpc::crytographic_computation::protocol_cryptographic_data::{
+    NetworkEncryptionKeyDkgAdvanceArgs, NetworkEncryptionKeyReconfigurationAdvanceArgs,
+};
 use crate::dwallet_mpc::dwallet_dkg::{
     DWalletDKGAdvanceRequestByCurve, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationAdvanceRequestByCurve,
@@ -9,12 +12,17 @@ use crate::dwallet_mpc::dwallet_dkg::{
     compute_imported_key_verification,
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
+use crate::dwallet_mpc::mpc_session::NetworkEncryptionKeyDkgPublicInput;
+use crate::dwallet_mpc::mpc_session::NetworkEncryptionKeyReconfigurationPublicInput;
 use crate::dwallet_mpc::mpc_session::PublicInput;
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, advance_network_dkg_v2};
+use crate::dwallet_mpc::network_dkg::{
+    DwalletMPCNetworkKeys, advance_network_dkg_bwd_compat, advance_network_dkg_v2,
+};
 use crate::dwallet_mpc::presign::{
     PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol, compute_presign,
 };
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
+use crate::dwallet_mpc::reconfiguration::advance_network_reconfiguration_bwd_compat;
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
     SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_dwallet_dkg_and_sign,
@@ -269,23 +277,58 @@ impl ProtocolCryptographicData {
                     return Err(DwalletMPCError::InvalidSessionPublicInput);
                 };
 
-                let advance_request_result =
-                    Party::<twopc_mpc::decentralized_party::dkg::Party>::ready_to_advance(
-                        party_id,
-                        access_structure,
-                        consensus_round,
-                        HashMap::from([(3, network_dkg_third_round_delay)]),
-                        &serialized_messages_by_consensus_round,
-                    )?;
+                // Dispatch `ready_to_advance` to the matching Party impl so the
+                // deserializer interprets the in-flight `Message` bytes under
+                // the right shape (bwd-compat 3-variant `Message` vs main
+                // 6+-variant `Message`).
+                let args = match public_input {
+                    NetworkEncryptionKeyDkgPublicInput::BwdCompat(public_input) => {
+                        let advance_request_result = Party::<
+                            twopc_mpc::decentralized_party_backward_compatible::dkg::Party,
+                        >::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, network_dkg_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
+                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                            advance_request_result
+                        else {
+                            return Ok(None);
+                        };
+
+                        NetworkEncryptionKeyDkgAdvanceArgs::BwdCompat {
+                            public_input: public_input.clone(),
+                            advance_request,
+                        }
+                    }
+                    NetworkEncryptionKeyDkgPublicInput::Main(public_input) => {
+                        let advance_request_result =
+                            Party::<twopc_mpc::decentralized_party::dkg::Party>::ready_to_advance(
+                                party_id,
+                                access_structure,
+                                consensus_round,
+                                HashMap::from([(3, network_dkg_third_round_delay)]),
+                                &serialized_messages_by_consensus_round,
+                            )?;
+
+                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                            advance_request_result
+                        else {
+                            return Ok(None);
+                        };
+
+                        NetworkEncryptionKeyDkgAdvanceArgs::Main {
+                            public_input: public_input.clone(),
+                            advance_request,
+                        }
+                    }
                 };
 
                 ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                    public_input: public_input.clone(),
-                    advance_request,
+                    args,
                     class_groups_decryption_key,
                 }
             }
@@ -301,23 +344,62 @@ impl ProtocolCryptographicData {
                 let decryption_key_shares = decryption_key_shares
                     .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                let advance_request_result = Party::<ReconfigurationParty>::ready_to_advance(
-                    party_id,
-                    access_structure,
-                    consensus_round,
-                    HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
-                    &serialized_messages_by_consensus_round,
-                )?;
+                // Dispatch `ready_to_advance` to the matching Party impl so
+                // the deserializer interprets the in-flight `Message` bytes
+                // under the right shape (bwd-compat 3-variant `Message` vs
+                // main 6+-variant `Message`).
+                let args = match public_input {
+                    NetworkEncryptionKeyReconfigurationPublicInput::BwdCompat(public_input) => {
+                        let advance_request_result = Party::<
+                            twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party,
+                        >::ready_to_advance(
+                            party_id,
+                            access_structure,
+                            consensus_round,
+                            HashMap::from([(3, decryption_key_reconfiguration_third_round_delay)]),
+                            &serialized_messages_by_consensus_round,
+                        )?;
 
-                let ReadyToAdvanceResult::ReadyToAdvance(advance_request) = advance_request_result
-                else {
-                    return Ok(None);
+                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                            advance_request_result
+                        else {
+                            return Ok(None);
+                        };
+
+                        NetworkEncryptionKeyReconfigurationAdvanceArgs::BwdCompat {
+                            public_input: public_input.clone(),
+                            advance_request,
+                        }
+                    }
+                    NetworkEncryptionKeyReconfigurationPublicInput::Main(public_input) => {
+                        let advance_request_result =
+                            Party::<ReconfigurationParty>::ready_to_advance(
+                                party_id,
+                                access_structure,
+                                consensus_round,
+                                HashMap::from([(
+                                    3,
+                                    decryption_key_reconfiguration_third_round_delay,
+                                )]),
+                                &serialized_messages_by_consensus_round,
+                            )?;
+
+                        let ReadyToAdvanceResult::ReadyToAdvance(advance_request) =
+                            advance_request_result
+                        else {
+                            return Ok(None);
+                        };
+
+                        NetworkEncryptionKeyReconfigurationAdvanceArgs::Main {
+                            public_input: public_input.clone(),
+                            advance_request,
+                        }
+                    }
                 };
 
                 ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                     data: NetworkEncryptionKeyReconfigurationData {},
-                    public_input: public_input.clone(),
-                    advance_request,
+                    args,
                     decryption_key_shares: decryption_key_shares.clone(),
                 }
             }
@@ -1080,57 +1162,89 @@ impl ProtocolCryptographicData {
                 advance_request.to_string(),
             )),
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
-                public_input,
-                advance_request,
+                args,
                 class_groups_decryption_key,
-                ..
-            } => advance_network_dkg_v2(
-                session_id,
-                access_structure,
-                public_input,
-                party_id,
-                advance_request,
-                class_groups_decryption_key,
-                &mut rng,
-            ),
+            } => match args {
+                NetworkEncryptionKeyDkgAdvanceArgs::BwdCompat {
+                    public_input,
+                    advance_request,
+                } => advance_network_dkg_bwd_compat(
+                    session_id,
+                    access_structure,
+                    public_input,
+                    party_id,
+                    advance_request,
+                    class_groups_decryption_key,
+                    &mut rng,
+                ),
+                NetworkEncryptionKeyDkgAdvanceArgs::Main {
+                    public_input,
+                    advance_request,
+                } => advance_network_dkg_v2(
+                    session_id,
+                    access_structure,
+                    public_input,
+                    party_id,
+                    advance_request,
+                    class_groups_decryption_key,
+                    &mut rng,
+                ),
+            },
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
-                public_input,
-                advance_request,
+                args,
                 decryption_key_shares,
                 ..
-            } => {
-                let result = Party::<ReconfigurationParty>::advance_with_guaranteed_output(
-                    session_id,
-                    party_id,
-                    access_structure,
+            } => match args {
+                NetworkEncryptionKeyReconfigurationAdvanceArgs::BwdCompat {
+                    public_input,
                     advance_request,
-                    Some(decryption_key_shares.clone()),
-                    &public_input,
+                } => advance_network_reconfiguration_bwd_compat(
+                    session_id,
+                    access_structure,
+                    public_input,
+                    party_id,
+                    advance_request,
+                    decryption_key_shares.clone(),
                     &mut rng,
-                )?;
+                ),
+                NetworkEncryptionKeyReconfigurationAdvanceArgs::Main {
+                    public_input,
+                    advance_request,
+                } => {
+                    let result = Party::<ReconfigurationParty>::advance_with_guaranteed_output(
+                        session_id,
+                        party_id,
+                        access_structure,
+                        advance_request,
+                        Some(decryption_key_shares.clone()),
+                        &public_input,
+                        &mut rng,
+                    )?;
 
-                match result {
-                    GuaranteedOutputDeliveryRoundResult::Advance { message } => {
-                        Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
-                    }
-                    GuaranteedOutputDeliveryRoundResult::Finalize {
-                        public_output_value,
-                        malicious_parties,
-                        private_output,
-                    } => {
-                        // Wrap the public output with its version.
-                        let public_output_value = bcs::to_bytes(
-                            &VersionedDecryptionKeyReconfigurationOutput::V2(public_output_value),
-                        )?;
-
-                        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                    match result {
+                        GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+                            Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
+                        }
+                        GuaranteedOutputDeliveryRoundResult::Finalize {
                             public_output_value,
                             malicious_parties,
                             private_output,
-                        })
+                        } => {
+                            // Wrap the public output with its version.
+                            let public_output_value =
+                                bcs::to_bytes(&VersionedDecryptionKeyReconfigurationOutput::V2(
+                                    public_output_value,
+                                ))?;
+
+                            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                                public_output_value,
+                                malicious_parties,
+                                private_output,
+                            })
+                        }
                     }
                 }
-            }
+            },
             _ => {
                 error!(
                     session_type=?protocol_metadata,

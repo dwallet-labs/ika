@@ -6,11 +6,15 @@ use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
+use crate::dwallet_mpc::network_dkg::{
+    DwalletMPCNetworkKeys, network_dkg_bwd_compat_public_input, network_dkg_v2_public_input,
+};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
 use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
-use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
+use crate::dwallet_mpc::reconfiguration::{
+    ReconfigurationPartyPublicInputGenerator, reconfiguration_bwd_compat_public_input,
+};
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -19,9 +23,41 @@ use crate::request_protocol_data::{
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
+use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
+use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
+
+/// Public input for network DKG, dispatched on
+/// `ProtocolConfig::is_network_encryption_key_version_v3()`:
+///
+/// - `BwdCompat` — the mainnet-v1.1.8-shape decentralized party
+///   (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`), used
+///   at `protocol_version <= 4` when peers may still publish bare
+///   `ClassGroupsEncryptionKeyAndProof` (no PVSS HPKE keys).
+/// - `Main` — the post-PR-#1707 main party
+///   (`twopc_mpc::decentralized_party::dkg::Party`), used at
+///   `protocol_version >= 5`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum NetworkEncryptionKeyDkgPublicInput {
+    BwdCompat(<bwd_compat_dkg::Party as mpc::Party>::PublicInput),
+    Main(<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput),
+}
+
+/// Public input for network Reconfiguration, dispatched on
+/// `ProtocolConfig::is_reconfiguration_message_version_v3()`. Mirrors
+/// [`NetworkEncryptionKeyDkgPublicInput`]: at v≤4 we build the bwd-compat
+/// shape (no PVSS HPKE keys) and run the bwd-compat
+/// `reconfiguration::Party`; at v≥5 we run the main `ReconfigurationParty`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum NetworkEncryptionKeyReconfigurationPublicInput {
+    BwdCompat(<bwd_compat_reconfig::Party as mpc::Party>::PublicInput),
+    Main(<ReconfigurationParty as mpc::Party>::PublicInput),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -31,12 +67,10 @@ pub(crate) enum PublicInput {
     DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
-    NetworkEncryptionKeyDkg(
-        <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
-    ),
+    NetworkEncryptionKeyDkg(NetworkEncryptionKeyDkgPublicInput),
     EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
-    NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as mpc::Party>::PublicInput),
+    NetworkEncryptionKeyReconfiguration(NetworkEncryptionKeyReconfigurationPublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
 
@@ -53,6 +87,7 @@ pub(crate) fn session_input_from_request(
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
     validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -149,14 +184,28 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-            Ok((
-                PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
+            // Pick the network DKG public-input shape that matches the active
+            // protocol_version. At `_version == 2` (mainnet-v1.1.8 era) peers
+            // publish bare `ClassGroupsEncryptionKeyAndProof` and the
+            // bwd-compat DKG `PublicInput::new` takes only the class-groups
+            // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
+            // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
+            let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
+                NetworkEncryptionKeyDkgPublicInput::Main(network_dkg_v2_public_input(
                     access_structure,
                     validator_mpc_keys_by_party_id.class_groups,
                     validator_mpc_keys_by_party_id.secp256k1_pvss,
                     validator_mpc_keys_by_party_id.secp256r1_pvss,
                     validator_mpc_keys_by_party_id.ristretto_pvss,
-                )?),
+                )?)
+            } else {
+                NetworkEncryptionKeyDkgPublicInput::BwdCompat(network_dkg_bwd_compat_public_input(
+                    access_structure,
+                    validator_mpc_keys_by_party_id.class_groups,
+                )?)
+            };
+            Ok((
+                PublicInput::NetworkEncryptionKeyDkg(dkg_public_input),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
         }
@@ -171,23 +220,34 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-            Ok((
-                    PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+            let network_dkg_public_output =
+                network_keys.get_network_dkg_public_output(dwallet_network_encryption_key_id)?;
+            let latest_reconfiguration_public_output =
+                network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
+
+            let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
+                NetworkEncryptionKeyReconfigurationPublicInput::Main(
+                        <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+                            committee,
+                            next_active_committee,
+                            network_dkg_public_output,
+                            latest_reconfiguration_public_output,
+                        )?,
+                    )
+            } else {
+                NetworkEncryptionKeyReconfigurationPublicInput::BwdCompat(
+                    reconfiguration_bwd_compat_public_input(
                         committee,
                         next_active_committee,
-                        network_keys
-                            .get_network_dkg_public_output(
-                                dwallet_network_encryption_key_id,
-                            )?,
-                        network_keys
-                            .get_last_reconfiguration_output(
-                                dwallet_network_encryption_key_id,
-                            ),
-                    )?),
-                    Some(bcs::to_bytes(
-                        &class_groups_decryption_key
-                    )?),
-                ))
+                        network_dkg_public_output,
+                        latest_reconfiguration_public_output,
+                    )?,
+                )
+            };
+            Ok((
+                PublicInput::NetworkEncryptionKeyReconfiguration(reconfig_public_input),
+                Some(bcs::to_bytes(&class_groups_decryption_key)?),
+            ))
         }
         ProtocolData::InternalPresign {
             data:

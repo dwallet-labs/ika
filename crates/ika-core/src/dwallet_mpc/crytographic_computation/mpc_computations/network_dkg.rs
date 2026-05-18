@@ -267,13 +267,9 @@ impl DwalletMPCNetworkKeys {
 /// with mainnet-v1.1.8 peers per audit §4 (`dkg::PublicOutput` is wire-stable
 /// across the cryptography-private bump).
 ///
-/// Currently `dead_code` — full dispatch wiring is blocked on an upstream
-/// gap in `cryptography-private @ a8fe6c6a`:
-/// `decentralized_party_backward_compatible::reconfiguration::PublicInput`
-/// has no public constructor. Once upstream adds one, this function will be
-/// called from the version-dispatch enum in `mpc_computations.rs`. See
-/// `docs/plan-backward-compat-mainnet-v1.1.8.md` for details.
-#[allow(dead_code)]
+/// Invoked from `compute_mpc`'s `NetworkEncryptionKeyDkg` arm via
+/// `NetworkEncryptionKeyDkgAdvanceArgs::BwdCompat`; selected by
+/// `session_input_from_request` based on `is_network_encryption_key_version_v3()`.
 pub(crate) fn advance_network_dkg_bwd_compat(
     session_id: CommitmentSizedNumber,
     access_structure: &WeightedThresholdAccessStructure,
@@ -314,10 +310,6 @@ pub(crate) fn advance_network_dkg_bwd_compat(
 /// Builds the bwd-compat decentralized-party DKG public input from class-groups
 /// encryption keys only — bwd-compat predates PVSS HPKE, so the constructor
 /// signature is `(access_structure, encryption_keys_and_proofs_per_crt_prime)`.
-///
-/// Currently `dead_code` — paired with [`advance_network_dkg_bwd_compat`]; see
-/// that function's docstring for the upstream-gap context.
-#[allow(dead_code)]
 pub(crate) fn network_dkg_bwd_compat_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,

@@ -2,56 +2,27 @@
 
 ## Status (as of 2026-05-18)
 
-**Committed (commit `23ba5e5f3d` on `dev_backward_compatability`)**:
+**Committed on `dev_backward_compatability`**:
 
-- ✅ Item 1: cryptography-private pin 9d35fa76 → a8fe6c6a.
-- ✅ Item 2: `decode_validator_encryption_keys` + tests, rewired 3 decode sites.
-- ✅ Item 4: `ProtocolConfig` MAX → 5, `is_*_version_v3()` helpers, v5 snapshot fixtures.
-- ✅ PR #1707 review item 3 file rename
-  (`network_owned_address_sign_dkg_emulation.rs` →
-  `network_owned_address_sign_dkg.rs`) — was missed in `396af2647e`.
+- ✅ Item 1 (`23ba5e5f3d` + pending pin bump to `7795eb45`): cryptography-private 9d35fa76 → a8fe6c6a → 7795eb45 (upstream PR #524 added the Reconfig PublicInput constructors).
+- ✅ Item 2 (`23ba5e5f3d`): `decode_validator_encryption_keys` + tests; 3 decode sites rewired.
+- ✅ Item 3 (`567bb73a96`): `--legacy-class-groups-only` CLI flag on `ika validator make-validator-info` and `set-next-epoch-mpc-data`.
+- ✅ Item 4 (`23ba5e5f3d`): `ProtocolConfig` MAX → 5, `is_*_version_v3()` helpers, v5 snapshot fixtures.
+- ✅ Item 6 (next commit): `advance_network_dkg_bwd_compat` + `network_dkg_bwd_compat_public_input`, wired into DKG dispatch.
+- ✅ Item 7 (next commit): `reconfiguration_bwd_compat_public_input` + `advance_network_reconfiguration_bwd_compat` calling upstream's new `decentralized_party_backward_compatible::reconfiguration::PublicInput::new_from_{dkg,reconfiguration}_output` constructors. Wired into Reconfig dispatch.
+- ✅ Item 8 (next commit): `PublicInput::NetworkEncryptionKey{Dkg, Reconfiguration}` wrapped in `…PublicInput::{BwdCompat, Main}` enums; `&ProtocolConfig` threaded into `session_input_from_request`; `ProtocolCryptographicData::NetworkEncryptionKey{Dkg, Reconfiguration}` holds `…AdvanceArgs::{BwdCompat, Main}`; `ready_to_advance` and `compute_mpc` match each enum. Dispatch is on `is_{network_encryption_key, reconfiguration_message}_version_v3()`.
+- ✅ PR #1707 review item 3 file rename (`23ba5e5f3d`).
 
-**In the next commit on this branch**:
+**Remaining**:
 
-- 🛠 Item 3: `--legacy-class-groups-only` CLI flag on `ika validator make-validator-info` and
-  `ika validator set-next-epoch-mpc-data`. Operators set the flag during the v4→v5 protocol
-  upgrade window so mainnet-v1.1.8 peers can decode this validator's published bytes.
-- 🛠 Items 6/7 (additive helpers only): `advance_network_dkg_bwd_compat` and
-  `network_dkg_bwd_compat_public_input` added (currently `#[allow(dead_code)]`; ready to be
-  invoked from the version-dispatch path once the upstream blocker is resolved).
-
-**Blocked — upstream gap in `cryptography-private @ a8fe6c6a`**:
-
-- ❌ Items 6+7+8+9 (Party-level version dispatch for DKG/Reconfig):
-  `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::PublicInput`
-  (`cryptography-private @ a8fe6c6a:2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs:40`)
-  is a distinct nominal type from the main module's `PublicInput`, with all 20 fields
-  declared `pub(crate)` and **no public constructor** (no `impl PublicInput` block, only
-  the internal `pub(crate) fn reconfigures_internal_internal`). Ika cannot build this
-  type from outside the crate.
-
-  **Resolution required upstream**: add a public constructor on
-  `decentralized_party_backward_compatible::reconfiguration::PublicInput` mirroring the
-  main module's `new_from_dkg_output` / `new_from_reconfiguration_output`.
-
-  Once that lands, the dispatch wiring is mechanical: change
-  `PublicInput::NetworkEncryptionKey{Dkg, Reconfiguration}` to enums of
-  `BwdCompat | Main`, thread `&ProtocolConfig` into `session_input_from_request`, and
-  match on `is_*_version_v3()` at each advance call site. The
-  `advance_network_dkg_bwd_compat` / `network_dkg_bwd_compat_public_input` helpers in
-  `crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_dkg.rs`
-  are already in place to be invoked from the dispatch.
-
-  Without this, the network can still do everything at `protocol_version >= 5`
-  (post-upgrade) but cannot run DKG/Reconfig during the v4 transition window. The
-  validator-key decode tolerance (item 2) and encode gating (item 3) are still useful:
-  they let operators upgrade the binary in a rolling-deploy while keeping publications
-  wire-compatible with un-upgraded mainnet-v1.1.8 peers, until the network collectively
-  activates protocol_v 5.
-
-- ❌ Item 10 partial: integration tests for bwd-compat DKG/Reconfig + v2→v3 migration are
-  blocked on the dispatch wiring above. The `decode_validator_encryption_keys` round-trip
-  tests shipped in commit `23ba5e5f3d`.
+- 🛠 Item 9 (v2→v3 reconfig migration arm): the existing cross-version arm at
+  `reconfiguration.rs:115-167` handles the pre-mainnet v1→v2 transition. Once we're
+  ready to upgrade a live network from `network_encryption_key_version == 2` (v2 DKG
+  output bytes) to `version == 3`, add a symmetric arm that decodes the V2-tagged
+  DKG bytes and feeds them into the **main** `decentralized_party::reconfiguration::Party::PublicInput::new_from_dkg_output`, writing the result as V2 still (DKG output is wire-stable; only Party impl + Message shape differ). Currently the bwd-compat reconfig dispatcher's `(V2 dkg, None reconfig)` arm already handles the genesis-equivalent case under the bwd-compat Party; the upgrade arm would dispatch into the main Party instead. Practically tied to ProtocolConfig activation logic that the user's operations team controls.
+- 🛠 Item 10: integration tests for bwd-compat DKG/Reconfig swarms + v2→v3 migration —
+  the decode round-trip tests shipped in `23ba5e5f3d`; the swarm tests need writing
+  now that dispatch is wired end-to-end.
 
 ## Context
 
