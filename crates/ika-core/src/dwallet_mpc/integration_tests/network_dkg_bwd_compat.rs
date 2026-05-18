@@ -103,19 +103,18 @@ async fn test_bwd_compat_network_dkg_full_flow() {
     );
 }
 
-// Bwd-compat Reconfiguration at protocol_version <= 4 currently fails at the
-// `bwd_compat_reconfig::PublicInput::new_from_dkg_output` call site —
-// upstream's constructor takes `universal_public_output: decentralized_party::dkg::PublicOutput`
-// (the post-bump main type), but the V2 DKG output bytes produced by the
-// bwd-compat DKG Party decode as `bwd_compat_dkg::Party::PublicOutput`
-// (a structural subset; no `From` impl ships in cryptography-private @ 7795eb45).
-// Until upstream adds either `From<bwd_compat::dkg::PublicOutput> for
-// decentralized_party::dkg::PublicOutput` or a `new_from_bwd_compat_dkg_output`
-// constructor, this test is expected to fail with the explicit
-// "Bwd-compat Reconfig blocked on upstream" error. Re-enable once upstream lands.
+// Upstream `new_from_dkg_output` signature fix (commit d48445b3 on
+// `bwd-compat-reconfig-from-bwd-compat-dkg`) makes the bwd-compat
+// `PublicInput` constructable from V2 DKG bytes — the dispatcher wiring
+// no longer errors at the V2 arm. The test framework (`create_network_key_test`
+// + `advance_mpc_flow_until_completion`) deadlocks on the bwd-compat reconfig
+// advance path though — likely a different round count or message-ready
+// expectation between the bwd-compat Party and the framework's assumed
+// 5-round advance loop. Left `#[ignore]`'d pending a per-bwd-compat-Party
+// round-count fix in the test framework.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "Bwd-compat reconfig at v=2 needs upstream `From<bwd_compat::dkg::PublicOutput> for decentralized_party::dkg::PublicOutput` (or analogous constructor)"]
+#[ignore = "test framework's advance loop deadlocks on bwd-compat reconfig Party rounds — needs round-count parameterization"]
 async fn test_bwd_compat_network_key_reconfiguration() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let _override = pin_protocol_to_v2_overrides();

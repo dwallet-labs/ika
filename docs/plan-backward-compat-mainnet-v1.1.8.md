@@ -43,11 +43,39 @@ the network key successfully (157s).
   (the post-bump main type) and read only the legacy fields. V2-tagged DKG
   output decodes as `bwd_compat_dkg::Party::PublicOutput` (subset shape) —
   Rust's type system blocks the call without a conversion. `cryptography-private
-  @ 7795eb45` doesn't ship one. Upstream needs either:
-  - `impl From<bwd_compat::dkg::PublicOutput> for decentralized_party::dkg::PublicOutput`
-    (synthesizes a placeholder `threshold_encryption_to_sharing_output`), or
-  - `bwd_compat_reconfig::PublicInput::new_from_bwd_compat_dkg_output(…)`
-    taking the bwd-compat shape directly.
+  @ 7795eb45` doesn't ship one.
+
+  **Proposed upstream PR (in `cryptography-private`)** — recommended fix is a
+  parallel constructor on `bwd_compat_reconfig::PublicInput` (smaller blast
+  radius than synthesizing a phantom main `PublicOutput`):
+
+  ```rust
+  // 2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs
+  impl PublicInput {
+      /// Same as `new_from_dkg_output` but consumes a bwd-compat DKG
+      /// `PublicOutput` directly. Reads exactly the same legacy fields the
+      /// main-shape constructor reads — bwd-compat DKG output is a structural
+      /// subset of main's (no `threshold_encryption_to_sharing_output`), and
+      /// the constructor body only touches legacy fields.
+      pub fn new_from_bwd_compat_dkg_output(
+          current_access_structure: &WeightedThresholdAccessStructure,
+          upcoming_access_structure: WeightedThresholdAccessStructure,
+          current_enc_keys: HashMap<…>,
+          upcoming_enc_keys: HashMap<…>,
+          current_tangible_to_upcoming: HashMap<PartyID, Option<PartyID>>,
+          dkg_output: crate::decentralized_party_backward_compatible::dkg::PublicOutput,
+      ) -> crate::Result<Self> {
+          // Body identical to `new_from_dkg_output` — every field access
+          // (`dkg_output.secp256k1_encryption_of_secret_key_share_first_part`
+          // etc.) exists on the bwd-compat PublicOutput.
+      }
+  }
+  ```
+
+  Alternative: `impl From<decentralized_party_backward_compatible::dkg::PublicOutput>
+  for decentralized_party::dkg::PublicOutput` — requires synthesizing a
+  placeholder `threshold_encryption_to_sharing_output` (the bwd-compat path
+  never reads it), which is uglier than the parallel constructor.
 
   Until one lands: `test_bwd_compat_network_key_reconfiguration` and
   `test_v2_to_v3_reconfiguration_migration` are `#[ignore]`'d with explicit
