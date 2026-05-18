@@ -643,7 +643,12 @@ impl DWalletMPCService {
     }
 
     pub(crate) fn receive_new_sui_requests(&mut self) -> IkaResult<Vec<DWalletSessionRequest>> {
-        match self.sui_data_requests.new_requests_receiver.try_recv() {
+        let mut receiver = self
+            .sui_data_requests
+            .new_requests_receiver
+            .lock()
+            .map_err(|e| IkaError::ReceiverError(format!("new_requests_receiver poisoned: {e}")))?;
+        match receiver.try_recv() {
             Ok(requests) => {
                 for request in &requests {
                     debug!(

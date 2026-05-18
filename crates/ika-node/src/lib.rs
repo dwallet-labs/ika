@@ -584,7 +584,11 @@ impl IkaNode {
             .set(config.supported_protocol_versions.unwrap().max.as_u64() as i64);
         let sui_data_receivers = SuiDataReceivers {
             network_keys_receiver,
-            new_requests_receiver,
+            // Wrap in Arc<Mutex<...>> so it's shared across per-epoch service clones
+            // instead of resubscribed; see SuiDataReceivers docs.
+            new_requests_receiver: std::sync::Arc::new(std::sync::Mutex::new(
+                new_requests_receiver,
+            )),
             next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
