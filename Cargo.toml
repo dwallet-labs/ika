@@ -73,13 +73,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010"}
-proof = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010"}
-class_groups = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010"}
-group = { git = "https://github.com/dwallet-labs/inkrypto", features = ["os_rng"], rev = "abd7f010"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "9d35fa76"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "9d35fa76"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -340,8 +340,9 @@ ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 
 [patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
+crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee553b25f9f619722391de33edbe2f7412c" }
 rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }
+der = { git = "https://github.com/RustCrypto/formats", tag = "der/v0.8.0-rc.8" }
 async-graphql = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-axum = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }
 async-graphql-value = { git = "https://github.com/amnn/async-graphql", branch = "v7.0.1-react-18-graphiql-4" }

@@ -1,10 +1,16 @@
 mod create_dwallet;
 mod encrypt_secret_share;
+mod idle_status_voting;
+mod internal_presign;
 mod malicious_behavior;
 mod message_before_event;
 mod missing_network_key;
 mod network_dkg;
+mod network_owned_address_sign;
+mod noa_checkpoint;
+mod presign_consensus;
 mod session;
 mod sign;
 mod threshold_not_reached;
 mod utils;
+mod validator_restart;

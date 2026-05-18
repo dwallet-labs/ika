@@ -6,7 +6,7 @@ version.workspace = true
 [dependencies]
 mpc.workspace = true
 twopc_mpc.workspace = true
-commitment = { git = "https://github.com/dwallet-labs/inkrypto", rev = "abd7f010" }
+commitment.workspace = true
 web-sys = "0.3.77"
 class_groups.workspace = true
 group.workspace = true
@@ -30,7 +30,3 @@ wasm_js = ["group/wasm_js", "dep:getrandom"]
 
 [lints]
 workspace = true
-
-[patch.crates-io]
-crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee5" }
-rfc6979 = { git = "https://github.com/RustCrypto/signatures", tag = "rfc6979/v0.5.0-rc.1" }

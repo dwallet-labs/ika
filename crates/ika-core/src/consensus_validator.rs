@@ -33,8 +33,8 @@ pub struct IkaTxValidator {
     // todo(zeev): why is it not used?
     #[allow(dead_code)]
     consensus_overload_checker: Arc<dyn ConsensusOverloadChecker>,
-    dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
-    system_checkpoint_service: Arc<dyn SystemCheckpointServiceNotify + Send + Sync>,
+    dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
+    system_checkpoint_service: Option<Arc<dyn SystemCheckpointServiceNotify + Send + Sync>>,
     metrics: Arc<IkaTxValidatorMetrics>,
 }
 
@@ -42,8 +42,8 @@ impl IkaTxValidator {
     pub fn new(
         authority_state: Arc<AuthorityState>,
         consensus_overload_checker: Arc<dyn ConsensusOverloadChecker>,
-        dwallet_checkpoint_service: Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>,
-        system_checkpoint_service: Arc<dyn SystemCheckpointServiceNotify + Send + Sync>,
+        dwallet_checkpoint_service: Option<Arc<dyn DWalletCheckpointServiceNotify + Send + Sync>>,
+        system_checkpoint_service: Option<Arc<dyn SystemCheckpointServiceNotify + Send + Sync>>,
         metrics: Arc<IkaTxValidatorMetrics>,
     ) -> Self {
         let epoch_store = authority_state.load_epoch_store_one_call_per_task().clone();
@@ -78,7 +78,13 @@ impl IkaTxValidator {
                 ConsensusTransactionKind::CapabilityNotificationV1(_)
                 | ConsensusTransactionKind::EndOfPublish(_)
                 | ConsensusTransactionKind::DWalletMPCMessage(..)
-                | ConsensusTransactionKind::DWalletMPCOutput(..) => {}
+                | ConsensusTransactionKind::DWalletMPCOutput(..)
+                | ConsensusTransactionKind::DWalletInternalMPCOutput(..)
+                | ConsensusTransactionKind::IdleStatusUpdate(..)
+                | ConsensusTransactionKind::SuiChainObservationUpdate(..)
+                | ConsensusTransactionKind::GlobalPresignRequest(..)
+                | ConsensusTransactionKind::NetworkKeyData(..)
+                | ConsensusTransactionKind::NOAObservation(..) => {}
                 ConsensusTransactionKind::SystemCheckpointSignature(signature) => {
                     system_checkpoints.push(signature.as_ref());
                     params_batch.push(&signature.checkpoint_message);
@@ -96,9 +102,10 @@ impl IkaTxValidator {
         .tap_err(|e| warn!("batch verification error: {}", e))?;
 
         // All checkpoint sigs have been verified, forward them to the checkpoint service
-        for ckpt in ckpt_messages {
-            self.dwallet_checkpoint_service
-                .notify_checkpoint_signature(&epoch_store, ckpt)?;
+        if let Some(ref service) = self.dwallet_checkpoint_service {
+            for ckpt in ckpt_messages {
+                service.notify_checkpoint_signature(&epoch_store, ckpt)?;
+            }
         }
 
         self.metrics
@@ -114,9 +121,10 @@ impl IkaTxValidator {
         .tap_err(|e| warn!("batch verification error: {}", e))?;
 
         // All checkpoint sigs have been verified, forward them to the checkpoint service
-        for ckpt in system_checkpoints {
-            self.system_checkpoint_service
-                .notify_checkpoint_signature(&epoch_store, ckpt)?;
+        if let Some(ref service) = self.system_checkpoint_service {
+            for ckpt in system_checkpoints {
+                service.notify_checkpoint_signature(&epoch_store, ckpt)?;
+            }
         }
 
         self.metrics

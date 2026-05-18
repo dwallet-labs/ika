@@ -28,6 +28,8 @@ async fn network_key_received_after_start_event() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
@@ -38,6 +40,8 @@ async fn network_key_received_after_start_event() {
         consensus_round: 1,
         committee: committee.clone(),
         sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
 
     send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
@@ -53,9 +57,13 @@ async fn network_key_received_after_start_event() {
         )
         .await
         {
+            // `consensus_round` starts at 1, completion lands at
+            // `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
             assert_eq!(
-                consensus_round, 5,
-                "Network DKG should complete after 4 rounds"
+                consensus_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             network_key_checkpoint = Some(pending_checkpoint);
@@ -102,7 +110,7 @@ async fn network_key_received_after_start_event() {
         key_id.unwrap(),
     );
     for dwallet_mpc_service in test_state.dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
     }
     for i in &parties_that_receive_network_key_after_start_event {
         let dwallet_mpc_service = &mut test_state.dwallet_mpc_services[*i];
@@ -166,6 +174,7 @@ pub(crate) fn send_network_key_to_parties(
                     DWalletNetworkEncryptionKeyData {
                         id: key_id.unwrap(),
                         current_epoch: 1,
+                        dkg_at_epoch: 1,
                         current_reconfiguration_public_output: vec![],
                         network_dkg_public_output: network_key_bytes.clone(),
                         state: DWalletNetworkEncryptionKeyState::NetworkDKGCompleted,

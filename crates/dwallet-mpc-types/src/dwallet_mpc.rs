@@ -99,6 +99,7 @@ pub type DKGDecentralizedPartyVersionedOutputSecp256r1 = DKGDecentralizedPartyVe
 pub struct NetworkEncryptionKeyPublicData {
     /// The epoch of the last version update.
     pub epoch: u64,
+    pub dkg_at_epoch: u64,
 
     pub state: NetworkDecryptionKeyPublicOutputType,
     /// The public output of the `latest` decryption key update (Reconfiguration).
@@ -125,10 +126,39 @@ pub struct NetworkEncryptionKeyPublicData {
         Arc<twopc_mpc::curve25519::class_groups::ProtocolPublicParameters>,
     pub curve25519_decryption_key_share_public_parameters:
         Arc<class_groups::Curve25519DecryptionKeySharePublicParameters>,
+
+    /// Per-curve DKG outputs for network-owned-address signing.
+    ///
+    /// Each field holds the centralized party DKG output created using a deterministic
+    /// zero-returning RNG (`ZeroRng`) to emulate the centralized party. This enables
+    /// the network to perform network-owned-address signing operations
+    /// without requiring an actual user.
+    ///
+    /// # Security Model
+    ///
+    /// The "user" (centralized party) key share is effectively zero/deterministic, meaning
+    /// there is no user secret to protect. Security for network-owned-address signing comes entirely
+    /// from the network's threshold signature scheme, not from randomness.
+    ///
+    /// Each output is BCS-serialized `NetworkOwnedAddressSignDKGOutput`.
+    /// DKG is per-curve (4 curves), not per-algorithm (5 algorithms).
+    /// Secp256k1 is shared by ECDSASecp256k1 and Taproot.
+    pub secp256k1_network_owned_address_dkg_output: Vec<u8>,
+    pub secp256r1_network_owned_address_dkg_output: Vec<u8>,
+    pub curve25519_network_owned_address_dkg_output: Vec<u8>,
+    pub ristretto_network_owned_address_dkg_output: Vec<u8>,
+
+    /// Per-curve extracted public keys for network-owned-address signing.
+    /// These are the actual group element bytes extracted from the centralized DKG output.
+    pub secp256k1_network_owned_address_public_key: Vec<u8>,
+    pub secp256r1_network_owned_address_public_key: Vec<u8>,
+    pub curve25519_network_owned_address_public_key: Vec<u8>,
+    pub ristretto_network_owned_address_public_key: Vec<u8>,
 }
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -139,6 +169,7 @@ pub struct NetworkEncryptionKeyPublicData {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 // useful to tell which protocol public parameters to use
 pub enum DWalletCurve {
@@ -154,6 +185,7 @@ pub enum DWalletCurve {
 
 #[derive(
     strum_macros::Display,
+    strum_macros::EnumString,
     Clone,
     Debug,
     PartialEq,
@@ -164,6 +196,7 @@ pub enum DWalletCurve {
     Copy,
     Ord,
     PartialOrd,
+    schemars::JsonSchema,
 )]
 pub enum DWalletSignatureAlgorithm {
     #[strum(to_string = "ECDSASecp256k1")]
@@ -176,6 +209,71 @@ pub enum DWalletSignatureAlgorithm {
     EdDSA,
     #[strum(to_string = "SchnorrkelSubstrate")]
     SchnorrkelSubstrate,
+}
+
+#[derive(
+    strum_macros::Display,
+    strum_macros::EnumString,
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Eq,
+    Hash,
+    Copy,
+    Ord,
+    PartialOrd,
+    schemars::JsonSchema,
+)]
+pub enum DWalletHashScheme {
+    #[strum(to_string = "Keccak256")]
+    Keccak256,
+    #[strum(to_string = "SHA256")]
+    SHA256,
+    #[strum(to_string = "DoubleSHA256")]
+    DoubleSHA256,
+    #[strum(to_string = "SHA512")]
+    SHA512,
+    #[strum(to_string = "Merlin")]
+    Merlin,
+}
+
+impl From<DWalletHashScheme> for group::HashScheme {
+    fn from(scheme: DWalletHashScheme) -> Self {
+        match scheme {
+            DWalletHashScheme::Keccak256 => group::HashScheme::Keccak256,
+            DWalletHashScheme::SHA256 => group::HashScheme::SHA256,
+            DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
+            DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
+            DWalletHashScheme::Merlin => group::HashScheme::Merlin,
+        }
+    }
+}
+
+impl From<group::HashScheme> for DWalletHashScheme {
+    fn from(scheme: group::HashScheme) -> Self {
+        match scheme {
+            group::HashScheme::Keccak256 => DWalletHashScheme::Keccak256,
+            group::HashScheme::SHA256 => DWalletHashScheme::SHA256,
+            group::HashScheme::DoubleSHA256 => DWalletHashScheme::DoubleSHA256,
+            group::HashScheme::SHA512 => DWalletHashScheme::SHA512,
+            group::HashScheme::Merlin => DWalletHashScheme::Merlin,
+        }
+    }
+}
+
+impl DWalletCurve {
+    /// Returns the u32 representation of this curve.
+    /// This is the inverse of [`try_into_curve`].
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            DWalletCurve::Secp256k1 => 0,
+            DWalletCurve::Secp256r1 => 1,
+            DWalletCurve::Curve25519 => 2,
+            DWalletCurve::Ristretto => 3,
+        }
+    }
 }
 
 // We can't import ika-types here since we import this module in there.
@@ -231,6 +329,14 @@ pub enum VersionedSignOutput {
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+}
+
+impl VersionedNetworkDkgOutput {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::V1(bytes) | Self::V2(bytes) => bytes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
@@ -369,6 +475,42 @@ impl NetworkEncryptionKeyPublicData {
     ) -> Arc<class_groups::Curve25519DecryptionKeySharePublicParameters> {
         self.curve25519_decryption_key_share_public_parameters
             .clone()
+    }
+
+    /// Returns the network-owned-address DKG output for the given curve.
+    pub fn network_owned_address_dkg_output(&self, curve: DWalletCurve) -> &[u8] {
+        match curve {
+            DWalletCurve::Secp256k1 => &self.secp256k1_network_owned_address_dkg_output,
+            DWalletCurve::Secp256r1 => &self.secp256r1_network_owned_address_dkg_output,
+            DWalletCurve::Curve25519 => &self.curve25519_network_owned_address_dkg_output,
+            DWalletCurve::Ristretto => &self.ristretto_network_owned_address_dkg_output,
+        }
+    }
+
+    /// Returns the network-owned-address public key for the given curve.
+    pub fn network_owned_address_public_key(&self, curve: DWalletCurve) -> &[u8] {
+        match curve {
+            DWalletCurve::Secp256k1 => &self.secp256k1_network_owned_address_public_key,
+            DWalletCurve::Secp256r1 => &self.secp256r1_network_owned_address_public_key,
+            DWalletCurve::Curve25519 => &self.curve25519_network_owned_address_public_key,
+            DWalletCurve::Ristretto => &self.ristretto_network_owned_address_public_key,
+        }
+    }
+
+    /// Returns the serialized protocol public parameters for the given curve.
+    ///
+    /// This is useful for network-owned-address signing operations where the protocol public
+    /// parameters need to be passed to emulation functions.
+    pub fn serialized_protocol_public_parameters_for_curve(
+        &self,
+        curve: DWalletCurve,
+    ) -> Result<Vec<u8>, bcs::Error> {
+        match curve {
+            DWalletCurve::Secp256k1 => bcs::to_bytes(&*self.secp256k1_protocol_public_parameters),
+            DWalletCurve::Secp256r1 => bcs::to_bytes(&*self.secp256r1_protocol_public_parameters),
+            DWalletCurve::Curve25519 => bcs::to_bytes(&*self.curve25519_protocol_public_parameters),
+            DWalletCurve::Ristretto => bcs::to_bytes(&*self.ristretto_protocol_public_parameters),
+        }
     }
 }
 

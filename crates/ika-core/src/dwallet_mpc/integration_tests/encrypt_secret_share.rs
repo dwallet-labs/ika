@@ -12,6 +12,7 @@ use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use ika_types::committee::Committee;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::info;
 
@@ -27,6 +28,8 @@ async fn encrypt_secret_share() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let mut test_state = IntegrationTestState {
         dwallet_mpc_services,
@@ -37,6 +40,8 @@ async fn encrypt_secret_share() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
     for service in &mut test_state.dwallet_mpc_services {
         service
@@ -50,6 +55,7 @@ async fn encrypt_secret_share() {
         consensus_round,
         key_id,
         network_key_bytes.clone(),
+        DWalletCurve::Secp256k1,
     )
     .await;
     let protocol_pp = network_dkg_public_output_to_protocol_pp_inner(0, network_key_bytes).unwrap();
@@ -72,7 +78,7 @@ async fn encrypt_secret_share() {
     );
     let (_, encrypted_secret_share_checkpoint) = utils::advance_mpc_flow_until_completion(
         &mut test_state,
-        dwallet_test_result.flow_completion_consensus_round,
+        dwallet_test_result.flow_completion_consensus_round + 1,
     )
     .await;
     let DWalletCheckpointMessageKind::RespondDWalletEncryptedUserShare(
@@ -107,12 +113,13 @@ pub(crate) fn send_start_encrypt_secret_share_event(
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::User,
                 session_identifier: SessionIdentifier::new(
                     SessionType::User,
                     session_identifier_preimage,
                 ),
-                session_sequence_number,
+                session_sequence_number: Some(session_sequence_number),
                 protocol_data: ProtocolData::EncryptedShareVerification {
                     data: EncryptedShareVerificationData {
                         curve: DWalletCurve::Secp256k1,

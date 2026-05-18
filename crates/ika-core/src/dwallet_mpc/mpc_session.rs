@@ -7,9 +7,15 @@ use dwallet_mpc_types::dwallet_mpc::{MPCMessage, MPCPrivateInput};
 use group::PartyID;
 use ika_types::crypto::{AuthorityName, AuthorityPublicKeyBytes};
 use ika_types::message::DWalletCheckpointMessageKind;
-use ika_types::messages_dwallet_mpc::{DWalletMPCMessage, DWalletMPCOutput, SessionIdentifier};
+use ika_types::messages_dwallet_mpc::{
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport, GlobalPresignRequest,
+    SessionIdentifier,
+};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry::Vacant;
+use sui_types::base_types::ObjectID;
 use tracing::{debug, error, info, warn};
 
 use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
@@ -24,7 +30,7 @@ use tokio::sync::broadcast;
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub(crate) struct DWalletMPCSessionOutput {
-    pub(crate) output: Vec<DWalletCheckpointMessageKind>,
+    pub(crate) output: DWalletMPCOutputKind,
     pub(crate) malicious_authorities: Vec<AuthorityName>,
 }
 
@@ -42,12 +48,20 @@ pub(crate) struct DWalletSession {
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) party_id: PartyID,
 
+    /// Which counterparty chain this session belongs to. `None` for internal sessions or
+    /// sessions created before the request arrives (WaitingForSessionRequest).
+    pub(super) counterparty_chain: Option<CounterpartyChainKind>,
+
     /// The status of the MPC session.
     pub(super) status: SessionStatus,
 
     pub(super) computation_type: SessionComputationType,
 
-    outputs_by_consensus_round: HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
+    /// BTreeMap is required here (not HashMap) to guarantee deterministic iteration
+    /// order by consensus round. `build_outputs_to_finalize` uses "last output wins"
+    /// semantics — all validators must agree on which round's output is "last" for
+    /// each party, which requires ordered iteration.
+    outputs_by_consensus_round: BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>>,
 }
 
 /// Possible statuses of a session:
@@ -108,13 +122,15 @@ impl DWalletSession {
         status: SessionStatus,
         session_identifier: SessionIdentifier,
         party_id: PartyID,
+        counterparty_chain: Option<CounterpartyChainKind>,
         computation_type: SessionComputationType,
     ) -> Self {
         Self {
             status,
-            outputs_by_consensus_round: HashMap::new(),
+            outputs_by_consensus_round: BTreeMap::new(),
             session_identifier,
             party_id,
+            counterparty_chain,
             validator_name,
             computation_type,
         }
@@ -128,7 +144,7 @@ impl DWalletSession {
             SessionComputationType::Native => SessionComputationType::Native,
         };
 
-        self.outputs_by_consensus_round = HashMap::new();
+        self.outputs_by_consensus_round = BTreeMap::new();
     }
 
     /// Adds an incoming message.
@@ -149,16 +165,11 @@ impl DWalletSession {
         sender_party_id: PartyID,
         message: DWalletMPCMessage,
     ) {
-        let mpc_protocol = match &self.status {
-            SessionStatus::Active { request, .. } => {
-                DWalletSessionRequestMetricData::from(&request.protocol_data).to_string()
-            }
-            SessionStatus::WaitingForSessionRequest => {
-                "Unknown - waiting for session request".to_string()
-            }
-            SessionStatus::ComputationCompleted => {
-                "Unknown - session computation completed".to_string()
-            }
+        let metric_data = match &self.status {
+            SessionStatus::Active { request, .. } => Some(DWalletSessionRequestMetricData::from(
+                &request.protocol_data,
+            )),
+            SessionStatus::WaitingForSessionRequest | SessionStatus::ComputationCompleted => None,
             SessionStatus::Completed | SessionStatus::Failed => {
                 warn!(
                     session_identifier=?self.session_identifier,
@@ -168,13 +179,27 @@ impl DWalletSession {
             }
         };
 
+        let protocol_name = metric_data.as_ref().map_or("Unknown", |d| d.name());
+        let curve = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.curve());
+        let hash_scheme = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.hash_scheme());
+        let signature_algorithm = metric_data
+            .as_ref()
+            .map_or_else(|| "Unknown".to_string(), |d| d.signature_algorithm());
+
         debug!(
             session_identifier=?message.session_identifier,
             from_authority=?message.authority,
             receiving_authority=?self.validator_name,
             consensus_round=?consensus_round,
             message_size_bytes=?message.message.len(),
-            ?mpc_protocol,
+            %protocol_name,
+            %curve,
+            %hash_scheme,
+            %signature_algorithm,
             "Received a dWallet MPC message",
         );
 
@@ -211,16 +236,15 @@ impl DWalletSession {
         &mut self,
         consensus_round: u64,
         sender_party_id: PartyID,
-        output: DWalletMPCOutput,
+        output: DWalletMPCOutputReport,
     ) {
         debug!(
-            session_identifier=?output.session_identifier,
-            from_authority=?output.authority,
+            session_identifier=?output.session_identifier(),
+            from_authority=?output.authority(),
             receiving_authority=?self.validator_name,
-            output_messages=?output.output,
+            output=?output,
             consensus_round,
             status =? self.status,
-            rejected=output.rejected(),
             "Received a dWallet MPC output",
         );
 
@@ -240,17 +264,30 @@ impl DWalletSession {
             .entry(consensus_round)
             .or_default();
 
-        if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
-            e.insert(DWalletMPCSessionOutput {
-                output: output.output,
-                malicious_authorities: output.malicious_authorities,
-            });
+        let malicious_authorities = output.malicious_authorities();
+        if let Ok(output) = output.output() {
+            if let Vacant(e) = consensus_round_output_map.entry(sender_party_id) {
+                e.insert(DWalletMPCSessionOutput {
+                    output,
+                    malicious_authorities,
+                });
+            }
+        } else {
+            warn!(
+                session_identifier=?output.session_identifier(),
+                from_authority=?output.authority(),
+                receiving_authority=?self.validator_name,
+                consensus_round,
+                status =? self.status,
+                rejected=output.rejected(),
+                "Received an invalid dWallet MPC output",
+            );
         }
     }
 
     pub(crate) fn outputs_by_consensus_round(
         &self,
-    ) -> &HashMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>> {
+    ) -> &BTreeMap<u64, HashMap<PartyID, DWalletMPCSessionOutput>> {
         &self.outputs_by_consensus_round
     }
 
@@ -349,6 +386,7 @@ impl DWalletMPCManager {
     pub(crate) async fn handle_mpc_request_batch(
         &mut self,
         requests: Vec<DWalletSessionRequest>,
+        newly_instantiated_network_key_ids: Vec<ObjectID>,
     ) -> Vec<DWalletSessionRequest> {
         // We only update `next_active_committee` in this block. Once it's set,
         // there will no longer be any pending events targeting it for this epoch.
@@ -368,14 +406,11 @@ impl DWalletMPCManager {
             }
         }
 
-        // First, try to update the network keys.
-        let newly_updated_network_keys_ids = self.maybe_update_network_keys().await;
-
         // Now handle events for which we've just received the corresponding public data.
         // Since events are only queued in `events_pending_for_network_key` in `handle_mpc_request()` calls from this function,
         // receiving the network key ensures no further events will be pending for that key.
         // Therefore, it's safe to process them now, as the queue will remain empty afterward.
-        for key_id in newly_updated_network_keys_ids {
+        for key_id in newly_instantiated_network_key_ids {
             let events_pending_for_newly_updated_network_key = self
                 .requests_pending_for_network_key
                 .remove(&key_id)
@@ -425,10 +460,7 @@ impl DWalletMPCManager {
     ) -> Option<SessionStatus> {
         let session_identifier = request.session_identifier;
 
-        // Avoid instantiation of completed events by checking they belong to the current epoch.
-        // We only pull uncompleted events, so we skip the check for those,
-        // but pushed events might be completed.
-        if !request.pulled && request.epoch != self.epoch_id {
+        if !request.should_run_in_current_epoch(self.epoch_id) {
             warn!(
                 session_identifier=?session_identifier,
                 session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
@@ -503,24 +535,39 @@ impl DWalletMPCManager {
             return None;
         }
 
-        let status = match session_input_from_request(
-            &request,
-            &self.access_structure,
-            &self.committee,
-            &self.network_keys,
-            self.next_active_committee.clone(),
-            self.validators_class_groups_public_keys_and_proofs.clone(),
-        ) {
-            Ok((public_input, private_input)) => SessionStatus::Active {
-                public_input,
-                private_input,
-                request: request.clone(),
-            },
-            Err(e) => {
-                error!(error=?e, ?request, "create session input from dWallet request with error");
-                SessionStatus::Failed
+        if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
+            request.protocol_data.is_global_presign()
+        {
+            if request.session_sequence_number.is_none() {
+                error!(
+                    should_never_happen = true,
+                    session_identifier = ?request.session_identifier,
+                    "internal presign session missing session_sequence_number",
+                );
             }
-        };
+            let global_presign_request = GlobalPresignRequest {
+                session_identifier: request.session_identifier,
+                session_sequence_number: request
+                    .session_sequence_number
+                    .expect("internal presign sessions always have a session sequence number"),
+                presign_id,
+                curve,
+                signature_algorithm,
+                dwallet_network_encryption_key_id,
+            };
+
+            if !self
+                .global_presign_requests
+                .contains(&global_presign_request)
+            {
+                self.global_presign_requests.push(global_presign_request);
+            }
+
+            // Don't create a session for global presign, we will take it from the internal pools.
+            return None;
+        }
+
+        let status = self.session_status_from_request(request.clone(), false);
 
         self.dwallet_mpc_metrics
             .add_received_request_start(&(&request.protocol_data).into());
@@ -529,6 +576,7 @@ impl DWalletMPCManager {
 
         if let Some(session) = self.sessions.get_mut(&session_identifier) {
             session.status = status.clone();
+            session.counterparty_chain = request.counterparty_chain;
 
             // We only trust the session type that we deduce ourselves from the session request.
             // However, it is not safe to override the session status in all cases.
@@ -544,7 +592,12 @@ impl DWalletMPCManager {
                 session.computation_type = new_type;
             }
         } else {
-            self.new_session(&session_identifier, status.clone(), new_type);
+            self.new_session(
+                &session_identifier,
+                status.clone(),
+                request.counterparty_chain,
+                new_type,
+            );
         }
         Some(status)
     }
@@ -582,10 +635,8 @@ impl DWalletMPCService {
             info!(
                 ?epoch_id,
                 our_epoch_id = self.epoch,
-                "Received uncompleted requests for a different epoch, ignoring"
+                "Received uncompleted requests from a different epoch, processing anyway"
             );
-
-            return vec![];
         }
 
         uncompleted_requests

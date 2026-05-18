@@ -5,6 +5,7 @@ use crate::request_protocol_data::{NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_types::committee::Committee;
 use ika_types::messages_consensus::ConsensusTransactionKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,14 +36,17 @@ async fn test_some_malicious_validators_flows_succeed() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
-                session_sequence_number: 1,
+                session_sequence_number: Some(1),
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
@@ -67,13 +71,25 @@ async fn test_some_malicious_validators_flows_succeed() {
 
     for malicious_party_index in malicious_parties {
         // Create a malicious message for round 1, and set it as the patty's message.
+        // Find the first DWalletMPCMessage by type, skipping any IdleStatusUpdate
+        // entries that may precede it.
+        let message_index = {
+            let submitted = sent_consensus_messages_collectors[malicious_party_index]
+                .submitted_messages
+                .lock()
+                .unwrap();
+            submitted
+                .iter()
+                .position(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+                .expect("Network DKG first round should produce a DWalletMPCMessage")
+        };
         let mut original_message = sent_consensus_messages_collectors[malicious_party_index]
             .submitted_messages
             .lock()
             .unwrap()
-            .remove(0);
+            .remove(message_index);
         let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind else {
-            panic!("Network DKG first round should produce a DWalletMPCMessage");
+            unreachable!("index was verified to be a DWalletMPCMessage above");
         };
         let mut new_message: Vec<u8> = vec![0];
         new_message.extend(bcs::to_bytes::<u64>(&1).unwrap());
@@ -107,7 +123,14 @@ async fn test_some_malicious_validators_flows_succeed() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 5 rounds");
+            // `mpc_round` starts at 1 and is incremented after each round, so completion
+            // lands at `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
+            assert_eq!(
+                mpc_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -163,14 +186,17 @@ async fn test_party_copies_other_party_message_dkg_round() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let network_key_id = ObjectID::random();
     sui_data_senders.iter().for_each(|sui_data_sender| {
         let _ = sui_data_sender.uncompleted_events_sender.send((
             vec![DWalletSessionRequest {
+                counterparty_chain: Some(CounterpartyChainKind::Sui),
                 session_type: SessionType::System,
                 session_identifier: SessionIdentifier::new(SessionType::System, [1; 32]),
-                session_sequence_number: 1,
+                session_sequence_number: Some(1),
                 protocol_data: ProtocolData::NetworkEncryptionKeyDkg {
                     data: NetworkEncryptionKeyDkgData {},
                     dwallet_network_encryption_key_id: network_key_id,
@@ -219,7 +245,12 @@ async fn test_party_copies_other_party_message_dkg_round() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(
+                mpc_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -250,28 +281,40 @@ pub(crate) fn replace_party_message_with_other_party_message(
     other_party: usize,
     sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
 ) {
-    let original_message = sent_consensus_messages_collectors[party_to_replace]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .pop()
-        .unwrap();
+    // The DWalletMPCMessage is the last DWalletMPCMessage in the submitted messages
+    // (status updates may follow it, but we want the most recent computation result).
+    let original_message = {
+        let mut submitted = sent_consensus_messages_collectors[party_to_replace]
+            .submitted_messages
+            .lock()
+            .unwrap();
+        let index = submitted
+            .iter()
+            .rposition(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+            .expect("party_to_replace should have a DWalletMPCMessage to replace");
+        submitted.remove(index)
+    };
 
-    let mut other_party_message = sent_consensus_messages_collectors[other_party]
-        .submitted_messages
-        .lock()
-        .unwrap()
-        .first()
-        .unwrap()
-        .clone();
+    // The other party's DWalletMPCMessage may be preceded by status updates; find it by type.
+    let mut other_party_message = {
+        let submitted = sent_consensus_messages_collectors[other_party]
+            .submitted_messages
+            .lock()
+            .unwrap();
+        submitted
+            .iter()
+            .find(|msg| matches!(msg.kind, ConsensusTransactionKind::DWalletMPCMessage(_)))
+            .expect("other_party should have a DWalletMPCMessage to copy")
+            .clone()
+    };
     let ConsensusTransactionKind::DWalletMPCMessage(ref mut other_party_message_content) =
         other_party_message.kind
     else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+        unreachable!("index was verified to be a DWalletMPCMessage above");
     };
     let ConsensusTransactionKind::DWalletMPCMessage(original_message) = original_message.kind
     else {
-        panic!("Only DWalletMPCMessage messages can be replaced with other party messages");
+        unreachable!("index was verified to be a DWalletMPCMessage above");
     };
     other_party_message_content.authority = original_message.authority;
     sent_consensus_messages_collectors[party_to_replace]

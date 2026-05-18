@@ -1,17 +1,27 @@
 use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
-use crate::request_protocol_data::ProtocolData;
-use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
+use crate::request_protocol_data::{
+    ProtocolData, internal_presign_protocol_data, network_owned_address_sign_protocol_data,
+};
+use dwallet_mpc_types::dwallet_mpc::{
+    DWalletCurve, DWalletSignatureAlgorithm, SerializedWrappedMPCPublicOutput,
+};
 use group::HashScheme;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+use ika_types::noa_checkpoint::CounterpartyChainKind;
+use merlin::Transcript;
 use std::cmp::Ordering;
 use std::fmt;
+use sui_types::base_types::ObjectID;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DWalletSessionRequest {
+    /// Which counterparty chain this session belongs to. `None` for internal sessions
+    /// (InternalPresign, NetworkOwnedAddressSign) that are chain-agnostic.
+    pub counterparty_chain: Option<CounterpartyChainKind>,
     pub session_type: SessionType,
     /// Unique identifier for the MPC session.
     pub session_identifier: SessionIdentifier,
-    pub session_sequence_number: u64,
+    pub session_sequence_number: Option<u64>,
     pub(crate) protocol_data: ProtocolData,
     pub epoch: u64,
     pub requires_network_key_data: bool,
@@ -19,6 +29,128 @@ pub struct DWalletSessionRequest {
     // True when the event was pulled from the state of the object,
     // and False when it was pushed as an event.
     pub pulled: bool,
+}
+
+impl DWalletSessionRequest {
+    pub fn new_internal_presign(
+        epoch: u64,
+        consensus_round: u64,
+        session_sequence_number: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        dwallet_network_encryption_key_id: ObjectID,
+        network_dkg_output: &[u8],
+    ) -> Self {
+        let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
+        transcript.append_u64(b"epoch", epoch);
+        transcript.append_u64(b"consensus round", consensus_round);
+        transcript.append_u64(b"session sequence number", session_sequence_number);
+        transcript.append_u64(b"curve", curve as u64);
+        transcript.append_u64(b"signature algorithm", signature_algorithm as u64);
+
+        transcript.append_message(
+            b"network encryption key id",
+            dwallet_network_encryption_key_id.as_ref(),
+        );
+        transcript.append_message(b"network dkg output", network_dkg_output);
+
+        // Generate a session identifier preimage in a deterministic way
+        // (internally, it uses a hash function to pseudo-randomly generate it).
+        let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+            [0; SessionIdentifier::LENGTH];
+        transcript.challenge_bytes(
+            b"session identifier preimage",
+            &mut session_identifier_preimage,
+        );
+
+        let session_type = SessionType::InternalPresign;
+        let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
+
+        let protocol_data = internal_presign_protocol_data(
+            curve,
+            signature_algorithm,
+            dwallet_network_encryption_key_id,
+        );
+
+        Self {
+            counterparty_chain: None,
+            session_type,
+            session_identifier,
+            session_sequence_number: Some(session_sequence_number),
+            protocol_data,
+            epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled: false,
+        }
+    }
+
+    /// Creates a new network-owned-address sign session request.
+    ///
+    /// The session identifier is derived deterministically from the epoch and
+    /// sequence number, ensuring all validators create the same session.
+    pub fn new_network_owned_address_sign(
+        epoch: u64,
+        curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+        hash_scheme: HashScheme,
+        dwallet_network_encryption_key_id: ObjectID,
+        network_dkg_output: &[u8],
+        message: Vec<u8>,
+        presign: SerializedWrappedMPCPublicOutput,
+    ) -> Self {
+        let mut transcript =
+            Transcript::new(b"NetworkOwnedAddressSign session identifier preimage");
+        transcript.append_u64(b"epoch", epoch);
+        transcript.append_message(b"message", &message);
+        transcript.append_u64(b"curve", curve as u64);
+        transcript.append_u64(b"signature algorithm", signature_algorithm as u64);
+        transcript.append_u64(b"hash scheme", hash_scheme as u64);
+        transcript.append_message(
+            b"network encryption key id",
+            dwallet_network_encryption_key_id.as_ref(),
+        );
+        transcript.append_message(b"network dkg output", network_dkg_output);
+
+        // Generate a session identifier preimage in a deterministic way
+        let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
+            [0; SessionIdentifier::LENGTH];
+        transcript.challenge_bytes(
+            b"session identifier preimage",
+            &mut session_identifier_preimage,
+        );
+
+        let session_type = SessionType::NetworkOwnedAddressSign;
+        let session_identifier = SessionIdentifier::new(session_type, session_identifier_preimage);
+
+        let protocol_data = network_owned_address_sign_protocol_data(
+            curve,
+            signature_algorithm,
+            hash_scheme,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+        );
+
+        Self {
+            counterparty_chain: None,
+            session_type,
+            session_identifier,
+            session_sequence_number: None,
+            protocol_data,
+            epoch,
+            requires_network_key_data: true,
+            requires_next_active_committee: false,
+            pulled: false,
+        }
+    }
+
+    /// Checking this request belongs to the current epoch.
+    /// We only pull uncompleted events, so we skip the check for those,
+    /// but pushed events might be completed.
+    pub fn should_run_in_current_epoch(&self, current_epoch: u64) -> bool {
+        self.pulled || self.epoch == current_epoch
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -45,6 +177,7 @@ impl Ord for DWalletSessionRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         // System sessions have a higher priority than user session and therefore come first (are smaller).
         // Both system and user sessions are sorted by their sequence number between themselves.
+        // Internal sessions (presign and sign) have lowest priority.
         match (self.session_type, other.session_type) {
             (SessionType::User, SessionType::User) => self
                 .session_sequence_number
@@ -54,6 +187,19 @@ impl Ord for DWalletSessionRequest {
                 .session_sequence_number
                 .cmp(&other.session_sequence_number),
             (SessionType::User, SessionType::System) => Ordering::Greater,
+            (SessionType::InternalPresign, SessionType::InternalPresign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            (SessionType::NetworkOwnedAddressSign, SessionType::NetworkOwnedAddressSign) => self
+                .session_sequence_number
+                .cmp(&other.session_sequence_number),
+            // Internal presign sessions are of the lowest priority (handled last)
+            (SessionType::InternalPresign, _) => Ordering::Greater,
+            (_, SessionType::InternalPresign) => Ordering::Less,
+
+            // Network-owned-address sign sessions are of the highest priority (handled first)
+            (SessionType::NetworkOwnedAddressSign, _) => Ordering::Less,
+            (_, SessionType::NetworkOwnedAddressSign) => Ordering::Greater,
         }
     }
 }
@@ -114,10 +260,22 @@ impl From<&ProtocolData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
+            ProtocolData::InternalPresign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
             ProtocolData::Presign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),
                 hash_scheme: None,
+                signature_algorithm: Some(data.signature_algorithm),
+            },
+            ProtocolData::NetworkOwnedAddressSign { data, .. } => DWalletSessionRequestMetricData {
+                name: data.to_string(),
+                curve: Some(data.curve),
+                hash_scheme: Some(data.hash_scheme),
                 signature_algorithm: Some(data.signature_algorithm),
             },
             ProtocolData::Sign { data, .. } => DWalletSessionRequestMetricData {
@@ -191,6 +349,22 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: None,
                 signature_algorithm: Some(data.signature_algorithm),
             },
+            ProtocolCryptographicData::InternalPresign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: None,
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSign { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::Sign { data, .. } => DWalletSessionRequestMetricData {
                 name: data.to_string(),
                 curve: Some(data.curve),

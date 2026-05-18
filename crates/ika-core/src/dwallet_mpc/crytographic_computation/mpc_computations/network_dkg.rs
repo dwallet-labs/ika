@@ -6,6 +6,7 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg::compute_noa_dkg;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
@@ -20,7 +21,8 @@ use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    Curve25519AsyncDKGProtocol, DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+    RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol, Secp256r1AsyncDKGProtocol,
 };
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party};
 use mpc::{
@@ -261,12 +263,15 @@ pub(crate) fn advance_network_dkg_v2(
     class_groups_decryption_key: ClassGroupsDecryptionKey,
     rng: &mut ChaCha20Rng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let private_input = dkg::PrivateInput {
+        decryption_key_per_crt_prime: class_groups_decryption_key,
+    };
     let result = Party::<dkg::Party>::advance_with_guaranteed_output(
         session_id,
         party_id,
         access_structure,
         advance_request,
-        Some(class_groups_decryption_key),
+        Some(private_input),
         &public_input,
         rng,
     );
@@ -295,10 +300,27 @@ pub(crate) fn advance_network_dkg_v2(
 pub(crate) fn network_dkg_v2_public_input(
     access_structure: &WeightedThresholdAccessStructure,
     encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+    secp256k1_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::Secp256k1PvssEncryptionKeyAndProof,
+    >,
+    secp256r1_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::Secp256r1PvssEncryptionKeyAndProof,
+    >,
+    ristretto_pvss_encryption_keys_and_proofs: HashMap<
+        PartyID,
+        ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
+    >,
 ) -> DwalletMPCResult<<dkg::Party as mpc::Party>::PublicInput> {
-    let public_input =
-        <dkg::Party as mpc::Party>::PublicInput::new(access_structure, encryption_keys_and_proofs)
-            .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
+    let public_input = <dkg::Party as mpc::Party>::PublicInput::new(
+        access_structure,
+        encryption_keys_and_proofs,
+        secp256k1_pvss_encryption_keys_and_proofs,
+        ristretto_pvss_encryption_keys_and_proofs,
+        secp256r1_pvss_encryption_keys_and_proofs,
+    )
+    .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))?;
 
     Ok(public_input)
 }
@@ -317,16 +339,20 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
             } else {
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
                     epoch,
+                    key_data.dkg_at_epoch,
                     &access_structure,
                     &key_data.network_dkg_public_output,
+                    key_data.id.into_bytes(),
                 )
             }
         } else {
             instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output(
                 epoch,
+                key_data.dkg_at_epoch,
                 &access_structure,
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
+                key_data.id.into_bytes(),
             )
         };
 
@@ -340,10 +366,122 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
         .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
+/// Per-curve DKG output and public key for network-owned-address signing.
+pub(crate) struct PerCurveNetworkOwnedAddressDkgData {
+    pub dkg_output: Vec<u8>,
+    pub public_key: Vec<u8>,
+}
+
+/// Holds per-curve DKG data for all 4 supported curves.
+pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
+    pub secp256k1: PerCurveNetworkOwnedAddressDkgData,
+    pub secp256r1: PerCurveNetworkOwnedAddressDkgData,
+    pub curve25519: PerCurveNetworkOwnedAddressDkgData,
+    pub ristretto: PerCurveNetworkOwnedAddressDkgData,
+}
+
+/// Computes DKG outputs and public keys for all 4 curves.
+pub(crate) fn compute_all_network_owned_address_dkg_outputs(
+    network_key_id: &[u8; 32],
+    secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+) -> DwalletMPCResult<AllCurvesNetworkOwnedAddressDkgData> {
+    let secp256k1 = compute_noa_dkg::<Secp256k1AsyncDKGProtocol>(
+        network_key_id,
+        DWalletCurve::Secp256k1,
+        secp256k1_protocol_public_parameters,
+    )?;
+    let secp256r1 = compute_noa_dkg::<Secp256r1AsyncDKGProtocol>(
+        network_key_id,
+        DWalletCurve::Secp256r1,
+        secp256r1_protocol_public_parameters,
+    )?;
+    let curve25519 = compute_noa_dkg::<Curve25519AsyncDKGProtocol>(
+        network_key_id,
+        DWalletCurve::Curve25519,
+        curve25519_protocol_public_parameters,
+    )?;
+    let ristretto = compute_noa_dkg::<RistrettoAsyncDKGProtocol>(
+        network_key_id,
+        DWalletCurve::Ristretto,
+        ristretto_protocol_public_parameters,
+    )?;
+    Ok(AllCurvesNetworkOwnedAddressDkgData {
+        secp256k1,
+        secp256r1,
+        curve25519,
+        ristretto,
+    })
+}
+
+/// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
+pub(crate) fn build_network_encryption_key_public_data(
+    epoch: u64,
+    dkg_at_epoch: u64,
+    state: NetworkDecryptionKeyPublicOutputType,
+    latest_network_reconfiguration_public_output: Option<
+        VersionedDecryptionKeyReconfigurationOutput,
+    >,
+    network_dkg_output: VersionedNetworkDkgOutput,
+    secp256k1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256k1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256k1DecryptionKeySharePublicParameters,
+    >,
+    secp256r1_protocol_public_parameters: Arc<
+        twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
+    >,
+    secp256r1_decryption_key_share_public_parameters: Arc<
+        class_groups::Secp256r1DecryptionKeySharePublicParameters,
+    >,
+    ristretto_protocol_public_parameters: Arc<
+        twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
+    >,
+    ristretto_decryption_key_share_public_parameters: Arc<
+        class_groups::RistrettoDecryptionKeySharePublicParameters,
+    >,
+    curve25519_protocol_public_parameters: Arc<
+        twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
+    >,
+    curve25519_decryption_key_share_public_parameters: Arc<
+        class_groups::Curve25519DecryptionKeySharePublicParameters,
+    >,
+    noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
+) -> NetworkEncryptionKeyPublicData {
+    NetworkEncryptionKeyPublicData {
+        epoch,
+        dkg_at_epoch,
+        state,
+        latest_network_reconfiguration_public_output,
+        network_dkg_output,
+        secp256k1_protocol_public_parameters,
+        secp256k1_decryption_key_share_public_parameters,
+        secp256r1_protocol_public_parameters,
+        secp256r1_decryption_key_share_public_parameters,
+        ristretto_protocol_public_parameters,
+        ristretto_decryption_key_share_public_parameters,
+        curve25519_protocol_public_parameters,
+        curve25519_decryption_key_share_public_parameters,
+        secp256k1_network_owned_address_dkg_output: noa_dkg_data.secp256k1.dkg_output.clone(),
+        secp256r1_network_owned_address_dkg_output: noa_dkg_data.secp256r1.dkg_output.clone(),
+        curve25519_network_owned_address_dkg_output: noa_dkg_data.curve25519.dkg_output.clone(),
+        ristretto_network_owned_address_dkg_output: noa_dkg_data.ristretto.dkg_output.clone(),
+        secp256k1_network_owned_address_public_key: noa_dkg_data.secp256k1.public_key.clone(),
+        secp256r1_network_owned_address_public_key: noa_dkg_data.secp256r1.public_key.clone(),
+        curve25519_network_owned_address_public_key: noa_dkg_data.curve25519.public_key.clone(),
+        ristretto_network_owned_address_public_key: noa_dkg_data.ristretto.public_key.clone(),
+    }
+}
+
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
+    dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
+    network_key_id: [u8; 32],
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -387,10 +525,20 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                     .curve25519_decryption_key_share_public_parameters(access_structure)?,
             );
 
-            Ok(NetworkEncryptionKeyPublicData {
+            // Compute DKG outputs and extract public keys for all 4 curves.
+            let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
+                &network_key_id,
+                &secp256k1_protocol_public_parameters,
+                &secp256r1_protocol_public_parameters,
+                &ristretto_protocol_public_parameters,
+                &curve25519_protocol_public_parameters,
+            )?;
+
+            Ok(build_network_encryption_key_public_data(
                 epoch,
-                state: NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                latest_network_reconfiguration_public_output: None,
+                dkg_at_epoch,
+                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                None,
                 network_dkg_output,
                 secp256k1_protocol_public_parameters,
                 secp256k1_decryption_key_share_public_parameters,
@@ -400,7 +548,8 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 ristretto_decryption_key_share_public_parameters,
                 curve25519_protocol_public_parameters,
                 curve25519_decryption_key_share_public_parameters,
-            })
+                &noa_dkg_data,
+            ))
         }
     }
 }

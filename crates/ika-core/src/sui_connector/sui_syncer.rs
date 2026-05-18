@@ -9,7 +9,7 @@ use crate::sui_connector::sui_event_into_request::sui_event_into_session_request
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
+use ika_types::committee::{Committee, EpochId, StakeUnit, ValidatorEncryptionKeysAndProofs};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -69,6 +69,7 @@ where
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
         info!(?mode, "Starting SuiSyncer");
         let mut task_handles = vec![];
@@ -96,6 +97,7 @@ where
                 system_object_receiver.clone(),
                 dwallet_coordinator_object_receiver.clone(),
                 end_of_publish_sender,
+                noa_checkpoints_finalized,
             ));
             info!("Syncing last session to complete in current epoch");
             tokio::spawn(Self::sync_last_session_to_complete_in_current_epoch(
@@ -321,22 +323,24 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        let class_group_encryption_keys_and_proofs = committee
+        // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Move-side
+        // `class_groups_public_key_and_proof` byte field now carries the
+        // combined `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS
+        // keys) per the cryptography-private @ 9d35fa76 bump. See the doc on
+        // `ValidatorEncryptionKeysAndProofs` for the rationale and the
+        // mainnet-incompat warning.
+        let combined_per_validator: Vec<_> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
                 let mpc_data = committee_mpc_data.get(id);
-
                 mpc_data.and_then(|mpc_data| {
-                    let class_groups_public_key_and_proof =
-                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.class_groups_public_key_and_proof(),
-                        );
-
-                    match class_groups_public_key_and_proof {
-                        Ok(key_and_proof) => Some((*name, key_and_proof)),
+                    match bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
+                        &mpc_data.class_groups_public_key_and_proof(),
+                    ) {
+                        Ok(combined) => Some((*name, combined)),
                         Err(e) => {
                             error!(
-                                "Failed to deserialize class groups public key and proof: {}",
+                                "Failed to deserialize ValidatorEncryptionKeysAndProofs: {}",
                                 e
                             );
                             None
@@ -344,7 +348,24 @@ where
                     }
                 })
             })
-            .collect::<HashMap<_, _>>();
+            .collect();
+
+        let class_group_encryption_keys_and_proofs: HashMap<_, _> = combined_per_validator
+            .iter()
+            .map(|(n, v)| (*n, v.class_groups.clone()))
+            .collect();
+        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+            .iter()
+            .map(|(n, v)| (*n, v.secp256k1_pvss.clone()))
+            .collect();
+        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+            .iter()
+            .map(|(n, v)| (*n, v.secp256r1_pvss.clone()))
+            .collect();
+        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+            .iter()
+            .map(|(n, v)| (*n, v.ristretto_pvss.clone()))
+            .collect();
 
         Ok(Committee::new(
             epoch,
@@ -353,6 +374,9 @@ where
                 .map(|(_, (name, stake))| (*name, *stake))
                 .collect(),
             class_group_encryption_keys_and_proofs,
+            secp256k1_pvss_public_keys_and_proofs,
+            secp256r1_pvss_public_keys_and_proofs,
+            ristretto_pvss_public_keys_and_proofs,
             quorum_threshold,
             validity_threshold,
         ))
@@ -449,6 +473,7 @@ where
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         end_of_publish_sender: Sender<Option<u64>>,
+        noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) {
         loop {
             time::sleep(Duration::from_secs(10)).await;
@@ -488,6 +513,7 @@ where
             let all_network_encryption_keys_reconfiguration_completed =
                 coordinator.dwallet_network_encryption_keys.size
                     == coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
+            let all_noa_checkpoints_finalized = noa_checkpoints_finalized();
             if coordinator
                 .sessions_manager
                 .locked_last_user_initiated_session_to_complete_in_current_epoch
@@ -495,6 +521,7 @@ where
                 && all_immediate_sessions_completed
                 && next_epoch_committee_exists
                 && all_network_encryption_keys_reconfiguration_completed
+                && all_noa_checkpoints_finalized
                 && coordinator
                     .pricing_and_fee_management
                     .calculation_votes

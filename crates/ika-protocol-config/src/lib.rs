@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use clap::*;
+use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
@@ -147,6 +148,18 @@ struct FeatureFlags {
     // If true, enforces checkpoint timestamps are non-decreasing.
     #[serde(skip_serializing_if = "is_false")]
     enforce_checkpoint_timestamp_monotonicity: bool,
+
+    // If true, enables internal presign session instantiation.
+    #[serde(skip_serializing_if = "is_false")]
+    internal_presign_sessions: bool,
+
+    // If true, enables V1 BLS-signed checkpoints (default on).
+    #[serde(skip_serializing_if = "is_false")]
+    bls_checkpoints: bool,
+
+    // If true, enables NOA (Network Owned Address) MPC-signed checkpoints.
+    #[serde(skip_serializing_if = "is_false")]
+    noa_checkpoints: bool,
 }
 
 #[allow(unused)]
@@ -246,6 +259,11 @@ pub struct ProtocolConfig {
     /// above 33 (f) will not be allowed.
     consensus_bad_nodes_stake_threshold: Option<u64>,
 
+    /// The threshold for determining if a validator is idle based on the number
+    /// of ready-to-run MPC sessions plus currently running computations.
+    /// If the total session count is below this threshold, the validator is considered idle.
+    idle_session_count_threshold: Option<u64>,
+
     // === Used at Sui consensus for current ProtocolConfig version (MAX 84) ===
     /// The maximum serialised transaction size (in bytes) accepted by consensus. That should be bigger than the
     /// `max_tx_size_bytes` with some additional headroom.
@@ -261,9 +279,62 @@ pub struct ProtocolConfig {
     /// is disabled.
     consensus_gc_depth: Option<u32>,
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
+    schnorr_presign_second_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
+
+    // === Network Owned Address (NOA) Sign Presign Configuration (per algorithm) ===
+    // Pool minimum sizes
+    network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Option<u64>,
+    network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size: Option<u64>,
+    network_owned_address_eddsa_presign_pool_minimum_size: Option<u64>,
+    network_owned_address_schnorrkel_substrate_presign_pool_minimum_size: Option<u64>,
+    network_owned_address_taproot_presign_pool_minimum_size: Option<u64>,
+    // Consensus round delays
+    network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay: Option<u64>,
+    network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay: Option<u64>,
+    network_owned_address_eddsa_presign_consensus_round_delay: Option<u64>,
+    network_owned_address_schnorrkel_substrate_presign_consensus_round_delay: Option<u64>,
+    network_owned_address_taproot_presign_consensus_round_delay: Option<u64>,
+    // Sessions to instantiate per cycle
+    network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate: Option<u64>,
+    network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate: Option<u64>,
+    network_owned_address_eddsa_presign_sessions_to_instantiate: Option<u64>,
+    network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
+    network_owned_address_taproot_presign_sessions_to_instantiate: Option<u64>,
+    // Pool maximum sizes (caps for idle spawning)
+    network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size: Option<u64>,
+    network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size: Option<u64>,
+    network_owned_address_eddsa_presign_pool_maximum_size: Option<u64>,
+    network_owned_address_schnorrkel_substrate_presign_pool_maximum_size: Option<u64>,
+    network_owned_address_taproot_presign_pool_maximum_size: Option<u64>,
+
+    // === Internal Presign Configuration ===
+    internal_secp256k1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_secp256r1_ecdsa_presign_pool_minimum_size: Option<u64>,
+    internal_eddsa_presign_pool_minimum_size: Option<u64>,
+    internal_schnorrkel_substrate_presign_pool_minimum_size: Option<u64>,
+    internal_taproot_presign_pool_minimum_size: Option<u64>,
+
+    internal_secp256k1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_secp256r1_ecdsa_presign_consensus_round_delay: Option<u64>,
+    internal_eddsa_presign_consensus_round_delay: Option<u64>,
+    internal_schnorrkel_substrate_presign_consensus_round_delay: Option<u64>,
+    internal_taproot_presign_consensus_round_delay: Option<u64>,
+
+    internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_eddsa_presign_sessions_to_instantiate: Option<u64>,
+    internal_schnorrkel_substrate_presign_sessions_to_instantiate: Option<u64>,
+    internal_taproot_presign_sessions_to_instantiate: Option<u64>,
+
+    // Pool maximum sizes (caps for idle spawning)
+    internal_secp256k1_ecdsa_presign_pool_maximum_size: Option<u64>,
+    internal_secp256r1_ecdsa_presign_pool_maximum_size: Option<u64>,
+    internal_eddsa_presign_pool_maximum_size: Option<u64>,
+    internal_schnorrkel_substrate_presign_pool_maximum_size: Option<u64>,
+    internal_taproot_presign_pool_maximum_size: Option<u64>,
 }
 
 // feature flags
@@ -279,6 +350,18 @@ impl ProtocolConfig {
     //         )))
     //     }
     // }
+
+    pub fn internal_presign_sessions_enabled(&self) -> bool {
+        self.feature_flags.internal_presign_sessions
+    }
+
+    pub fn bls_checkpoints(&self) -> bool {
+        self.feature_flags.bls_checkpoints
+    }
+
+    pub fn noa_checkpoints(&self) -> bool {
+        self.feature_flags.noa_checkpoints
+    }
 
     pub fn consensus_round_prober(&self) -> bool {
         self.feature_flags.consensus_round_prober
@@ -470,6 +553,9 @@ impl ProtocolConfig {
             // higher confidence.
             consensus_bad_nodes_stake_threshold: Some(30),
 
+            // Idle threshold for MPC session management
+            idle_session_count_threshold: Some(10),
+
             // TODO (#873): Implement a production grade configuration upgrade mechanism
             // We use the `_for_testing` functions because they are currently the only way
             // to modify Sui's protocol configuration from external crates.
@@ -483,9 +569,65 @@ impl ProtocolConfig {
             consensus_gc_depth: Some(60),
             // The delay is measured in consensus rounds.
             decryption_key_reconfiguration_third_round_delay: Some(10),
+            schnorr_presign_second_round_delay: Some(8),
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
+
+            // === Network Owned Address (NOA) Presign Configuration (per algorithm) ===
+            // Non-EdDSA algorithms use the same defaults as their internal presign counterparts.
+            // EdDSA keeps its own NOA-specific higher values.
+            // Pool minimum sizes
+            network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Some(2500),
+            network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size: Some(1000),
+            network_owned_address_eddsa_presign_pool_minimum_size: Some(5000),
+            network_owned_address_schnorrkel_substrate_presign_pool_minimum_size: Some(1000),
+            network_owned_address_taproot_presign_pool_minimum_size: Some(1000),
+            // Consensus round delays
+            network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay: Some(4), // 1s
+            network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay: Some(4), // 1s
+            network_owned_address_eddsa_presign_consensus_round_delay: Some(4),           // 1s
+            network_owned_address_schnorrkel_substrate_presign_consensus_round_delay: Some(8), // 2s
+            network_owned_address_taproot_presign_consensus_round_delay: Some(8),         // 2s
+            // Sessions to instantiate per cycle
+            network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate: Some(2),
+            network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate: Some(1),
+            network_owned_address_eddsa_presign_sessions_to_instantiate: Some(4),
+            network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1),
+            network_owned_address_taproot_presign_sessions_to_instantiate: Some(1),
+            // Pool maximum sizes
+            network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size: Some(75000),
+            network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size: Some(30000),
+            network_owned_address_eddsa_presign_pool_maximum_size: Some(150000),
+            network_owned_address_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
+            network_owned_address_taproot_presign_pool_maximum_size: Some(30000),
+
+            // === Internal Presign Configuration ===
+            // Pool minimum sizes
+            internal_secp256k1_ecdsa_presign_pool_minimum_size: Some(2500),
+            internal_secp256r1_ecdsa_presign_pool_minimum_size: Some(1000),
+            internal_eddsa_presign_pool_minimum_size: Some(1000),
+            internal_schnorrkel_substrate_presign_pool_minimum_size: Some(1000),
+            internal_taproot_presign_pool_minimum_size: Some(1000),
+            // Consensus round delays (rounds between refill checks)
+            internal_secp256k1_ecdsa_presign_consensus_round_delay: Some(4), // 1s
+            internal_secp256r1_ecdsa_presign_consensus_round_delay: Some(4), // 1s
+            internal_eddsa_presign_consensus_round_delay: Some(8),           // 2s
+            internal_schnorrkel_substrate_presign_consensus_round_delay: Some(8), // 2s
+            internal_taproot_presign_consensus_round_delay: Some(8),         // 2s
+            // Sessions to instantiate per refill cycle
+            internal_secp256k1_ecdsa_presign_sessions_to_instantiate: Some(2), // 2×1=2 presigns
+            internal_secp256r1_ecdsa_presign_sessions_to_instantiate: Some(1), // 1×1=1 presign
+            internal_eddsa_presign_sessions_to_instantiate: Some(1),           // 1×26=26 presigns
+            internal_schnorrkel_substrate_presign_sessions_to_instantiate: Some(1), // 1×26=26
+            internal_taproot_presign_sessions_to_instantiate: Some(1),         // 1×26=26 presigns
+
+            // Pool maximum sizes (caps for idle spawning, 3× minimum)
+            internal_secp256k1_ecdsa_presign_pool_maximum_size: Some(75000),
+            internal_secp256r1_ecdsa_presign_pool_maximum_size: Some(30000),
+            internal_eddsa_presign_pool_maximum_size: Some(30000),
+            internal_schnorrkel_substrate_presign_pool_maximum_size: Some(30000),
+            internal_taproot_presign_pool_maximum_size: Some(30000),
         };
 
         cfg.feature_flags.mysticeti_num_leaders_per_round = Some(1);
@@ -495,6 +637,7 @@ impl ProtocolConfig {
         cfg.feature_flags
             .consensus_skip_gced_blocks_in_direct_finalization = false;
         cfg.feature_flags.enforce_checkpoint_timestamp_monotonicity = true;
+        cfg.feature_flags.bls_checkpoints = true;
 
         #[allow(clippy::never_loop)]
         for cur in 2..=version.0 {
@@ -507,8 +650,11 @@ impl ProtocolConfig {
                     cfg.reconfiguration_message_version = Some(2);
                 }
                 4 => {
+                    cfg.feature_flags.internal_presign_sessions = true;
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
+                    cfg.feature_flags.bls_checkpoints = true;
+                    cfg.feature_flags.noa_checkpoints = true;
                 }
                 // Use this template when making changes:
                 //
@@ -538,6 +684,194 @@ impl ProtocolConfig {
             *cur = Some(Box::new(override_fn));
             OverrideGuard
         })
+    }
+
+    /// Get the minimum size of the NOA sign presign pool for a given signature algorithm.
+    pub fn get_network_owned_address_presign_pool_minimum_size(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.network_owned_address_eddsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.network_owned_address_taproot_presign_pool_minimum_size()
+            }
+        }
+    }
+
+    /// Get the consensus round delay for NOA sign presigns for a given signature algorithm.
+    pub fn get_network_owned_address_presign_consensus_round_delay(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.network_owned_address_ecdsa_secp256k1_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.network_owned_address_ecdsa_secp256r1_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.network_owned_address_eddsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.network_owned_address_schnorrkel_substrate_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.network_owned_address_taproot_presign_consensus_round_delay()
+            }
+        }
+    }
+
+    /// Get the number of NOA sign presign sessions to instantiate per cycle for a given signature algorithm.
+    pub fn get_network_owned_address_presign_sessions_to_instantiate(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.network_owned_address_ecdsa_secp256k1_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.network_owned_address_ecdsa_secp256r1_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.network_owned_address_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.network_owned_address_taproot_presign_sessions_to_instantiate()
+            }
+        }
+    }
+
+    /// Get the maximum size of the NOA sign presign pool for a given signature algorithm.
+    pub fn get_network_owned_address_presign_pool_maximum_size(
+        &self,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.network_owned_address_eddsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.network_owned_address_taproot_presign_pool_maximum_size()
+            }
+        }
+    }
+
+    /// Get the minimum size of the internal presign.
+    /// We should continue instantiating internal presign sessions until reaching this size.
+    pub fn get_internal_presign_pool_minimum_size(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_minimum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_minimum_size(),
+        }
+    }
+
+    /// Get the number of consensus rounds to wait between instantiation of internal presign sessions.
+    pub fn get_internal_presign_consensus_round_delay(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_consensus_round_delay(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.internal_taproot_presign_consensus_round_delay()
+            }
+        }
+    }
+
+    /// Get the number of internal presign sessions to instantiate every time.
+    pub fn get_internal_presign_sessions_to_instantiate(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSA => {
+                self.internal_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::Taproot => {
+                self.internal_taproot_presign_sessions_to_instantiate()
+            }
+        }
+    }
+
+    /// Get the maximum size of the internal presign pool.
+    /// We should not spawn presigns beyond this size even when idle.
+    pub fn get_internal_presign_pool_maximum_size(
+        &self,
+        _curve: DWalletCurve,
+        signature_algorithm: DWalletSignatureAlgorithm,
+    ) -> u64 {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::ECDSASecp256k1 => {
+                self.internal_secp256k1_ecdsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256r1 => {
+                self.internal_secp256r1_ecdsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_maximum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+                self.internal_schnorrkel_substrate_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_maximum_size(),
+        }
     }
 }
 
@@ -759,7 +1093,6 @@ mod test {
 
         let protocol_config: ProtocolConfig =
             ProtocolConfig::get_for_version(ProtocolVersion::MIN, Chain::Unknown);
-
         assert_eq!(
             protocol_config
                 .attr_map()

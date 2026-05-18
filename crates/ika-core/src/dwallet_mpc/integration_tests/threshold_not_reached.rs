@@ -40,6 +40,8 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         sent_consensus_messages_collectors,
         epoch_stores,
         notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(committee_size);
     let mut test_state = utils::IntegrationTestState {
         dwallet_mpc_services,
@@ -50,6 +52,8 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
         consensus_round: 1,
         committee,
         sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
     };
     utils::send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     loop {
@@ -118,7 +122,9 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             malicious_actor_name
         );
     }
-    let network_dkg_mpc_rounds = 5;
+    // `crypto_round` starts at 1, so completion lands at
+    // `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
+    let network_dkg_mpc_rounds = utils::EXPECTED_NETWORK_DKG_ROUND_COUNT as usize + 1;
     assert_eq!(
         test_state.crypto_round,
         network_dkg_mpc_rounds + expected_threshold_not_reached_occurrences_crypto_rounds.len(),

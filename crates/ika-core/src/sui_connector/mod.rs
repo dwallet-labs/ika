@@ -71,6 +71,7 @@ impl SuiConnectorService {
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -114,6 +115,7 @@ impl SuiConnectorService {
             end_of_publish_sender,
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
+            noa_checkpoints_finalized,
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;

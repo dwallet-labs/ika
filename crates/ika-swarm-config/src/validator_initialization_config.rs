@@ -3,7 +3,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
@@ -59,10 +59,18 @@ impl ValidatorInitializationConfig {
         let current_epoch_consensus_address = self.current_epoch_consensus_address.clone();
         let _next_epoch_consensus_address = self.next_epoch_consensus_address.clone();
 
-        // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm
+        // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
+        //
+        // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Per the cryptography-private @ 9d35fa76 bump,
+        // the bytes published into the Move-side `class_groups_public_key_and_proof` field carry
+        // the COMBINED `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys), not the
+        // bare `ClassGroupsEncryptionKeyAndProof` mainnet expects. Validators on either side of
+        // this serialization boundary cannot decode each other's records — by design for the
+        // bump's local-network scope. See `ValidatorEncryptionKeysAndProofs`'s docstring.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
             class_groups_public_key_and_proof: bcs::to_bytes(
-                &ClassGroupsKeyPairAndProof::from_seed(&self.root_seed).encryption_key_and_proof(),
+                &ClassGroupsAndPvssKeyPairAndProof::from_seed(&self.root_seed)
+                    .validator_encryption_keys_and_proofs(),
             )
             .unwrap(),
         });

@@ -23,6 +23,8 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         mut sent_consensus_messages_collectors,
         mut epoch_stores,
         notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
     ) = utils::create_dwallet_mpc_services(4);
     let network_key_id = ObjectID::random();
 
@@ -49,7 +51,7 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         consensus_round,
     );
     for dwallet_mpc_service in dwallet_mpc_services.iter_mut() {
-        dwallet_mpc_service.run_service_loop_iteration().await;
+        dwallet_mpc_service.run_service_loop_iteration(vec![]).await;
     }
     consensus_round += 1;
     for i in &parties_that_receive_session_message_before_start_event {
@@ -97,9 +99,13 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         )
         .await
         {
+            // `consensus_round` starts at 1; +1 round added for delayed parties; completion
+            // lands at `EXPECTED_NETWORK_DKG_ROUND_COUNT + 2` (DKG rounds + finalize + delay).
             assert_eq!(
-                consensus_round, 6,
-                "Network DKG should complete after 4 rounds, and one round was added for the delayed parties"
+                consensus_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 2,
+                "Network DKG should complete after {} rounds, and one round was added for the delayed parties",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;

@@ -505,7 +505,7 @@ impl DWalletDKGPublicInputByCurve {
     }
 }
 
-fn try_ready_to_advance<P: Protocol>(
+pub(crate) fn try_ready_to_advance<P: Protocol>(
     party_id: PartyID,
     access_structure: &WeightedThresholdAccessStructure,
     consensus_round: u64,

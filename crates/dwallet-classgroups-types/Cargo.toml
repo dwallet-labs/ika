@@ -12,5 +12,8 @@ serde.workspace = true
 ika-types.workspace = true
 twopc_mpc.workspace = true
 
+[dev-dependencies]
+bcs.workspace = true
+
 [lints]
 workspace = true

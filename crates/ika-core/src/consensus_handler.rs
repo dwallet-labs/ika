@@ -42,8 +42,8 @@ use tracing::{debug, error, instrument, trace_span, warn};
 
 pub struct ConsensusHandlerInitializer {
     state: Arc<AuthorityState>,
-    checkpoint_service: Arc<DWalletCheckpointService>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -52,8 +52,8 @@ pub struct ConsensusHandlerInitializer {
 impl ConsensusHandlerInitializer {
     pub fn new(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
@@ -72,8 +72,8 @@ impl ConsensusHandlerInitializer {
     #[allow(dead_code)]
     pub(crate) fn new_for_testing(
         state: Arc<AuthorityState>,
-        checkpoint_service: Arc<DWalletCheckpointService>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<DWalletCheckpointService>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     ) -> Self {
         Self {
             state: state.clone(),
@@ -118,8 +118,8 @@ pub struct ConsensusHandler<C> {
     /// It is used for avoiding replaying already processed transactions,
     /// checking chain consistency, and accumulating per-epoch consensus output stats.
     last_consensus_stats: ExecutionIndicesWithStats,
-    checkpoint_service: Arc<C>,
-    system_checkpoint_service: Arc<SystemCheckpointService>,
+    checkpoint_service: Option<Arc<C>>,
+    system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
     /// Reputation scores used by consensus adapter that we update, forwarded from consensus
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     /// The consensus committee used to do stake computations for deciding set of low scoring authorities
@@ -138,8 +138,8 @@ const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
 impl<C> ConsensusHandler<C> {
     pub fn new(
         epoch_store: Arc<AuthorityPerEpochStore>,
-        checkpoint_service: Arc<C>,
-        system_checkpoint_service: Arc<SystemCheckpointService>,
+        checkpoint_service: Option<Arc<C>>,
+        system_checkpoint_service: Option<Arc<SystemCheckpointService>>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
@@ -431,9 +431,15 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::DWalletCheckpointSignature(_) => "dwallet_checkpoint_signature",
         ConsensusTransactionKind::DWalletMPCMessage(..) => "dwallet_mpc_message",
         ConsensusTransactionKind::DWalletMPCOutput(..) => "dwallet_mpc_output",
+        ConsensusTransactionKind::DWalletInternalMPCOutput(..) => "dwallet_internal_mpc_output",
         ConsensusTransactionKind::CapabilityNotificationV1(_) => "capability_notification_v1",
         ConsensusTransactionKind::SystemCheckpointSignature(_) => "system_checkpoint_signature",
         ConsensusTransactionKind::EndOfPublish(_) => "end_of_publish",
+        ConsensusTransactionKind::IdleStatusUpdate(_) => "idle_status_update",
+        ConsensusTransactionKind::SuiChainObservationUpdate(_) => "sui_chain_observation_update",
+        ConsensusTransactionKind::GlobalPresignRequest(_) => "global_presign_request",
+        ConsensusTransactionKind::NetworkKeyData(_) => "network_key_data",
+        ConsensusTransactionKind::NOAObservation(_) => "noa_observation",
     }
 }
 

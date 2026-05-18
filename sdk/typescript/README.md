@@ -454,6 +454,84 @@ pnpm --filter @ika.xyz/sdk test:integration
 System tests live under `test/system-tests/` and have their own setup; they are **not** run by the
 commands above.
 
+## Local network testing (step-by-step)
+
+A more detailed guide for running the full local network and SDK integration tests.
+
+### 1. Start the local Sui node
+
+From the repo root:
+
+```bash
+bash scripts/run_sui.sh
+```
+
+Wait until you see `SuiNode started!` in the output.
+
+### 2. Start the local Ika network
+
+In a separate terminal, from the repo root:
+
+```bash
+bash scripts/rerun_ika_info.sh
+```
+
+This wipes previous state (`~/.ika`), publishes all Move contracts to the local Sui node,
+initializes the system with 4 validators + 1 fullnode, and creates a fresh `ika_config.json` at the
+repo root with the new package and object IDs.
+
+The first run builds in release mode and takes several minutes.
+
+### 3. Wait for network DKG to complete
+
+Watch the Ika output for:
+- `Available CPU cores for Rayon cryptographic computations` — validators starting
+- Presign pool messages — network DKG is complete and presign pools are filling
+
+This typically takes 2–5 minutes after the validators start.
+
+### 4. Copy the config to the SDK
+
+```bash
+cp ika_config.json sdk/typescript/ika_config.json
+```
+
+**This is critical.** The SDK integration tests read `ika_config.json` to find Sui object IDs. If the
+file contains stale IDs from a previous deployment, all tests fail with `Object does not exist`.
+
+### 5. Install SDK dependencies
+
+```bash
+cd sdk/typescript
+pnpm install --ignore-scripts
+```
+
+Use `--ignore-scripts` to skip the `ika-wasm` WASM build step, which may fail due to dependency
+conflicts. The pre-built `dist/` is sufficient for running tests.
+
+If the SDK needs a fresh build:
+
+```bash
+pnpm build
+```
+
+### 6. Run integration tests
+
+Run all integration tests sequentially with per-test progress reporting:
+
+```bash
+bash scripts/run-integration-tests-sequential.sh --timeout 300
+```
+
+Options:
+
+| Flag                  | Description                                                |
+| --------------------- | ---------------------------------------------------------- |
+| `--timeout <seconds>` | Per-test timeout (default: 120s; use 300+ for crypto tests)|
+| `--filter <pattern>`  | Only run matching test files (e.g., `--filter "dwallet*"`) |
+
+Tests run in dependency order: foundational tests first, comprehensive combination tests last.
+
 ### License
 
 BSD-3-Clause-Clear © dWallet Labs, Ltd.

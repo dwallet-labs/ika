@@ -9,20 +9,19 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
+use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
-    EncryptedShareVerificationData, MakeDWalletUserSecretKeySharesPublicData,
+    EncryptedShareVerificationData, InternalPresignData, MakeDWalletUserSecretKeySharesPublicData,
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
-use group::PartyID;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
+use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -53,10 +52,7 @@ pub(crate) fn session_input_from_request(
     committee: &Committee,
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
-    validators_class_groups_public_keys_and_proofs: HashMap<
-        PartyID,
-        ClassGroupsEncryptionKeyAndProof,
-    >,
+    validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -156,7 +152,10 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
-                    validators_class_groups_public_keys_and_proofs,
+                    validator_mpc_keys_by_party_id.class_groups,
+                    validator_mpc_keys_by_party_id.secp256k1_pvss,
+                    validator_mpc_keys_by_party_id.secp256r1_pvss,
+                    validator_mpc_keys_by_party_id.ristretto_pvss,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
@@ -189,6 +188,27 @@ pub(crate) fn session_input_from_request(
                         &class_groups_decryption_key
                     )?),
                 ))
+        }
+        ProtocolData::InternalPresign {
+            data:
+                InternalPresignData {
+                    signature_algorithm,
+                    ..
+                },
+            dwallet_network_encryption_key_id,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            Ok((
+                PublicInput::Presign(PresignPublicInputByProtocol::try_new(
+                    *signature_algorithm,
+                    encryption_key_public_data,
+                    None,
+                )?),
+                None,
+            ))
         }
         ProtocolData::Presign {
             data:
@@ -235,6 +255,38 @@ pub(crate) fn session_input_from_request(
             )?),
             None,
         )),
+        ProtocolData::NetworkOwnedAddressSign {
+            data,
+            dwallet_network_encryption_key_id,
+            message,
+            presign,
+            ..
+        } => {
+            let encryption_key_public_data = network_keys
+                .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
+
+            // Pass an empty `message_centralized_signature` so `SignPublicInputByProtocol`
+            // dispatches `SignData::ToBeEmulated` — the upstream sign protocol then emulates
+            // the centralized party's partial signature inside its Rayon-scheduled advance.
+            let stored_dkg_output_bytes =
+                encryption_key_public_data.network_owned_address_dkg_output(data.curve);
+
+            let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    &stored_dkg_output_bytes,
+                    message.clone(),
+                    presign,
+                    &Vec::<u8>::new(),
+                    data.hash_scheme,
+                    access_structure,
+                    encryption_key_public_data,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::EncryptedShareVerification {
             data: EncryptedShareVerificationData { curve, .. },
             dwallet_network_encryption_key_id,

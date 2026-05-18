@@ -217,6 +217,9 @@ pub enum DwalletMPCError {
 
     #[error("invalid centralized party imported dWallet public output version")]
     InvalidCentralizedPartyImportedDWalletPublicOutputVersion,
+
+    #[error("Presign {0:?} has already been used")]
+    PresignAlreadyUsed(SessionIdentifier),
 }
 
 /// A wrapper type for the result of a runtime operation.
