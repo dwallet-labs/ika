@@ -1965,7 +1965,7 @@ impl DWalletMPCService {
                             vec![DWalletCurve::Secp256k1 as u32]
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_)) => {
-                            // V2 supports all curves
+                            // V2 supports all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2033,7 +2033,7 @@ impl DWalletMPCService {
                             vec![DWalletCurve::Secp256k1 as u32]
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_)) => {
-                            // V2 supports all curves
+                            // V2 supports all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
