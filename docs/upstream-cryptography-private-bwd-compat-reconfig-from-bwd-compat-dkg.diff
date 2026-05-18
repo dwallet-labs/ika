@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yehonatan Cohen Scaly <scalys7@gmail.com>
+Date: Mon, 18 May 2026 17:00:00 +0300
+Subject: [PATCH] bwd-compat reconfig: add new_from_bwd_compat_dkg_output
+
+Sibling constructor to `new_from_dkg_output` that accepts the
+bwd-compat DKG `PublicOutput` (`super::dkg::PublicOutput`) directly.
+
+A network DKG'd under the bwd-compat Party produces this type; the
+main-shape `decentralized_party::dkg::PublicOutput` has an extra
+`threshold_encryption_to_sharing_output` field the bwd-compat shape
+doesn't carry, so there's no `From` between them and external callers
+(ika) cannot synthesize one. Body is identical to `new_from_dkg_output`
+modulo the parameter type: every legacy field accessed exists on both
+shapes, and the existing `From<bwd_compat::dkg::PublicOutput> for
+class_groups::dkg::PublicOutput` impl supplies the conversion the
+`class_groups::reconfiguration::PublicInput::new` call needs.
+
+Apply on top of 7795eb45 (current `main`):
+
+    cd /path/to/cryptography-private
+    git checkout main
+    git checkout -b bwd-compat-reconfig-from-bwd-compat-dkg
+    git am < /path/to/dwallet-network/docs/upstream-cryptography-private-bwd-compat-reconfig-from-bwd-compat-dkg.diff
+    git push origin bwd-compat-reconfig-from-bwd-compat-dkg
+
+Then bump ika's `Cargo.toml` rev to the new commit hash and wire it in
+`crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/reconfiguration.rs::reconfiguration_bwd_compat_public_input`
+(V2 arm: call `bwd_compat_reconfig::PublicInput::new_from_bwd_compat_dkg_output`
+with bytes decoded as `bwd_compat_dkg::Party::PublicOutput`).
+---
+ .../reconfiguration.rs                        | 99 +++++++++++++++++++
+ 1 file changed, 99 insertions(+)
+
+diff --git a/2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs b/2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs
+--- a/2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs
++++ b/2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs
+@@ -179,6 +179,105 @@ impl PublicInput {
+         })
+     }
+
++    /// Builds the bwd-compat reconfiguration `PublicInput` from a bwd-compat
++    /// DKG `PublicOutput` (sibling type
++    /// `crate::decentralized_party_backward_compatible::dkg::PublicOutput`).
++    ///
++    /// Same shape as [`Self::new_from_dkg_output`] but accepts the bwd-compat
++    /// DKG output directly — a network that DKG'd under the bwd-compat Party
++    /// produces this type, and the upstream-main `decentralized_party::dkg::PublicOutput`
++    /// has an extra `threshold_encryption_to_sharing_output` field the
++    /// bwd-compat shape doesn't carry, so there's no `From` between them.
++    /// Body only reads legacy fields that exist on both shapes.
++    pub fn new_from_bwd_compat_dkg_output(
++        current_access_structure: &WeightedThresholdAccessStructure,
++        upcoming_access_structure: WeightedThresholdAccessStructure,
++        current_encryption_key_values_and_proofs_per_crt_prime: HashMap<
++            PartyID,
++            [(
++                CompactIbqf<CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS>,
++                KnowledgeOfDiscreteLogUCProof,
++            ); MAX_PRIMES],
++        >,
++        upcoming_encryption_key_values_and_proofs_per_crt_prime: HashMap<
++            PartyID,
++            [(
++                CompactIbqf<CRT_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS>,
++                KnowledgeOfDiscreteLogUCProof,
++            ); MAX_PRIMES],
++        >,
++        current_tangible_party_id_to_upcoming: HashMap<PartyID, Option<PartyID>>,
++        bwd_compat_public_output: super::dkg::PublicOutput,
++    ) -> crate::Result<Self> {
++        let ristretto_setup_parameters =
++            RistrettoSetupParameters::derive_from_plaintext_parameters::<ristretto::Scalar>(
++                ristretto::scalar::PublicParameters::default(),
++                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
++            )?;
++
++        let curve25519_setup_parameters =
++            Curve25519SetupParameters::derive_from_plaintext_parameters::<curve25519::Scalar>(
++                group::curve25519::scalar::PublicParameters::default(),
++                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
++            )?;
++
++        let secp256r1_setup_parameters =
++            Secp256r1SetupParameters::derive_from_plaintext_parameters::<secp256r1::Scalar>(
++                secp256r1::scalar::PublicParameters::default(),
++                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
++            )?;
++
++        let secp256k1_decryption_key_share_public_parameters = bwd_compat_public_output
++            .secp256k1_decryption_key_share_public_parameters(current_access_structure)?;
++
++        // Bwd-compat dkg::PublicOutput has `impl From<…> for class_groups::dkg::PublicOutput`,
++        // matching the main shape's conversion — same legacy CRT fields.
++        let class_groups_public_input =
++            class_groups::reconfiguration::PublicInput::new::<secp256k1::GroupElement>(
++                current_access_structure,
++                upcoming_access_structure,
++                secp256k1::scalar::PublicParameters::default(),
++                current_encryption_key_values_and_proofs_per_crt_prime,
++                upcoming_encryption_key_values_and_proofs_per_crt_prime,
++                secp256k1_decryption_key_share_public_parameters,
++                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
++                current_tangible_party_id_to_upcoming,
++                bwd_compat_public_output.clone().into(),
++            )?;
++
++        Ok(Self {
++            class_groups_public_input,
++            secp256k1_encryption_of_secret_key_share_first_part: bwd_compat_public_output
++                .secp256k1_encryption_of_secret_key_share_first_part,
++            secp256k1_encryption_of_secret_key_share_second_part: bwd_compat_public_output
++                .secp256k1_encryption_of_secret_key_share_second_part,
++            secp256k1_public_key_share_first_part: bwd_compat_public_output
++                .secp256k1_public_key_share_first_part,
++            secp256k1_public_key_share_second_part: bwd_compat_public_output
++                .secp256k1_public_key_share_second_part,
++            ristretto_encryption_of_secret_key_share_first_part: bwd_compat_public_output
++                .ristretto_encryption_of_secret_key_share_first_part,
++            ristretto_encryption_of_secret_key_share_second_part: bwd_compat_public_output
++                .ristretto_encryption_of_secret_key_share_second_part,
++            ristretto_public_key_share_first_part: bwd_compat_public_output
++                .ristretto_public_key_share_first_part,
++            ristretto_public_key_share_second_part: bwd_compat_public_output
++                .ristretto_public_key_share_second_part,
++            ristretto_setup_parameters,
++            curve25519_encryption_of_secret_key_share_first_part: bwd_compat_public_output
++                .curve25519_encryption_of_secret_key_share_first_part,
++            curve25519_encryption_of_secret_key_share_second_part: bwd_compat_public_output
++                .curve25519_encryption_of_secret_key_share_second_part,
++            curve25519_public_key_share_first_part: bwd_compat_public_output
++                .curve25519_public_key_share_first_part,
++            curve25519_public_key_share_second_part: bwd_compat_public_output
++                .curve25519_public_key_share_second_part,
++            curve25519_setup_parameters,
++            secp256r1_encryption_of_secret_key_share_first_part: bwd_compat_public_output
++                .secp256r1_encryption_of_secret_key_share_first_part,
++            secp256r1_encryption_of_secret_key_share_second_part: bwd_compat_public_output
++                .secp256r1_encryption_of_secret_key_share_second_part,
++            secp256r1_public_key_share_first_part: bwd_compat_public_output
++                .secp256r1_public_key_share_first_part,
++            secp256r1_public_key_share_second_part: bwd_compat_public_output
++                .secp256r1_public_key_share_second_part,
++            secp256r1_setup_parameters,
++        })
++    }
++
+     pub fn new_from_dkg_output(
+         current_access_structure: &WeightedThresholdAccessStructure,
+         upcoming_access_structure: WeightedThresholdAccessStructure,
+--
+2.43.0
