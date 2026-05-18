@@ -702,6 +702,7 @@ export class IkaClient {
 				type: `${this.ikaConfig.packages.ikaDwallet2pcMpcOriginalPackage}::coordinator_inner::DWalletCap`,
 				cursor,
 				limit,
+				include: { content: true },
 			})
 			.then((response) => {
 				return {
