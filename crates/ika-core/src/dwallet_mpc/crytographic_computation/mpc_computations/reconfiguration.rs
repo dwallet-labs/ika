@@ -243,6 +243,19 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
     }
 }
 
+// NOTE: Backward-compat Reconfiguration dispatch is currently blocked on an
+// upstream gap. `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::PublicInput`
+// (`cryptography-private @ a8fe6c6a:2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs:40`)
+// is a distinct nominal type from the main module's `PublicInput`, with all 20
+// fields declared `pub(crate)` and no public constructor (no `impl PublicInput`
+// block, only the internal `pub(crate) fn reconfigures_internal_internal`). Ika
+// cannot build this type from outside the crate. Once cryptography-private adds
+// a `pub fn new_from_dkg_output` / `pub fn new_from_reconfiguration_output`
+// constructor mirroring the main module's, the bwd-compat reconfig path can be
+// wired here following the same pattern as `advance_network_dkg_bwd_compat`.
+//
+// Tracked in the plan at `docs/plan-backward-compat-mainnet-v1.1.8.md`.
+
 fn current_tangible_party_id_to_upcoming(
     current_committee: Committee,
     upcoming_committee: Committee,

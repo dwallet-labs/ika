@@ -66,6 +66,13 @@ pub enum IkaValidatorCommand {
         host_name: String,
         gas_price: u64,
         sender_sui_address: SuiAddress,
+        /// Publish the mainnet-v1.1.8-shape MPC data (bare
+        /// `ClassGroupsEncryptionKeyAndProof`) in the resulting `ValidatorInfo`
+        /// file. Use during the v4→v5 protocol upgrade window so the validator
+        /// can interop with mainnet-v1.1.8 peers. See the same flag on
+        /// `set-next-epoch-mpc-data`.
+        #[clap(long)]
+        legacy_class_groups_only: bool,
     },
     #[clap(name = "config-env")]
     ConfigEnv {
@@ -314,6 +321,18 @@ pub enum IkaValidatorCommand {
         validator_operation_cap_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
         ika_sui_config: Option<PathBuf>,
+        /// Publish the mainnet-v1.1.8-shape MPC data (bare
+        /// `ClassGroupsEncryptionKeyAndProof`, no per-curve PVSS HPKE keys)
+        /// instead of the default post-PR-#1707 bundle
+        /// (`ValidatorEncryptionKeysAndProofs`).
+        ///
+        /// Set this flag while the network is still at `protocol_version <= 4`
+        /// so mainnet-v1.1.8 peers can decode this validator's published bytes.
+        /// Drop the flag once the network upgrades to `protocol_version >= 5`
+        /// — at that point all validators run the new binary and consume the
+        /// new shape.
+        #[clap(long)]
+        legacy_class_groups_only: bool,
     },
     #[clap(name = "verify-validator-cap")]
     VerifyValidatorCap {
@@ -409,6 +428,7 @@ impl IkaValidatorCommand {
                 host_name,
                 gas_price,
                 sender_sui_address,
+                legacy_class_groups_only,
             } => {
                 let dir = std::env::current_dir()?;
                 let protocol_key_file_name = dir.join("protocol.key");
@@ -428,13 +448,23 @@ impl IkaValidatorCommand {
 
                 let class_groups_public_key_and_proof =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
-                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ See
-                // `ValidatorEncryptionKeysAndProofs`'s docstring — this byte field is now
-                // overloaded to carry the combined struct (class groups + 3 PVSS keys).
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: bcs::to_bytes(
+                // Publication shape is version-gated: set `legacy_class_groups_only`
+                // during the v4→v5 protocol upgrade window so mainnet-v1.1.8 peers
+                // can decode this validator's bytes. Reading is shape-tolerant
+                // on either side via `decode_validator_encryption_keys`.
+                let mpc_data_bytes = if legacy_class_groups_only {
+                    bcs::to_bytes(
+                        &class_groups_public_key_and_proof
+                            .class_groups
+                            .encryption_key_and_proof(),
+                    )?
+                } else {
+                    bcs::to_bytes(
                         &class_groups_public_key_and_proof.validator_encryption_keys_and_proofs(),
-                    )?,
+                    )?
+                };
+                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
+                    class_groups_public_key_and_proof: mpc_data_bytes,
                 });
 
                 let validator_info = ValidatorInfo {
@@ -944,23 +974,31 @@ impl IkaValidatorCommand {
                 gas_budget,
                 validator_operation_cap_id,
                 ika_sui_config,
+                legacy_class_groups_only,
             } => {
                 let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
-                // Create a new MPC root seed and the combined validator-key payload.
-                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ The Move-side
-                // `class_groups_public_key_and_proof` byte field is overloaded to carry
-                // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) post-bump;
-                // see that struct's docstring.
+                // Build the publication payload. The Move-side `mpc_data_bytes`
+                // field is opaque `vector<u8>`; the contents are version-gated:
+                // pre-upgrade (mainnet-v1.1.8 peers in the committee) we publish
+                // bare `ClassGroupsEncryptionKeyAndProof` so old binaries can
+                // decode; post-upgrade we publish the full
+                // `ValidatorEncryptionKeysAndProofs` bundle. Reading is shape-
+                // tolerant on either side via `decode_validator_encryption_keys`.
                 let mpc_root_seed = RootSeed::random_seed();
                 let new_validator_keys =
-                    ClassGroupsAndPvssKeyPairAndProof::from_seed(&mpc_root_seed)
-                        .validator_encryption_keys_and_proofs();
+                    ClassGroupsAndPvssKeyPairAndProof::from_seed(&mpc_root_seed);
+
+                let mpc_data_bytes = if legacy_class_groups_only {
+                    bcs::to_bytes(&new_validator_keys.class_groups.encryption_key_and_proof())?
+                } else {
+                    bcs::to_bytes(&new_validator_keys.validator_encryption_keys_and_proofs())?
+                };
 
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: bcs::to_bytes(&new_validator_keys)?,
+                    class_groups_public_key_and_proof: mpc_data_bytes,
                 });
 
                 let response = set_next_epoch_mpc_data_bytes(

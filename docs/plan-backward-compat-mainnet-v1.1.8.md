@@ -1,5 +1,58 @@
 # Backward-compatibility with mainnet-v1.1.8 — plan
 
+## Status (as of 2026-05-18)
+
+**Committed (commit `23ba5e5f3d` on `dev_backward_compatability`)**:
+
+- ✅ Item 1: cryptography-private pin 9d35fa76 → a8fe6c6a.
+- ✅ Item 2: `decode_validator_encryption_keys` + tests, rewired 3 decode sites.
+- ✅ Item 4: `ProtocolConfig` MAX → 5, `is_*_version_v3()` helpers, v5 snapshot fixtures.
+- ✅ PR #1707 review item 3 file rename
+  (`network_owned_address_sign_dkg_emulation.rs` →
+  `network_owned_address_sign_dkg.rs`) — was missed in `396af2647e`.
+
+**In the next commit on this branch**:
+
+- 🛠 Item 3: `--legacy-class-groups-only` CLI flag on `ika validator make-validator-info` and
+  `ika validator set-next-epoch-mpc-data`. Operators set the flag during the v4→v5 protocol
+  upgrade window so mainnet-v1.1.8 peers can decode this validator's published bytes.
+- 🛠 Items 6/7 (additive helpers only): `advance_network_dkg_bwd_compat` and
+  `network_dkg_bwd_compat_public_input` added (currently `#[allow(dead_code)]`; ready to be
+  invoked from the version-dispatch path once the upstream blocker is resolved).
+
+**Blocked — upstream gap in `cryptography-private @ a8fe6c6a`**:
+
+- ❌ Items 6+7+8+9 (Party-level version dispatch for DKG/Reconfig):
+  `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::PublicInput`
+  (`cryptography-private @ a8fe6c6a:2pc-mpc/src/decentralized_party_backward_compatible/reconfiguration.rs:40`)
+  is a distinct nominal type from the main module's `PublicInput`, with all 20 fields
+  declared `pub(crate)` and **no public constructor** (no `impl PublicInput` block, only
+  the internal `pub(crate) fn reconfigures_internal_internal`). Ika cannot build this
+  type from outside the crate.
+
+  **Resolution required upstream**: add a public constructor on
+  `decentralized_party_backward_compatible::reconfiguration::PublicInput` mirroring the
+  main module's `new_from_dkg_output` / `new_from_reconfiguration_output`.
+
+  Once that lands, the dispatch wiring is mechanical: change
+  `PublicInput::NetworkEncryptionKey{Dkg, Reconfiguration}` to enums of
+  `BwdCompat | Main`, thread `&ProtocolConfig` into `session_input_from_request`, and
+  match on `is_*_version_v3()` at each advance call site. The
+  `advance_network_dkg_bwd_compat` / `network_dkg_bwd_compat_public_input` helpers in
+  `crates/ika-core/src/dwallet_mpc/crytographic_computation/mpc_computations/network_dkg.rs`
+  are already in place to be invoked from the dispatch.
+
+  Without this, the network can still do everything at `protocol_version >= 5`
+  (post-upgrade) but cannot run DKG/Reconfig during the v4 transition window. The
+  validator-key decode tolerance (item 2) and encode gating (item 3) are still useful:
+  they let operators upgrade the binary in a rolling-deploy while keeping publications
+  wire-compatible with un-upgraded mainnet-v1.1.8 peers, until the network collectively
+  activates protocol_v 5.
+
+- ❌ Item 10 partial: integration tests for bwd-compat DKG/Reconfig + v2→v3 migration are
+  blocked on the dispatch wiring above. The `decode_validator_encryption_keys` round-trip
+  tests shipped in commit `23ba5e5f3d`.
+
 ## Context
 
 The `dev_backward_compatability` branch (HEAD `396af2647e`) is built on top of PR #1707's crypto bump (`cryptography-private` pinned at `9d35fa76`). PR #1707 added per-curve PVSS HPKE keys to the new bundled struct `ValidatorEncryptionKeysAndProofs` (`crates/ika-types/src/committee.rs:559`) and now writes its bytes into the same Move-side validator field that mainnet-v1.1.8 used for the bare `ClassGroupsEncryptionKeyAndProof`. The field's outer envelope is unchanged — both sides write `VersionedMPCData::V1(MPCDataV1 { class_groups_public_key_and_proof: Vec<u8> })` (`crates/dwallet-mpc-types/src/dwallet_mpc.rs:286-293`, byte-identical in mainnet-v1.1.8). Only the bytes inside that vec differ.

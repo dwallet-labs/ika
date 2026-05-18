@@ -35,6 +35,7 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
 use tracing::error;
 use twopc_mpc::decentralized_party::dkg;
+use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
 
 /// Holds the network (decryption) keys of the network MPC protocols.
 pub struct DwalletMPCNetworkKeys {
@@ -251,6 +252,78 @@ impl DwalletMPCNetworkKeys {
         let key = self.network_encryption_keys.get(key_id)?;
         key.latest_network_reconfiguration_public_output()
     }
+}
+
+/// Advances the network DKG protocol using the mainnet-v1.1.8-shape
+/// decentralized party
+/// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`).
+///
+/// Used when the active `ProtocolConfig` reports
+/// `network_encryption_key_version() == 2` (protocol_version ≤ 4), i.e. when
+/// any peer in the committee may still be publishing the bare
+/// `ClassGroupsEncryptionKeyAndProof` shape and therefore lacks PVSS HPKE
+/// keys required by the main-shape DKG. The finalized public output is
+/// wrapped as `VersionedNetworkDkgOutput::V2`; bytes are wire-compatible
+/// with mainnet-v1.1.8 peers per audit §4 (`dkg::PublicOutput` is wire-stable
+/// across the cryptography-private bump).
+///
+/// Currently `dead_code` — full dispatch wiring is blocked on an upstream
+/// gap in `cryptography-private @ a8fe6c6a`:
+/// `decentralized_party_backward_compatible::reconfiguration::PublicInput`
+/// has no public constructor. Once upstream adds one, this function will be
+/// called from the version-dispatch enum in `mpc_computations.rs`. See
+/// `docs/plan-backward-compat-mainnet-v1.1.8.md` for details.
+#[allow(dead_code)]
+pub(crate) fn advance_network_dkg_bwd_compat(
+    session_id: CommitmentSizedNumber,
+    access_structure: &WeightedThresholdAccessStructure,
+    public_input: <bwd_compat_dkg::Party as mpc::Party>::PublicInput,
+    party_id: PartyID,
+    advance_request: AdvanceRequest<<bwd_compat_dkg::Party as mpc::Party>::Message>,
+    class_groups_decryption_key: ClassGroupsDecryptionKey,
+    rng: &mut ChaCha20Rng,
+) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
+    let result = Party::<bwd_compat_dkg::Party>::advance_with_guaranteed_output(
+        session_id,
+        party_id,
+        access_structure,
+        advance_request,
+        Some(class_groups_decryption_key),
+        &public_input,
+        rng,
+    );
+
+    match result {
+        Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+            public_output_value,
+            malicious_parties,
+            private_output,
+        }) => {
+            let public_output_value =
+                bcs::to_bytes(&VersionedNetworkDkgOutput::V2(public_output_value))?;
+            Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
+                public_output_value,
+                malicious_parties,
+                private_output,
+            })
+        }
+        other => other.map_err(Into::into),
+    }
+}
+
+/// Builds the bwd-compat decentralized-party DKG public input from class-groups
+/// encryption keys only — bwd-compat predates PVSS HPKE, so the constructor
+/// signature is `(access_structure, encryption_keys_and_proofs_per_crt_prime)`.
+///
+/// Currently `dead_code` — paired with [`advance_network_dkg_bwd_compat`]; see
+/// that function's docstring for the upstream-gap context.
+#[allow(dead_code)]
+pub(crate) fn network_dkg_bwd_compat_public_input(
+    access_structure: &WeightedThresholdAccessStructure,
+    encryption_keys_and_proofs: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+) -> DwalletMPCResult<<bwd_compat_dkg::Party as mpc::Party>::PublicInput> {
+    bwd_compat_dkg::PublicInput::new(access_structure, encryption_keys_and_proofs)
+        .map_err(|e| DwalletMPCError::InvalidMPCPartyType(e.to_string()))
 }
 
 /// Advances the network DKG protocol for the supported key types.
