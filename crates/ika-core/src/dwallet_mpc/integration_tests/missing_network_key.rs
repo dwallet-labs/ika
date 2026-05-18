@@ -57,12 +57,13 @@ async fn network_key_received_after_start_event() {
         )
         .await
         {
-            // 7-round network DKG at cryptography-private @ 9d35fa76 (was 4 pre-bump:
-            // upstream activated the threshold-encryption-to-sharing sub-protocol).
-            // consensus_round starts at 1, completion lands at 8.
+            // `consensus_round` starts at 1, completion lands at
+            // `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
             assert_eq!(
-                consensus_round, 8,
-                "Network DKG should complete after 7 rounds"
+                consensus_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             network_key_checkpoint = Some(pending_checkpoint);

@@ -14,8 +14,8 @@ use crate::dwallet_mpc::mpc_session::{
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
-    ValidatorsEncryptionKeysByPartyId, authority_name_to_party_id_from_committee,
-    generate_access_structure_from_committee, get_validators_encryption_keys_by_party_id,
+    ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
+    generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
     party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -104,9 +104,9 @@ pub(crate) struct DWalletMPCManager {
     /// All four per-validator on-chain public-key payloads (class groups + 3
     /// PVSS HPKE) keyed by party id. Built once at MPC manager init from the
     /// committee's 4 sibling HashMaps; passed to `session_input_from_request`
-    /// per session-input construction. See `ValidatorsEncryptionKeysByPartyId`
+    /// per session-input construction. See `ValidatorMpcKeysByPartyId`
     /// for the bundle's contents.
-    pub(crate) validators_encryption_keys_by_party_id: ValidatorsEncryptionKeysByPartyId,
+    pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
 
     /// The set of malicious actors that were agreed upon by a quorum of validators.
@@ -280,9 +280,7 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            validators_encryption_keys_by_party_id: get_validators_encryption_keys_by_party_id(
-                &committee,
-            )?,
+            validator_mpc_keys_by_party_id: get_validator_mpc_keys_by_party_id(&committee)?,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
             last_session_to_complete_in_current_epoch: 0,
@@ -763,7 +761,7 @@ impl DWalletMPCManager {
             &self.committee,
             &self.network_keys,
             self.next_active_committee.clone(),
-            self.validators_encryption_keys_by_party_id.clone(),
+            self.validator_mpc_keys_by_party_id.clone(),
         ) {
             Ok((public_input, private_input)) => SessionStatus::Active {
                 public_input,

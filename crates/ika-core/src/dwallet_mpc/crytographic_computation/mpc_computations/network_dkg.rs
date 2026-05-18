@@ -6,17 +6,16 @@
 //! The module provides the management of the network Decryption-Key shares and
 //! the network DKG protocol.
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::network_owned_address_sign_dkg_session_identifier;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg::compute_noa_dkg;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, NetworkDecryptionKeyPublicOutputType,
-    NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
-    VersionedDecryptionKeyReconfigurationOutput, VersionedDwalletDKGPublicOutput,
-    VersionedNetworkDkgOutput, public_key_from_decentralized_dkg_output_by_curve_v2,
+    DWalletCurve, NetworkDecryptionKeyPublicOutputType, NetworkEncryptionKeyPublicData,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedNetworkDkgOutput,
 };
 use group::PartyID;
 use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
@@ -379,48 +378,6 @@ pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
     pub secp256r1: PerCurveNetworkOwnedAddressDkgData,
     pub curve25519: PerCurveNetworkOwnedAddressDkgData,
     pub ristretto: PerCurveNetworkOwnedAddressDkgData,
-}
-
-/// Runs the threshold-only DKG for a single curve, extracts the public key and
-/// wraps the output in `VersionedDwalletDKGPublicOutput::V2` for downstream
-/// sign-input construction.
-///
-/// Phase 4f of crypto bump: ika's NOA emulator was deleted; this calls upstream's
-/// native `<D as dkg::Protocol>::threshold_dkg_output(pp, session_id)` directly
-/// to produce the decentralized-party DKG output for threshold (no centralized
-/// party) mode. The session id is derived from `network_key_id + curve`
-/// (curve-specific, sig-algo independent) per `network_owned_address_sign_dkg_session_identifier`.
-fn compute_noa_dkg<D>(
-    network_key_id: &[u8; 32],
-    curve: DWalletCurve,
-    protocol_public_parameters: &D::ProtocolPublicParameters,
-) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData>
-where
-    D: twopc_mpc::dkg::Protocol,
-{
-    let session_identifier =
-        network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
-    let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
-
-    let out = D::threshold_dkg_output(protocol_public_parameters, session_id).map_err(|e| {
-        DwalletMPCError::InternalError(format!("threshold_dkg_output {curve:?}: {e}"))
-    })?;
-    let raw_bytes = bcs::to_bytes(&out)?;
-    let public_key = public_key_from_decentralized_dkg_output_by_curve_v2(curve, &raw_bytes)
-        .map_err(|e| {
-            DwalletMPCError::InternalError(format!("public_key extract {curve:?}: {e}"))
-        })?;
-    // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
-    // construction (which decodes via VersionedDwalletDKGPublicOutput) can
-    // round-trip through the standard user-driven sign path.
-    let dkg_output = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
-        public_key_bytes: public_key.clone(),
-        dkg_output: raw_bytes,
-    })?;
-    Ok(PerCurveNetworkOwnedAddressDkgData {
-        dkg_output,
-        public_key,
-    })
 }
 
 /// Computes DKG outputs and public keys for all 4 curves.

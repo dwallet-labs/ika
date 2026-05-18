@@ -100,6 +100,8 @@ sdk/
 - Don't use `futures::executor::block_on` (use tokio runtime)
 - Don't use `bincode::deserialize_from` (use `bincode::deserialize`)
 - Don't exceed 20 function arguments (clippy enforced)
+- Don't reference plan/phase names in comments (e.g., "Phase 4f of crypto bump", "(Phase 4a, option 1)"). Plan-phase nomenclature rots once the plan doc is archived; keep the comment's technical content and drop the phase tag.
+- When initializing a struct with locals, name the local like the field (use struct-init shorthand or shadowing). `let dkg_output = ...; let dkg_output = bcs::to_bytes(&dkg_output)?; PerCurveDkgData { dkg_output, public_key }` — not `let out = ...; let raw_bytes = bcs::to_bytes(&out)?; PerCurveDkgData { dkg_output: raw_bytes, public_key }`.
 
 ### Move
 

@@ -664,11 +664,11 @@ pub fn advance_centralized_sign_party(
 }
 
 /// Centralized-party sign helper, parameterised over both the sign protocol `P` and the
-/// per-curve DKG protocol `D` as separate generics (Phase 4a, option 1). This avoids
-/// chasing types through `<P::DKGProtocol as dkg::Protocol>::…`; callers pair `P` and `D`
-/// per curve at the call site. The `presign::Protocol<DKGProtocol = D>` bound enforces
-/// that `D` is in fact `P`'s DKG protocol, so `P::Presign` and the centralized-party DKG
-/// output / secret key share types align.
+/// per-curve DKG protocol `D` as separate generics. This avoids chasing types through
+/// `<P::DKGProtocol as dkg::Protocol>::…`; callers pair `P` and `D` per curve at the call
+/// site. The `presign::Protocol<DKGProtocol = D>` bound enforces that `D` is in fact `P`'s
+/// DKG protocol, so `P::Presign` and the centralized-party DKG output / secret key share
+/// types align.
 fn advance_sign_with_decentralized_party_dkg_output<P, D>(
     centralized_party_secret_key_share: &[u8],
     presign: &[u8],

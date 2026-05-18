@@ -26,7 +26,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -2181,7 +2181,7 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
 
         // Verify that the validators local class-groups key is the
         // same as stored in the system state object onchain.

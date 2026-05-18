@@ -4699,6 +4699,7 @@ dependencies = [
 name = "dwallet-classgroups-types"
 version = "1.1.8"
 dependencies = [
+ "bcs",
  "class_groups",
  "crypto-bigint 0.7.0-rc.9",
  "dwallet-rng",

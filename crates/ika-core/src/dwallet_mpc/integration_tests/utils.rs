@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
@@ -511,10 +511,12 @@ pub fn create_dwallet_mpc_services(
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&seed);
+        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&seed);
         committee.class_groups_public_keys_and_proofs.insert(
             *authority_name,
-            class_groups_key_pair.encryption_key_and_proof(),
+            class_groups_key_pair
+                .class_groups
+                .encryption_key_and_proof(),
         );
         // PVSS HPKE per-curve public keys + proofs (added at the cryptography-private @
         // 9d35fa76 bump). The integration-test committee mirrors what `Committee::new`
@@ -1132,6 +1134,10 @@ use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_protocol_config::OverrideGuard;
+
+/// Number of MPC rounds the network DKG runs under `cryptography-private @ 9d35fa76`.
+/// Driven by upstream's threshold-encryption-to-sharing sub-protocol; bump if upstream changes.
+pub(crate) const EXPECTED_NETWORK_DKG_ROUND_COUNT: u64 = 7;
 
 /// Test-friendly protocol config values.
 /// These are small to keep integration tests fast and assertions exact.

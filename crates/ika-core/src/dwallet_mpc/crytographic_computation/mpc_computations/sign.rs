@@ -405,11 +405,10 @@ impl SignPublicInputByProtocol {
 
 // Per-curve concrete sign-public-input builders. Each pulls its
 // `decryption_key_share_public_parameters` and `protocol_public_parameters` from
-// `network_encryption_key_public_data` directly (Phase 4b: no `decryption_pp` parameter
-// threaded through the helper). Each constructs the per-protocol decentralized PublicInput
-// via struct literal (Phase 4c: no `From<(tuple)>` route since upstream removed it).
-// Phase 9: empty `message_centralized_signature` → SignData::ToBeEmulated (NOA path);
-// otherwise SignData::Unverified(deserialized_sign_message) (user-driven path).
+// `network_encryption_key_public_data` directly and constructs the per-protocol
+// decentralized `PublicInput` via struct literal. An empty
+// `message_centralized_signature` selects `SignData::ToBeEmulated` (NOA path);
+// otherwise `SignData::Unverified(deserialized_sign_message)` (user-driven path).
 
 fn build_secp256k1_ecdsa_sign_public_input(
     expected_decrypters: HashSet<PartyID>,
@@ -425,45 +424,20 @@ fn build_secp256k1_ecdsa_sign_public_input(
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.secp256k1_decryption_key_share_public_parameters();
 
+    // secp256k1 ECDSA is the only protocol that ever wrote presign V1 (raw concrete
+    // `twopc_mpc::ecdsa::presign::Presign<...>`, no `SignMessage` wrapping). Peek at the
+    // presign versioning: V1 uses the shared DKG decode + inline raw-presign conversion;
+    // V2 delegates the whole pair to the combined helper.
     let presign_versioned: VersionedPresignOutput = bcs::from_bytes(presign).map_err(|e| {
         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
             "Failed to deserialize presign output: {e}"
         )))
     })?;
 
-    let dkg_output: <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput;
-    let presign_value: <Secp256k1ECDSAProtocol as twopc_mpc::presign::Protocol>::Presign;
-
-    match presign_versioned {
+    let (dkg_output, presign_value) = match presign_versioned {
         VersionedPresignOutput::V1(presign_bytes) => {
-            // V1 backward-compat: presign was serialized as the raw concrete Presign type
-            // (no SignMessage wrapping) and dkg_output came in as a v1-shaped output. Decode
-            // both as their pre-bump concrete types and convert into the new shapes.
-            let dkg_versioned: VersionedDwalletDKGPublicOutput =
-                bcs::from_bytes(dwallet_decentralized_public_output).map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG versioned output (v1 path): {e}"
-                    )))
-                })?;
-            dkg_output = match dkg_versioned {
-                VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
-                    <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-                >(output.as_slice())
-                .map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V1: {e}"
-                    )))
-                })?
-                .into(),
-                VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => bcs::from_bytes(
-                    dkg_output.as_slice(),
-                )
-                .map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V2 (v1 presign path): {e}"
-                    )))
-                })?,
-            };
+            let dkg_output =
+                decode_ecdsa_dkg::<Secp256k1AsyncDKGProtocol>(dwallet_decentralized_public_output)?;
             let raw_presign: twopc_mpc::ecdsa::presign::Presign<
                 group::secp256k1::group_element::Value,
                 group::Value<CiphertextSpaceGroupElement<{ NON_FUNDAMENTAL_DISCRIMINANT_LIMBS }>>,
@@ -472,40 +446,12 @@ fn build_secp256k1_ecdsa_sign_public_input(
                     "Failed to deserialize presign V1: {e}"
                 )))
             })?;
-            presign_value = raw_presign.into();
+            (dkg_output, raw_presign.into())
         }
-        VersionedPresignOutput::V2(presign_bytes) => {
-            let dkg_versioned: VersionedDwalletDKGPublicOutput =
-                bcs::from_bytes(dwallet_decentralized_public_output).map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG versioned output: {e}"
-                    )))
-                })?;
-            dkg_output = match dkg_versioned {
-                VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
-                    <Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-                >(output.as_slice())
-                .map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V1: {e}"
-                    )))
-                })?
-                .into(),
-                VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => bcs::from_bytes(
-                    dkg_output.as_slice(),
-                )
-                .map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V2: {e}"
-                    )))
-                })?,
-            };
-            presign_value = bcs::from_bytes(&presign_bytes).map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize presign V2: {e}"
-                )))
-            })?;
-        }
+        VersionedPresignOutput::V2(_) => decode_ecdsa_dkg_and_presign::<
+            Secp256k1AsyncDKGProtocol,
+            Secp256k1ECDSAProtocol,
+        >(dwallet_decentralized_public_output, presign)?,
     };
 
     let sign_data =
@@ -661,6 +607,39 @@ fn build_ristretto_schnorrkel_sign_public_input(
 // Decode helpers shared across the per-curve builders. They are generic over (D, P) where D
 // is the per-curve DKG protocol and P is the per-curve sign protocol; the body is just bcs
 // deserialization through the standard versioned wrappers, no protocol-specific logic.
+fn decode_ecdsa_dkg<D>(
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+) -> DwalletMPCResult<<D as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>
+where
+    D: twopc_mpc::dkg::Protocol,
+{
+    let dkg_versioned: VersionedDwalletDKGPublicOutput =
+        bcs::from_bytes(dwallet_decentralized_public_output).map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize decentralized DKG versioned output: {e}"
+            )))
+        })?;
+    let dkg_output = match dkg_versioned {
+        VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
+            <D as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
+        >(output.as_slice())
+        .map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "Failed to deserialize decentralized DKG output V1: {e}"
+            )))
+        })?
+        .into(),
+        VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            bcs::from_bytes(dkg_output.as_slice()).map_err(|e| {
+                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                    "Failed to deserialize decentralized DKG output V2: {e}"
+                )))
+            })?
+        }
+    };
+    Ok(dkg_output)
+}
+
 fn decode_ecdsa_dkg_and_presign<D, P>(
     dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
     presign: &SerializedWrappedMPCPublicOutput,
@@ -672,31 +651,7 @@ where
     D: twopc_mpc::dkg::Protocol,
     P: twopc_mpc::presign::Protocol,
 {
-    let dkg_versioned: VersionedDwalletDKGPublicOutput =
-        bcs::from_bytes(dwallet_decentralized_public_output).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "Failed to deserialize decentralized DKG versioned output: {e}"
-            )))
-        })?;
-    let dkg_output: <D as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput =
-        match dkg_versioned {
-            VersionedDwalletDKGPublicOutput::V1(output) => bcs::from_bytes::<
-                <D as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput,
-            >(output.as_slice())
-            .map_err(|e| {
-                DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                    "Failed to deserialize decentralized DKG output V1: {e}"
-                )))
-            })?
-            .into(),
-            VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
-                bcs::from_bytes(dkg_output.as_slice()).map_err(|e| {
-                    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                        "Failed to deserialize decentralized DKG output V2: {e}"
-                    )))
-                })?
-            }
-        };
+    let dkg_output = decode_ecdsa_dkg::<D>(dwallet_decentralized_public_output)?;
 
     let presign_versioned: VersionedPresignOutput = bcs::from_bytes(presign).map_err(|e| {
         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
@@ -1101,12 +1056,11 @@ pub(crate) fn update_expected_decrypters_metrics(
 /// Verifies a single partial signature (centralized-party-only signed message) against the
 /// given dWallet DKG output and returns the post-verification compact `VerifiedSignData`.
 ///
-/// Phase 4e of the crypto bump: upstream's `verify_centralized_party_partial_signature` now
-/// returns `Result<P::VerifiedSignData>` instead of `Result<()>` — that compact form
-/// (3 ciphertext / nonce fields for ECDSA, vs. the full `SignMessage` with all ZK proofs)
-/// can be persisted/re-transmitted as `SignData::Verified(...)` for any follow-up sign or
-/// rebroadcast, skipping re-verification and shrinking wire size. Surface it on the helper's
-/// return signature here; callers that don't yet plumb it through can discard locally.
+/// Upstream's `verify_centralized_party_partial_signature` returns `Result<P::VerifiedSignData>`
+/// — a compact form (3 ciphertext / nonce fields for ECDSA, vs. the full `SignMessage` with
+/// all ZK proofs) that can be persisted / re-transmitted as `SignData::Verified(...)` for any
+/// follow-up sign or rebroadcast, skipping re-verification and shrinking wire size. Callers
+/// that don't yet plumb it through can discard locally.
 pub(crate) fn verify_partial_signature<P, D>(
     message: &[u8],
     hash_scheme: &HashScheme,

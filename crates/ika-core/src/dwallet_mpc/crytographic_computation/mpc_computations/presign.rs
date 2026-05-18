@@ -218,8 +218,8 @@ impl PresignPublicInputByProtocol {
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 // Schnorr AHE presign PublicInput has no dkg_output field; ignore the optional
                 // dwallet_dkg_output (the field is targeted-DKG-only and AHE-mode Schnorr
-                // doesn't use it). Phase-4 documents that Schnorr AHE presign carries only
-                // protocol_public_parameters per upstream.
+                // doesn't use it). Upstream's Schnorr AHE presign carries only
+                // protocol_public_parameters.
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.ristretto_protocol_public_parameters();

@@ -82,27 +82,27 @@ pub(crate) fn authority_name_to_party_id_from_committee(
     Ok(tangible_party_id)
 }
 
-/// Per-validator on-chain public-key payload, indexed by `PartyID`. Bundles the
-/// existing class-groups CRT encryption-key map with the three per-curve PVSS
-/// HPKE encryption-key maps that `decentralized_party::dkg::PublicInput::new`
-/// and the reconfiguration-party constructors require post-`9d35fa76` bump.
+/// Per-validator public MPC keys, indexed by `PartyID`. Holds the class-groups
+/// CRT encryption-key map alongside the three per-curve PVSS HPKE encryption-key
+/// maps that `decentralized_party::dkg::PublicInput::new` and the
+/// reconfiguration-party constructors require post-`9d35fa76` bump.
 ///
-/// Built once per session-input construction from the `Committee`'s 4 sibling
-/// HashMaps; passed as a single argument to `network_dkg_v2_public_input` and
-/// to the reconfiguration `generate_public_input` constructors so adding a new
-/// PVSS curve in the future requires touching only this struct + the
-/// extractor below, not every helper signature on the call path.
+/// Exists so that `network_dkg_v2_public_input` and the three reconfiguration
+/// `generate_public_input` constructors take one parameter instead of four
+/// separate `HashMap` arguments. Adding a fifth PVSS curve in the future becomes
+/// a one-field change to this struct + its extractor rather than threading a new
+/// `HashMap` through every helper signature on the call path.
 #[derive(Clone, Debug)]
-pub(crate) struct ValidatorsEncryptionKeysByPartyId {
+pub(crate) struct ValidatorMpcKeysByPartyId {
     pub class_groups: HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
     pub secp256k1_pvss: HashMap<PartyID, Secp256k1PvssEncryptionKeyAndProof>,
     pub secp256r1_pvss: HashMap<PartyID, Secp256r1PvssEncryptionKeyAndProof>,
     pub ristretto_pvss: HashMap<PartyID, RistrettoPvssEncryptionKeyAndProof>,
 }
 
-pub(crate) fn get_validators_encryption_keys_by_party_id(
+pub(crate) fn get_validator_mpc_keys_by_party_id(
     committee: &Committee,
-) -> DwalletMPCResult<ValidatorsEncryptionKeysByPartyId> {
+) -> DwalletMPCResult<ValidatorMpcKeysByPartyId> {
     let mut class_groups = HashMap::new();
     let mut secp256k1_pvss = HashMap::new();
     let mut secp256r1_pvss = HashMap::new();
@@ -138,7 +138,7 @@ pub(crate) fn get_validators_encryption_keys_by_party_id(
             ristretto_pvss.insert(party_id, k);
         }
     }
-    Ok(ValidatorsEncryptionKeysByPartyId {
+    Ok(ValidatorMpcKeysByPartyId {
         class_groups,
         secp256k1_pvss,
         secp256r1_pvss,

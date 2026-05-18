@@ -9,7 +9,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
-use crate::dwallet_mpc::ValidatorsEncryptionKeysByPartyId;
+use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
 use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -52,7 +52,7 @@ pub(crate) fn session_input_from_request(
     committee: &Committee,
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
-    validators_encryption_keys_by_party_id: ValidatorsEncryptionKeysByPartyId,
+    validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -152,10 +152,10 @@ pub(crate) fn session_input_from_request(
             Ok((
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
-                    validators_encryption_keys_by_party_id.class_groups,
-                    validators_encryption_keys_by_party_id.secp256k1_pvss,
-                    validators_encryption_keys_by_party_id.secp256r1_pvss,
-                    validators_encryption_keys_by_party_id.ristretto_pvss,
+                    validator_mpc_keys_by_party_id.class_groups,
+                    validator_mpc_keys_by_party_id.secp256k1_pvss,
+                    validator_mpc_keys_by_party_id.secp256r1_pvss,
+                    validator_mpc_keys_by_party_id.ristretto_pvss,
                 )?),
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
@@ -265,12 +265,9 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Phase 4f of crypto bump: ika no longer pre-emulates the centralized party's
-            // partial signature off-Rayon. The stored output is now just the decentralized
-            // DKG output bytes (network_dkg.rs writes it via `threshold_dkg_output`). Pass
-            // empty `message_centralized_signature` to signal NOA → SignPublicInputByProtocol
-            // dispatches `SignData::ToBeEmulated` so the upstream protocol emulates inside
-            // its Rayon-scheduled advance.
+            // Pass an empty `message_centralized_signature` so `SignPublicInputByProtocol`
+            // dispatches `SignData::ToBeEmulated` — the upstream sign protocol then emulates
+            // the centralized party's partial signature inside its Rayon-scheduled advance.
             let stored_dkg_output_bytes =
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
