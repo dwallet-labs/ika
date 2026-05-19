@@ -1,0 +1,28 @@
+{
+	"include": ["src"],
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["dom", "esnext"],
+		"types": ["node"],
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"noEmit": true,
+		"isolatedModules": true,
+		"paths": {
+			"@ika.xyz/plugins/sui/source": ["../src/sui/source/index.ts"],
+			"@ika.xyz/plugins/sui/destination": ["../src/sui/destination/index.ts"],
+			"@ika.xyz/plugins/sui/publisher": ["../src/sui/publisher/index.ts"],
+			"@ika.xyz/plugins/solana/destination": ["../src/solana/destination/index.ts"],
+			"@ika.xyz/plugins/solana/publisher": ["../src/solana/publisher/index.ts"],
+			"@ika.xyz/plugins/ethereum/destination": ["../src/ethereum/destination/index.ts"],
+			"@ika.xyz/plugins/ethereum/publisher": ["../src/ethereum/publisher/index.ts"],
+			"@ika.xyz/plugins/bitcoin/destination": ["../src/bitcoin/destination/index.ts"],
+			"@ika.xyz/plugins/bitcoin/publisher": ["../src/bitcoin/publisher/index.ts"]
+		}
+	}
+}

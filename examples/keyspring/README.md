@@ -36,13 +36,13 @@ This demo showcases how Ika enables **cross-chain wallet creation**. Using your 
 ```bash
 cd backend
 bun install
-
-# Set your Sui admin key
-export SUI_ADMIN_SECRET_KEY="your-base64-encoded-key"
-export IKA_COIN_ID="your-ika-coin-id" # used for gas
-
+export SUI_ADMIN_SECRET_KEY="suiprivkey..."  # bech32 Sui signer
 bun run dev
 ```
+
+The backend now uses `@ika.xyz/plugins` for fee allocation, transaction
+composition, and Ethereum broadcast. `IKA_COIN_ID` is no longer required —
+fee coins are minted on demand via viem-style `coinWithBalance`.
 
 ### 2. Start the Frontend
 
@@ -92,6 +92,28 @@ Your Wallet                    Ika Network                   Base Sepolia
 - **Cross-chain**: Use any wallet to control an Ethereum address
 - **Secure**: Based on Ika's [Zero-Trust dWallet](https://docs.ika.xyz/sdk/ika-transaction/zero-trust-dwallet) model
 
+### Plugin Architecture
+
+The backend uses three plugins from `@ika.xyz/plugins`:
+
+| Plugin                          | Role                                                        |
+| ------------------------------- | ----------------------------------------------------------- |
+| `suiSource`                     | Sui-side transaction envelope: fee coins, signing, exec     |
+| `ethPublisher`                  | Broadcasts signed Ethereum txs to Base Sepolia              |
+| `assembleEthereumPayload`       | Helper: (r,s) + tx → serialized signed tx (yParity recovery) |
+
+The source is constructed **without a USEK** — the backend never sees user
+key material. Two non-custodial primitives bridge the gap:
+
+- `ika.sui.compose.submitDKG(...)` — submit a DKG with a payload prepared
+  by the browser. Optionally emits the encryption-key registration call.
+- `ika.sui.compose.submitSign(...)` — submit a sign with a precomputed
+  `userSignMessage`. Emits accept-share + verify-presign + approve +
+  request-sign in a single PTB.
+
+Both helpers wrap the low-level coordinator Move calls in a typed API and
+get fee allocation + execution for free via `ika.sui.transaction(...)`.
+
 ### How Passkey Authentication Works
 
 When using a passkey instead of a wallet:
@@ -128,11 +150,12 @@ When using a passkey instead of a wallet:
 
 ### Backend Environment
 
-| Variable               | Description                | Default   |
-| ---------------------- | -------------------------- | --------- |
-| `PORT`                 | Server port                | `3001`    |
-| `SUI_ADMIN_SECRET_KEY` | Base64-encoded Ed25519 key | Required  |
-| `SUI_NETWORK`          | `testnet` or `mainnet`     | `testnet` |
+| Variable               | Description                                     | Default   |
+| ---------------------- | ----------------------------------------------- | --------- |
+| `PORT`                 | Server port                                     | `3001`    |
+| `SUI_ADMIN_SECRET_KEY` | bech32 `suiprivkey...` Sui signer               | Required  |
+| `SUI_NETWORK`          | `testnet` or `mainnet`                          | `testnet` |
+| `SUI_RPC_URL`          | Override the Sui RPC endpoint                   | optional  |
 
 ### Frontend Environment
 

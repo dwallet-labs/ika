@@ -73,7 +73,10 @@ sui-simulator.workspace = true
 
 
 [features]
-default = ["enforce-minimum-cpu"]
+default = []
 
-# Set this feature to enforce a minimum of 16 CPU cores for cryptographic computations.
+# Set this feature to enforce a minimum of 16 CPU cores for cryptographic
+# computations. Real validator builds should enable it explicitly via
+# `--features=ika-node/enforce-minimum-cpu`. Local development on
+# smaller machines (e.g. dev boxes, CI workers) must build without it.
 enforce-minimum-cpu = ["ika-core/enforce-minimum-cpu"]

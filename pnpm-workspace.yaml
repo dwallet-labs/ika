@@ -1,5 +1,7 @@
 packages:
   - 'sdk/**'
+  - 'examples/keyspring/backend'
   - '!**/dist/**'
   - '!**/.next/**'
   - '!docs/**'
+  - '!sdk/typescript/plugin'

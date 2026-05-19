@@ -1,0 +1,107 @@
+{
+	"name": "@ika.xyz/plugins",
+	"version": "0.1.0",
+	"description": "First-party plugin packages for the Ika SDK: sources, destinations, publishers.",
+	"license": "BSD-3-Clause-Clear",
+	"sideEffects": false,
+	"type": "commonjs",
+	"main": "./dist/cjs/index.js",
+	"module": "./dist/esm/index.js",
+	"types": "./dist/cjs/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/esm/index.js",
+			"require": "./dist/cjs/index.js"
+		},
+		"./sui": {
+			"import": "./dist/esm/sui/index.js",
+			"require": "./dist/cjs/sui/index.js"
+		},
+		"./sui/source": {
+			"import": "./dist/esm/sui/source/index.js",
+			"require": "./dist/cjs/sui/source/index.js"
+		},
+		"./sui/destination": {
+			"import": "./dist/esm/sui/destination/index.js",
+			"require": "./dist/cjs/sui/destination/index.js"
+		},
+		"./sui/publisher": {
+			"import": "./dist/esm/sui/publisher/index.js",
+			"require": "./dist/cjs/sui/publisher/index.js"
+		},
+		"./solana": {
+			"import": "./dist/esm/solana/index.js",
+			"require": "./dist/cjs/solana/index.js"
+		},
+		"./solana/destination": {
+			"import": "./dist/esm/solana/destination/index.js",
+			"require": "./dist/cjs/solana/destination/index.js"
+		},
+		"./solana/publisher": {
+			"import": "./dist/esm/solana/publisher/index.js",
+			"require": "./dist/cjs/solana/publisher/index.js"
+		},
+		"./ethereum": {
+			"import": "./dist/esm/ethereum/index.js",
+			"require": "./dist/cjs/ethereum/index.js"
+		},
+		"./ethereum/destination": {
+			"import": "./dist/esm/ethereum/destination/index.js",
+			"require": "./dist/cjs/ethereum/destination/index.js"
+		},
+		"./ethereum/publisher": {
+			"import": "./dist/esm/ethereum/publisher/index.js",
+			"require": "./dist/cjs/ethereum/publisher/index.js"
+		},
+		"./bitcoin": {
+			"import": "./dist/esm/bitcoin/index.js",
+			"require": "./dist/cjs/bitcoin/index.js"
+		},
+		"./bitcoin/destination": {
+			"import": "./dist/esm/bitcoin/destination/index.js",
+			"require": "./dist/cjs/bitcoin/destination/index.js"
+		},
+		"./bitcoin/publisher": {
+			"import": "./dist/esm/bitcoin/publisher/index.js",
+			"require": "./dist/cjs/bitcoin/publisher/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"peerDependencies": {
+		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/sui": "^2.16.3",
+		"@solana/web3.js": "^1.95.0",
+		"bitcoinjs-lib": "^7.0.0",
+		"viem": "^2.23.0"
+	},
+	"peerDependenciesMeta": {
+		"@solana/web3.js": {
+			"optional": true
+		},
+		"bitcoinjs-lib": {
+			"optional": true
+		},
+		"viem": {
+			"optional": true
+		}
+	},
+	"dependencies": {
+		"@bitcoinerlab/secp256k1": "^1.2.0",
+		"@noble/curves": "^2.2.0",
+		"@noble/hashes": "^2.0.1"
+	},
+	"devDependencies": {
+		"@ika.xyz/sdk": "workspace:*",
+		"@mysten/sui": "^2.16.3",
+		"@solana/web3.js": "^1.95.0",
+		"@types/node": "^25.0.0",
+		"bitcoinjs-lib": "^7.0.0",
+		"typescript": "^6.0.0",
+		"viem": "^2.23.0"
+	}
+}

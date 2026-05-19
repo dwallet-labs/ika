@@ -14,7 +14,7 @@ use std::{
 
 use ika_config::NodeConfig;
 use ika_config::node::{
-    AuthorityOverloadConfig, LOCAL_DEFAULT_SUI_FAUCET_URL, RunWithRange,
+    AuthorityOverloadConfig, RunWithRange, get_testing_sui_faucet_url,
     get_testing_sui_fullnode_rpc_url,
 };
 use ika_node::IkaNodeHandle;
@@ -208,7 +208,10 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
             network_config
         } else {
             let sui_fullnode_rpc_url = get_testing_sui_fullnode_rpc_url();
-            let sui_faucet_url = LOCAL_DEFAULT_SUI_FAUCET_URL.to_string();
+            // Honor SUI_FAUCET_URL env (mirrors SUI_FULLNODE_RPC_URL). Previously
+            // hardcoded to LOCAL_DEFAULT_SUI_FAUCET_URL which made the swarm
+            // unusable inside a docker container where 127.0.0.1 isn't the host.
+            let sui_faucet_url = get_testing_sui_faucet_url();
             let mut config_builder =
                 ConfigBuilder::new(dir.as_ref(), sui_fullnode_rpc_url, sui_faucet_url);
 
