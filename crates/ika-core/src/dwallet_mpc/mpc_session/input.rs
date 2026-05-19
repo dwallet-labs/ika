@@ -183,6 +183,31 @@ pub(crate) fn session_input_from_request(
             // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
+                // At `_version == 3` every committee member MUST publish the post-PR-#1707
+                // bundle shape (class-groups + per-curve PVSS HPKE). The shape-tolerant
+                // decoder accepts old-shape submissions silently, so a validator that
+                // hasn't migrated would land here with empty PVSS entries while their
+                // class-groups entry is present — fail loudly rather than running DKG
+                // on a partial map.
+                let expected = committee.voting_rights.len();
+                let class_groups_count = validator_mpc_keys_by_party_id.class_groups.len();
+                let secp256k1_pvss_count = validator_mpc_keys_by_party_id.secp256k1_pvss.len();
+                let secp256r1_pvss_count = validator_mpc_keys_by_party_id.secp256r1_pvss.len();
+                let ristretto_pvss_count = validator_mpc_keys_by_party_id.ristretto_pvss.len();
+                if class_groups_count != expected
+                    || secp256k1_pvss_count != expected
+                    || secp256r1_pvss_count != expected
+                    || ristretto_pvss_count != expected
+                {
+                    return Err(DwalletMPCError::InvalidMPCPartyType(format!(
+                        "at network_encryption_key_version == 3 every committee member \
+                         must publish the post-PR-#1707 bundle shape, but only \
+                         {class_groups_count}/{expected} class-groups, \
+                         {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
+                         {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
+                         {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
+                    )));
+                }
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
                     validator_mpc_keys_by_party_id.class_groups,

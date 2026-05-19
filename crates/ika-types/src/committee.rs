@@ -573,6 +573,11 @@ pub struct ValidatorEncryptionKeysAndProofs {
 /// `ClassGroupsEncryptionKeyAndProof`) come back here with PVSS halves as
 /// `None`; downstream DKG / Reconfiguration dispatch picks the
 /// `decentralized_party_backward_compatible` Party (which needs no PVSS keys).
+///
+/// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707 transition window.
+/// Once every validator has republished under the new shape and the network has
+/// settled at `network_encryption_key_version == 3`, delete this struct and have
+/// the decode sites read [`ValidatorEncryptionKeysAndProofs`] directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedValidatorEncryptionKeys {
     pub class_groups: ClassGroupsEncryptionKeyAndProof,
@@ -597,6 +602,12 @@ pub struct DecodedValidatorEncryptionKeys {
 /// bytes by default, so a new-shape payload will NOT silently parse as the old
 /// shape: the old-shape parse path consumes the leading class-groups array and
 /// errors on the trailing PVSS section, then the new-shape arm succeeds.
+///
+/// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707 transition window.
+/// Delete this function (and the old-shape fallback) once the network has settled
+/// at `network_encryption_key_version == 3` and every validator publishes
+/// [`ValidatorEncryptionKeysAndProofs`]; decode sites can then call
+/// `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` directly.
 pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidatorEncryptionKeys> {
     if let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(bytes) {
         return Some(DecodedValidatorEncryptionKeys {

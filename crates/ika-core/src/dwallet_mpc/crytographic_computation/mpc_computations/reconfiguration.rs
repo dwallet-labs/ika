@@ -70,6 +70,40 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         let upcoming_validators_pvss_hpke_keys_by_party_id =
             crate::dwallet_mpc::get_validator_mpc_keys_by_party_id(&upcoming_committee)?;
 
+        // At main Reconfig (callable only from `_version == 3`) every upcoming
+        // committee member MUST publish the post-PR-#1707 bundle shape. The
+        // shape-tolerant decoder accepts old-shape submissions silently, so a
+        // not-yet-migrated validator in the upcoming committee would land here
+        // with empty PVSS entries while their class-groups entry is present.
+        // Fail loudly rather than running reconfig on a partial map.
+        let expected = upcoming_committee.voting_rights.len();
+        let class_groups_count = upcoming_validators_pvss_hpke_keys_by_party_id
+            .class_groups
+            .len();
+        let secp256k1_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
+            .secp256k1_pvss
+            .len();
+        let secp256r1_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
+            .secp256r1_pvss
+            .len();
+        let ristretto_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
+            .ristretto_pvss
+            .len();
+        if class_groups_count != expected
+            || secp256k1_pvss_count != expected
+            || secp256r1_pvss_count != expected
+            || ristretto_pvss_count != expected
+        {
+            return Err(DwalletMPCError::InvalidMPCPartyType(format!(
+                "at reconfiguration_message_version == 3 every upcoming committee \
+                 member must publish the post-PR-#1707 bundle shape, but only \
+                 {class_groups_count}/{expected} class-groups, \
+                 {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
+                 {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
+                 {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
+            )));
+        }
+
         let current_tangible_party_id_to_upcoming =
             current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
 

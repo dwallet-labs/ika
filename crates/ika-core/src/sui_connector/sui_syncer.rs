@@ -334,7 +334,7 @@ where
                     &mpc_data.class_groups_public_key_and_proof(),
                 );
                 if decoded.is_none() {
-                    error!(
+                    warn!(
                         authority = ?name,
                         "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
                     );

@@ -71,6 +71,11 @@ pub enum IkaValidatorCommand {
         /// file. Use during the v3→v4 protocol upgrade window so the validator
         /// can interop with mainnet-v1.1.8 peers. See the same flag on
         /// `set-next-epoch-mpc-data`.
+        ///
+        /// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707
+        /// transition. Delete this flag (and the legacy publication branch in
+        /// the command implementation) once the network has settled at
+        /// `network_encryption_key_version == 3`.
         #[clap(long)]
         legacy_class_groups_only: bool,
     },
@@ -331,6 +336,11 @@ pub enum IkaValidatorCommand {
         /// Drop the flag once the network upgrades to `protocol_version >= 4`
         /// — at that point all validators run the new binary and consume the
         /// new shape.
+        ///
+        /// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707
+        /// transition. Delete this flag (and the legacy publication branch in
+        /// the command implementation) once the network has settled at
+        /// `network_encryption_key_version == 3`.
         #[clap(long)]
         legacy_class_groups_only: bool,
     },

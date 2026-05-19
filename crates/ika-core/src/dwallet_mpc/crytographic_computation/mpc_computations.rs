@@ -55,7 +55,7 @@ use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
 pub(crate) mod network_dkg;
-pub(crate) mod network_owned_address_sign_dkg;
+pub(crate) mod network_owned_address_sign_dkg_emulation;
 pub(crate) mod presign;
 pub(crate) mod reconfiguration;
 pub(crate) mod sign;
