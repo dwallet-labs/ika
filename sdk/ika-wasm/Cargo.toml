@@ -51,6 +51,13 @@ wasm-opt = false
 #    "--flexible-inline-max-function-size",
 #    "4294967295",
 #]
+# Anchor this crate as its own workspace root so `cargo metadata` (invoked by
+# wasm-pack from `pnpm i` / `npm run build`) doesn't walk up past the outer
+# Cargo.toml's `exclude = ["sdk/ika-wasm"]` and into a parent checkout's
+# workspace, which happens with git worktrees and produces a "current package
+# believes it's in a workspace when it's not" error.
+[workspace]
+
 [dependencies]
 dwallet-mpc-centralized-party = { path = "../../crates/dwallet-mpc-centralized-party", features = ["wasm_js"] }
 anyhow = "1.0.100"
