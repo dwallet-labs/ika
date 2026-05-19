@@ -17,7 +17,6 @@ use ika_move_contracts::{
 };
 use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
-use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
 use ika_types::sui::{
     ADVANCE_EPOCH_FUNCTION_NAME, CREATE_BYTES_TABLE_VEC_FUNCTION_NAME,
@@ -35,8 +34,6 @@ use move_core_types::language_storage::{StructTag, TypeTag};
 use move_package_alt_compilation::build_config::BuildConfig as MoveBuildConfig;
 use shared_crypto::intent::Intent;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
 use sui::client_commands::{
     PublishArgs, SuiClientCommandResult, SuiClientCommands, TestPublishArgs,
@@ -81,6 +78,31 @@ pub struct ContractPaths {
     pub ika_common_contract_path: PathBuf,
     pub ika_system_contract_path: PathBuf,
     pub ika_dwallet_2pc_mpc_contract_path: PathBuf,
+}
+
+pub struct PublishedIkaPackages {
+    pub ika_package_id: ObjectID,
+    pub treasury_cap_id: ObjectID,
+    pub ika_package_upgrade_cap_id: ObjectID,
+    pub ika_common_package_id: ObjectID,
+    pub system_object_cap_id: ObjectID,
+    pub ika_common_package_upgrade_cap_id: ObjectID,
+    pub ika_system_package_id: ObjectID,
+    pub init_cap_id: ObjectID,
+    pub ika_system_package_upgrade_cap_id: ObjectID,
+    pub ika_dwallet_2pc_mpc_package_id: ObjectID,
+    pub ika_dwallet_2pc_mpc_init_id: ObjectID,
+    pub ika_dwallet_2pc_mpc_package_upgrade_cap_id: ObjectID,
+    pub ika_supply_id: ObjectID,
+}
+
+pub struct InitializedIkaSystem {
+    pub ika_system_object_id: ObjectID,
+    pub protocol_cap_id: ObjectID,
+    pub init_system_shared_version: SequenceNumber,
+    pub ika_dwallet_coordinator_object_id: ObjectID,
+    pub dwallet_2pc_mpc_coordinator_initial_shared_version: SequenceNumber,
+    pub validator_ids: Vec<ObjectID>,
 }
 
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
@@ -207,8 +229,57 @@ pub async fn init_ika_on_sui(
         })?;
     let contract_paths = setup_contract_paths(Chain::Devnet)?;
 
+    let packages = publish_ika_packages(
+        &mut context,
+        client.clone(),
+        publisher_address,
+        &contract_paths,
+    )
+    .await?;
+
+    let system = initialize_ika_system(
+        &mut context,
+        client.clone(),
+        publisher_address,
+        &packages,
+        validator_initialization_configs,
+        &validator_addresses,
+        &initiation_parameters,
+    )
+    .await?;
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Restore cwd: `sui move build` (called from publish_*_package_to_sui) cd's into
+    // the contracts temp dir. Restoring keeps callers of this function from seeing a
+    // mutated cwd. The matching `ika_config.json` write was lifted into the CLI so
+    // library callers (tests) don't emit stray files.
+    std::env::set_current_dir(contract_paths.current_working_dir)?;
+
+    Ok((
+        packages.ika_package_id,
+        packages.ika_common_package_id,
+        packages.ika_dwallet_2pc_mpc_package_id,
+        packages.ika_system_package_id,
+        system.ika_system_object_id,
+        system.ika_dwallet_coordinator_object_id,
+        publisher_keypair,
+    ))
+}
+
+/// Publish the four Ika Move packages and mint the initial IKA supply.
+///
+/// This is the first half of the chain bootstrap; it is independent of validator
+/// registration and system initialization, so test code can stop here to inspect
+/// or modify package state before calling [`initialize_ika_system`].
+pub async fn publish_ika_packages(
+    context: &mut WalletContext,
+    client: SuiClient,
+    publisher_address: SuiAddress,
+    contract_paths: &ContractPaths,
+) -> Result<PublishedIkaPackages, anyhow::Error> {
     let (ika_package_id, treasury_cap_id, ika_package_upgrade_cap_id) =
-        publish_ika_package_to_sui(&mut context, contract_paths.ika_contract_path).await?;
+        publish_ika_package_to_sui(context, contract_paths.ika_contract_path.clone()).await?;
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     println!(
@@ -216,13 +287,13 @@ pub async fn init_ika_on_sui(
     );
 
     let (ika_common_package_id, system_object_cap_id, ika_common_package_upgrade_cap_id) =
-        publish_ika_common_package_to_sui(&mut context, contract_paths.ika_common_contract_path)
+        publish_ika_common_package_to_sui(context, contract_paths.ika_common_contract_path.clone())
             .await?;
 
     println!("Package `ika_common` published: ika_common_package_id: {ika_common_package_id}");
 
     let (ika_system_package_id, init_cap_id, ika_system_package_upgrade_cap_id) =
-        publish_ika_system_package_to_sui(&mut context, contract_paths.ika_system_contract_path)
+        publish_ika_system_package_to_sui(context, contract_paths.ika_system_contract_path.clone())
             .await?;
 
     println!(
@@ -234,8 +305,8 @@ pub async fn init_ika_on_sui(
         ika_dwallet_2pc_mpc_init_id,
         ika_dwallet_2pc_mpc_package_upgrade_cap_id,
     ) = publish_ika_dwallet_2pc_mpc_package_to_sui(
-        &mut context,
-        contract_paths.ika_dwallet_2pc_mpc_contract_path,
+        context,
+        contract_paths.ika_dwallet_2pc_mpc_contract_path.clone(),
     )
     .await?;
 
@@ -243,21 +314,53 @@ pub async fn init_ika_on_sui(
         "Package `ika_dwallet_2pc_mpc` published: ika_dwallet_2pc_mpc_package_id: {ika_dwallet_2pc_mpc_package_id} ika_dwallet_2pc_mpc_init_id: {ika_dwallet_2pc_mpc_init_id}"
     );
 
-    let ika_supply_id = minted_ika(publisher_address, client.clone(), ika_package_id).await?;
+    let ika_supply_id = minted_ika(publisher_address, client, ika_package_id).await?;
 
     println!("Minted: ika_supply_id: {ika_supply_id}");
 
-    let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
-        publisher_address,
-        &mut context,
-        client.clone(),
+    Ok(PublishedIkaPackages {
+        ika_package_id,
+        treasury_cap_id,
+        ika_package_upgrade_cap_id,
         ika_common_package_id,
+        system_object_cap_id,
+        ika_common_package_upgrade_cap_id,
         ika_system_package_id,
         init_cap_id,
-        system_object_cap_id,
-        ika_package_upgrade_cap_id,
         ika_system_package_upgrade_cap_id,
-        treasury_cap_id,
+        ika_dwallet_2pc_mpc_package_id,
+        ika_dwallet_2pc_mpc_init_id,
+        ika_dwallet_2pc_mpc_package_upgrade_cap_id,
+        ika_supply_id,
+    })
+}
+
+/// Initialize the on-chain Ika system: run `init::initialize`, wire up upgrade
+/// caps, register validators, stake, run `system::initialize`, and request the
+/// first network encryption key DKG.
+///
+/// Assumes [`publish_ika_packages`] has already published the packages and minted
+/// the IKA supply, and that each validator address has been funded with gas.
+pub async fn initialize_ika_system(
+    context: &mut WalletContext,
+    client: SuiClient,
+    publisher_address: SuiAddress,
+    packages: &PublishedIkaPackages,
+    validator_initialization_configs: &[ValidatorInitializationConfig],
+    validator_addresses: &[SuiAddress],
+    initiation_parameters: &InitiationParameters,
+) -> Result<InitializedIkaSystem, anyhow::Error> {
+    let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
+        publisher_address,
+        context,
+        client.clone(),
+        packages.ika_common_package_id,
+        packages.ika_system_package_id,
+        packages.init_cap_id,
+        packages.system_object_cap_id,
+        packages.ika_package_upgrade_cap_id,
+        packages.ika_system_package_upgrade_cap_id,
+        packages.treasury_cap_id,
         initiation_parameters.clone(),
     )
     .await?;
@@ -268,13 +371,13 @@ pub async fn init_ika_on_sui(
 
     ika_system_set_witness_approving_advance_epoch(
         publisher_address,
-        &mut context,
+        context,
         client.clone(),
-        ika_system_package_id,
+        packages.ika_system_package_id,
         ika_system_object_id,
         init_system_shared_version,
         protocol_cap_id,
-        ika_dwallet_2pc_mpc_package_id,
+        packages.ika_dwallet_2pc_mpc_package_id,
     )
     .await?;
 
@@ -282,14 +385,14 @@ pub async fn init_ika_on_sui(
 
     ika_system_add_upgrade_cap_by_cap(
         publisher_address,
-        &mut context,
+        context,
         client.clone(),
-        ika_system_package_id,
+        packages.ika_system_package_id,
         ika_system_object_id,
         init_system_shared_version,
         protocol_cap_id,
-        ika_common_package_upgrade_cap_id,
-        ika_dwallet_2pc_mpc_package_upgrade_cap_id,
+        packages.ika_common_package_upgrade_cap_id,
+        packages.ika_dwallet_2pc_mpc_package_upgrade_cap_id,
     )
     .await?;
 
@@ -304,10 +407,10 @@ pub async fn init_ika_on_sui(
         let validator_initialization_metadata = validator_initialization_config.to_validator_info();
         let (validator_id, validator_cap_id) = request_add_validator_candidate(
             validator_address,
-            &mut context,
+            context,
             &validator_initialization_metadata,
-            ika_system_package_id,
-            ika_common_package_id,
+            packages.ika_system_package_id,
+            packages.ika_common_package_id,
             ika_system_object_id,
             init_system_shared_version,
         )
@@ -321,11 +424,11 @@ pub async fn init_ika_on_sui(
 
     stake_ika(
         publisher_address,
-        &mut context,
-        ika_system_package_id,
+        context,
+        packages.ika_system_package_id,
         ika_system_object_id,
         init_system_shared_version,
-        ika_supply_id,
+        packages.ika_supply_id,
         validator_ids.clone(),
     )
     .await?;
@@ -335,9 +438,9 @@ pub async fn init_ika_on_sui(
     for (validator_address, validator_cap_id) in validator_addresses.iter().zip(validator_cap_ids) {
         request_add_validator(
             *validator_address,
-            &mut context,
+            context,
             client.clone(),
-            ika_system_package_id,
+            packages.ika_system_package_id,
             ika_system_object_id,
             init_system_shared_version,
             validator_cap_id,
@@ -349,28 +452,28 @@ pub async fn init_ika_on_sui(
     let (ika_dwallet_coordinator_object_id, dwallet_2pc_mpc_coordinator_initial_shared_version) =
         ika_system_initialize(
             publisher_address,
-            &mut context,
+            context,
             client.clone(),
-            ika_system_package_id,
+            packages.ika_system_package_id,
             ika_system_object_id,
             init_system_shared_version,
             protocol_cap_id,
-            ika_dwallet_2pc_mpc_package_id,
-            ika_dwallet_2pc_mpc_init_id,
+            packages.ika_dwallet_2pc_mpc_package_id,
+            packages.ika_dwallet_2pc_mpc_init_id,
             initiation_parameters.max_validator_change_count,
         )
         .await?;
     println!("Running `system::initialize` done.");
     set_global_presign_config(
         publisher_address,
-        &mut context,
+        context,
         client.clone(),
-        ika_system_package_id,
+        packages.ika_system_package_id,
         ika_system_object_id,
         init_system_shared_version,
         dwallet_2pc_mpc_coordinator_initial_shared_version,
         protocol_cap_id,
-        ika_dwallet_2pc_mpc_package_id,
+        packages.ika_dwallet_2pc_mpc_package_id,
         ika_dwallet_coordinator_object_id,
     )
     .await?;
@@ -378,10 +481,10 @@ pub async fn init_ika_on_sui(
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
-        &mut context,
-        client.clone(),
-        ika_system_package_id,
-        ika_dwallet_2pc_mpc_package_id,
+        context,
+        client,
+        packages.ika_system_package_id,
+        packages.ika_dwallet_2pc_mpc_package_id,
         ika_system_object_id,
         init_system_shared_version,
         ika_dwallet_coordinator_object_id,
@@ -392,37 +495,14 @@ pub async fn init_ika_on_sui(
 
     println!("Running `system::request_dwallet_network_encryption_key_dkg_by_cap` done.");
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    let ika_config = IkaNetworkConfig {
-        objects: {
-            IkaObjectsConfig {
-                ika_system_object_id,
-                ika_dwallet_coordinator_object_id,
-            }
-        },
-        packages: IkaPackageConfig {
-            ika_package_id,
-            ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id,
-            ika_dwallet_2pc_mpc_package_id_v2: None,
-            ika_system_package_id,
-        },
-    };
-    std::env::set_current_dir(contract_paths.current_working_dir)?;
-    let mut file = File::create("ika_config.json")?;
-    let json = serde_json::to_string_pretty(&ika_config)?;
-    file.write_all(json.as_bytes())?;
-
-    Ok((
-        ika_package_id,
-        ika_common_package_id,
-        ika_dwallet_2pc_mpc_package_id,
-        ika_system_package_id,
+    Ok(InitializedIkaSystem {
         ika_system_object_id,
+        protocol_cap_id,
+        init_system_shared_version,
         ika_dwallet_coordinator_object_id,
-        publisher_keypair,
-    ))
+        dwallet_2pc_mpc_coordinator_initial_shared_version,
+        validator_ids,
+    })
 }
 
 pub async fn ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
