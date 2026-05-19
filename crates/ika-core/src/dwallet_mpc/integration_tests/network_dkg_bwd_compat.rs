@@ -184,8 +184,14 @@ async fn test_bwd_compat_network_key_reconfiguration() {
 #[cfg(test)]
 async fn test_v2_to_v3_reconfiguration_migration() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let (committee, _) = Committee::new_simple_test_committee();
     let epoch_id = 1;
+
+    // Pin committee + per-validator seeds up front so phase 1 (under v=2) and phase 2
+    // (under v=3) share the same class-groups decryption keys. A real v4→v5 upgrade
+    // keeps validator keys across the protocol_config flip — without seed sharing, phase 2
+    // validators couldn't decrypt phase 1's V2 DKG output (it's encrypted to phase 1's
+    // class-groups encryption keys).
+    let (committee, seeds) = utils::build_committee_with_random_seeds(4);
 
     // ── Phase 1: pin v=2, run network DKG under the bwd-compat Party ─────
     let v2_override = pin_protocol_to_v2_overrides();
@@ -197,7 +203,10 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         v2_notify_services,
         v2_noa_sign_request_senders,
         v2_noa_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services(4);
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+    );
 
     for service in &v2_dwallet_mpc_services {
         assert!(
@@ -230,7 +239,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     // Drop v2 override so phase 2 services snapshot the default (v3) protocol config.
     drop(v2_override);
 
-    // ── Phase 2: build fresh services at v=3, hand them the V2 DKG output ─
+    // ── Phase 2: rebuild services at v=3 sharing phase 1's committee + seeds ─
     let (
         v3_dwallet_mpc_services,
         v3_sui_data_senders,
@@ -239,7 +248,10 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         v3_notify_services,
         v3_noa_sign_request_senders,
         v3_noa_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services(4);
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds.clone(),
+    );
 
     for service in &v3_dwallet_mpc_services {
         assert!(
@@ -256,7 +268,6 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         );
     }
 
-    let v3_committee = (*v3_dwallet_mpc_services[0].committee.clone()).clone();
     let mut v3_state = IntegrationTestState {
         dwallet_mpc_services: v3_dwallet_mpc_services,
         sent_consensus_messages_collectors: v3_sent_consensus_messages_collectors,
@@ -264,7 +275,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         notify_services: v3_notify_services,
         crypto_round: 1,
         consensus_round: 1,
-        committee: v3_committee.clone(),
+        committee: committee.clone(),
         sui_data_senders: v3_sui_data_senders,
         network_owned_address_sign_request_senders: v3_noa_sign_request_senders,
         network_owned_address_sign_output_receivers: v3_noa_sign_output_receivers,
@@ -294,11 +305,15 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     for service in v3_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
+    // Fresh phase-2 services start with `last_read_consensus_round = Some(0)`, so the next
+    // round read from storage must be `1`. Distribute the status updates from the loop above
+    // at round 1 to keep `round_to_messages` contiguous; advancing the reconfig flow below
+    // continues at round 2.
     utils::send_advance_results_between_parties(
         &v3_state.committee,
         &mut v3_state.sent_consensus_messages_collectors,
         &mut v3_state.epoch_stores,
-        2,
+        1,
     );
     for service in v3_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
@@ -339,7 +354,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
         key_id,
     );
     let (_, reconfiguration_checkpoint) =
-        utils::advance_mpc_flow_until_completion(&mut v3_state, 3).await;
+        utils::advance_mpc_flow_until_completion(&mut v3_state, 2).await;
     let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
         reconfiguration_checkpoint
             .messages()
