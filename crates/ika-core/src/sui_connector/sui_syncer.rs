@@ -9,7 +9,7 @@ use crate::sui_connector::sui_event_into_request::sui_event_into_session_request
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{Committee, EpochId, StakeUnit, ValidatorEncryptionKeysAndProofs};
+use ika_types::committee::{Committee, EpochId, StakeUnit, decode_validator_encryption_keys};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -323,48 +323,41 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Move-side
-        // `class_groups_public_key_and_proof` byte field now carries the
-        // combined `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS
-        // keys) per the cryptography-private @ 9d35fa76 bump. See the doc on
-        // `ValidatorEncryptionKeysAndProofs` for the rationale and the
-        // mainnet-incompat warning.
-        let combined_per_validator: Vec<_> = committee
+        // Shape-tolerant decode per validator. PVSS HashMaps gain an entry only
+        // when the validator published the post-PR-#1707 bundle shape;
+        // mainnet-v1.1.8-shape validators contribute only their class-groups key.
+        let decoded_per_validator: Vec<_> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id);
-                mpc_data.and_then(|mpc_data| {
-                    match bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
-                        &mpc_data.class_groups_public_key_and_proof(),
-                    ) {
-                        Ok(combined) => Some((*name, combined)),
-                        Err(e) => {
-                            error!(
-                                "Failed to deserialize ValidatorEncryptionKeysAndProofs: {}",
-                                e
-                            );
-                            None
-                        }
-                    }
-                })
+                let mpc_data = committee_mpc_data.get(id)?;
+                let decoded = decode_validator_encryption_keys(
+                    &mpc_data.class_groups_public_key_and_proof(),
+                );
+                if decoded.is_none() {
+                    warn!(
+                        authority = ?name,
+                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
+                    );
+                }
+                decoded.map(|d| (*name, d))
             })
             .collect();
 
-        let class_group_encryption_keys_and_proofs: HashMap<_, _> = combined_per_validator
+        let class_group_encryption_keys_and_proofs: HashMap<_, _> = decoded_per_validator
             .iter()
             .map(|(n, v)| (*n, v.class_groups.clone()))
             .collect();
-        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
             .iter()
-            .map(|(n, v)| (*n, v.secp256k1_pvss.clone()))
+            .filter_map(|(n, v)| v.secp256k1_pvss.clone().map(|k| (*n, k)))
             .collect();
-        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
             .iter()
-            .map(|(n, v)| (*n, v.secp256r1_pvss.clone()))
+            .filter_map(|(n, v)| v.secp256r1_pvss.clone().map(|k| (*n, k)))
             .collect();
-        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = combined_per_validator
+        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
             .iter()
-            .map(|(n, v)| (*n, v.ristretto_pvss.clone()))
+            .filter_map(|(n, v)| v.ristretto_pvss.clone().map(|k| (*n, k)))
             .collect();
 
         Ok(Committee::new(

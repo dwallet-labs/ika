@@ -762,6 +762,7 @@ impl DWalletMPCManager {
             &self.network_keys,
             self.next_active_committee.clone(),
             self.validator_mpc_keys_by_party_id.clone(),
+            &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => SessionStatus::Active {
                 public_input,

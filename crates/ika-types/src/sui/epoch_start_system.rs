@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::committee::{
     Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit,
-    ValidatorEncryptionKeysAndProofs,
+    decode_validator_encryption_keys,
 };
 use crate::crypto::{AuthorityName, AuthorityPublicKey, NetworkPublicKey};
 use anemo::PeerId;
@@ -140,33 +140,24 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .map(|validator| {
-                // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Per the
-                // `cryptography-private` bump (9d35fa76), the Move-side
-                // `class_groups_public_key_and_proof` byte field is overloaded
-                // to carry the new `ValidatorEncryptionKeysAndProofs` (class
-                // groups + 3 PVSS keys), NOT the bare `ClassGroupsEncryption-
-                // KeyAndProof` mainnet uses. See `ValidatorEncryptionKeysAnd-
-                // Proofs`'s docstring. Decoding falls back to None on bytes
-                // that don't deserialize as the new shape; this surfaces as
-                // "no MPC data" rather than as a decode panic.
-                let combined = validator.mpc_data.clone().and_then(|mpc_data| {
-                    bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
-                        &mpc_data.class_groups_public_key_and_proof(),
-                    )
-                    .ok()
-                });
-
+                // Shape-tolerant decode: accepts both the mainnet-v1.1.8
+                // bare-class-groups payload and the post-PR-#1707 bundle. PVSS
+                // halves come back as `None` for validators publishing the old
+                // shape; downstream DKG/Reconfig dispatch picks the bwd-compat
+                // Party in that case.
                 let (
                     class_groups_public_key_and_proof,
                     secp256k1_pvss_public_key_and_proof,
                     secp256r1_pvss_public_key_and_proof,
                     ristretto_pvss_public_key_and_proof,
-                ) = match combined {
+                ) = match validator.mpc_data.as_ref().and_then(|mpc_data| {
+                    decode_validator_encryption_keys(&mpc_data.class_groups_public_key_and_proof())
+                }) {
                     Some(v) => (
                         Some(v.class_groups),
-                        Some(v.secp256k1_pvss),
-                        Some(v.secp256r1_pvss),
-                        Some(v.ristretto_pvss),
+                        v.secp256k1_pvss,
+                        v.secp256r1_pvss,
+                        v.ristretto_pvss,
                     ),
                     None => (None, None, None, None),
                 };
@@ -200,45 +191,43 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .map(|validator| (validator.authority_name(), validator.voting_power))
             .collect();
 
-        // Decode the overloaded Move field per validator into the combined
-        // `ValidatorEncryptionKeysAndProofs` struct. See the wire-incompat
-        // warning in `get_ika_committee_with_network_metadata`.
-        let combined_per_validator: Vec<_> = self
+        // Shape-tolerant decode per validator. Mainnet-v1.1.8-shape payloads
+        // (bare class-groups) populate only the class-groups HashMap; PVSS
+        // HashMaps gain an entry only when the validator published the
+        // post-PR-#1707 bundle shape.
+        let decoded_per_validator: Vec<_> = self
             .active_validators
             .iter()
             .filter_map(|validator| {
-                validator.mpc_data.clone().and_then(|mpc_data| {
-                    match bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(
-                        &mpc_data.class_groups_public_key_and_proof(),
-                    ) {
-                        Ok(combined) => Some((validator.authority_name(), combined)),
-                        Err(e) => {
-                            error!(
-                                "Failed to deserialize ValidatorEncryptionKeysAndProofs: {}",
-                                e
-                            );
-                            None
-                        }
-                    }
-                })
+                let mpc_data = validator.mpc_data.as_ref()?;
+                let decoded = decode_validator_encryption_keys(
+                    &mpc_data.class_groups_public_key_and_proof(),
+                );
+                if decoded.is_none() {
+                    error!(
+                        authority = ?validator.authority_name(),
+                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
+                    );
+                }
+                decoded.map(|d| (validator.authority_name(), d))
             })
             .collect();
 
-        let class_groups_public_keys_and_proofs = combined_per_validator
+        let class_groups_public_keys_and_proofs = decoded_per_validator
             .iter()
             .map(|(name, v)| (*name, v.class_groups.clone()))
             .collect();
-        let secp256k1_pvss_public_keys_and_proofs = combined_per_validator
+        let secp256k1_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .map(|(name, v)| (*name, v.secp256k1_pvss.clone()))
+            .filter_map(|(name, v)| v.secp256k1_pvss.clone().map(|k| (*name, k)))
             .collect();
-        let secp256r1_pvss_public_keys_and_proofs = combined_per_validator
+        let secp256r1_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .map(|(name, v)| (*name, v.secp256r1_pvss.clone()))
+            .filter_map(|(name, v)| v.secp256r1_pvss.clone().map(|k| (*name, k)))
             .collect();
-        let ristretto_pvss_public_keys_and_proofs = combined_per_validator
+        let ristretto_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .map(|(name, v)| (*name, v.ristretto_pvss.clone()))
+            .filter_map(|(name, v)| v.ristretto_pvss.clone().map(|k| (*name, k)))
             .collect();
 
         Committee::new(

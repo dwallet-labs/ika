@@ -506,8 +506,17 @@ pub fn create_dwallet_mpc_services(
     Vec<Sender<NetworkOwnedAddressSignRequest>>,
     Vec<Receiver<NetworkOwnedAddressSignOutput>>,
 ) {
-    let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
+    let (committee, seeds) = build_committee_with_random_seeds(size);
+    create_dwallet_mpc_services_with_committee_and_seeds(committee, seeds)
+}
+
+/// Builds a fresh test committee with random seeds for every validator. Use this when the
+/// test does not need to share validator key material across multiple service-creation calls.
+pub fn build_committee_with_random_seeds(
+    size: usize,
+) -> (Committee, HashMap<AuthorityName, RootSeed>) {
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
+    let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
@@ -535,6 +544,26 @@ pub fn create_dwallet_mpc_services(
             class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
         );
     }
+    (committee, seeds)
+}
+
+/// Creates the same set of `DWalletMPCService`s as [`create_dwallet_mpc_services`] but
+/// from a caller-supplied committee + per-validator seeds. Use this when two service sets
+/// need to share validator key material — e.g. the v2→v3 reconfig migration test, where
+/// "phase 2" validators must hold the same class-groups decryption keys as "phase 1" so
+/// they can decrypt the V2 DKG output captured in phase 1.
+pub fn create_dwallet_mpc_services_with_committee_and_seeds(
+    committee: Committee,
+    seeds: HashMap<AuthorityName, RootSeed>,
+) -> (
+    Vec<DWalletMPCService>,
+    Vec<SuiDataSenders>,
+    Vec<Arc<TestingSubmitToConsensus>>,
+    Vec<Arc<TestingAuthorityPerEpochStore>>,
+    Vec<Arc<TestingDWalletCheckpointNotify>>,
+    Vec<Sender<NetworkOwnedAddressSignRequest>>,
+    Vec<Receiver<NetworkOwnedAddressSignOutput>>,
+) {
     let dwallet_mpc_services = committee
         .names()
         .map(|authority_name| {
