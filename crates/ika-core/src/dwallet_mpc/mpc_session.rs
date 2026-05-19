@@ -23,10 +23,7 @@ use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use crate::request_protocol_data::ProtocolData;
 use ika_types::error::{IkaError, IkaResult};
-pub(crate) use input::{
-    NetworkEncryptionKeyDkgPublicInput, NetworkEncryptionKeyReconfigurationPublicInput,
-    PublicInput, session_input_from_request,
-};
+pub(crate) use input::{PublicInput, session_input_from_request};
 use std::fmt::{Debug, Formatter};
 use std::{fmt, mem};
 use tokio::sync::broadcast;

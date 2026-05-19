@@ -1961,8 +1961,7 @@ impl DWalletMPCService {
                         &output,
                     ) {
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V1(_)) => {
-                            // V1 only supports Secp256k1
-                            vec![DWalletCurve::Secp256k1 as u32]
+                            unreachable!("V1 network DKG outputs are no longer produced")
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_))
                         | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V3(_)) => {
@@ -2030,8 +2029,7 @@ impl DWalletMPCService {
                 } else {
                     match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput>(&output) {
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
-                            // V1 only supports Secp256k1
-                            vec![DWalletCurve::Secp256k1 as u32]
+                            unreachable!("V1 reconfiguration outputs are no longer produced")
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_))
                         | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {

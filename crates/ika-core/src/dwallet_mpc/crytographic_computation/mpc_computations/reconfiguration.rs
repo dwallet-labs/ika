@@ -120,59 +120,8 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         }
 
         match network_dkg_public_output {
-            VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
-                match latest_reconfiguration_public_output {
-                    None => {
-                        Err(DwalletMPCError::InternalError(
-                            "The Reconfiguration v2 protocol can only be executed after a v1-to-v2 protocol, or after another reconfiguration v2 protocol."
-                                .to_string(),
-                        ))
-                    }
-                    Some(latest_reconfiguration_public_output) => {
-                        let VersionedDecryptionKeyReconfigurationOutput::V2(
-                            latest_reconfiguration_public_output,
-                        ) = latest_reconfiguration_public_output
-                        else {
-                            return Err(DwalletMPCError::InternalError(
-                                "The Reconfiguration v2 protocol can only be executed after a v1-to-v2 protocol, or after another reconfiguration v2 protocol."
-                                    .to_string(),
-                            ));
-                        };
-
-                        debug_variable_chunks(
-                            "Instantiating public input for reconfiguration v2 [network_dkg_public_output (v1)]",
-                            "network_dkg_public_output",
-                            &network_dkg_public_output
-                        );
-
-                        debug_variable_chunks(
-                            "Instantiating public input for reconfiguration v2 [latest_reconfiguration_public_output]",
-                            "latest_reconfiguration_public_output",
-                            &latest_reconfiguration_public_output
-                        );
-
-
-                        // 3 trailing PVSS HPKE encryption-keys-and-proofs args (per-curve,
-                        // for upstream's threshold-encryption-to-sharing sub-protocol) sourced
-                        // from the UPCOMING committee.
-                        let public_input: <ReconfigurationParty as Party>::PublicInput =
-                            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_reconfiguration_output(
-                                &current_access_structure,
-                                upcoming_access_structure,
-                                current_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
-                                current_tangible_party_id_to_upcoming,
-                                bcs::from_bytes(&network_dkg_public_output)?,
-                                bcs::from_bytes(&latest_reconfiguration_public_output)?,
-                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
-                                upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
-                                upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
-                            )
-                                .map_err(DwalletMPCError::from)?;
-
-                        Ok(public_input)
-                    }
-                }
+            VersionedNetworkDkgOutput::V1(_) => {
+                unreachable!("V1 network DKG outputs are no longer produced")
             }
             // V2 and V3 DKG outputs differ only in whether the trailing Protocol-0.1
             // `threshold_encryption_to_sharing_output` is present. Decode either shape to a
@@ -295,9 +244,9 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
         current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
 
     match network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-            "V1 Network keys no longer supported".to_string(),
-        )),
+        VersionedNetworkDkgOutput::V1(_) => {
+            unreachable!("V1 network DKG outputs are no longer produced")
+        }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output_bytes) => {
             let bwd_compat_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(&network_dkg_public_output_bytes)?;
@@ -328,8 +277,10 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
                     )
                     .map_err(DwalletMPCError::from)
                 }
-                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_))
-                | Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => Err(
+                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
+                    unreachable!("V1 reconfiguration outputs are no longer produced")
+                }
+                Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => Err(
                     DwalletMPCError::InternalError(
                         "Bwd-compat reconfig requires a prior V2-tagged reconfiguration output."
                             .to_string(),
@@ -501,9 +452,9 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     }
 
     match &mpc_public_output {
-        VersionedDecryptionKeyReconfigurationOutput::V1(_) => Err(DwalletMPCError::InternalError(
-            "V1 Network keys no longer supported".to_string(),
-        )),
+        VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
+            unreachable!("V1 reconfiguration outputs are no longer produced")
+        }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
             // bwd-compat reconfig PublicOutput shape.
             let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =

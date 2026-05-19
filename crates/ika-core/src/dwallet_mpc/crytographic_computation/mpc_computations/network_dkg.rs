@@ -76,9 +76,9 @@ async fn get_decryption_key_shares_from_public_output(
         let res = match shares.state() {
             NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
                 match &shares.network_dkg_output() {
-                    VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-                        "V1 Network keys no longer supported".to_string(),
-                    )),
+                    VersionedNetworkDkgOutput::V1(_) => {
+                        unreachable!("V1 network DKG outputs are no longer produced")
+                    }
                     VersionedNetworkDkgOutput::V2(public_output) => {
                         // mainnet-v1.1.8 / bwd-compat shape — decode under
                         // `bwd_compat_dkg::Party::PublicOutput`.
@@ -117,7 +117,7 @@ async fn get_decryption_key_shares_from_public_output(
                     .unwrap()
                 {
                     VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-                        Err(DwalletMPCError::InternalError("V1 Network keys no longer supported".to_string()))
+                        unreachable!("V1 reconfiguration outputs are no longer produced")
                     }
                     VersionedDecryptionKeyReconfigurationOutput::V2(public_output) => {
                         // bwd-compat reconfig output shape.
@@ -643,9 +643,9 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     }
 
     match &mpc_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
-            "V1 Network keys no longer supported".to_string(),
-        )),
+        VersionedNetworkDkgOutput::V1(_) => {
+            unreachable!("V1 network DKG outputs are no longer produced")
+        }
         VersionedNetworkDkgOutput::V2(public_output_bytes) => {
             // bwd-compat shape — decode under `bwd_compat_dkg::Party::PublicOutput`.
             let public_output: <bwd_compat_dkg::Party as mpc::Party>::PublicOutput =
