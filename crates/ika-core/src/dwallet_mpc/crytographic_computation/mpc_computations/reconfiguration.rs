@@ -296,43 +296,49 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
     let current_tangible_party_id_to_upcoming =
         current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);
 
-    // Shape compatibility note: bwd-compat DKG output (`bwd_compat_dkg::Party::PublicOutput`)
-    // is a structural subset of main `dkg::PublicOutput` — same legacy fields,
-    // no trailing `threshold_encryption_to_sharing_output`. Upstream's
-    // `bwd_compat_reconfig::PublicInput::new_from_dkg_output` at
-    // `cryptography-private @ 7795eb45` only accepts the main type. Until the
-    // upstream signature is loosened (patch ready in
-    // `docs/upstream-cryptography-private-bwd-compat-reconfig-from-bwd-compat-dkg.diff`
-    // — feature branch `bwd-compat-reconfig-from-bwd-compat-dkg`, commit
-    // `d48445b3`), the V2 arm returns an explicit error rather than feeding
-    // wrong-type bytes through. Once the upstream change lands:
-    // - bump the pin in `Cargo.toml` to the new SHA;
-    // - replace this `Err` with:
-    //     `let bwd_compat_dkg_public_output: <bwd_compat_dkg::Party as mpc::Party>::PublicOutput = bcs::from_bytes(network_dkg_public_output_bytes)?;`
-    //     followed by `bwd_compat_reconfig::PublicInput::new_from_dkg_output(…)` /
-    //     `new_from_reconfiguration_output(…)` calls;
-    // - drop `#[ignore]` from `test_bwd_compat_network_key_reconfiguration`.
-    let _ = (
-        current_access_structure,
-        upcoming_access_structure,
-        current_encryption_keys_per_crt_prime_and_proofs,
-        upcoming_encryption_keys_per_crt_prime_and_proofs,
-        current_tangible_party_id_to_upcoming,
-        latest_reconfiguration_public_output,
-    );
-
     match network_dkg_public_output {
         VersionedNetworkDkgOutput::V1(_) => Err(DwalletMPCError::InternalError(
             "V1 Network keys no longer supported".to_string(),
         )),
-        VersionedNetworkDkgOutput::V2(_) => Err(DwalletMPCError::InternalError(
-            "Bwd-compat Reconfig blocked on upstream cryptography-private: needs \
-             `bwd_compat_reconfig::PublicInput::new_from_dkg_output` to accept \
-             `super::dkg::PublicOutput` instead of `decentralized_party::dkg::PublicOutput`. \
-             See `docs/upstream-cryptography-private-bwd-compat-reconfig-from-bwd-compat-dkg.diff` \
-             (branch `bwd-compat-reconfig-from-bwd-compat-dkg`, commit d48445b3)."
-                .to_string(),
-        )),
+        VersionedNetworkDkgOutput::V2(network_dkg_public_output_bytes) => {
+            let bwd_compat_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(&network_dkg_public_output_bytes)?;
+
+            match latest_reconfiguration_public_output {
+                None => bwd_compat_reconfig::PublicInput::new_from_dkg_output(
+                    &current_access_structure,
+                    upcoming_access_structure,
+                    current_encryption_keys_per_crt_prime_and_proofs,
+                    upcoming_encryption_keys_per_crt_prime_and_proofs,
+                    current_tangible_party_id_to_upcoming,
+                    bwd_compat_dkg_public_output,
+                )
+                .map_err(DwalletMPCError::from),
+                Some(VersionedDecryptionKeyReconfigurationOutput::V2(
+                    latest_reconfiguration_public_output_bytes,
+                )) => {
+                    let public_output: <bwd_compat_reconfig::Party as mpc::Party>::PublicOutput =
+                        bcs::from_bytes(&latest_reconfiguration_public_output_bytes)?;
+                    bwd_compat_reconfig::PublicInput::new_from_reconfiguration_output(
+                        &current_access_structure,
+                        upcoming_access_structure,
+                        current_encryption_keys_per_crt_prime_and_proofs,
+                        upcoming_encryption_keys_per_crt_prime_and_proofs,
+                        current_tangible_party_id_to_upcoming,
+                        bwd_compat_dkg_public_output.into(),
+                        public_output,
+                    )
+                    .map_err(DwalletMPCError::from)
+                }
+                Some(VersionedDecryptionKeyReconfigurationOutput::V1(_))
+                | Some(VersionedDecryptionKeyReconfigurationOutput::V3(_)) => Err(
+                    DwalletMPCError::InternalError(
+                        "Bwd-compat reconfig requires a prior V2-tagged reconfiguration output."
+                            .to_string(),
+                    ),
+                ),
+            }
+        }
         VersionedNetworkDkgOutput::V3(_) => Err(DwalletMPCError::InternalError(
             "Bwd-compat Reconfig dispatch saw a V3 DKG output — protocol_config / wire-tag mismatch."
                 .to_string(),

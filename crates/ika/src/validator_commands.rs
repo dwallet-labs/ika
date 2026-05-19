@@ -68,7 +68,7 @@ pub enum IkaValidatorCommand {
         sender_sui_address: SuiAddress,
         /// Publish the mainnet-v1.1.8-shape MPC data (bare
         /// `ClassGroupsEncryptionKeyAndProof`) in the resulting `ValidatorInfo`
-        /// file. Use during the v4→v5 protocol upgrade window so the validator
+        /// file. Use during the v3→v4 protocol upgrade window so the validator
         /// can interop with mainnet-v1.1.8 peers. See the same flag on
         /// `set-next-epoch-mpc-data`.
         #[clap(long)]
@@ -326,9 +326,9 @@ pub enum IkaValidatorCommand {
         /// instead of the default post-PR-#1707 bundle
         /// (`ValidatorEncryptionKeysAndProofs`).
         ///
-        /// Set this flag while the network is still at `protocol_version <= 4`
+        /// Set this flag while the network is still at `protocol_version <= 3`
         /// so mainnet-v1.1.8 peers can decode this validator's published bytes.
-        /// Drop the flag once the network upgrades to `protocol_version >= 5`
+        /// Drop the flag once the network upgrades to `protocol_version >= 4`
         /// — at that point all validators run the new binary and consume the
         /// new shape.
         #[clap(long)]
@@ -449,7 +449,7 @@ impl IkaValidatorCommand {
                 let class_groups_public_key_and_proof =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
                 // Publication shape is version-gated: set `legacy_class_groups_only`
-                // during the v4→v5 protocol upgrade window so mainnet-v1.1.8 peers
+                // during the v3→v4 protocol upgrade window so mainnet-v1.1.8 peers
                 // can decode this validator's bytes. Reading is shape-tolerant
                 // on either side via `decode_validator_encryption_keys`.
                 let mpc_data_bytes = if legacy_class_groups_only {

@@ -331,13 +331,13 @@ pub enum VersionedSignOutput {
 ///   returns the "no longer supported" error.
 /// - `V2` — mainnet-v1.1.8 / bwd-compat shape; bytes from
 ///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`.
-///   Written by `advance_network_dkg_bwd_compat` at `protocol_version <= 4`.
+///   Written by `advance_network_dkg_bwd_compat` at `protocol_version <= 3` (mainnet-v1.1.8).
 /// - `V3` — post-PR-#1707 main shape; bytes from
 ///   `twopc_mpc::decentralized_party::dkg::Party::PublicOutput`. The main
 ///   `PublicOutput` adds a trailing `threshold_encryption_to_sharing_output`
 ///   field that the bwd-compat shape doesn't carry, so the byte layouts differ
 ///   and decoding requires the right Party type. Written by
-///   `advance_network_dkg_v2` at `protocol_version >= 5`.
+///   `advance_network_dkg_v2` at `protocol_version >= 4`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),

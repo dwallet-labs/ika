@@ -35,11 +35,11 @@ use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_c
 ///
 /// - `BwdCompat` — the mainnet-v1.1.8-shape decentralized party
 ///   (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`), used
-///   at `protocol_version <= 4` when peers may still publish bare
+///   at `protocol_version <= 3` (mainnet-v1.1.8) when peers may still publish bare
 ///   `ClassGroupsEncryptionKeyAndProof` (no PVSS HPKE keys).
 /// - `Main` — the post-PR-#1707 main party
 ///   (`twopc_mpc::decentralized_party::dkg::Party`), used at
-///   `protocol_version >= 5`.
+///   `protocol_version >= 4`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum NetworkEncryptionKeyDkgPublicInput {
