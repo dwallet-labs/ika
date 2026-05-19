@@ -174,33 +174,31 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                     }
                 }
             }
-            VersionedNetworkDkgOutput::V2(_) => {
-                // Main `ReconfigurationParty::generate_public_input` is only called when
-                // `protocol_config.is_reconfiguration_message_version_v3() == true` — but
-                // a V2-tagged DKG output means the network was DKG'd under the bwd-compat
-                // Party. Converting bwd-compat `dkg::PublicOutput` to main shape requires
-                // an upstream `From` impl on `decentralized_party_backward_compatible::dkg::PublicOutput`
-                // for `decentralized_party::dkg::PublicOutput`; that conversion is not yet
-                // shipped in cryptography-private. Until it is, treat the v2→v3 migration
-                // explicitly as unsupported.
-                Err(DwalletMPCError::InternalError(
-                    "v2→v3 reconfig migration requires upstream `bwd_compat_dkg::PublicOutput → \
-                     dkg::PublicOutput` conversion; not yet available in cryptography-private."
-                        .to_string(),
-                ))
-            }
-            VersionedNetworkDkgOutput::V3(network_dkg_public_output) => {
+            // V2 and V3 DKG outputs differ only in whether the trailing Protocol-0.1
+            // `threshold_encryption_to_sharing_output` is present. Decode either shape to a
+            // `dkg::PublicOutputCore` and feed it into the same main constructor — covers
+            // both the steady-state v3-DKG path and the v2→v3 migration path (including the
+            // epoch-1 edge case where there is no prior reconfig output yet).
+            v2_or_v3 @ (VersionedNetworkDkgOutput::V2(_) | VersionedNetworkDkgOutput::V3(_)) => {
+                let dkg_public_output_core: twopc_mpc::decentralized_party::dkg::PublicOutputCore =
+                    match &v2_or_v3 {
+                        VersionedNetworkDkgOutput::V2(bytes) => bcs::from_bytes(bytes)?,
+                        VersionedNetworkDkgOutput::V3(bytes) => {
+                            let full: twopc_mpc::decentralized_party::dkg::PublicOutput =
+                                bcs::from_bytes(bytes)?;
+                            full.core
+                        }
+                        VersionedNetworkDkgOutput::V1(_) => unreachable!(),
+                    };
+
+                debug_variable_chunks(
+                    "Instantiating public input for reconfiguration v3 [dkg_public_output_core]",
+                    "dkg_public_output_core",
+                    &bcs::to_bytes(&dkg_public_output_core)?,
+                );
+
                 match latest_reconfiguration_public_output {
                     None => {
-                        let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
-                            bcs::from_bytes(&network_dkg_public_output)?;
-
-                        debug_variable_chunks(
-                            "Instantiating public input for reconfiguration v3 [network_dkg_public_output (v3)]",
-                            "network_dkg_public_output",
-                            &network_dkg_public_output,
-                        );
-
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
                             <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicInput::new_from_dkg_output(
                                 &current_access_structure,
@@ -208,7 +206,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 current_tangible_party_id_to_upcoming,
-                                public_output,
+                                dkg_public_output_core,
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
@@ -217,21 +215,25 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
 
                         Ok(public_input)
                     }
-                    Some(VersionedDecryptionKeyReconfigurationOutput::V3(
-                        latest_reconfiguration_public_output,
-                    )) => {
-                        let public_output: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicOutput =
-                            bcs::from_bytes(&network_dkg_public_output)?;
+                    Some(prior @ (VersionedDecryptionKeyReconfigurationOutput::V2(_)
+                    | VersionedDecryptionKeyReconfigurationOutput::V3(_))) => {
+                        let prior_reconfig_core: twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore =
+                            match &prior {
+                                VersionedDecryptionKeyReconfigurationOutput::V2(bytes) => {
+                                    bcs::from_bytes(bytes)?
+                                }
+                                VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => {
+                                    let full: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+                                        bcs::from_bytes(bytes)?;
+                                    full.core
+                                }
+                                VersionedDecryptionKeyReconfigurationOutput::V1(_) => unreachable!(),
+                            };
 
                         debug_variable_chunks(
-                            "Instantiating public input for reconfiguration v3 [network_dkg_public_output (v3)]",
-                            "network_dkg_public_output",
-                            &network_dkg_public_output,
-                        );
-                        debug_variable_chunks(
-                            "Instantiating public input for reconfiguration v3 [latest_reconfiguration_public_output (v3)]",
-                            "latest_reconfiguration_public_output",
-                            &latest_reconfiguration_public_output,
+                            "Instantiating public input for reconfiguration v3 [prior_reconfig_core]",
+                            "prior_reconfig_core",
+                            &bcs::to_bytes(&prior_reconfig_core)?,
                         );
 
                         let public_input: <ReconfigurationParty as Party>::PublicInput =
@@ -241,8 +243,8 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
                                 current_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 upcoming_encryption_keys_per_crt_prime_and_proofs.clone(),
                                 current_tangible_party_id_to_upcoming,
-                                public_output.into(),
-                                bcs::from_bytes(&latest_reconfiguration_public_output)?,
+                                dkg_public_output_core.into(),
+                                prior_reconfig_core,
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256k1_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.ristretto_pvss.clone(),
                                 upcoming_validators_pvss_hpke_keys_by_party_id.secp256r1_pvss.clone(),
@@ -251,16 +253,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
 
                         Ok(public_input)
                     }
-                    Some(VersionedDecryptionKeyReconfigurationOutput::V1(_))
-                    | Some(VersionedDecryptionKeyReconfigurationOutput::V2(_)) => {
-                        // The DKG ran under main (V3) but a prior reconfig is V1/V2-tagged.
-                        // V1 is unsupported globally; a V2 prior under a V3 DKG is the
-                        // mid-migration case (see V2 dkg arm above for the same upstream gap).
-                        Err(DwalletMPCError::InternalError(
-                            "Main Reconfig expects V3 prior reconfig output; cross-version not yet supported."
+                    Some(VersionedDecryptionKeyReconfigurationOutput::V1(_)) => Err(
+                        DwalletMPCError::InternalError(
+                            "Main Reconfig expects V2 or V3 prior reconfig output; V1 is unsupported."
                                 .to_string(),
-                        ))
-                    }
+                        ),
+                    ),
                 }
             }
         }
