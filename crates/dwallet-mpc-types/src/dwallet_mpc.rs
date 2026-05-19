@@ -325,24 +325,57 @@ pub enum VersionedSignOutput {
     V1(MPCPublicOutput),
 }
 
+/// Wire-tagged network-DKG public output.
+///
+/// - `V1` — previously-deployed shape; the raw
+///   `class_groups::dkg::PublicOutput` (no decentralized-party wrapper). Never
+///   produced anymore — mainnet has been migrated past this version — but the
+///   variant is retained so BCS variant indices of `V2` and `V3` stay stable
+///   for already-stored outputs.
+/// - `V2` — bytes from
+///   `twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicOutput`,
+///   which after the upstream `PublicOutputCore` extraction is a re-export of
+///   `twopc_mpc::decentralized_party::dkg::PublicOutputCore`. Written by
+///   `advance_network_dkg_bwd_compat` when
+///   `ProtocolConfig::is_network_encryption_key_version_v3()` is `false`.
+/// - `V3` — bytes from
+///   `twopc_mpc::decentralized_party::dkg::Party::PublicOutput`. The full
+///   output wraps `PublicOutputCore` with the trailing
+///   `threshold_encryption_to_sharing_output` field — so V3 BCS bytes are the
+///   V2 BCS bytes plus the trailing field. Written by `advance_network_dkg_v2`
+///   when `is_network_encryption_key_version_v3()` is `true`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedNetworkDkgOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    V3(MPCPublicOutput),
 }
 
 impl VersionedNetworkDkgOutput {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::V1(bytes) | Self::V2(bytes) => bytes,
+            Self::V1(bytes) | Self::V2(bytes) | Self::V3(bytes) => bytes,
         }
     }
 }
 
+/// Wire-tagged decentralized-reconfiguration public output.
+///
+/// - `V1` — previously-deployed shape; never produced anymore. Retained for
+///   BCS variant-index stability of `V2`/`V3`.
+/// - `V2` — bytes from
+///   `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party::PublicOutput`,
+///   which is a re-export of
+///   `twopc_mpc::decentralized_party::reconfiguration::PublicOutputCore`.
+/// - `V3` — bytes from
+///   `twopc_mpc::decentralized_party::reconfiguration::Party::PublicOutput`,
+///   the `PublicOutputCore` plus the trailing
+///   `threshold_encryption_to_sharing_output` field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Hash)]
 pub enum VersionedDecryptionKeyReconfigurationOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    V3(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

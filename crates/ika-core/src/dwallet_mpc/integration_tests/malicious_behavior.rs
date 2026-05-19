@@ -123,7 +123,14 @@ async fn test_some_malicious_validators_flows_succeed() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 5 rounds");
+            // `mpc_round` starts at 1 and is incremented after each round, so completion
+            // lands at `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
+            assert_eq!(
+                mpc_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }
@@ -238,7 +245,12 @@ async fn test_party_copies_other_party_message_dkg_round() {
         )
         .await
         {
-            assert_eq!(mpc_round, 5, "Network DKG should complete after 4 rounds");
+            assert_eq!(
+                mpc_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 1,
+                "Network DKG should complete after {} rounds",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
+            );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;
         }

@@ -395,7 +395,11 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: Some(data.signature_algorithm),
                 }
             }
-            ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration { data, .. } => {
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
+                data,
+                ..
+            }
+            | ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),
                     curve: None,
@@ -403,7 +407,8 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                     signature_algorithm: None,
                 }
             }
-            ProtocolCryptographicData::NetworkEncryptionKeyDkg { .. } => {
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgBwdCompat { .. }
+            | ProtocolCryptographicData::NetworkEncryptionKeyDkg { .. } => {
                 DWalletSessionRequestMetricData {
                     name: "NetworkEncryptionKeyDkg".to_string(),
                     curve: None,

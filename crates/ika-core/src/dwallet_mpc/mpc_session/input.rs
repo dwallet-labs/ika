@@ -1,17 +1,20 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::NetworkOwnedAddressSignDKGOutput;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::emulate_centralized_party_partial_signature;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
 use crate::dwallet_mpc::dwallet_dkg::{
     BytesCentralizedPartyKeyShareVerification, DWalletDKGPublicInputByCurve,
     DWalletImportedKeyVerificationPublicInputByCurve,
 };
-use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, network_dkg_v2_public_input};
+use crate::dwallet_mpc::network_dkg::{
+    DwalletMPCNetworkKeys, network_dkg_bwd_compat_public_input, network_dkg_v2_public_input,
+};
 use crate::dwallet_mpc::presign::PresignPublicInputByProtocol;
 
-use crate::dwallet_mpc::reconfiguration::ReconfigurationPartyPublicInputGenerator;
+use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
+use crate::dwallet_mpc::reconfiguration::{
+    ReconfigurationPartyPublicInputGenerator, reconfiguration_bwd_compat_public_input,
+};
 use crate::dwallet_mpc::sign::{DKGAndSignPublicInputByProtocol, SignPublicInputByProtocol};
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{
@@ -19,14 +22,13 @@ use crate::request_protocol_data::{
     PartialSignatureVerificationData, PresignData, ProtocolData,
 };
 use commitment::CommitmentSizedNumber;
-use dwallet_mpc_types::dwallet_mpc::{
-    MPCPrivateInput, ReconfigurationParty, VersionedPresignOutput,
-};
-use group::PartyID;
-use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee};
+use dwallet_mpc_types::dwallet_mpc::{MPCPrivateInput, ReconfigurationParty};
+use ika_protocol_config::ProtocolConfig;
+use ika_types::committee::Committee;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use mpc::WeightedThresholdAccessStructure;
-use std::collections::HashMap;
+use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
+use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
@@ -36,11 +38,30 @@ pub(crate) enum PublicInput {
     DWalletDKGAndSign(DKGAndSignPublicInputByProtocol),
     Presign(PresignPublicInputByProtocol),
     Sign(SignPublicInputByProtocol),
+    /// Backward-compatible network DKG public input
+    /// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party::PublicInput`).
+    /// Selected when `ProtocolConfig::is_network_encryption_key_version_v3()` is
+    /// `false` — peers may still publish bare `ClassGroupsEncryptionKeyAndProof`
+    /// without PVSS HPKE keys.
+    NetworkEncryptionKeyDkgBwdCompat(<bwd_compat_dkg::Party as mpc::Party>::PublicInput),
+    /// Main network DKG public input
+    /// (`twopc_mpc::decentralized_party::dkg::Party::PublicInput`). Selected when
+    /// `ProtocolConfig::is_network_encryption_key_version_v3()` is `true`.
     NetworkEncryptionKeyDkg(
         <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
     ),
     EncryptedShareVerification(ProtocolPublicParametersByCurve),
     PartialSignatureVerification(ProtocolPublicParametersByCurve),
+    /// Backward-compatible network Reconfiguration public input
+    /// (`twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party::PublicInput`).
+    /// Selected when `ProtocolConfig::is_reconfiguration_message_version_v3()` is
+    /// `false`.
+    NetworkEncryptionKeyReconfigurationBwdCompat(
+        <bwd_compat_reconfig::Party as mpc::Party>::PublicInput,
+    ),
+    /// Main network Reconfiguration public input
+    /// (`ReconfigurationParty::PublicInput`). Selected when
+    /// `ProtocolConfig::is_reconfiguration_message_version_v3()` is `true`.
     NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as mpc::Party>::PublicInput),
     MakeDWalletUserSecretKeySharesPublic(ProtocolPublicParametersByCurve),
 }
@@ -57,10 +78,8 @@ pub(crate) fn session_input_from_request(
     committee: &Committee,
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
-    validators_class_groups_public_keys_and_proofs: HashMap<
-        PartyID,
-        ClassGroupsEncryptionKeyAndProof,
-    >,
+    validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
@@ -157,11 +176,53 @@ pub(crate) fn session_input_from_request(
             let class_groups_decryption_key = network_keys
                 .validator_private_dec_key_data
                 .class_groups_decryption_key;
-            Ok((
+            // Pick the network DKG public-input shape that matches the active
+            // protocol_version. At `_version == 2` (mainnet-v1.1.8 era) peers
+            // publish bare `ClassGroupsEncryptionKeyAndProof` and the
+            // bwd-compat DKG `PublicInput::new` takes only the class-groups
+            // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
+            // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
+            let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
+                // At `_version == 3` every committee member MUST publish the post-PR-#1707
+                // bundle shape (class-groups + per-curve PVSS HPKE). The shape-tolerant
+                // decoder accepts old-shape submissions silently, so a validator that
+                // hasn't migrated would land here with empty PVSS entries while their
+                // class-groups entry is present — fail loudly rather than running DKG
+                // on a partial map.
+                let expected = committee.voting_rights.len();
+                let class_groups_count = validator_mpc_keys_by_party_id.class_groups.len();
+                let secp256k1_pvss_count = validator_mpc_keys_by_party_id.secp256k1_pvss.len();
+                let secp256r1_pvss_count = validator_mpc_keys_by_party_id.secp256r1_pvss.len();
+                let ristretto_pvss_count = validator_mpc_keys_by_party_id.ristretto_pvss.len();
+                if class_groups_count != expected
+                    || secp256k1_pvss_count != expected
+                    || secp256r1_pvss_count != expected
+                    || ristretto_pvss_count != expected
+                {
+                    return Err(DwalletMPCError::InvalidMPCPartyType(format!(
+                        "at network_encryption_key_version == 3 every committee member \
+                         must publish the post-PR-#1707 bundle shape, but only \
+                         {class_groups_count}/{expected} class-groups, \
+                         {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
+                         {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
+                         {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
+                    )));
+                }
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
-                    validators_class_groups_public_keys_and_proofs,
-                )?),
+                    validator_mpc_keys_by_party_id.class_groups,
+                    validator_mpc_keys_by_party_id.secp256k1_pvss,
+                    validator_mpc_keys_by_party_id.secp256r1_pvss,
+                    validator_mpc_keys_by_party_id.ristretto_pvss,
+                )?)
+            } else {
+                PublicInput::NetworkEncryptionKeyDkgBwdCompat(network_dkg_bwd_compat_public_input(
+                    access_structure,
+                    validator_mpc_keys_by_party_id.class_groups,
+                )?)
+            };
+            Ok((
+                dkg_public_input,
                 Some(bcs::to_bytes(&class_groups_decryption_key)?),
             ))
         }
@@ -176,23 +237,34 @@ pub(crate) fn session_input_from_request(
             let next_active_committee = next_active_committee.ok_or(
                 DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
             )?;
-            Ok((
-                    PublicInput::NetworkEncryptionKeyReconfiguration(<ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
+            let network_dkg_public_output =
+                network_keys.get_network_dkg_public_output(dwallet_network_encryption_key_id)?;
+            let latest_reconfiguration_public_output =
+                network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
+
+            let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
+                PublicInput::NetworkEncryptionKeyReconfiguration(
+                    <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
-                        network_keys
-                            .get_network_dkg_public_output(
-                                dwallet_network_encryption_key_id,
-                            )?,
-                        network_keys
-                            .get_last_reconfiguration_output(
-                                dwallet_network_encryption_key_id,
-                            ),
-                    )?),
-                    Some(bcs::to_bytes(
-                        &class_groups_decryption_key
-                    )?),
-                ))
+                        network_dkg_public_output,
+                        latest_reconfiguration_public_output,
+                    )?,
+                )
+            } else {
+                PublicInput::NetworkEncryptionKeyReconfigurationBwdCompat(
+                    reconfiguration_bwd_compat_public_input(
+                        committee,
+                        next_active_committee,
+                        network_dkg_public_output,
+                        latest_reconfiguration_public_output,
+                    )?,
+                )
+            };
+            Ok((
+                reconfig_public_input,
+                Some(bcs::to_bytes(&class_groups_decryption_key)?),
+            ))
         }
         ProtocolData::InternalPresign {
             data:
@@ -270,51 +342,20 @@ pub(crate) fn session_input_from_request(
             let encryption_key_public_data = network_keys
                 .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?;
 
-            // Get the stored network-owned-address sign DKG output for the specific curve
-            // (contains both centralized and decentralized DKG).
-            // This is pre-computed during network key construction.
+            // Pass an empty `message_centralized_signature` so `SignPublicInputByProtocol`
+            // dispatches `SignData::ToBeEmulated` — the upstream sign protocol then emulates
+            // the centralized party's partial signature inside its Rayon-scheduled advance.
             let stored_dkg_output_bytes =
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
-            // Deserialize the stored network-owned-address sign DKG output.
-            let network_owned_address_sign_dkg_output: NetworkOwnedAddressSignDKGOutput =
-                bcs::from_bytes(stored_dkg_output_bytes).map_err(DwalletMPCError::BcsError)?;
-
-            // Get the serialized protocol public parameters for the curve
-            let protocol_pp_bytes = encryption_key_public_data
-                .serialized_protocol_public_parameters_for_curve(data.curve)
-                .map_err(DwalletMPCError::BcsError)?;
-
-            // Extract the presign bytes from the versioned presign output
-            let presign_bytes = match bcs::from_bytes::<VersionedPresignOutput>(presign)
-                .map_err(DwalletMPCError::BcsError)?
-            {
-                VersionedPresignOutput::V1(bytes) | VersionedPresignOutput::V2(bytes) => bytes,
-            };
-
-            // Emulate the centralized party's partial signature using ZeroRng.
-            // All validators will produce identical output.
-            // NOTE: this is a cryptographic computation done outside of a Rayon context; it could be expensive.
-            // Currently, we are using schnorr signatures for which it is cheap;
-            // if in the future we should support other signature algorithms for network-owned-address sign, e.g. ECDSA, we would have to add an option to the Sign protocol to emulate the message internally, or compute it separately within a rayon context.
-            let message_centralized_signature = emulate_centralized_party_partial_signature(
-                data.signature_algorithm,
-                &network_owned_address_sign_dkg_output.centralized_dkg_result,
-                message.clone(),
-                data.hash_scheme,
-                &presign_bytes,
-                &protocol_pp_bytes,
-            )?;
-
-            // Use Sign protocol with the pre-computed decentralized DKG output.
-            // The DKG was computed during network key construction.
+            let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
-                    &network_owned_address_sign_dkg_output.decentralized_dkg_public_output,
+                    &stored_dkg_output_bytes,
                     message.clone(),
                     presign,
-                    &message_centralized_signature,
+                    &Vec::<u8>::new(),
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,

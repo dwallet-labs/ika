@@ -24,6 +24,8 @@ use crate::validator_commands::IkaValidatorCommand;
 use ika_swarm::memory::Swarm;
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::validator_initialization_config::DEFAULT_NUMBER_OF_AUTHORITIES;
+use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
 use tokio::runtime::Runtime;
 use tracing::info;
@@ -358,7 +360,7 @@ async fn start(
     config: Option<PathBuf>,
     force_reinitiation: bool,
     epoch_duration_ms: Option<u64>,
-    _sui_fullnode_rpc_url: String,
+    sui_fullnode_rpc_url: String,
     _sui_faucet_url: String,
     no_full_node: bool,
 ) -> Result<(), anyhow::Error> {
@@ -368,6 +370,18 @@ async fn start(
             "Cannot pass `--force-reinitiation` and `--network.config` at the same time."
         );
     }
+
+    if let Err(e) = SuiClientBuilder::default()
+        .build(&sui_fullnode_rpc_url)
+        .await
+    {
+        bail!(
+            "Cannot reach Sui full node at {sui_fullnode_rpc_url}: {e}.\n\
+             Start a local Sui node first (e.g. `sui start --with-faucet --force-regenesis`) \
+             or pass `--sui-fullnode-rpc-url <URL>` to point at a running node."
+        );
+    }
+
     tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
 
     if epoch_duration_ms.is_some() && network_config_exists(config.clone()) && !force_reinitiation {
@@ -434,6 +448,25 @@ async fn start(
     let mut swarm = swarm_builder.build().await?;
     if ika_network_config_not_exists {
         swarm.network_config.save(&network_config_path)?;
+    }
+
+    // The bootstrap library no longer writes `ika_config.json` itself; the CLI emits
+    // it next to the user's cwd whenever a fresh chain was bootstrapped, preserving
+    // the long-standing default consumed by `ika config add-env`, the TypeScript SDK
+    // integration tests, and the `scripts/update_pricing*.sh` helpers.
+    if force_reinitiation || ika_network_config_not_exists {
+        let ika_config = IkaNetworkConfig::new(
+            swarm.network_config.ika_package_id,
+            swarm.network_config.ika_common_package_id,
+            swarm.network_config.ika_dwallet_2pc_mpc_package_id,
+            None,
+            swarm.network_config.ika_system_package_id,
+            swarm.network_config.ika_system_object_id,
+            swarm.network_config.ika_dwallet_coordinator_object_id,
+        );
+        let ika_config_path = std::env::current_dir()?.join("ika_config.json");
+        std::fs::write(&ika_config_path, serde_json::to_string_pretty(&ika_config)?)?;
+        info!("Wrote {}", ika_config_path.display());
     }
 
     swarm.launch().await?;

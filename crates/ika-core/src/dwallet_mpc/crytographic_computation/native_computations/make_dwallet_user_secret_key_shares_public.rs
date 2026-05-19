@@ -13,7 +13,6 @@ use ika_types::messages_dwallet_mpc::{
 };
 use twopc_mpc::dkg;
 use twopc_mpc::dkg::Protocol;
-use twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 
 /// Verifies the given secret share matches the given dWallets`
 /// DKG output centralized_party_public_key_share.
@@ -56,7 +55,7 @@ fn verify_centralized_party_secret_key_share_v1(
         ProtocolPublicParametersByCurve::Secp256k1(pp) => {
             let decentralized_dkg_output =
                 bcs::from_bytes::<DKGDecentralizedPartyOutputSecp256k1>(&dkg_output)?;
-            <ECDSAProtocol as Protocol>::verify_centralized_party_public_key_share(
+            <Secp256k1AsyncDKGProtocol as Protocol>::verify_centralized_party_public_key_share(
                 &pp,
                 decentralized_dkg_output.into(),
                 bcs::from_bytes(&secret_share)?,

@@ -18,8 +18,9 @@ use dwallet_mpc_types::dwallet_mpc::{
 use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256r1ECDSAProtocol, SessionIdentifier,
+    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
 use std::sync::Arc;
@@ -111,10 +112,10 @@ impl ProtocolCryptographicData {
                     let hash_scheme = data.hash_scheme;
                     let decentralized_dkg_output = match dkg_output {
                             VersionedDwalletDKGPublicOutput::V1(output) => {
-                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
+                                bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyTargetedDKGOutput>(output.as_slice())?.into()
                             }
                             VersionedDwalletDKGPublicOutput::V2{dkg_output, ..} => {
-                                bcs::from_bytes::<<Secp256k1ECDSAProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
+                                bcs::from_bytes::<<Secp256k1AsyncDKGProtocol as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput>(dkg_output.as_slice())?
                             }
                         };
 
@@ -144,7 +145,10 @@ impl ProtocolCryptographicData {
                 VersionedPresignOutput::V2(_) => {
                     match data.signature_algorithm {
                         DWalletSignatureAlgorithm::ECDSASecp256k1 => {
-                            verify_partial_signature::<Secp256k1ECDSAProtocol>(
+                            let _verified_sign_data = verify_partial_signature::<
+                                Secp256k1ECDSAProtocol,
+                                Secp256k1AsyncDKGProtocol,
+                            >(
                                 &data.message,
                                 &data.hash_scheme,
                                 &data.dwallet_decentralized_output,
@@ -154,7 +158,10 @@ impl ProtocolCryptographicData {
                             )?;
                         }
                         DWalletSignatureAlgorithm::Taproot => {
-                            verify_partial_signature::<TaprootProtocol>(
+                            let _verified_sign_data = verify_partial_signature::<
+                                TaprootProtocol,
+                                Secp256k1AsyncDKGProtocol,
+                            >(
                                 &data.message,
                                 &data.hash_scheme,
                                 &data.dwallet_decentralized_output,
@@ -186,14 +193,15 @@ impl ProtocolCryptographicData {
                     });
                 }
 
-                verify_partial_signature::<Secp256r1ECDSAProtocol>(
-                    &data.message,
-                    &data.hash_scheme,
-                    &data.dwallet_decentralized_output,
-                    &data.presign,
-                    &data.partially_signed_message,
-                    protocol_public_parameters,
-                )?;
+                let _verified_sign_data =
+                    verify_partial_signature::<Secp256r1ECDSAProtocol, Secp256r1AsyncDKGProtocol>(
+                        &data.message,
+                        &data.hash_scheme,
+                        &data.dwallet_decentralized_output,
+                        &data.presign,
+                        &data.partially_signed_message,
+                        protocol_public_parameters,
+                    )?;
                 Vec::new()
             }
             ProtocolCryptographicData::PartialSignatureVerification {
@@ -209,7 +217,10 @@ impl ProtocolCryptographicData {
                     });
                 }
 
-                verify_partial_signature::<Curve25519EdDSAProtocol>(
+                let _verified_sign_data = verify_partial_signature::<
+                    Curve25519EdDSAProtocol,
+                    Curve25519AsyncDKGProtocol,
+                >(
                     &data.message,
                     &data.hash_scheme,
                     &data.dwallet_decentralized_output,
@@ -232,7 +243,10 @@ impl ProtocolCryptographicData {
                     });
                 }
 
-                verify_partial_signature::<RistrettoSchnorrkelSubstrateProtocol>(
+                let _verified_sign_data = verify_partial_signature::<
+                    RistrettoSchnorrkelSubstrateProtocol,
+                    RistrettoAsyncDKGProtocol,
+                >(
                     &data.message,
                     &data.hash_scheme,
                     &data.dwallet_decentralized_output,

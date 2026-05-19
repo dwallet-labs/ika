@@ -122,7 +122,9 @@ async fn test_threshold_not_reached_n_times_flow_succeeds() {
             malicious_actor_name
         );
     }
-    let network_dkg_mpc_rounds = 5;
+    // `crypto_round` starts at 1, so completion lands at
+    // `EXPECTED_NETWORK_DKG_ROUND_COUNT + 1` (DKG rounds + finalize).
+    let network_dkg_mpc_rounds = utils::EXPECTED_NETWORK_DKG_ROUND_COUNT as usize + 1;
     assert_eq!(
         test_state.crypto_round,
         network_dkg_mpc_rounds + expected_threshold_not_reached_occurrences_crypto_rounds.len(),

@@ -247,26 +247,8 @@ async fn wait_for_network_owned_address_sign_output(
 
 // === Per-algorithm E2E tests ===
 
-/// ECDSA centralized party emulation with ZeroRng currently fails with
-/// `Commitment(InvalidPublicParameters)` in `SignCentralizedPartyV2`.
-///
-/// The Schnorr-based protocols (EdDSA, SchnorrkelSubstrate, Taproot) work because their
-/// commitment scheme tolerates a zero secret key share, while ECDSA's does not.
-///
-/// The centralized party partial signature emulation (`emulate_centralized_party_partial_signature`
-/// in `input.rs`) runs synchronously on the main thread outside any Rayon context.
-/// For Schnorr this is fine (cheap), but for ECDSA it would also be expensive even if
-/// the commitment issue were resolved. Two possible fixes:
-/// 1. Move the emulation into the Rayon cryptographic computation pipeline so it runs
-///    on the Rayon thread pool alongside the decentralized party sign computation.
-/// 2. Adapt the Sign protocol to accept a flag that makes it compute the centralized
-///    party partial signature internally (within its own Rayon task), eliminating the
-///    need to pre-compute it in `session_input_from_request`.
-///
-/// Unignore once the ECDSA `Commitment(InvalidPublicParameters)` issue is resolved.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
 async fn test_network_owned_address_sign_ecdsa_secp256k1() {
     network_owned_address_sign_flow(
         DWalletCurve::Secp256k1,
@@ -276,10 +258,8 @@ async fn test_network_owned_address_sign_ecdsa_secp256k1() {
     .await;
 }
 
-/// See [`test_network_owned_address_sign_ecdsa_secp256k1`] for details on why this is ignored.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
 async fn test_network_owned_address_sign_ecdsa_secp256r1() {
     network_owned_address_sign_flow(
         DWalletCurve::Secp256r1,

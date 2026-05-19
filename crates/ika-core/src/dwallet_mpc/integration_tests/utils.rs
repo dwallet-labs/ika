@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
@@ -506,17 +506,64 @@ pub fn create_dwallet_mpc_services(
     Vec<Sender<NetworkOwnedAddressSignRequest>>,
     Vec<Receiver<NetworkOwnedAddressSignOutput>>,
 ) {
-    let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
+    let (committee, seeds) = build_committee_with_random_seeds(size);
+    create_dwallet_mpc_services_with_committee_and_seeds(committee, seeds)
+}
+
+/// Builds a fresh test committee with random seeds for every validator. Use this when the
+/// test does not need to share validator key material across multiple service-creation calls.
+pub fn build_committee_with_random_seeds(
+    size: usize,
+) -> (Committee, HashMap<AuthorityName, RootSeed>) {
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
+    let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&seed);
+        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&seed);
         committee.class_groups_public_keys_and_proofs.insert(
             *authority_name,
-            class_groups_key_pair.encryption_key_and_proof(),
+            class_groups_key_pair
+                .class_groups
+                .encryption_key_and_proof(),
+        );
+        // PVSS HPKE per-curve public keys + proofs (added at the cryptography-private @
+        // 9d35fa76 bump). The integration-test committee mirrors what `Committee::new`
+        // expects post-bump so `network_dkg_v2_public_input` and the reconfiguration
+        // PublicInput constructors get real per-curve maps instead of empty placeholders.
+        committee.secp256k1_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.secp256k1_pvss_encryption_key_and_proof(),
+        );
+        committee.secp256r1_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.secp256r1_pvss_encryption_key_and_proof(),
+        );
+        committee.ristretto_pvss_public_keys_and_proofs.insert(
+            *authority_name,
+            class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
         );
     }
+    (committee, seeds)
+}
+
+/// Creates the same set of `DWalletMPCService`s as [`create_dwallet_mpc_services`] but
+/// from a caller-supplied committee + per-validator seeds. Use this when two service sets
+/// need to share validator key material — e.g. the v2→v3 reconfig migration test, where
+/// "phase 2" validators must hold the same class-groups decryption keys as "phase 1" so
+/// they can decrypt the V2 DKG output captured in phase 1.
+pub fn create_dwallet_mpc_services_with_committee_and_seeds(
+    committee: Committee,
+    seeds: HashMap<AuthorityName, RootSeed>,
+) -> (
+    Vec<DWalletMPCService>,
+    Vec<SuiDataSenders>,
+    Vec<Arc<TestingSubmitToConsensus>>,
+    Vec<Arc<TestingAuthorityPerEpochStore>>,
+    Vec<Arc<TestingDWalletCheckpointNotify>>,
+    Vec<Sender<NetworkOwnedAddressSignRequest>>,
+    Vec<Receiver<NetworkOwnedAddressSignOutput>>,
+) {
     let dwallet_mpc_services = committee
         .names()
         .map(|authority_name| {
@@ -1116,6 +1163,10 @@ use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};
 use ika_protocol_config::OverrideGuard;
+
+/// Number of MPC rounds the network DKG runs under `cryptography-private @ 9d35fa76`.
+/// Driven by upstream's threshold-encryption-to-sharing sub-protocol; bump if upstream changes.
+pub(crate) const EXPECTED_NETWORK_DKG_ROUND_COUNT: u64 = 7;
 
 /// Test-friendly protocol config values.
 /// These are small to keep integration tests fast and assertions exact.
