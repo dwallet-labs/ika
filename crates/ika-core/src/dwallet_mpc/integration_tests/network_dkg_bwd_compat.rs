@@ -180,14 +180,8 @@ async fn test_bwd_compat_network_key_reconfiguration() {
     info!("Bwd-compat network reconfiguration completed");
 }
 
-// v2→v3 migration likewise blocked on the same upstream conversion gap: the
-// main `ReconfigurationParty::generate_public_input` is called at v=3 with a
-// V2-tagged DKG output (bwd-compat shape), which needs to be converted to
-// `decentralized_party::dkg::PublicOutput` before feeding the main `new_from_dkg_output`.
-// Re-enable once upstream conversion lands.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "v2→v3 reconfig migration needs upstream `From<bwd_compat::dkg::PublicOutput> for decentralized_party::dkg::PublicOutput`"]
 async fn test_v2_to_v3_reconfiguration_migration() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
     let (committee, _) = Committee::new_simple_test_committee();
