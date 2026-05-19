@@ -290,4 +290,56 @@ mod tests {
             bcs::from_bytes(&bytes).expect("BCS deserialize");
         assert_eq!(original, decoded);
     }
+
+    /// Tests for `ika_types::committee::decode_validator_encryption_keys` —
+    /// colocated here so the test can use `ClassGroupsAndPvssKeyPairAndProof::from_seed`
+    /// without creating a circular `ika-types` ↔ `dwallet-classgroups-types`
+    /// dev-dependency.
+    mod decode_validator_encryption_keys {
+        use super::*;
+        use ika_types::committee::decode_validator_encryption_keys;
+
+        fn sample_bundle() -> ValidatorEncryptionKeysAndProofs {
+            let seed = RootSeed::new([0xA5u8; 32]);
+            ClassGroupsAndPvssKeyPairAndProof::from_seed(&seed)
+                .validator_encryption_keys_and_proofs()
+        }
+
+        #[test]
+        fn decodes_new_shape() {
+            let bundle = sample_bundle();
+            let bytes = bcs::to_bytes(&bundle).expect("encode bundle");
+            let decoded = decode_validator_encryption_keys(&bytes).expect("decode new shape");
+            assert_eq!(decoded.class_groups, bundle.class_groups);
+            assert_eq!(decoded.secp256k1_pvss, Some(bundle.secp256k1_pvss));
+            assert_eq!(decoded.secp256r1_pvss, Some(bundle.secp256r1_pvss));
+            assert_eq!(decoded.ristretto_pvss, Some(bundle.ristretto_pvss));
+        }
+
+        #[test]
+        fn decodes_old_shape_with_pvss_none() {
+            let bundle = sample_bundle();
+            let old_bytes = bcs::to_bytes(&bundle.class_groups).expect("encode old shape");
+            let decoded = decode_validator_encryption_keys(&old_bytes).expect("decode old shape");
+            assert_eq!(decoded.class_groups, bundle.class_groups);
+            assert!(decoded.secp256k1_pvss.is_none());
+            assert!(decoded.secp256r1_pvss.is_none());
+            assert!(decoded.ristretto_pvss.is_none());
+        }
+
+        #[test]
+        fn rejects_random_bytes() {
+            assert!(decode_validator_encryption_keys(&[]).is_none());
+            assert!(decode_validator_encryption_keys(&[0u8; 16]).is_none());
+            assert!(decode_validator_encryption_keys(&vec![0xFFu8; 1024]).is_none());
+        }
+
+        #[test]
+        fn rejects_old_shape_with_trailing_bytes() {
+            let bundle = sample_bundle();
+            let mut bytes = bcs::to_bytes(&bundle.class_groups).expect("encode old shape");
+            bytes.push(0xAA);
+            assert!(decode_validator_encryption_keys(&bytes).is_none());
+        }
+    }
 }

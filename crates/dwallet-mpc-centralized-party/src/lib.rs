@@ -7,11 +7,8 @@
 #![allow(unused_qualifications)]
 
 use anyhow::{Context, anyhow};
-use class_groups::dkg::Secp256k1Party;
 use class_groups::{
-    DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER, SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-    SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_SCALAR_LIMBS,
-    setup::DeriveFromPlaintextPublicParameters,
+    SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS, SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
 };
 use dwallet_mpc_types::dwallet_mpc::{
     DKGDecentralizedPartyOutputSecp256k1, DKGDecentralizedPartyVersionedOutputSecp256k1,
@@ -23,8 +20,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
     VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable, secp256k1};
-use homomorphic_encryption::GroupsPublicParametersAccessors;
+use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable};
 use mpc::Party;
 use mpc::two_party::Round;
 use rand_core::SeedableRng;
@@ -869,8 +865,11 @@ pub fn network_key_version_inner(
         bcs::from_bytes(&network_dkg_public_output)?;
 
     match &network_dkg_public_output {
-        VersionedNetworkDkgOutput::V1(_) => Ok(1),
+        VersionedNetworkDkgOutput::V1(_) => {
+            unreachable!("V1 network DKG outputs are no longer produced")
+        }
         VersionedNetworkDkgOutput::V2(_) => Ok(2),
+        VersionedNetworkDkgOutput::V3(_) => Ok(3),
     }
 }
 
@@ -1025,51 +1024,32 @@ fn protocol_public_parameters(
         bcs::from_bytes(&network_dkg_public_output)?;
 
     match &network_dkg_public_output {
-        // TODO (#1473): Add support for V2 network keys.
-        VersionedNetworkDkgOutput::V1(network_dkg_public_output) => {
-            let network_dkg_public_output: <Secp256k1Party as mpc::Party>::PublicOutput =
-                bcs::from_bytes(network_dkg_public_output)?;
-            let encryption_scheme_public_parameters = network_dkg_public_output
-                .default_encryption_scheme_public_parameters::<secp256k1::GroupElement>(
-            )?;
-
-            let setup_parameters = class_groups::setup::SetupParameters::<
-                SECP256K1_SCALAR_LIMBS,
-                SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS,
-                group::secp256k1::scalar::PublicParameters,
-            >::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
-                group::secp256k1::scalar::PublicParameters::default(),
-                DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER,
-            )?;
-
-            let neutral_group_value =
-                group::secp256k1::GroupElement::neutral_from_public_parameters(
-                    &group::secp256k1::group_element::PublicParameters::default(),
-                )
-                .map_err(twopc_mpc::Error::from)?
-                .value();
-            let neutral_ciphertext_value =
-                ::class_groups::CiphertextSpaceGroupElement::neutral_from_public_parameters(
-                    setup_parameters.ciphertext_space_public_parameters(),
-                )?
-                .value();
-
-            let protocol_public_parameters = ProtocolPublicParameters::new::<
-                { secp256k1::SCALAR_LIMBS },
-                { SECP256K1_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                { SECP256K1_NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
-                secp256k1::GroupElement,
-            >(
-                neutral_group_value,
-                neutral_group_value,
-                neutral_ciphertext_value,
-                neutral_ciphertext_value,
-                encryption_scheme_public_parameters.clone(),
-            );
-            Ok(bcs::to_bytes(&protocol_public_parameters)?)
+        VersionedNetworkDkgOutput::V1(_) => {
+            unreachable!("V1 network DKG outputs are no longer produced")
         }
         VersionedNetworkDkgOutput::V2(network_dkg_public_output) => {
+            // bwd-compat (mainnet-v1.1.8) DKG output shape.
+            let network_dkg_public_output: <twopc_mpc::decentralized_party_backward_compatible::dkg::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(network_dkg_public_output)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256k1_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Ristretto => bcs::to_bytes(
+                    &network_dkg_public_output.ristretto_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Curve25519 => bcs::to_bytes(
+                    &network_dkg_public_output.curve25519_protocol_public_parameters()?,
+                )?,
+                DWalletCurve::Secp256r1 => bcs::to_bytes(
+                    &network_dkg_public_output.secp256r1_protocol_public_parameters()?,
+                )?,
+            };
+
+            Ok(pp)
+        }
+        VersionedNetworkDkgOutput::V3(network_dkg_public_output) => {
             let network_dkg_public_output: <dkg::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(network_dkg_public_output)?;
 
@@ -1096,17 +1076,38 @@ fn protocol_public_parameters(
 fn protocol_public_parameters_from_reconfiguration_output(
     curve: u32,
     reconfiguration_dkg_public_output: SerializedWrappedMPCPublicOutput,
-    versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
+    _versioned_network_dkg_output: SerializedWrappedMPCPublicOutput,
 ) -> anyhow::Result<Vec<u8>> {
     let reconfiguration_dkg_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(&reconfiguration_dkg_public_output)?;
 
     match &reconfiguration_dkg_public_output {
-        // TODO (#1487): Remove temporary support for V1 reconfiguration keys.
         VersionedDecryptionKeyReconfigurationOutput::V1(_) => {
-            protocol_public_parameters(curve, versioned_network_dkg_output)
+            unreachable!("V1 reconfiguration outputs are no longer produced")
         }
         VersionedDecryptionKeyReconfigurationOutput::V2(public_output_bytes) => {
+            // bwd-compat reconfig output shape.
+            let public_output: <twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party as mpc::Party>::PublicOutput =
+                bcs::from_bytes(public_output_bytes)?;
+
+            let pp = match try_into_curve(curve)? {
+                DWalletCurve::Secp256k1 => {
+                    bcs::to_bytes(&public_output.secp256k1_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Ristretto => {
+                    bcs::to_bytes(&public_output.ristretto_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Curve25519 => {
+                    bcs::to_bytes(&public_output.curve25519_protocol_public_parameters()?)?
+                }
+                DWalletCurve::Secp256r1 => {
+                    bcs::to_bytes(&public_output.secp256r1_protocol_public_parameters()?)?
+                }
+            };
+
+            Ok(pp)
+        }
+        VersionedDecryptionKeyReconfigurationOutput::V3(public_output_bytes) => {
             let public_output: <twopc_mpc::decentralized_party::reconfiguration::Party as mpc::Party>::PublicOutput =
                 bcs::from_bytes(public_output_bytes)?;
 

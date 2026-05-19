@@ -22,6 +22,13 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Record history of protocol version allocations here:
 //
 // Version 1: Original version.
+// Version 4: Internal presign sessions, BLS checkpoints, NOA checkpoints, +
+//            validator-key publication switch from `ClassGroupsEncryptionKeyAndProof`
+//            (mainnet-v1.1.8 shape, v3) to `ValidatorEncryptionKeysAndProofs`
+//            (class-groups + per-curve PVSS HPKE). DKG / Reconfiguration switch
+//            to `twopc_mpc::decentralized_party::*` (PR #1707 upstream); at v3
+//            they run against `decentralized_party_backward_compatible::*` to
+//            stay wire-compatible with mainnet-v1.1.8 peers.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -355,6 +362,26 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
+    /// True iff this protocol_version uses the post-PR-#1707 network DKG /
+    /// validator-key-publication shape — `ValidatorEncryptionKeysAndProofs`
+    /// (class-groups + per-curve PVSS HPKE) and
+    /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
+    /// <= 3 (mainnet-v1.1.8), where the publication is bare
+    /// `ClassGroupsEncryptionKeyAndProof` and DKG runs against
+    /// `twopc_mpc::decentralized_party_backward_compatible::dkg::Party`.
+    pub fn is_network_encryption_key_version_v3(&self) -> bool {
+        self.network_encryption_key_version.is_some_and(|v| v == 3)
+    }
+
+    /// True iff this protocol_version uses the post-PR-#1707 reconfiguration
+    /// shape — `twopc_mpc::decentralized_party::reconfiguration::Party` with
+    /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
+    /// <= 3, where reconfiguration runs against
+    /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
+    pub fn is_reconfiguration_message_version_v3(&self) -> bool {
+        self.reconfiguration_message_version.is_some_and(|v| v == 3)
+    }
+
     pub fn bls_checkpoints(&self) -> bool {
         self.feature_flags.bls_checkpoints
     }
@@ -655,6 +682,8 @@ impl ProtocolConfig {
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.noa_checkpoints = true;
+                    cfg.network_encryption_key_version = Some(3);
+                    cfg.reconfiguration_message_version = Some(3);
                 }
                 // Use this template when making changes:
                 //

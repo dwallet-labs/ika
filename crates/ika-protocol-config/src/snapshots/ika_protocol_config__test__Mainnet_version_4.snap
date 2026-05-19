@@ -27,8 +27,8 @@ consensus_gc_depth: 60
 decryption_key_reconfiguration_third_round_delay: 10
 schnorr_presign_second_round_delay: 8
 network_dkg_third_round_delay: 10
-network_encryption_key_version: 2
-reconfiguration_message_version: 2
+network_encryption_key_version: 3
+reconfiguration_message_version: 3
 network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: 2500
 network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size: 1000
 network_owned_address_eddsa_presign_pool_minimum_size: 5000
