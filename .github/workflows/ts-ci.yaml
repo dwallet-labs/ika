@@ -64,7 +64,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build sdk/typescript (workspace dependency)
+      - name: Build sdk/typescript (workspace dependency for plugins)
+        if: matrix.package == 'sdk/plugins'
         run: pnpm run build
         working-directory: ./sdk/typescript
 
@@ -73,9 +74,9 @@ jobs:
         working-directory: ./${{ matrix.package }}
 
       - name: Typecheck
+        if: matrix.package == 'sdk/plugins'
         run: pnpm run typecheck
         working-directory: ./${{ matrix.package }}
-        if: matrix.package == 'sdk/plugins'
 
       - name: Build
         run: pnpm run build
@@ -86,6 +87,6 @@ jobs:
         working-directory: ./${{ matrix.package }}
 
       - name: Unit tests
+        if: matrix.package == 'sdk/plugins'
         run: pnpm run test:unit
         working-directory: ./${{ matrix.package }}
-        if: matrix.package == 'sdk/plugins'
