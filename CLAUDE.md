@@ -137,7 +137,10 @@ Gotchas worth knowing before touching simtest code:
   (bypasses `panic_handler`). The cryptography-private `parallel` feature is
   therefore disabled under `cfg(msim)` via
   `[target.'cfg(not(msim))'.dependencies]` overrides in `ika-core` and
-  `dwallet-classgroups-types`. Direct `rayon::spawn_fifo` sites in
+  `dwallet-classgroups-types`. Reads backwards but is the only direction
+  Cargo accepts — feature unification is additive only, so to turn a
+  feature OFF under msim you list the base dep without it and re-add it
+  in a `cfg(not(msim))` block. Direct `rayon::spawn_fifo` sites in
   `dwallet_mpc/crytographic_computation/{orchestrator,mpc_computations/network_dkg}.rs`
   also capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter
   it as the first line of the closure. New rayon-from-msim-node code needs
