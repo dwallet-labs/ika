@@ -6,6 +6,14 @@
 // binary; uses a real secp256k1 keypair from @noble/curves so the yParity
 // recovery loop is exercised against a real signature.
 
+import { deriveEthereumAddress, eth } from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { hashMessage, keccak256, serializeTransaction, type Hex } from 'viem';
+import { privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
 import { describe, expect, it, vi } from 'vitest';
 
 const realPubkeyByOutput = new Map<string, Uint8Array>();
@@ -23,15 +31,6 @@ vi.mock('@ika.xyz/sdk', async () => {
 		}),
 	};
 });
-
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { hashMessage, keccak256, serializeTransaction, type Hex } from 'viem';
-import { privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
-
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
-import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
-import { eth, deriveEthereumAddress } from '@ika.xyz/plugins/ethereum/destination';
-import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
 
 // -----------------------------------------------------------------------------
 // Test fixtures: real secp256k1 keypair so we can sign with the private key,
@@ -73,14 +72,14 @@ function fakeDWallet(publicOutput: Uint8Array): DWallet<'SECP256K1'> {
 function buildCtx(): IkaContext {
 	const source = {
 		chain: 'sui',
-		async signMessage(input: {
-			dWallet: DWallet;
-			message: Uint8Array;
-		}): Promise<BaseSignResult> {
+		async signMessage(input: { dWallet: DWallet; message: Uint8Array }): Promise<BaseSignResult> {
 			const key = Array.from(input.dWallet.publicOutput).join(',');
 			const priv = realPrivkeyByOutput.get(key);
 			if (!priv) throw new Error('test: no priv for this dWallet');
-			const signature = secp256k1.sign(input.message, priv, { prehash: false });
+			// Destinations now pass the preimage and request `hash: KECCAK256`.
+			// The real MPC applies the hash internally; mock that here.
+			const digest = new Uint8Array(keccak_256(input.message));
+			const signature = secp256k1.sign(digest, priv, { prehash: false });
 			return {
 				signature,
 				curve: Curve.SECP256K1,
@@ -182,7 +181,9 @@ describe('ethereum destination — sign (transaction)', () => {
 		expect(signed.payload.signature).toMatch(/^0x[0-9a-f]{130}$/i);
 
 		// The digest hashMessage produced under EIP-191 is recoverable.
-		const digest = hashMessage({ raw: ('0x' + bytesToHex(new TextEncoder().encode('hello'))) as Hex });
+		const digest = hashMessage({
+			raw: ('0x' + bytesToHex(new TextEncoder().encode('hello'))) as Hex,
+		});
 		expect(digest).toMatch(/^0x[0-9a-f]{64}$/);
 	});
 
@@ -226,9 +227,7 @@ describe('ethereum destination — sign (transaction)', () => {
 		const ctx: IkaContext = {
 			source: {
 				chain: 'sui',
-				async signMessage(input: {
-					message: Uint8Array;
-				}): Promise<BaseSignResult> {
+				async signMessage(input: { message: Uint8Array }): Promise<BaseSignResult> {
 					const signature = secp256k1.sign(input.message, fxB.privateKey, {
 						prehash: false,
 					});

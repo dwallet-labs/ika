@@ -8,9 +8,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
-
-import type { ClientWithCoreApi } from '@mysten/sui/client';
 import type { IkaConfig } from '@ika.xyz/sdk';
+import type { ClientWithCoreApi } from '@mysten/sui/client';
 
 // Shape of `ika_config.json` written by crates/ika-swarm-config/src/sui_client.rs.
 // serde renames the Rust fields to snake_case.

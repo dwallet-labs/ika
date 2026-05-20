@@ -10,7 +10,14 @@
 //
 // Everything else that does need a chain lands in test/testnet/.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
+import { ImportedKeySharedPartialError } from '@ika.xyz/plugins/sui/source';
+import { Curve } from '@ika.xyz/sdk';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createSolanaAddressCache } from '../../src/solana/destination/address.js';
+import { createAddressCache } from '../../src/sui/destination/address.js';
+import { revealUserSecretShare } from '../../src/sui/source/dkg.js';
 
 // Mock the WASM derivation BEFORE importing the address modules — coalescing
 // tests need a deterministic, fast, controllable derivation. We also count
@@ -32,13 +39,6 @@ vi.mock('@ika.xyz/sdk', async () => {
 		}),
 	};
 });
-
-import { solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
-import { createAddressCache } from '../../../plugins/src/sui/destination/address.js';
-import { createSolanaAddressCache } from '../../../plugins/src/solana/destination/address.js';
-import { ImportedKeySharedPartialError } from '@ika.xyz/plugins/sui/source';
-import { revealUserSecretShare } from '../../../plugins/src/sui/source/dkg.js';
-import { Curve } from '@ika.xyz/sdk';
 
 // -----------------------------------------------------------------------------
 // Q2: Solana publisher confirmation timeout (PRD §3.3 / §9 Q2).
@@ -250,7 +250,10 @@ describe('address caches — Q6 thundering-herd coalescing', () => {
 
 describe('ImportedKeySharedPartialError — shape contract (PRD §8.4)', () => {
 	it('carries verifiedDWallet, cause, retryReveal; instanceof Error', () => {
-		const fakeWallet = { id: '0xABC', kind: 'imported-key' } as unknown as import('@ika.xyz/plugins/sui/source').SuiDWallet;
+		const fakeWallet = {
+			id: '0xABC',
+			kind: 'imported-key',
+		} as unknown as import('@ika.xyz/plugins/sui/source').SuiDWallet;
 		const retry = async () => fakeWallet;
 		const err = new ImportedKeySharedPartialError({
 			verifiedDWallet: fakeWallet,
@@ -270,7 +273,9 @@ describe('ImportedKeySharedPartialError — shape contract (PRD §8.4)', () => {
 	});
 
 	it('retryReveal accepts an optional AbortSignal', async () => {
-		const fakeWallet = { id: '0xDEF' } as unknown as import('@ika.xyz/plugins/sui/source').SuiDWallet;
+		const fakeWallet = {
+			id: '0xDEF',
+		} as unknown as import('@ika.xyz/plugins/sui/source').SuiDWallet;
 		let receivedSignal: AbortSignal | undefined;
 		const retry = async (opts?: { signal?: AbortSignal }) => {
 			receivedSignal = opts?.signal;
@@ -323,7 +328,8 @@ describe('revealUserSecretShare — irreversibility gate (§8.3)', () => {
 		await expect(
 			revealUserSecretShare(irrelevantCtx, {
 				dWallet: buildImportedKeyDWallet(),
-				acknowledge: 'I-Understand-This-Is-Irreversible' as unknown as 'i-understand-this-is-irreversible',
+				acknowledge:
+					'I-Understand-This-Is-Irreversible' as unknown as 'i-understand-this-is-irreversible',
 			}),
 		).rejects.toThrow(/irreversible.*acknowledge/);
 	});

@@ -207,10 +207,7 @@ export interface PublisherPlugin<
 > {
 	readonly kind: 'publisher';
 	readonly chain: Chain;
-	broadcast(
-		signed: SignedTx<Chain, Payload>,
-		opts?: PublishOptions,
-	): Promise<BroadcastResult>;
+	broadcast(signed: SignedTx<Chain, Payload>, opts?: PublishOptions): Promise<BroadcastResult>;
 	install?(ctx: IkaContext): void | Promise<void>;
 }
 
@@ -234,6 +231,5 @@ export type DWalletExtensionOf<P> = P extends {
 	: object;
 
 /** Extract supported curves of a destination plugin (or `never`). */
-export type SupportedCurvesOf<P> = P extends DestinationPlugin<string, infer SC, object, object>
-	? SC
-	: never;
+export type SupportedCurvesOf<P> =
+	P extends DestinationPlugin<string, infer SC, object, object> ? SC : never;

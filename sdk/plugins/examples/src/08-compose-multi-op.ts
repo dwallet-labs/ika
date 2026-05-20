@@ -15,6 +15,7 @@
  */
 
 import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+
 import { buildIka, run } from './shared.js';
 
 run('compose multiple sign ops into one PTB', async () => {

@@ -21,6 +21,12 @@ env:
 jobs:
   code-quality:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - sdk/typescript
+          - sdk/plugins
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -57,16 +63,29 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Build sdk/typescript (workspace dependency)
+        run: pnpm run build
         working-directory: ./sdk/typescript
 
       - name: Format Check
         run: pnpm run prettier:check
-        working-directory: ./sdk/typescript
+        working-directory: ./${{ matrix.package }}
+
+      - name: Typecheck
+        run: pnpm run typecheck
+        working-directory: ./${{ matrix.package }}
+        if: matrix.package == 'sdk/plugins'
 
       - name: Build
         run: pnpm run build
-        working-directory: ./sdk/typescript
+        working-directory: ./${{ matrix.package }}
 
       - name: Lint
         run: pnpm run eslint:check
-        working-directory: ./sdk/typescript
+        working-directory: ./${{ matrix.package }}
+
+      - name: Unit tests
+        run: pnpm run test:unit
+        working-directory: ./${{ matrix.package }}
+        if: matrix.package == 'sdk/plugins'

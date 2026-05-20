@@ -617,11 +617,7 @@ function generateImportedKey(curve: Curve): Uint8Array {
 		await finalizeSign(await exec(tx), combo);
 	}
 
-	async function signZeroTrustSecret(
-		dWallet: ZeroTrustDWallet,
-		combo: Combo,
-		message: Uint8Array,
-	) {
+	async function signZeroTrustSecret(dWallet: ZeroTrustDWallet, combo: Combo, message: Uint8Array) {
 		const aliceKeys = await getUSEK('alice', combo.curve);
 		const encShare = await ikaClient.getEncryptedUserSecretKeyShare(
 			encryptedShareIds.get(`zero-trust:${combo.curve}`)!,
@@ -1559,28 +1555,24 @@ function generateImportedKey(curve: Curve): Uint8Array {
 	// =======================================================================
 
 	describe('misc surface', () => {
-		it(
-			'sync prepareDKG (vs prepareDKGAsync) produces a usable DKGRequestInput',
-			async () => {
-				const curve = Curve.SECP256K1;
-				await ensureUSEKRegistered('alice', curve);
-				const aliceKeys = await getUSEK('alice', curve);
-				const pp = await ikaClient.getProtocolPublicParameters(undefined, curve);
-				const sessionIdBytes = createRandomSessionIdentifier();
-				const input = await prepareDKG(
-					pp,
-					curve,
-					aliceKeys.encryptionKey,
-					sessionIdBytes,
-					signerAddress,
-				);
-				expect(input.userDKGMessage.byteLength).toBeGreaterThan(0);
-				expect(input.userPublicOutput.byteLength).toBeGreaterThan(0);
-				expect(input.userSecretKeyShare.byteLength).toBeGreaterThan(0);
-				expect(input.encryptedUserShareAndProof.byteLength).toBeGreaterThan(0);
-			},
-			60_000,
-		);
+		it('sync prepareDKG (vs prepareDKGAsync) produces a usable DKGRequestInput', async () => {
+			const curve = Curve.SECP256K1;
+			await ensureUSEKRegistered('alice', curve);
+			const aliceKeys = await getUSEK('alice', curve);
+			const pp = await ikaClient.getProtocolPublicParameters(undefined, curve);
+			const sessionIdBytes = createRandomSessionIdentifier();
+			const input = await prepareDKG(
+				pp,
+				curve,
+				aliceKeys.encryptionKey,
+				sessionIdBytes,
+				signerAddress,
+			);
+			expect(input.userDKGMessage.byteLength).toBeGreaterThan(0);
+			expect(input.userPublicOutput.byteLength).toBeGreaterThan(0);
+			expect(input.userSecretKeyShare.byteLength).toBeGreaterThan(0);
+			expect(input.encryptedUserShareAndProof.byteLength).toBeGreaterThan(0);
+		}, 60_000);
 
 		it('hasDWallet / getDWallet on-chain refs simulate cleanly', async () => {
 			const dWallet = await ensureZeroTrust(Curve.SECP256K1);

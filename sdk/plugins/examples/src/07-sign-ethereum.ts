@@ -17,13 +17,13 @@
  * signing target chain is Ethereum.
  */
 
-import { type Hex } from 'viem';
-import { sepolia } from 'viem/chains';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
 import { Curve } from '@ika.xyz/sdk';
 import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource } from '@ika.xyz/plugins/sui/source';
-import { eth } from '@ika.xyz/plugins/ethereum/destination';
-import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import type { Hex, Hex } from 'viem';
+import { sepolia } from 'viem/chains';
+
 import { loadEnv, loadUseks, run } from './shared.js';
 
 run('Ethereum sign + broadcast (SECP256K1 shared dWallet)', async () => {
@@ -32,9 +32,7 @@ run('Ethereum sign + broadcast (SECP256K1 shared dWallet)', async () => {
 
 	// Bring the ethereum destination + publisher into the client surface.
 	const ika = new IkaClient()
-		.use(
-			suiSource({ network: 'testnet', signer, userShareEncryptionKeys: useks, suiClient }),
-		)
+		.use(suiSource({ network: 'testnet', signer, userShareEncryptionKeys: useks, suiClient }))
 		.use(eth())
 		.use(
 			ethPublisher({

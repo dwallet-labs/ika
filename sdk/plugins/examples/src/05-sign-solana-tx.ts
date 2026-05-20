@@ -12,6 +12,7 @@
  * a funded recipient; the signer address still needs devnet SOL though.
  */
 
+import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 import {
 	Connection,
 	PublicKey,
@@ -19,7 +20,7 @@ import {
 	TransactionMessage,
 	VersionedTransaction,
 } from '@solana/web3.js';
-import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
+
 import { buildIka, run } from './shared.js';
 
 run('sign + broadcast Solana transaction (Ed25519 shared dWallet)', async () => {

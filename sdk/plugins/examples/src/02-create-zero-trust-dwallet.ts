@@ -16,6 +16,7 @@
  */
 
 import { Curve } from '@ika.xyz/sdk';
+
 import { buildIka, run } from './shared.js';
 
 run('zero-trust dWallet (SECP256K1)', async () => {

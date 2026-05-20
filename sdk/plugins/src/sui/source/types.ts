@@ -42,12 +42,10 @@ import type { SuiDWallet } from './dwallet.js';
  */
 export interface SuiTxExecutionResult {
 	readonly digest?: string;
-	readonly events?:
-		| Array<{
-				readonly eventType: string;
-				readonly bcs?: number[] | Uint8Array | null;
-		  }>
-		| null;
+	readonly events?: Array<{
+		readonly eventType: string;
+		readonly bcs?: number[] | Uint8Array | null;
+	}> | null;
 }
 
 /**

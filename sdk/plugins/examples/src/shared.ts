@@ -15,15 +15,15 @@
  *   SOLANA_RPC_URL            optional override for the Solana RPC endpoint
  */
 
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
-import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource } from '@ika.xyz/plugins/sui/source';
-import { sui } from '@ika.xyz/plugins/sui/destination';
-import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
 import { solana } from '@ika.xyz/plugins/solana/destination';
 import { solanaDevnet } from '@ika.xyz/plugins/solana/publisher';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import type { Curve, Curve } from '@ika.xyz/sdk';
+import { UserShareEncryptionKeys, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 export interface ExampleEnv {
 	readonly signer: Ed25519Keypair;

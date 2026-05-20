@@ -11,6 +11,7 @@
  */
 
 import { Curve } from '@ika.xyz/sdk';
+
 import { buildIka, run } from './shared.js';
 
 run('shared dWallet (ED25519)', async () => {

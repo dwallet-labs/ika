@@ -63,9 +63,7 @@ export interface CoalescingCache<V> {
  * value-type agnostic; concrete destination caches build their domain logic
  * on top (e.g. compute the cache key from `(curve, publicOutput)`).
  */
-export function createCoalescingCache<V>(
-	opts: CoalescingCacheOptions<V> = {},
-): CoalescingCache<V> {
+export function createCoalescingCache<V>(opts: CoalescingCacheOptions<V> = {}): CoalescingCache<V> {
 	const lru = new LruStringCache<V>(opts.max ?? 256);
 	const inFlight = new Map<string, Promise<V>>();
 	const clone = opts.clone ?? ((v: V) => v);

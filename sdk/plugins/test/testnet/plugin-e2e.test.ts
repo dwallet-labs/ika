@@ -7,23 +7,11 @@
 // Required env:
 //   IKA_TESTNET_PRIVATE_KEY  Bech32 `suiprivkey...` signer for Sui testnet
 
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction } from '@mysten/sui/transactions';
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { p256 } from '@noble/curves/nist.js';
-import { ed25519 } from '@noble/curves/ed25519.js';
-import { randomBytes } from '@noble/hashes/utils.js';
-import { blake2b } from '@noble/hashes/blake2.js';
-import { messageWithIntent } from '@mysten/sui/cryptography';
-import {
-	PublicKey,
-	SystemProgram,
-	TransactionMessage,
-	VersionedTransaction,
-} from '@solana/web3.js';
-import { beforeAll, describe, expect, it } from 'vitest';
-
+import { solana } from '@ika.xyz/plugins/solana/destination';
+import { solanaDevnet } from '@ika.xyz/plugins/solana/publisher';
+import { sui } from '@ika.xyz/plugins/sui/destination';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { SuiDWallet, suiSource } from '@ika.xyz/plugins/sui/source';
 import {
 	Curve,
 	Hash,
@@ -32,11 +20,22 @@ import {
 	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
 import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { SuiDWallet, suiSource } from '@ika.xyz/plugins/sui/source';
-import { sui } from '@ika.xyz/plugins/sui/destination';
-import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
-import { solana } from '@ika.xyz/plugins/solana/destination';
-import { solanaDevnet } from '@ika.xyz/plugins/solana/publisher';
+import { messageWithIntent } from '@mysten/sui/cryptography';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction } from '@mysten/sui/transactions';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { p256 } from '@noble/curves/nist.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { blake2b } from '@noble/hashes/blake2.js';
+import { randomBytes } from '@noble/hashes/utils.js';
+import {
+	PublicKey,
+	SystemProgram,
+	TransactionMessage,
+	VersionedTransaction,
+} from '@solana/web3.js';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const PRIVATE_KEY = process.env.IKA_TESTNET_PRIVATE_KEY;
 const SHOULD_RUN = !!PRIVATE_KEY;
@@ -254,10 +253,7 @@ function buildClient(
 					kind: 'shared',
 					curve: Curve.ED25519,
 				});
-				const pubkeyBytes = await publicKeyFromDWalletOutput(
-					Curve.ED25519,
-					dWallet.publicOutput,
-				);
+				const pubkeyBytes = await publicKeyFromDWalletOutput(Curve.ED25519, dWallet.publicOutput);
 				const payer = new PublicKey(pubkeyBytes);
 				const recipient = new PublicKey('11111111111111111111111111111112');
 				const tx = new VersionedTransaction(

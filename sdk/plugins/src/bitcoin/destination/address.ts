@@ -112,10 +112,10 @@ export function buildCheckSigScript(xOnlyPubkey: Uint8Array): Uint8Array {
 export interface P2trBundle {
 	readonly kind: 'p2tr-script';
 	readonly address: string;
-	readonly redeem: { readonly output: Buffer; readonly redeemVersion: number };
-	readonly scriptTree: { readonly output: Buffer };
+	readonly redeem: { readonly output: Uint8Array; readonly redeemVersion: number };
+	readonly scriptTree: { readonly output: Uint8Array };
 	readonly payment: bitcoin.payments.Payment;
-	readonly internalPubkey: Buffer;
+	readonly internalPubkey: Uint8Array;
 }
 
 /** Build the P2TR script-path payment bundle for one dWallet on one network. */
@@ -123,13 +123,13 @@ export function buildP2trScriptPath(xOnlyPubkey: Uint8Array, network: BitcoinNet
 	ensureEccLib();
 	const script = buildCheckSigScript(xOnlyPubkey);
 	const redeem = {
-		output: Buffer.from(script),
+		output: script,
 		redeemVersion: TAPSCRIPT_LEAF_VERSION,
 	};
-	const scriptTree = { output: Buffer.from(script) };
+	const scriptTree = { output: script };
 	const payment = bitcoin.payments.p2tr(
 		{
-			internalPubkey: Buffer.from(NUMS_PUBKEY),
+			internalPubkey: NUMS_PUBKEY,
 			scriptTree,
 			redeem,
 			network: networkParams(network),
@@ -145,7 +145,7 @@ export function buildP2trScriptPath(xOnlyPubkey: Uint8Array, network: BitcoinNet
 		redeem,
 		scriptTree,
 		payment,
-		internalPubkey: Buffer.from(NUMS_PUBKEY),
+		internalPubkey: NUMS_PUBKEY,
 	};
 }
 
@@ -164,7 +164,7 @@ export function deriveAddressByMode(
 	switch (mode) {
 		case 'p2pkh': {
 			const payment = bitcoin.payments.p2pkh({
-				pubkey: Buffer.from(compressedPubkey),
+				pubkey: compressedPubkey,
 				network: net,
 			});
 			if (!payment.address) throw new Error('failed to derive P2PKH address');
@@ -172,7 +172,7 @@ export function deriveAddressByMode(
 		}
 		case 'p2wpkh': {
 			const payment = bitcoin.payments.p2wpkh({
-				pubkey: Buffer.from(compressedPubkey),
+				pubkey: compressedPubkey,
 				network: net,
 			});
 			if (!payment.address) throw new Error('failed to derive P2WPKH address');
@@ -180,7 +180,7 @@ export function deriveAddressByMode(
 		}
 		case 'p2sh-p2wpkh': {
 			const inner = bitcoin.payments.p2wpkh({
-				pubkey: Buffer.from(compressedPubkey),
+				pubkey: compressedPubkey,
 				network: net,
 			});
 			const payment = bitcoin.payments.p2sh({ redeem: inner, network: net });

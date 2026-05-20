@@ -7,11 +7,13 @@
 // chain — the destinations sign-flow, address derivation, and publisher all
 // see the same inputs they would in production.
 
+import type { Curve } from '@ika.xyz/sdk';
+import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
-import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 
 function dsha256(b: Uint8Array): Uint8Array {
 	return new Uint8Array(sha256(sha256(b)));
@@ -23,14 +25,10 @@ function applyHash(message: Uint8Array, hash: Hash): Uint8Array {
 			return new Uint8Array(sha256(message));
 		case Hash.DoubleSHA256:
 			return dsha256(message);
-		case Hash.KECCAK256: {
-			const { keccak_256 } = require('@noble/hashes/sha3.js');
+		case Hash.KECCAK256:
 			return new Uint8Array(keccak_256(message));
-		}
-		case Hash.SHA512: {
-			const { sha512 } = require('@noble/hashes/sha2.js');
+		case Hash.SHA512:
 			return new Uint8Array(sha512(message));
-		}
 		default:
 			throw new Error(`mock source: unsupported hash ${hash}`);
 	}
@@ -133,8 +131,6 @@ async function signWithFixture(
 			return ed25519.sign(input.message, fixture.ed25519.secret);
 		}
 		default:
-			throw new Error(
-				`mock source: unsupported signatureAlgorithm ${input.signatureAlgorithm}`,
-			);
+			throw new Error(`mock source: unsupported signatureAlgorithm ${input.signatureAlgorithm}`);
 	}
 }

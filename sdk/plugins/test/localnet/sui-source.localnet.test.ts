@@ -14,13 +14,28 @@
 // `ikaFeePerOp: 0n` below). The Sui faucet covers the SUI gas.
 
 import { existsSync } from 'node:fs';
-
-import { beforeAll, describe, expect, it } from 'vitest';
-
-import * as bitcoin from 'bitcoinjs-lib';
 import * as ecc from '@bitcoinerlab/secp256k1';
-bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
-
+import { btc, buildP2trScriptPath } from '@ika.xyz/plugins/bitcoin/destination';
+import type { BitcoinMode } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+import { eth } from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { solana } from '@ika.xyz/plugins/solana/destination';
+import { solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
+import { sui as suiDestination } from '@ika.xyz/plugins/sui/destination';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { suiSource, type SuiSourceExtend } from '@ika.xyz/plugins/sui/source';
+import {
+	IkaClient as CoreIkaClient,
+	Curve,
+	publicKeyFromDWalletOutput,
+	SignatureAlgorithm,
+	UserShareEncryptionKeys,
+} from '@ika.xyz/sdk';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { Transaction as SuiTransaction } from '@mysten/sui/transactions';
 import {
 	Connection,
 	LAMPORTS_PER_SOL,
@@ -29,34 +44,16 @@ import {
 	TransactionMessage,
 	VersionedTransaction,
 } from '@solana/web3.js';
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-import { Transaction as SuiTransaction } from '@mysten/sui/transactions';
+import * as bitcoin from 'bitcoinjs-lib';
 import { createPublicClient, http, parseEther, type Hex } from 'viem';
 import { foundry } from 'viem/chains';
-
-import {
-	Curve,
-	IkaClient as CoreIkaClient,
-	publicKeyFromDWalletOutput,
-	SignatureAlgorithm,
-	UserShareEncryptionKeys,
-} from '@ika.xyz/sdk';
-import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource, type SuiSourceExtend } from '@ika.xyz/plugins/sui/source';
-import { eth } from '@ika.xyz/plugins/ethereum/destination';
-import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
-import { btc, buildP2trScriptPath } from '@ika.xyz/plugins/bitcoin/destination';
-import type { BitcoinMode } from '@ika.xyz/plugins/bitcoin/destination';
-import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
-import { solana } from '@ika.xyz/plugins/solana/destination';
-import { solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
-import { sui as suiDestination } from '@ika.xyz/plugins/sui/destination';
-import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { bitcoinRegtest } from './_helpers/bitcoin.js';
 import { waitForJsonRpc } from './_helpers/chain-ready.js';
 import { loadLocalnetIkaConfig } from './_helpers/ika-localnet.js';
+
+bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
 
 const SUI_RPC = process.env.SUI_LOCALNET_URL ?? 'http://127.0.0.1:9000';
 const SUI_FAUCET = process.env.SUI_FAUCET_URL ?? 'http://127.0.0.1:9123/v2/gas';
@@ -67,7 +64,7 @@ const IKA_CONFIG_PATH =
 	process.env.IKA_LOCALNET_CONFIG ??
 	new URL('./ika-state/ika_config.json', import.meta.url).pathname;
 
-let ready = {
+const ready = {
 	sui: false,
 	eth: false,
 	btc: false,
@@ -195,8 +192,8 @@ describe('sui source localnet — full e2e through ika MPC + all destinations', 
 				SignatureAlgorithm.Taproot,
 			]);
 			const presignByMode: Record<BitcoinMode, (typeof presigns)[number]> = {
-				'p2pkh': presigns[0],
-				'p2wpkh': presigns[1],
+				p2pkh: presigns[0],
+				p2wpkh: presigns[1],
 				'p2sh-p2wpkh': presigns[2],
 				'p2tr-script': presigns[3],
 			};
@@ -217,11 +214,7 @@ describe('sui source localnet — full e2e through ika MPC + all destinations', 
 				expect(utxos.length, `no UTXO funded for ${mode}`).toBeGreaterThan(0);
 				const utxo = utxos[0];
 
-				const walletAddress = (await chain.walletRpc(
-					'localnet',
-					'getnewaddress',
-					[],
-				)) as string;
+				const walletAddress = (await chain.walletRpc('localnet', 'getnewaddress', [])) as string;
 				const psbt = new bitcoin.Psbt({ network: bitcoin.networks.regtest });
 				const valueSats = BigInt(Math.round(utxo.amount * 1e8));
 
@@ -454,12 +447,12 @@ describe('sui source localnet — full e2e through ika MPC + all destinations', 
 // statically. The tests below cast the returned `dWallet` to the namespace
 // they need (e.g. `dWallet.ethereum`) at the call site — runtime decoration
 // is what actually attaches the namespace.
-type BootstrappedClient = ReturnType<typeof emptyIkaClient> & {
+type BootstrappedClient = ReturnType<typeof _emptyIkaClient> & {
 	sui: SuiSourceExtend['sui'];
 	publish: (signed: unknown) => Promise<string>;
 };
 
-function emptyIkaClient() {
+function _emptyIkaClient() {
 	return new IkaClient();
 }
 
@@ -581,8 +574,8 @@ async function batchedPresigns(
 		tx.transferObjects(caps, ika.sui.address);
 	});
 
-	const events = ((exec as { events?: ReadonlyArray<{ eventType: string; bcs?: number[] | null }> })
-		.events ?? []);
+	const events =
+		(exec as { events?: ReadonlyArray<{ eventType: string; bcs?: number[] | null }> }).events ?? [];
 	const ids = events
 		.filter((e) => e.eventType.includes('PresignRequestEvent'))
 		.map((e) => presignEvent.parse(new Uint8Array(e.bcs ?? [])).event_data.presign_id as string);
@@ -595,7 +588,9 @@ async function batchedPresigns(
 	// Poll each presign to Completed in parallel. The validators compute
 	// these concurrently, so the wait is bounded by the slowest, not the sum.
 	const presigns = await Promise.all(
-		ids.map((id) => ika.sui.client.getPresignInParticularState(id, 'Completed', { timeout: 180_000 })),
+		ids.map((id) =>
+			ika.sui.client.getPresignInParticularState(id, 'Completed', { timeout: 180_000 }),
+		),
 	);
 	return presigns;
 }

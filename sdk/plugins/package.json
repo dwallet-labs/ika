@@ -81,7 +81,22 @@
 		}
 	},
 	"scripts": {
-		"build": "build-package"
+		"build": "build-package",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+		"prettier:check": "prettier -c \"**/*.ts\" --ignore-unknown",
+		"prettier:fix": "prettier -w --ignore-unknown .",
+		"eslint:check": "eslint --max-warnings=0 .",
+		"eslint:fix": "pnpm run eslint:check --fix",
+		"lint": "pnpm run eslint:check && pnpm run prettier:check",
+		"lint:fix": "pnpm run eslint:fix && pnpm run prettier:fix",
+		"test": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/unit",
+		"test:unit": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/unit",
+		"test:testnet": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/testnet",
+		"test:localnet": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run test/localnet",
+		"test:watch": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest",
+		"test:coverage": "NODE_OPTIONS=\"--max-old-space-size=8192\" vitest run --coverage test/unit",
+		"localnet:up": "docker compose -f test/localnet/docker-compose.yml up -d",
+		"localnet:down": "docker compose -f test/localnet/docker-compose.yml down -v"
 	},
 	"files": [
 		"bitcoin",
@@ -124,6 +139,7 @@
 		"@types/node": "^25.0.0",
 		"bitcoinjs-lib": "^7.0.0",
 		"typescript": "^6.0.0",
-		"viem": "^2.23.0"
+		"viem": "^2.23.0",
+		"vitest": "4.1.6"
 	}
 }

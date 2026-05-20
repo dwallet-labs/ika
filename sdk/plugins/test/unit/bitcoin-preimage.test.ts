@@ -5,17 +5,19 @@
 // reference digest functions. If `hash(preimage)` matches the reference
 // digest for every mode, the MPC will sign the right thing.
 
-import { describe, expect, it } from 'vitest';
-
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as bitcoin from 'bitcoinjs-lib';
+import { describe, expect, it } from 'vitest';
 
-import { buildLegacyPreimage, p2pkhScript } from '../../../plugins/src/bitcoin/destination/preimage/legacy.js';
-import { buildBip143Preimage, p2wpkhScriptCode } from '../../../plugins/src/bitcoin/destination/preimage/bip143.js';
+import {
+	buildBip143Preimage,
+	p2wpkhScriptCode,
+} from '../../src/bitcoin/destination/preimage/bip143.js';
 import {
 	buildBip341Preimage,
 	computeTapLeafHash,
-} from '../../../plugins/src/bitcoin/destination/preimage/bip341.js';
+} from '../../src/bitcoin/destination/preimage/bip341.js';
+import { buildLegacyPreimage, p2pkhScript } from '../../src/bitcoin/destination/preimage/legacy.js';
 
 function dsha256(b: Uint8Array): Uint8Array {
 	return new Uint8Array(sha256(sha256(b)));
@@ -106,8 +108,7 @@ describe('legacy P2PKH sighash preimage', () => {
 			outputs: [{ script: RECIPIENT_SCRIPT, value: 50_000n }],
 		});
 		const script = p2pkhScript(PKH);
-		const hashType =
-			bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
+		const hashType = bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
 		const ref = tx.hashForSignature(0, script, hashType);
 		const out = buildLegacyPreimage({ tx, inputIndex: 0, prevOutScript: script, hashType });
 		expect(out.preimage).toBeTruthy();
@@ -170,8 +171,7 @@ describe('BIP-143 P2WPKH sighash preimage', () => {
 		});
 		const scriptCode = p2wpkhScriptCode(PKH);
 		const value = 200_000n;
-		const hashType =
-			bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
+		const hashType = bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
 		const ref = tx.hashForWitnessV0(0, scriptCode, value, hashType);
 		const preimage = buildBip143Preimage({
 			tx,
@@ -199,12 +199,7 @@ describe('BIP-341 Taproot sighash preimage', () => {
 		const values = [123_456n];
 		const prevOutScripts = [spk];
 
-		const ref = tx.hashForWitnessV1(
-			0,
-			prevOutScripts,
-			values,
-			bitcoin.Transaction.SIGHASH_DEFAULT,
-		);
+		const ref = tx.hashForWitnessV1(0, prevOutScripts, values, bitcoin.Transaction.SIGHASH_DEFAULT);
 		const preimage = buildBip341Preimage({
 			tx,
 			inputIndex: 0,
@@ -268,8 +263,7 @@ describe('BIP-341 Taproot sighash preimage', () => {
 		spk.set(xOnly, 2);
 		const values = [123_456n, 50_000n];
 		const prevOutScripts = [spk, spk];
-		const hashType =
-			bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
+		const hashType = bitcoin.Transaction.SIGHASH_ALL | bitcoin.Transaction.SIGHASH_ANYONECANPAY;
 		const ref = tx.hashForWitnessV1(0, prevOutScripts, values, hashType);
 		const preimage = buildBip341Preimage({
 			tx,

@@ -36,25 +36,21 @@
  * `sdk/typescript/test/localnet/sui-source.localnet.test.ts`.
  */
 
-import * as bitcoin from 'bitcoinjs-lib';
 import * as ecc from '@bitcoinerlab/secp256k1';
-bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
-
-import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Curve } from '@ika.xyz/sdk';
-import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource } from '@ika.xyz/plugins/sui/source';
 import { btc } from '@ika.xyz/plugins/bitcoin/destination';
 import type { BitcoinMode } from '@ika.xyz/plugins/bitcoin/destination';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { Curve } from '@ika.xyz/sdk';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { bytesToHex } from '@noble/hashes/utils';
+import * as bitcoin from 'bitcoinjs-lib';
 
 import { loadEnv, loadUseks, run } from './shared.js';
 
-const ALL_MODES: ReadonlyArray<BitcoinMode> = [
-	'p2pkh',
-	'p2wpkh',
-	'p2sh-p2wpkh',
-	'p2tr-script',
-];
+bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
+
+const ALL_MODES: ReadonlyArray<BitcoinMode> = ['p2pkh', 'p2wpkh', 'p2sh-p2wpkh', 'p2tr-script'];
 
 run('Bitcoin sign across all four modes (+ cross-signer DKG/sign)', async () => {
 	const { signer, suiClient } = loadEnv();
@@ -87,7 +83,7 @@ run('Bitcoin sign across all four modes (+ cross-signer DKG/sign)', async () => 
 		// DER encoding / witness packing — preimage mode returns the raw bytes.
 		console.log(
 			`  ${mode.padEnd(15)} ${signed.payload.signature.length}B  ` +
-				Buffer.from(signed.payload.signature).toString('hex').slice(0, 32) +
+				bytesToHex(signed.payload.signature).slice(0, 32) +
 				'…',
 		);
 	}
@@ -141,6 +137,6 @@ run('Bitcoin sign across all four modes (+ cross-signer DKG/sign)', async () => 
 	if (signedByUser.payload.kind !== 'preimage') throw new Error('unreachable');
 	console.log(
 		'  p2tr-script signature produced under the user signer:',
-		Buffer.from(signedByUser.payload.signature).toString('hex').slice(0, 32) + '…',
+		bytesToHex(signedByUser.payload.signature).slice(0, 32) + '…',
 	);
 });

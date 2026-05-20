@@ -7,8 +7,6 @@
 //
 // No testnet — all plugins are in-memory fakes that exercise the wiring.
 
-import { describe, expect, it } from 'vitest';
-
 import { Curve } from '@ika.xyz/sdk';
 import {
 	DWallet,
@@ -17,10 +15,11 @@ import {
 	type IkaContext,
 	type Plugin,
 	type PublisherPlugin,
-	type SignMessageInput,
 	type SignedTx,
+	type SignMessageInput,
 	type SourcePlugin,
 } from '@ika.xyz/sdk/plugin';
+import { describe, expect, it } from 'vitest';
 
 // -----------------------------------------------------------------------------
 // Test fixtures.
@@ -43,16 +42,24 @@ interface FakeSourceExtend {
 	readonly testchain: { readonly id: string; greet(): string };
 }
 
-function fakeSource(opts: {
-	chain?: string;
-	installPromise?: Promise<void>;
-	signMessage?: () => Promise<unknown>;
-} = {}): SourcePlugin<'testchain', FakeDWallet, SignMessageInput<FakeDWallet>, {
-	signature: Uint8Array;
-	curve: 'ED25519';
-	signatureAlgorithm: 'EdDSA';
-	hash: 'SHA512';
-}, FakeSourceExtend> {
+function fakeSource(
+	opts: {
+		chain?: string;
+		installPromise?: Promise<void>;
+		signMessage?: () => Promise<unknown>;
+	} = {},
+): SourcePlugin<
+	'testchain',
+	FakeDWallet,
+	SignMessageInput<FakeDWallet>,
+	{
+		signature: Uint8Array;
+		curve: 'ED25519';
+		signatureAlgorithm: 'EdDSA';
+		hash: 'SHA512';
+	},
+	FakeSourceExtend
+> {
 	const chain = (opts.chain ?? 'testchain') as 'testchain';
 	return {
 		kind: 'source',
@@ -61,13 +68,13 @@ function fakeSource(opts: {
 		surface: {
 			chain,
 			signMessage: opts.signMessage
-				? (async () => (await opts.signMessage!()) as never)
+				? async () => (await opts.signMessage!()) as never
 				: async () => ({
-					signature: new Uint8Array([1, 2, 3]),
-					curve: 'ED25519' as const,
-					signatureAlgorithm: 'EdDSA' as const,
-					hash: 'SHA512' as const,
-				}),
+						signature: new Uint8Array([1, 2, 3]),
+						curve: 'ED25519' as const,
+						signatureAlgorithm: 'EdDSA' as const,
+						hash: 'SHA512' as const,
+					}),
 			getDWallet: async (id) => new FakeDWallet(id),
 		},
 		extend: { testchain: { id: 'fake-source', greet: () => 'hi' } },
@@ -135,7 +142,9 @@ describe('IkaClient — plugin lifecycle', () => {
 			.use(fakeDestination())
 			.use(fakePublisher('testchain'));
 		expect((ika as unknown as { testchain: { id: string } }).testchain.id).toBe('fake-source');
-		expect((ika as unknown as { fakedest: { ping: () => string } }).fakedest.ping()).toBe('fakedest');
+		expect((ika as unknown as { fakedest: { ping: () => string } }).fakedest.ping()).toBe(
+			'fakedest',
+		);
 		expect(ika.source?.chain).toBe('testchain');
 	});
 
@@ -236,9 +245,14 @@ describe('IkaClient — decorate()', () => {
 	});
 
 	it('skips destinations whose supportedCurves do not include the dWallet curve', async () => {
-		const ed25519Only: DestinationPlugin<'ed25519only', 'ED25519', { ed25519only: object }, {
-			ed25519only: { yes(): boolean };
-		}> = {
+		const ed25519Only: DestinationPlugin<
+			'ed25519only',
+			'ED25519',
+			{ ed25519only: object },
+			{
+				ed25519only: { yes(): boolean };
+			}
+		> = {
 			kind: 'destination',
 			name: 'ed25519only',
 			supportedCurves: ['ED25519'],
@@ -331,9 +345,14 @@ describe('IkaClient — install lifecycle', () => {
 describe('IkaClient — Plugin union variance', () => {
 	it('accepts a destination whose SupportedCurve is narrower than Curve', () => {
 		// Compile-time check; we only assert it builds + runs.
-		const ed25519Only: DestinationPlugin<'ed25519only', 'ED25519', { ed25519only: object }, {
-			ed25519only: object;
-		}> = {
+		const ed25519Only: DestinationPlugin<
+			'ed25519only',
+			'ED25519',
+			{ ed25519only: object },
+			{
+				ed25519only: object;
+			}
+		> = {
 			kind: 'destination',
 			name: 'ed25519only',
 			supportedCurves: ['ED25519'],
@@ -349,9 +368,14 @@ describe('IkaClient — decorate() atomicity + edge cases', () => {
 	it('does not stamp when no destination matched (curve mismatch)', async () => {
 		// User decorates a SECP256K1 dWallet through a client that only has
 		// an ED25519-only destination. Nothing applies — stamp not set.
-		const ed25519Only: DestinationPlugin<'ed25519only', 'ED25519', { ed25519only: object }, {
-			ed25519only: { yes(): boolean };
-		}> = {
+		const ed25519Only: DestinationPlugin<
+			'ed25519only',
+			'ED25519',
+			{ ed25519only: object },
+			{
+				ed25519only: { yes(): boolean };
+			}
+		> = {
 			kind: 'destination',
 			name: 'ed25519only',
 			supportedCurves: ['ED25519'],
@@ -536,7 +560,9 @@ describe('IkaClient — install rollback + symbol-keyed extends', () => {
 		expect(merged.testchain.addedByDest?.()).toBe('present');
 		await expect(ika.ready()).rejects.toThrow(/dest-init-fail/);
 		// Destination's inner key is gone.
-		expect((ika as unknown as { testchain: { addedByDest?: unknown } }).testchain.addedByDest).toBeUndefined();
+		expect(
+			(ika as unknown as { testchain: { addedByDest?: unknown } }).testchain.addedByDest,
+		).toBeUndefined();
 		// Source's stays.
 		expect(merged.testchain.id).toBe('fake-source');
 	});
@@ -713,17 +739,19 @@ describe('IkaClient — auto-decoration type wrapping (depth-2 transformer)', ()
 
 		// Compile-time assertions via dummy variable assignments.
 		// 1. Top-level method's return IS decorated.
-		const _topReturn: Promise<FakeDWallet & FakeDestDWalletExtend> =
-			(ika as unknown as { testchain: { createDWallet: () => Promise<FakeDWallet & FakeDestDWalletExtend> } })
-				.testchain.createDWallet();
+		const _topReturn: Promise<FakeDWallet & FakeDestDWalletExtend> = (
+			ika as unknown as {
+				testchain: { createDWallet: () => Promise<FakeDWallet & FakeDestDWalletExtend> };
+			}
+		).testchain.createDWallet();
 		void _topReturn;
 		// 2. Nested method's return is NOT auto-decorated — the raw FakeDWallet
 		//    type is preserved. Assigning into the decorated shape MUST fail
 		//    at compile time.
 		// @ts-expect-error - ika.testchain.raw.getDWallet is NOT auto-decorated
-		const _nestedReturn: Promise<FakeDWallet & FakeDestDWalletExtend> =
-			(ika as unknown as { testchain: { raw: { getDWallet: (id: string) => Promise<FakeDWallet> } } })
-				.testchain.raw.getDWallet('x');
+		const _nestedReturn: Promise<FakeDWallet & FakeDestDWalletExtend> = (
+			ika as unknown as { testchain: { raw: { getDWallet: (id: string) => Promise<FakeDWallet> } } }
+		).testchain.raw.getDWallet('x');
 		void _nestedReturn;
 		expect(true).toBe(true);
 	});
@@ -923,9 +951,7 @@ describe('IkaClient — ready() failure surfacing policy (§4.2)', () => {
 
 describe('IkaClient — publisher routing type narrowing (§6.2)', () => {
 	it('compile-time: ika.publish rejects wrong-chain payload', async () => {
-		const ika = new IkaClient()
-			.use(fakeSource())
-			.use(fakePublisher('testchain'));
+		const ika = new IkaClient().use(fakeSource()).use(fakePublisher('testchain'));
 		// @ts-expect-error - chain 'mystery' is not registered
 		const _bad = ika.publish({ chain: 'mystery', payload: { ok: true } });
 		// Swallow the runtime rejection — this test is for the compile-time
@@ -935,9 +961,7 @@ describe('IkaClient — publisher routing type narrowing (§6.2)', () => {
 	});
 
 	it('compile-time: publish accepts opts.signal (PRD §4.4 / §9 Q9)', async () => {
-		const ika = new IkaClient()
-			.use(fakeSource())
-			.use(fakePublisher('testchain', 'ok'));
+		const ika = new IkaClient().use(fakeSource()).use(fakePublisher('testchain', 'ok'));
 		const controller = new AbortController();
 		const r = await ika.publish(
 			{ chain: 'testchain' as const, payload: { ok: true } as { ok: true } },
@@ -961,7 +985,8 @@ describe('IkaClient — auto-decoration of Array<DWallet> returns (§6.4, Q4)', 
 				testchain: {
 					id: 'arr',
 					greet: () => 'hi',
-					getMany: async () => [new FakeDWallet('a'), new FakeDWallet('b')] as readonly FakeDWallet[],
+					getMany: async () =>
+						[new FakeDWallet('a'), new FakeDWallet('b')] as readonly FakeDWallet[],
 					getManyMutable: async () => [new FakeDWallet('c')],
 				},
 			},

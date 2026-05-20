@@ -24,9 +24,10 @@
  * `encryptedShareId`, so persist both alongside the dWallet id at DKG time.
  */
 
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { Curve } from '@ika.xyz/sdk';
 import { ImportedKeySharedPartialError } from '@ika.xyz/plugins/sui/source';
+import { Curve } from '@ika.xyz/sdk';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+
 import { buildIka, run } from './shared.js';
 
 run('recover a partial imported-key-shared DKG', async () => {

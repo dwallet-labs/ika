@@ -136,7 +136,7 @@ const p2pkhHandler: BitcoinModeHandler = {
 		args.psbt.updateInput(args.inputIndex, {
 			partialSig: [
 				{
-					pubkey: Buffer.from(args.compressedPubkey),
+					pubkey: args.compressedPubkey,
 					signature: encodeDerEcdsaWithHashType(args.signature, args.hashType),
 				},
 			],
@@ -169,7 +169,7 @@ const p2wpkhHandler: BitcoinModeHandler = {
 		args.psbt.updateInput(args.inputIndex, {
 			partialSig: [
 				{
-					pubkey: Buffer.from(args.compressedPubkey),
+					pubkey: args.compressedPubkey,
 					signature: encodeDerEcdsaWithHashType(args.signature, args.hashType),
 				},
 			],
@@ -252,9 +252,9 @@ const p2trScriptHandler: BitcoinModeHandler = {
 		args.psbt.updateInput(args.inputIndex, {
 			tapScriptSig: [
 				{
-					pubkey: Buffer.from(xOnly),
-					signature: Buffer.from(sigWithHashType),
-					leafHash: Buffer.from(leafHash),
+					pubkey: xOnly,
+					signature: sigWithHashType,
+					leafHash,
 				},
 			],
 		});
@@ -290,14 +290,14 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
  * normalization is left to the MPC — Ika produces canonical signatures, so
  * we don't re-normalize here.
  */
-function encodeDerEcdsaWithHashType(rs: Uint8Array, hashType: number): Buffer {
+function encodeDerEcdsaWithHashType(rs: Uint8Array, hashType: number): Uint8Array {
 	if (rs.length !== 64) {
 		throw new Error(`encodeDerEcdsaWithHashType: expected 64-byte (r||s), got ${rs.length}`);
 	}
 	const r = stripLeadingZeros(rs.subarray(0, 32));
 	const s = stripLeadingZeros(rs.subarray(32, 64));
 	const der = derEncode(r, s);
-	const out = Buffer.alloc(der.length + 1);
+	const out = new Uint8Array(der.length + 1);
 	out.set(der, 0);
 	out[der.length] = hashType;
 	return out;

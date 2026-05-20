@@ -29,16 +29,8 @@ services:
     # `broadcast` override that calls `sendrawtransaction` directly.
     image: bitcoin/bitcoin:27
     command: >
-      -regtest
-      -server
-      -rpcuser=test
-      -rpcpassword=test
-      -rpcbind=0.0.0.0
-      -rpcallowip=0.0.0.0/0
-      -fallbackfee=0.0001
-      -txindex
-      -dnsseed=0
-      -upnp=0
+      -regtest -server -rpcuser=test -rpcpassword=test -rpcbind=0.0.0.0 -rpcallowip=0.0.0.0/0
+      -fallbackfee=0.0001 -txindex -dnsseed=0 -upnp=0
     ports:
       - '18443:18443'
     healthcheck:
@@ -61,11 +53,7 @@ services:
     image: ghcr.io/foundry-rs/foundry:latest
     entrypoint: anvil
     command: >
-      --host 0.0.0.0
-      --port 8545
-      --chain-id 31337
-      --block-time 1
-      --accounts 0
+      --host 0.0.0.0 --port 8545 --chain-id 31337 --block-time 1 --accounts 0
     ports:
       - '8545:8545'
     healthcheck:
@@ -82,10 +70,7 @@ services:
     image: solanalabs/solana:stable
     entrypoint: solana-test-validator
     command: >
-      --rpc-port 8899
-      --bind-address 0.0.0.0
-      --reset
-      --quiet
+      --rpc-port 8899 --bind-address 0.0.0.0 --reset --quiet
     ports:
       - '8899:8899'
     healthcheck:
@@ -104,9 +89,7 @@ services:
     image: mysten/sui-tools:mainnet
     entrypoint: sui
     command: >
-      start
-      --with-faucet
-      --force-regenesis
+      start --with-faucet --force-regenesis
     ports:
       - '9000:9000'
       - '9123:9123'
@@ -164,4 +147,3 @@ services:
       timeout: 3s
       retries: 90
       start_period: 30s
-

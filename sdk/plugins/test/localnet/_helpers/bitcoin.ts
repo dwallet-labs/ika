@@ -44,9 +44,7 @@ export function bitcoinRegtest(rpcUrl: string = DEFAULT_RPC_URL): BitcoinRegtest
 	const parsed = new URL(rpcUrl);
 	const auth =
 		parsed.username || parsed.password
-			? `Basic ${Buffer.from(
-					`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`,
-				).toString('base64')}`
+			? `Basic ${btoa(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`)}`
 			: undefined;
 	parsed.username = '';
 	parsed.password = '';

@@ -8,6 +8,15 @@
 // valid against the dWallet pubkey by independently re-deriving the digest
 // the MPC would have produced and verifying with @noble/curves.
 
+import * as ecc from '@bitcoinerlab/secp256k1';
+import { btc, deriveBitcoinAddress } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import * as bitcoin from 'bitcoinjs-lib';
 import { describe, expect, it, vi } from 'vitest';
 
 const realPubkeyByOutput = new Map<string, Uint8Array>();
@@ -26,23 +35,10 @@ vi.mock('@ika.xyz/sdk', async () => {
 	};
 });
 
-import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-import * as bitcoin from 'bitcoinjs-lib';
-import * as ecc from '@bitcoinerlab/secp256k1';
 bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
-
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
-import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
-import { btc, deriveBitcoinAddress } from '@ika.xyz/plugins/bitcoin/destination';
-import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
 
 function dsha256(b: Uint8Array): Uint8Array {
 	return new Uint8Array(sha256(sha256(b)));
-}
-
-function bytesToHex(b: Uint8Array): string {
-	return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
 function makeFixture() {
@@ -119,8 +115,8 @@ function buildPsbtWith(input: {
 	redeemScript?: Buffer;
 	tapLeaf?: {
 		leafVersion: number;
-		script: Buffer;
-		controlBlock: Buffer;
+		script: Uint8Array;
+		controlBlock: Uint8Array;
 	};
 	prevRawTx?: Buffer;
 	recipientScript: Uint8Array;
@@ -228,12 +224,9 @@ describe('bitcoin destination — sign (P2WPKH)', () => {
 		await plugin.install?.(ctx);
 
 		// Build the P2WPKH scriptPubKey: OP_0 OP_PUSHBYTES_20 <hash160(pubkey)>
-		const pkh = (() => {
-			// hash160 is exported as a helper from the destination, but we
-			// recompute here to keep this test independent.
-			const { ripemd160 } = require('@noble/hashes/legacy.js');
-			return new Uint8Array(ripemd160(new Uint8Array(sha256(fx.compressed))));
-		})();
+		// hash160 is exported as a helper from the destination, but we
+		// recompute here to keep this test independent.
+		const pkh = new Uint8Array(ripemd160(new Uint8Array(sha256(fx.compressed))));
 		const prevScript = new Uint8Array(22);
 		prevScript[0] = 0x00;
 		prevScript[1] = 0x14;

@@ -1,11 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { type Curve } from '../client/types.js';
-import { DWallet } from './types.js';
+import type { Curve } from '../client/types.js';
 import type {
 	BaseSignResult,
 	DestinationPlugin,
+	DWallet,
 	IkaContext,
 	IkaContextClient,
 	Plugin,
@@ -26,11 +26,12 @@ type PublisherPayloadOf<P> = P extends PublisherPlugin<string, infer Pay, unknow
 type PublisherResultOf<P> = P extends PublisherPlugin<string, unknown, infer R> ? R : never;
 
 /** Pull the client-level `extend` namespace out of a source/destination plugin. */
-type ExtendOf<P> = P extends DestinationPlugin<string, Curve, infer CE, object>
-	? CE
-	: P extends SourcePlugin<string, DWallet, SignMessageInput, BaseSignResult, infer SE>
-		? SE
-		: object;
+type ExtendOf<P> =
+	P extends DestinationPlugin<string, Curve, infer CE, object>
+		? CE
+		: P extends SourcePlugin<string, DWallet, SignMessageInput, BaseSignResult, infer SE>
+			? SE
+			: object;
 
 /** Pull the dWallet-level extension shape (output of `dWalletExtend`). */
 type DWalletNsOf<P> = P extends DestinationPlugin<string, Curve, object, infer DE> ? DE : object;
@@ -64,9 +65,9 @@ type WrapReturnValue<R, DWalletNs extends object> = R extends DWallet
 	: R extends readonly (infer E)[]
 		? E extends DWallet
 			? // Preserve readonly-ness: a `readonly E[]` input produces `readonly (E & DWalletNs)[]`,
-			  // a mutable `E[]` input produces `(E & DWalletNs)[]`. The trick is to branch on
-			  // whether the original was `readonly` by checking against the mutable form.
-			  R extends E[]
+				// a mutable `E[]` input produces `(E & DWalletNs)[]`. The trick is to branch on
+				// whether the original was `readonly` by checking against the mutable form.
+				R extends E[]
 				? (E & DWalletNs)[]
 				: readonly (E & DWalletNs)[]
 			: R
@@ -77,9 +78,7 @@ type WrapReturnValue<R, DWalletNs extends object> = R extends DWallet
 			: R;
 
 /** Wrap a single method's return type. Non-function values pass through unchanged. */
-type WrapDWalletMethod<F, DWalletNs extends object> = F extends (
-	...a: infer A
-) => Promise<infer P>
+type WrapDWalletMethod<F, DWalletNs extends object> = F extends (...a: infer A) => Promise<infer P>
 	? (...a: A) => Promise<WrapReturnValue<P, DWalletNs>>
 	: F extends (...a: infer A) => infer R
 		? (...a: A) => WrapReturnValue<R, DWalletNs>
@@ -112,19 +111,24 @@ type WrapDWalletReturns<T, DWalletNs extends object> = {
 
 type PublisherRecord = { chain: string; payload: unknown; result: unknown };
 
-type PublisherMetaOf<P> = P extends PublisherPlugin<string, unknown, unknown>
-	? { chain: PublisherChainOf<P>; payload: PublisherPayloadOf<P>; result: PublisherResultOf<P> }
-	: never;
+type PublisherMetaOf<P> =
+	P extends PublisherPlugin<string, unknown, unknown>
+		? { chain: PublisherChainOf<P>; payload: PublisherPayloadOf<P>; result: PublisherResultOf<P> }
+		: never;
 
 type PublisherChainsOf<Pub extends PublisherRecord> = Pub extends { chain: infer C } ? C : never;
-type PublisherPayloadByChain<
-	Pub extends PublisherRecord,
-	Chain extends string,
-> = Pub extends { chain: Chain; payload: infer Payload } ? Payload : never;
-type PublisherResultByChain<
-	Pub extends PublisherRecord,
-	Chain extends string,
-> = Pub extends { chain: Chain; result: infer R } ? R : never;
+type PublisherPayloadByChain<Pub extends PublisherRecord, Chain extends string> = Pub extends {
+	chain: Chain;
+	payload: infer Payload;
+}
+	? Payload
+	: never;
+type PublisherResultByChain<Pub extends PublisherRecord, Chain extends string> = Pub extends {
+	chain: Chain;
+	result: infer R;
+}
+	? R
+	: never;
 
 /**
  * `PluginIkaClient` carries three pieces of metadata in its generics:
@@ -216,20 +220,21 @@ class IkaClientImpl {
 	#decoratingInFlight: WeakMap<DWallet, Promise<unknown>> = new WeakMap();
 
 	constructor() {
-		const self = this;
 		this.#contextClient = Object.freeze({
-			decorate: <D extends DWallet>(d: D): Promise<D> =>
-				self.decorate(d) as Promise<D>,
-			ready: () => self.ready(),
+			decorate: <D extends DWallet>(d: D): Promise<D> => this.decorate(d) as Promise<D>,
+			ready: () => this.ready(),
 		});
-		// Live context — `source` is a getter so destinations capturing `ctx`
-		// at install time still see the current source when invoked.
+		// Live context — captured via arrow functions so the getters below
+		// resolve `this` to the IkaClient instance rather than the literal
+		// object frozen by `Object.freeze`.
+		const getSource = (): SourceSurface | null => this.#wrappedSourceSurface;
+		const getClient = (): IkaContextClient => this.#contextClient;
 		this.#context = Object.freeze({
 			get source() {
-				return self.#wrappedSourceSurface;
+				return getSource();
 			},
 			get client() {
-				return self.#contextClient;
+				return getClient();
 			},
 		}) as IkaContext;
 	}
@@ -308,9 +313,7 @@ class IkaClientImpl {
 			}
 			case 'publisher': {
 				if (this.#publishers.has(plugin.chain)) {
-					throw new Error(
-						`publisher plugin for chain '${plugin.chain}' already registered`,
-					);
+					throw new Error(`publisher plugin for chain '${plugin.chain}' already registered`);
 				}
 				const pub = plugin as AnyPublisher;
 				const rec = this.#beginRecording();
@@ -334,10 +337,7 @@ class IkaClientImpl {
 		return this;
 	}
 
-	async publish(
-		signed: SignedTx<string, unknown>,
-		opts?: PublishOptions,
-	): Promise<unknown> {
+	async publish(signed: SignedTx<string, unknown>, opts?: PublishOptions): Promise<unknown> {
 		await this.ready();
 		const publisher = this.#publishers.get(signed.chain);
 		if (!publisher) {
@@ -461,9 +461,7 @@ class IkaClientImpl {
 					rollback();
 				} catch (rollbackErr) {
 					// Rollback should not throw, but if it does, surface both.
-					const wrapped = new Error(
-						`install of ${label} failed AND rollback failed`,
-					);
+					const wrapped = new Error(`install of ${label} failed AND rollback failed`);
 					(wrapped as Error & { cause?: unknown }).cause = err;
 					(wrapped as Error & { rollbackCause?: unknown }).rollbackCause = rollbackErr;
 					throw wrapped;
@@ -631,9 +629,7 @@ class IkaClientImpl {
 			const existing = self[topKey];
 			const topDescriptor = Object.getOwnPropertyDescriptor(extend, topKey);
 			if (!topDescriptor) continue;
-			const incoming = topDescriptor.get
-				? topDescriptor.get.call(extend)
-				: topDescriptor.value;
+			const incoming = topDescriptor.get ? topDescriptor.get.call(extend) : topDescriptor.value;
 			if (
 				existing != null &&
 				typeof existing === 'object' &&
@@ -652,10 +648,7 @@ class IkaClientImpl {
 								`namespace must not declare overlapping method names.`,
 						);
 					}
-					const innerDescriptor = Object.getOwnPropertyDescriptor(
-						incoming as object,
-						innerKey,
-					);
+					const innerDescriptor = Object.getOwnPropertyDescriptor(incoming as object, innerKey);
 					if (innerDescriptor) {
 						Object.defineProperty(merged, innerKey, innerDescriptor);
 						recorder?.recordInnerKey(topKey, innerKey);
