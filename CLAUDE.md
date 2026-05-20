@@ -165,10 +165,9 @@ Gotchas worth knowing before touching simtest code:
   under `--cfg msim`, suspect a Sui-fork `#[cfg(msim)]` block referencing
   ika-renamed-but-not-actually-aliased symbols (`ika_simulator::*`,
   `OIDCProvider`, `safe_mode`, etc.).
-- **Open follow-up:** the smoke test exceeds the `< 5 min` wall budget on
-  sequential crypto. The fix is the deferred `chore/simtest-crypto-mock`
-  branch — feature-gated mocked class-groups (mirroring how `cargo-simtest`
-  already mocks `blst`).
+- **Wall time:** real class-groups crypto runs sequentially under msim
+  (`parallel` is off — see above). Expect smoke tests to be slow enough
+  that simtest is more useful as nightly / on-demand than per-PR CI.
 
 ## Cryptography Notes
 
