@@ -151,6 +151,28 @@ impl RootSeed {
         ChaCha20Rng::from_seed(self.pvss_ristretto_decryption_key_seed())
     }
 
+    fn vss_schnorr_hpke_encryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+        let mut transcript = Transcript::new(b"Fast Schnorr VSS HPKE Encryption Key Seed");
+        transcript.append_message(b"root seed", &self.0);
+        let mut seed = [0u8; Self::SEED_LENGTH];
+        transcript.challenge_bytes(b"seed", &mut seed);
+        seed
+    }
+
+    /// Instantiates a deterministic secure pseudo-random generator (ChaCha20)
+    /// with which to generate this validator's Fast Schnorr (VSS) HPKE
+    /// keypair — a single curve25519 keypair (`mpc::secret_sharing::shamir::
+    /// known_order::generate_encryption_keypair`) used as the threshold-
+    /// encryption-to-sharing transport for all VSS curves. The HPKE layer is
+    /// curve25519 regardless of the signing curve, so one keypair suffices.
+    ///
+    /// Domain-separated from `class_groups_decryption_key_rng` and the three
+    /// per-curve class-groups PVSS RNGs so the secret never coincides with any
+    /// of them.
+    pub fn vss_schnorr_hpke_encryption_key_rng(&self) -> ChaCha20Rng {
+        ChaCha20Rng::from_seed(self.vss_schnorr_hpke_encryption_key_seed())
+    }
+
     /// Instantiates a deterministic secure pseudo-random generator (using the ChaCha20 algorithm)
     /// with which to advance an MPC round.
     pub fn mpc_round_rng(

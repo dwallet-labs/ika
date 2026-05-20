@@ -2,7 +2,7 @@
 source: crates/ika-protocol-config/src/lib.rs
 expression: "ProtocolConfig::get_for_version(cur, *chain_id)"
 ---
-version: 4
+version: 5
 feature_flags:
   consensus_round_prober: true
   mysticeti_num_leaders_per_round: 1
@@ -13,6 +13,7 @@ feature_flags:
   internal_presign_sessions: true
   bls_checkpoints: true
   noa_checkpoints: true
+  fast_schnorr_supported: true
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200

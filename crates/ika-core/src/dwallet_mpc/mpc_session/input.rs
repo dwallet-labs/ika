@@ -83,6 +83,21 @@ pub(crate) fn session_input_from_request(
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
+
+    // Defense-in-depth protocol-version gate for Fast Schnorr (VSS): the primary
+    // enforcement is the on-chain supported-algorithm map population, but reject
+    // any VSS presign/sign request here too if the active protocol version does
+    // not enable it. (Move has no version gate; this is the Rust-side gate.)
+    if let Some(signature_algorithm) = request.protocol_data.signature_algorithm()
+        && signature_algorithm.is_vss()
+        && !protocol_config.fast_schnorr_supported()
+    {
+        return Err(DwalletMPCError::InvalidInput(format!(
+            "Fast Schnorr (VSS) algorithm {signature_algorithm} requested but \
+             fast_schnorr_supported is disabled at this protocol version"
+        )));
+    }
+
     match &request.protocol_data {
         ProtocolData::DWalletDKG {
             dwallet_network_encryption_key_id,
@@ -283,6 +298,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     None,
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))
@@ -305,6 +321,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))

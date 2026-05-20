@@ -26,6 +26,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
+use commitment::CommitmentSizedNumber;
 use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
@@ -1549,7 +1550,7 @@ impl DWalletMPCService {
                 }
                 Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                     malicious_parties,
-                    private_output: _,
+                    private_output,
                     public_output_value,
                 }) => {
                     info!(
@@ -1557,6 +1558,36 @@ impl DWalletMPCService {
                         validator=?validator_name,
                         "Reached output for session"
                     );
+
+                    // Fast Schnorr (VSS) presign: persist the private nonce-share
+                    // output (`bcs(Vec<PrivatePresignOutput>)`, already serialized
+                    // by the GOD layer) keyed by the presign session id, for the
+                    // later sign to recover. All other protocols (AHE presign, DKG,
+                    // reconfig, sign) have empty/irrelevant private outputs — skip.
+                    if matches!(
+                        request.protocol_data,
+                        ProtocolData::Presign { .. } | ProtocolData::InternalPresign { .. }
+                    ) && request
+                        .protocol_data
+                        .signature_algorithm()
+                        .is_some_and(|algorithm| algorithm.is_vss())
+                    {
+                        let presign_session_id = CommitmentSizedNumber::from_le_slice(
+                            session_identifier.to_vec().as_slice(),
+                        );
+                        if let Err(err) = self
+                            .epoch_store
+                            .store_presign_private_output(presign_session_id, private_output)
+                        {
+                            error!(
+                                ?session_identifier,
+                                validator=?validator_name,
+                                error=?err,
+                                "failed to persist VSS presign private output"
+                            );
+                        }
+                    }
+
                     let consensus_adapter = self.dwallet_submit_to_consensus.clone();
                     let malicious_authorities = if !malicious_parties.is_empty() {
                         let malicious_authorities =

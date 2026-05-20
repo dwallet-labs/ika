@@ -1,6 +1,5 @@
 ---
 source: crates/ika-protocol-config/src/lib.rs
-assertion_line: 1061
 expression: "ProtocolConfig::get_for_version(cur, *chain_id)"
 ---
 version: 3
@@ -24,6 +23,7 @@ consensus_max_transactions_in_block_bytes: 315218930
 consensus_gc_depth: 60
 decryption_key_reconfiguration_third_round_delay: 10
 schnorr_presign_second_round_delay: 8
+schnorr_presign_third_round_delay: 8
 network_dkg_third_round_delay: 10
 network_encryption_key_version: 2
 reconfiguration_message_version: 2

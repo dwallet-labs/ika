@@ -223,6 +223,12 @@ export const SignatureAlgorithm = {
 	EdDSA: 'EdDSA',
 	/** Schnorrkel/Ristretto (Substrate) - Valid hash: Merlin only */
 	SchnorrkelSubstrate: 'SchnorrkelSubstrate',
+	/** Fast Schnorr (VSS) Taproot on secp256k1 - Valid hash: SHA256 only. DKG-created keys only. */
+	TaprootVSS: 'TaprootVSS',
+	/** Fast Schnorr (VSS) EdDSA on Ed25519 - Valid hash: SHA512 only. DKG-created keys only. */
+	EdDSAVSS: 'EdDSAVSS',
+	/** Fast Schnorr (VSS) Schnorrkel/Ristretto - Valid hash: Merlin only. DKG-created keys only. */
+	SchnorrkelSubstrateVSS: 'SchnorrkelSubstrateVSS',
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];

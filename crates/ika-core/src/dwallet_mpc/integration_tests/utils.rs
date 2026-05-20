@@ -69,6 +69,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// A presign is considered fully used only when all presigns from that session
     /// have been consumed (used_count >= total_count).
     pub(crate) used_presigns: Arc<Mutex<HashMap<SessionIdentifier, (u64, u64)>>>,
+    /// Fast Schnorr (VSS) presign private outputs, keyed by presign session id.
+    pub(crate) presign_private_outputs:
+        Arc<Mutex<HashMap<commitment::CommitmentSizedNumber, Vec<u8>>>>,
     /// Assigned presigns keyed by (signature_algorithm, session_identifier).
     pub(crate) assigned_presigns:
         Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier), AssignedPresign>>>,
@@ -136,6 +139,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
+            presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -291,6 +295,30 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         let entry = used.entry(presign_session_id).or_insert((0, 0));
         entry.0 += 1;
         Ok(())
+    }
+
+    fn store_presign_private_output(
+        &self,
+        presign_session_id: commitment::CommitmentSizedNumber,
+        private_output: Vec<u8>,
+    ) -> IkaResult<()> {
+        self.presign_private_outputs
+            .lock()
+            .unwrap()
+            .insert(presign_session_id, private_output);
+        Ok(())
+    }
+
+    fn get_presign_private_output(
+        &self,
+        presign_session_id: commitment::CommitmentSizedNumber,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self
+            .presign_private_outputs
+            .lock()
+            .unwrap()
+            .get(&presign_session_id)
+            .cloned())
     }
 
     fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {

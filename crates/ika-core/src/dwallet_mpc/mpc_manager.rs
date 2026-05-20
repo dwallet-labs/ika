@@ -35,11 +35,12 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
-    SuiChainObservationUpdate,
+    Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol, DWalletInternalMPCOutputKind,
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyData, GlobalPresignRequest, IdleStatusUpdate,
+    RistrettoSchnorrkelSubstrateProtocol, RistrettoSchnorrkelSubstrateVSSProtocol,
+    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier, SessionType, SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -187,7 +188,7 @@ pub(crate) struct DWalletMPCManager {
         HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+    pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
     pub(crate) network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
@@ -809,6 +810,14 @@ impl DWalletMPCManager {
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
                 for signature_algorithm in signature_algorithms {
+                    // Fast Schnorr (VSS) is in the supported-algorithm map but only
+                    // instantiate internal VSS presigns once the feature is enabled
+                    // at this protocol version.
+                    if signature_algorithm.is_vss()
+                        && !self.protocol_config.fast_schnorr_supported()
+                    {
+                        continue;
+                    }
                     let is_network_owned_address_signing_presign =
                         agreed_network_owned_address_signing_key_id == key_id;
 
@@ -1539,6 +1548,33 @@ impl DWalletMPCManager {
                     }
                     DWalletSignatureAlgorithm::Taproot => {
                         self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::TaprootVSS => {
+                        self.record_internal_presign_output::<Secp256k1TaprootVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSAVSS => {
+                        self.record_internal_presign_output::<Curve25519EdDSAVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateVSSProtocol>(
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                             session_sequence_number,

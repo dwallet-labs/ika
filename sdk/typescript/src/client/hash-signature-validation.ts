@@ -10,6 +10,9 @@ const VALID_HASH_SIGNATURE_COMBINATIONS: Record<SignatureAlgorithm, readonly Has
 	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256],
 	[SignatureAlgorithm.EdDSA]: [Hash.SHA512],
 	[SignatureAlgorithm.SchnorrkelSubstrate]: [Hash.Merlin],
+	[SignatureAlgorithm.TaprootVSS]: [Hash.SHA256],
+	[SignatureAlgorithm.EdDSAVSS]: [Hash.SHA512],
+	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: [Hash.Merlin],
 } as const;
 
 // Maps signature algorithms to their curves (for validation)
@@ -19,6 +22,9 @@ const SIGNATURE_ALGORITHM_TO_CURVE: Record<SignatureAlgorithm, Curve> = {
 	[SignatureAlgorithm.ECDSASecp256r1]: Curve.SECP256R1,
 	[SignatureAlgorithm.EdDSA]: Curve.ED25519,
 	[SignatureAlgorithm.SchnorrkelSubstrate]: Curve.RISTRETTO,
+	[SignatureAlgorithm.TaprootVSS]: Curve.SECP256K1,
+	[SignatureAlgorithm.EdDSAVSS]: Curve.ED25519,
+	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: Curve.RISTRETTO,
 } as const;
 
 // Absolute numbering for signature algorithms (global, not relative to curve)
@@ -28,6 +34,9 @@ const SIGNATURE_ALGORITHM_ABSOLUTE_NUMBERS: Record<SignatureAlgorithm, number> =
 	[SignatureAlgorithm.ECDSASecp256r1]: 2,
 	[SignatureAlgorithm.EdDSA]: 3,
 	[SignatureAlgorithm.SchnorrkelSubstrate]: 4,
+	[SignatureAlgorithm.TaprootVSS]: 5,
+	[SignatureAlgorithm.EdDSAVSS]: 6,
+	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: 7,
 } as const;
 
 // Absolute numbering for hashes (global, not relative to curve/signature)
@@ -59,6 +68,12 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 					[Hash.SHA256]: 0,
 				},
 			},
+			[SignatureAlgorithm.TaprootVSS]: {
+				signatureAlgorithmNumber: 2,
+				hashes: {
+					[Hash.SHA256]: 0,
+				},
+			},
 		},
 	},
 	[Curve.SECP256R1]: {
@@ -81,6 +96,12 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 					[Hash.SHA512]: 0,
 				},
 			},
+			[SignatureAlgorithm.EdDSAVSS]: {
+				signatureAlgorithmNumber: 1,
+				hashes: {
+					[Hash.SHA512]: 0,
+				},
+			},
 		},
 	},
 	[Curve.RISTRETTO]: {
@@ -88,6 +109,12 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 		signatureAlgorithms: {
 			[SignatureAlgorithm.SchnorrkelSubstrate]: {
 				signatureAlgorithmNumber: 0,
+				hashes: {
+					[Hash.Merlin]: 0,
+				},
+			},
+			[SignatureAlgorithm.SchnorrkelSubstrateVSS]: {
+				signatureAlgorithmNumber: 1,
 				hashes: {
 					[Hash.Merlin]: 0,
 				},
@@ -132,6 +159,12 @@ export function getSignatureAlgorithmName(signatureAlgorithm: SignatureAlgorithm
 			return 'EdDSA';
 		case SignatureAlgorithm.SchnorrkelSubstrate:
 			return 'SchnorrkelSubstrate (Ristretto)';
+		case SignatureAlgorithm.TaprootVSS:
+			return 'TaprootVSS (Fast Schnorr)';
+		case SignatureAlgorithm.EdDSAVSS:
+			return 'EdDSAVSS (Fast Schnorr)';
+		case SignatureAlgorithm.SchnorrkelSubstrateVSS:
+			return 'SchnorrkelSubstrateVSS (Fast Schnorr, Ristretto)';
 		default:
 			return `Unknown SignatureAlgorithm (${signatureAlgorithm})`;
 	}
@@ -194,13 +227,18 @@ export function validateCurveSignatureAlgorithm(
 
 /** Compile-time type for valid signature algorithms per curve */
 export type ValidSignatureAlgorithmForCurve<C extends Curve> = C extends typeof Curve.SECP256K1
-	? typeof SignatureAlgorithm.ECDSASecp256k1 | typeof SignatureAlgorithm.Taproot
+	?
+			| typeof SignatureAlgorithm.ECDSASecp256k1
+			| typeof SignatureAlgorithm.Taproot
+			| typeof SignatureAlgorithm.TaprootVSS
 	: C extends typeof Curve.SECP256R1
 		? typeof SignatureAlgorithm.ECDSASecp256r1
 		: C extends typeof Curve.ED25519
-			? typeof SignatureAlgorithm.EdDSA
+			? typeof SignatureAlgorithm.EdDSA | typeof SignatureAlgorithm.EdDSAVSS
 			: C extends typeof Curve.RISTRETTO
-				? typeof SignatureAlgorithm.SchnorrkelSubstrate
+				?
+						| typeof SignatureAlgorithm.SchnorrkelSubstrate
+						| typeof SignatureAlgorithm.SchnorrkelSubstrateVSS
 				: never;
 
 /** Compile-time type for valid hash/signature combinations */
@@ -215,7 +253,13 @@ export type ValidHashForSignature<S extends SignatureAlgorithm> =
 					? typeof Hash.SHA512
 					: S extends typeof SignatureAlgorithm.SchnorrkelSubstrate
 						? typeof Hash.Merlin
-						: never;
+						: S extends typeof SignatureAlgorithm.TaprootVSS
+							? typeof Hash.SHA256
+							: S extends typeof SignatureAlgorithm.EdDSAVSS
+								? typeof Hash.SHA512
+								: S extends typeof SignatureAlgorithm.SchnorrkelSubstrateVSS
+									? typeof Hash.Merlin
+									: never;
 
 /** Type guard: checks if hash is valid for signature algorithm */
 export function isValidHashForSignature<S extends SignatureAlgorithm>(

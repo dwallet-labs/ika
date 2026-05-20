@@ -4737,6 +4737,7 @@ dependencies = [
  "dwallet-rng",
  "group 0.2.0",
  "ika-types",
+ "mpc",
  "serde",
  "twopc_mpc",
 ]

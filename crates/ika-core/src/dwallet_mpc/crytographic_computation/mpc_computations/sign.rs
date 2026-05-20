@@ -12,18 +12,23 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
-    SerializedWrappedMPCPublicOutput, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
-    VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
+    SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
+    VersionedDwalletDKGPublicOutput, VersionedPresignOutput, VersionedUserSignedMessage,
+    public_key_from_decentralized_dkg_output_by_curve_v2,
 };
+use dwallet_rng::RootSeed;
 use group::CsRng;
 use group::{HashScheme, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
+    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol,
+    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelSubstrateProtocol,
+    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{AsynchronouslyAdvanceable, GuaranteesOutputDelivery};
@@ -51,6 +56,14 @@ pub(crate) enum SignPublicInputByProtocol {
     Curve25519(<SignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
     Ristretto(<SignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: TaprootVSS")]
+    TaprootVSS(<SignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSAVSS")]
+    EdDSAVSS(<SignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrateVSS")]
+    SchnorrkelSubstrateVSS(
+        <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput,
+    ),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
@@ -100,6 +113,26 @@ pub(crate) enum SignAdvanceRequestByProtocol {
     Ristretto(
         mpc::guaranteed_output_delivery::AdvanceRequest<
             <SignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Secp256k1, protocol: TaprootVSS")]
+    TaprootVSS(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <SignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(to_string = "Sign Advance Request - curve: Curve25519, protocol: EdDSAVSS")]
+    EdDSAVSS(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <SignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::Message,
+        >,
+    ),
+    #[strum(
+        to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
+    )]
+    SchnorrkelSubstrateVSS(
+        mpc::guaranteed_output_delivery::AdvanceRequest<
+            <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::Message,
         >,
     ),
 }
@@ -242,6 +275,45 @@ impl SignAdvanceRequestByProtocol {
 
                 advance_request.map(SignAdvanceRequestByProtocol::Secp256r1)
             }
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    SignParty<Secp256k1TaprootVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::TaprootVSS)
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    SignParty<Curve25519EdDSAVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::EdDSAVSS)
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    SignParty<RistrettoSchnorrkelSubstrateVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::new(),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS)
+            }
         };
 
         Ok(advance_request)
@@ -322,6 +394,18 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                 advance_request.map(Self::Secp256r1)
             }
+            // Fast Schnorr (VSS) does not support the combined DKG-and-sign fast
+            // path (upstream placeholder). Such requests are rejected at
+            // construction (`dwallet_dkg_and_sign_protocol_data`), so this is
+            // unreachable; kept exhaustive with a clear error as defense-in-depth.
+            DWalletSignatureAlgorithm::TaprootVSS
+            | DWalletSignatureAlgorithm::EdDSAVSS
+            | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                return Err(DwalletMPCError::InvalidInput(format!(
+                    "Fast Schnorr (VSS) algorithm {protocol} is not supported for \
+                     the combined DKG-and-sign fast path"
+                )));
+            }
         };
 
         Ok(advance_request)
@@ -399,6 +483,42 @@ impl SignPublicInputByProtocol {
                     network_encryption_key_public_data,
                 )?,
             )),
+            // Fast Schnorr (VSS) sign PublicInput: the 8-field struct. Commitments
+            // come from the latest reconfiguration output (see
+            // `vss_reconfiguration_public_output`); dkg_output/presign/sign_data
+            // decode exactly like the AHE Schnorr path (generic over the protocol).
+            DWalletSignatureAlgorithm::TaprootVSS => Ok(SignPublicInputByProtocol::TaprootVSS(
+                build_secp256k1_taproot_vss_sign_public_input(
+                    dwallet_decentralized_public_output,
+                    message,
+                    presign,
+                    message_centralized_signature,
+                    hash_scheme,
+                    network_encryption_key_public_data,
+                )?,
+            )),
+            DWalletSignatureAlgorithm::EdDSAVSS => Ok(SignPublicInputByProtocol::EdDSAVSS(
+                build_curve25519_eddsa_vss_sign_public_input(
+                    dwallet_decentralized_public_output,
+                    message,
+                    presign,
+                    message_centralized_signature,
+                    hash_scheme,
+                    network_encryption_key_public_data,
+                )?,
+            )),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                Ok(SignPublicInputByProtocol::SchnorrkelSubstrateVSS(
+                    build_ristretto_schnorrkel_vss_sign_public_input(
+                        dwallet_decentralized_public_output,
+                        message,
+                        presign,
+                        message_centralized_signature,
+                        hash_scheme,
+                        network_encryption_key_public_data,
+                    )?,
+                ))
+            }
         }
     }
 }
@@ -409,6 +529,437 @@ impl SignPublicInputByProtocol {
 // decentralized `PublicInput` via struct literal. An empty
 // `message_centralized_signature` selects `SignData::ToBeEmulated` (NOA path);
 // otherwise `SignData::Unverified(deserialized_sign_message)` (user-driven path).
+
+/// Recovers the presign `session_id` from a public VSS presign — the key under
+/// which this presign's private nonce output was persisted at presign-finalize.
+/// Deserializes the curve-specific public `schnorr::vss::Presign`.
+pub(crate) fn vss_public_presign_session_id(
+    signature_algorithm: DWalletSignatureAlgorithm,
+    presign: &SerializedWrappedMPCPublicOutput,
+) -> DwalletMPCResult<commitment::CommitmentSizedNumber> {
+    let versioned: VersionedPresignOutput = bcs::from_bytes(presign).map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "failed to deserialize VSS presign output: {e}"
+        )))
+    })?;
+    let VersionedPresignOutput::V2(inner) = versioned else {
+        return Err(DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) presign must be V2".to_string(),
+        ));
+    };
+    let decode = |bytes: &[u8]| -> DwalletMPCResult<commitment::CommitmentSizedNumber> {
+        match signature_algorithm {
+            DWalletSignatureAlgorithm::TaprootVSS => Ok(bcs::from_bytes::<
+                <Secp256k1TaprootVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+            >(bytes)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
+            .session_id),
+            DWalletSignatureAlgorithm::EdDSAVSS => Ok(bcs::from_bytes::<
+                <Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+            >(bytes)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
+            .session_id),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => Ok(bcs::from_bytes::<
+                <RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+            >(bytes)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
+            .session_id),
+            _ => Err(DwalletMPCError::InvalidInput(format!(
+                "{signature_algorithm} is not a Fast Schnorr (VSS) algorithm"
+            ))),
+        }
+    };
+    decode(&inner)
+}
+
+/// Deserializes the latest network Reconfiguration V3 public output, which holds
+/// the per-curve secret-key polynomial commitments + masked parts + randomizer
+/// dealings the Fast Schnorr (VSS) sign needs. VSS sign requires a reconfigured
+/// network key — the DKG-only output does not expose these accessors.
+fn vss_reconfiguration_public_output(
+    network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+) -> DwalletMPCResult<<twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput>
+{
+    let reconfiguration_output = network_encryption_key_public_data
+        .latest_network_reconfiguration_public_output()
+        .ok_or_else(|| {
+            DwalletMPCError::InvalidInput(
+                "Fast Schnorr (VSS) sign requires a reconfigured network key, but no \
+                 reconfiguration output is present"
+                    .to_string(),
+            )
+        })?;
+    match reconfiguration_output {
+        VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => bcs::from_bytes::<
+            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
+        >(&bytes)
+        .map_err(|e| {
+            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+                "failed to deserialize reconfiguration V3 public output: {e}"
+            )))
+        }),
+        _ => Err(DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
+        )),
+    }
+}
+
+/// Deserializes the persisted VSS presign `PrivateOutput` (`Vec<PrivatePresignOutput>`)
+/// and returns the entry matching the public presign's `session_id` +
+/// `presign_blending_index`. `None` private output (missing row) → soft-fail error
+/// so this validator drops out of the sign quorum rather than crashing the session.
+fn vss_presign_private_output_entry<P>(
+    presign_private_output: Option<Vec<u8>>,
+    session_id: commitment::CommitmentSizedNumber,
+    presign_blending_index: u16,
+) -> DwalletMPCResult<<<P as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput>
+where
+    P: twopc_mpc::presign::Protocol,
+    <<P as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput:
+        serde::de::DeserializeOwned,
+{
+    let bytes = presign_private_output.ok_or_else(|| {
+        DwalletMPCError::InvalidInput(format!(
+            "VSS presign private output missing for session {session_id:?} blending index \
+             {presign_blending_index}; this validator cannot contribute to the sign"
+        ))
+    })?;
+    bcs::from_bytes(&bytes).map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "failed to deserialize persisted VSS presign private output: {e}"
+        )))
+    })
+}
+
+pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
+    party_id: PartyID,
+    root_seed: &RootSeed,
+    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    presign_private_output: Option<Vec<u8>>,
+    public_input: &<SignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput,
+) -> DwalletMPCResult<
+    <SignParty<Secp256k1TaprootVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
+> {
+    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
+        reconfiguration_public_output
+    else {
+        return Err(DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
+        ));
+    };
+    let reconfiguration_public_output = bcs::from_bytes::<
+        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
+    >(reconfig_bytes)
+    .map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "failed to deserialize reconfiguration V3 public output: {e}"
+        )))
+    })?;
+
+    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
+        .compute_secp256k1_shamir_shares_of_secret_key_share_parts(
+            party_id,
+            validator_keys.secp256k1_pvss_decryption_key(),
+            validator_keys.secp256k1_pvss_encryption_key_and_proof().0,
+        )
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover secp256k1 VSS secret-key Shamir shares: {e:?}"
+            ))
+        })?;
+
+    let session_id = public_input.presign.session_id;
+    let presign_blending_index = public_input.presign.presign_blending_index;
+    let private_presign_outputs = vss_presign_private_output_entry::<Secp256k1TaprootVSSProtocol>(
+        presign_private_output,
+        session_id,
+        presign_blending_index,
+    )?;
+    let entry = private_presign_outputs
+        .into_iter()
+        .find(|output| {
+            output.session_id == session_id
+                && output.presign_blending_index == presign_blending_index
+        })
+        .ok_or_else(|| {
+            DwalletMPCError::InvalidInput(format!(
+                "no persisted VSS presign output for session {session_id:?} blending index \
+                 {presign_blending_index}"
+            ))
+        })?;
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
+            secret_key_share_first_part,
+            secret_key_share_second_part,
+            session_id: entry.session_id,
+            presign_blending_index: entry.presign_blending_index,
+            nonce_share_first_part: entry.nonce_share_first_part,
+            nonce_share_second_part: entry.nonce_share_second_part,
+            first_nonce_polynomial_commitments: entry
+                .nonce_share_first_part_coefficient_commitments,
+            second_nonce_polynomial_commitments: entry
+                .nonce_share_second_part_coefficient_commitments,
+        },
+    )
+}
+
+pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
+    party_id: PartyID,
+    root_seed: &RootSeed,
+    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    presign_private_output: Option<Vec<u8>>,
+    public_input: &<SignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput,
+) -> DwalletMPCResult<
+    <SignParty<Curve25519EdDSAVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
+> {
+    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
+        reconfiguration_public_output
+    else {
+        return Err(DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
+        ));
+    };
+    let reconfiguration_public_output = bcs::from_bytes::<
+        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
+    >(reconfig_bytes)
+    .map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "failed to deserialize reconfiguration V3 public output: {e}"
+        )))
+    })?;
+
+    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
+        // curve25519's threshold-encryption-to-sharing uses the ristretto PVSS key
+        // (same const-generic discriminant limbs; the validator publishes no
+        // separate curve25519 PVSS key — see `compute_curve25519_shamir_shares_...`
+        // taking `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`).
+        .compute_curve25519_shamir_shares_of_secret_key_share_parts(
+            party_id,
+            validator_keys.ristretto_pvss_decryption_key(),
+            validator_keys.ristretto_pvss_encryption_key_and_proof().0,
+        )
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover curve25519 VSS secret-key Shamir shares: {e:?}"
+            ))
+        })?;
+
+    let session_id = public_input.presign.session_id;
+    let presign_blending_index = public_input.presign.presign_blending_index;
+    let private_presign_outputs = vss_presign_private_output_entry::<Curve25519EdDSAVSSProtocol>(
+        presign_private_output,
+        session_id,
+        presign_blending_index,
+    )?;
+    let entry = private_presign_outputs
+        .into_iter()
+        .find(|output| {
+            output.session_id == session_id
+                && output.presign_blending_index == presign_blending_index
+        })
+        .ok_or_else(|| {
+            DwalletMPCError::InvalidInput(format!(
+                "no persisted VSS presign output for session {session_id:?} blending index \
+                 {presign_blending_index}"
+            ))
+        })?;
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
+            secret_key_share_first_part,
+            secret_key_share_second_part,
+            session_id: entry.session_id,
+            presign_blending_index: entry.presign_blending_index,
+            nonce_share_first_part: entry.nonce_share_first_part,
+            nonce_share_second_part: entry.nonce_share_second_part,
+            first_nonce_polynomial_commitments: entry
+                .nonce_share_first_part_coefficient_commitments,
+            second_nonce_polynomial_commitments: entry
+                .nonce_share_second_part_coefficient_commitments,
+        },
+    )
+}
+
+pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
+    party_id: PartyID,
+    root_seed: &RootSeed,
+    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    presign_private_output: Option<Vec<u8>>,
+    public_input: &<SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as Party>::PublicInput,
+) -> DwalletMPCResult<
+    <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
+> {
+    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
+        reconfiguration_public_output
+    else {
+        return Err(DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
+        ));
+    };
+    let reconfiguration_public_output = bcs::from_bytes::<
+        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
+    >(reconfig_bytes)
+    .map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "failed to deserialize reconfiguration V3 public output: {e}"
+        )))
+    })?;
+
+    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
+        .compute_ristretto_shamir_shares_of_secret_key_share_parts(
+            party_id,
+            validator_keys.ristretto_pvss_decryption_key(),
+            validator_keys.ristretto_pvss_encryption_key_and_proof().0,
+        )
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover ristretto VSS secret-key Shamir shares: {e:?}"
+            ))
+        })?;
+
+    let session_id = public_input.presign.session_id;
+    let presign_blending_index = public_input.presign.presign_blending_index;
+    let private_presign_outputs = vss_presign_private_output_entry::<
+        RistrettoSchnorrkelSubstrateVSSProtocol,
+    >(presign_private_output, session_id, presign_blending_index)?;
+    let entry = private_presign_outputs
+        .into_iter()
+        .find(|output| {
+            output.session_id == session_id
+                && output.presign_blending_index == presign_blending_index
+        })
+        .ok_or_else(|| {
+            DwalletMPCError::InvalidInput(format!(
+                "no persisted VSS presign output for session {session_id:?} blending index \
+                 {presign_blending_index}"
+            ))
+        })?;
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
+            secret_key_share_first_part,
+            secret_key_share_second_part,
+            session_id: entry.session_id,
+            presign_blending_index: entry.presign_blending_index,
+            nonce_share_first_part: entry.nonce_share_first_part,
+            nonce_share_second_part: entry.nonce_share_second_part,
+            first_nonce_polynomial_commitments: entry
+                .nonce_share_first_part_coefficient_commitments,
+            second_nonce_polynomial_commitments: entry
+                .nonce_share_second_part_coefficient_commitments,
+        },
+    )
+}
+
+fn build_secp256k1_taproot_vss_sign_public_input(
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    message: Vec<u8>,
+    presign: &SerializedWrappedMPCPublicOutput,
+    message_centralized_signature: &SerializedWrappedMPCPublicOutput,
+    hash_scheme: HashScheme,
+    network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+) -> DwalletMPCResult<<SignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput> {
+    let protocol_public_parameters =
+        network_encryption_key_public_data.secp256k1_protocol_public_parameters();
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
+        Secp256k1AsyncDKGProtocol,
+        Secp256k1TaprootVSSProtocol,
+    >(dwallet_decentralized_public_output, presign)?;
+    let sign_data =
+        decode_schnorr_sign_data::<Secp256k1TaprootVSSProtocol>(message_centralized_signature)?;
+    let reconfiguration_output =
+        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let (first_commitments, second_commitments) =
+        reconfiguration_output.secp256k1_polynomial_commitments();
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
+            message,
+            hash_scheme,
+            dkg_output,
+            presign: presign_value,
+            centralized_party_partial_signature: sign_data,
+            protocol_public_parameters,
+            first_secret_key_polynomial_commitments: first_commitments.clone(),
+            second_secret_key_polynomial_commitments: second_commitments.clone(),
+        },
+    )
+}
+
+fn build_curve25519_eddsa_vss_sign_public_input(
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    message: Vec<u8>,
+    presign: &SerializedWrappedMPCPublicOutput,
+    message_centralized_signature: &SerializedWrappedMPCPublicOutput,
+    hash_scheme: HashScheme,
+    network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+) -> DwalletMPCResult<<SignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput> {
+    let protocol_public_parameters =
+        network_encryption_key_public_data.curve25519_protocol_public_parameters();
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
+        Curve25519AsyncDKGProtocol,
+        Curve25519EdDSAVSSProtocol,
+    >(dwallet_decentralized_public_output, presign)?;
+    let sign_data =
+        decode_schnorr_sign_data::<Curve25519EdDSAVSSProtocol>(message_centralized_signature)?;
+    let reconfiguration_output =
+        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let (first_commitments, second_commitments) =
+        reconfiguration_output.curve25519_polynomial_commitments();
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
+            message,
+            hash_scheme,
+            dkg_output,
+            presign: presign_value,
+            centralized_party_partial_signature: sign_data,
+            protocol_public_parameters,
+            first_secret_key_polynomial_commitments: first_commitments.clone(),
+            second_secret_key_polynomial_commitments: second_commitments.clone(),
+        },
+    )
+}
+
+fn build_ristretto_schnorrkel_vss_sign_public_input(
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    message: Vec<u8>,
+    presign: &SerializedWrappedMPCPublicOutput,
+    message_centralized_signature: &SerializedWrappedMPCPublicOutput,
+    hash_scheme: HashScheme,
+    network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as Party>::PublicInput> {
+    let protocol_public_parameters =
+        network_encryption_key_public_data.ristretto_protocol_public_parameters();
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
+        RistrettoAsyncDKGProtocol,
+        RistrettoSchnorrkelSubstrateVSSProtocol,
+    >(dwallet_decentralized_public_output, presign)?;
+    let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+        message_centralized_signature,
+    )?;
+    let reconfiguration_output =
+        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let (first_commitments, second_commitments) =
+        reconfiguration_output.ristretto_polynomial_commitments();
+
+    Ok(
+        twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
+            message,
+            hash_scheme,
+            dkg_output,
+            presign: presign_value,
+            centralized_party_partial_signature: sign_data,
+            protocol_public_parameters,
+            first_secret_key_polynomial_commitments: first_commitments.clone(),
+            second_secret_key_polynomial_commitments: second_commitments.clone(),
+        },
+    )
+}
 
 fn build_secp256k1_ecdsa_sign_public_input(
     expected_decrypters: HashSet<PartyID>,
@@ -841,6 +1392,16 @@ impl DKGAndSignPublicInputByProtocol {
                         network_encryption_key_public_data,
                     )?,
                 ))
+            }
+            // Fast Schnorr (VSS) has no combined DKG-and-sign (upstream placeholder);
+            // rejected at request construction, kept exhaustive here as defense-in-depth.
+            DWalletSignatureAlgorithm::TaprootVSS
+            | DWalletSignatureAlgorithm::EdDSAVSS
+            | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                Err(DwalletMPCError::InvalidInput(format!(
+                    "Fast Schnorr (VSS) algorithm {protocol} is not supported for \
+                     the combined DKG-and-sign fast path"
+                )))
             }
         }
     }

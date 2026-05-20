@@ -359,6 +359,14 @@ where
             .iter()
             .filter_map(|(n, v)| v.ristretto_pvss.clone().map(|k| (*n, k)))
             .collect();
+        let vss_schnorr_hpke_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .filter_map(|(n, v)| {
+                v.vss_schnorr_hpke_public_key_and_proof
+                    .clone()
+                    .map(|k| (*n, k))
+            })
+            .collect();
 
         Ok(Committee::new(
             epoch,
@@ -370,6 +378,7 @@ where
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
+            vss_schnorr_hpke_public_keys_and_proofs,
             quorum_threshold,
             validity_threshold,
         ))

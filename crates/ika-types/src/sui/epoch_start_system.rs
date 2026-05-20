@@ -229,6 +229,14 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .iter()
             .filter_map(|(name, v)| v.ristretto_pvss.clone().map(|k| (*name, k)))
             .collect();
+        let vss_schnorr_hpke_public_keys_and_proofs = decoded_per_validator
+            .iter()
+            .filter_map(|(name, v)| {
+                v.vss_schnorr_hpke_public_key_and_proof
+                    .clone()
+                    .map(|k| (*name, k))
+            })
+            .collect();
 
         Committee::new(
             self.epoch,
@@ -237,6 +245,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
+            vss_schnorr_hpke_public_keys_and_proofs,
             self.quorum_threshold,
             self.validity_threshold,
         )

@@ -7,6 +7,7 @@ version.workspace = true
 dwallet-rng.workspace = true
 class_groups = { workspace = true, features = ["parallel"] }
 group.workspace = true
+mpc.workspace = true
 crypto-bigint.workspace = true
 serde.workspace = true
 ika-types.workspace = true

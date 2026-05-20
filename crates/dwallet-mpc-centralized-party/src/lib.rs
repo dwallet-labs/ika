@@ -52,6 +52,14 @@ type Secp256r1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
 type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
 
+// Fast Schnorr (VSS) sign protocols. The centralized party reuses the shared
+// sign implementation (same PrivateInput / OutgoingMessage / 5-tuple public
+// input); only the decentralized party differs. Module path is `<curve>::vss`.
+type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::vss::TaprootVSSProtocol;
+type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::vss::EdDSAVSSProtocol;
+type RistrettoSchnorrkelSubstrateVSSProtocol =
+    twopc_mpc::ristretto::vss::SchnorrkelSubstrateVSSProtocol;
+
 type DKGCentralizedParty =
     <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
 type SignCentralizedPartyV1 =
@@ -518,6 +526,46 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &protocol_pp,
                     )
                 }
+                // Fast Schnorr (VSS): centralized party identical to AHE sibling.
+                DWalletSignatureAlgorithm::TaprootVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        Secp256k1TaprootVSSProtocol,
+                        Secp256k1DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::EdDSAVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        Curve25519EdDSAVSSProtocol,
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        RistrettoSchnorrkelSubstrateVSSProtocol,
+                        RistrettoDKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
             }
         }
     }
@@ -644,6 +692,48 @@ pub fn advance_centralized_sign_party(
                 DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     advance_sign_with_decentralized_party_dkg_output::<
                         SchnorrkelSubstrateProtocol,
+                        RistrettoDKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                // Fast Schnorr (VSS): the centralized party's sign step is identical
+                // to its AHE sibling on the same curve; only the decentralized party
+                // differs. Reuse the same generic helper with the per-curve DKG protocol.
+                DWalletSignatureAlgorithm::TaprootVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        Secp256k1TaprootVSSProtocol,
+                        Secp256k1DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::EdDSAVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        Curve25519EdDSAVSSProtocol,
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        RistrettoSchnorrkelSubstrateVSSProtocol,
                         RistrettoDKGProtocol,
                     >(
                         &centralized_party_secret_key_share,
@@ -1463,6 +1553,20 @@ pub fn parse_signature_from_sign_output_inner(
         }
         DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        // Fast Schnorr (VSS) variants produce the same standard signature object as
+        // their AHE sibling on the same curve (VSS only changes how it's computed).
+        DWalletSignatureAlgorithm::TaprootVSS => {
+            let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::EdDSAVSS => {
+            let signature: EdDSASignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
     }

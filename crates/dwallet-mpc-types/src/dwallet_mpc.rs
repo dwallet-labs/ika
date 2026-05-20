@@ -209,6 +209,30 @@ pub enum DWalletSignatureAlgorithm {
     EdDSA,
     #[strum(to_string = "SchnorrkelSubstrate")]
     SchnorrkelSubstrate,
+    /// Fast Schnorr (VSS) variant of Taproot on secp256k1. DKG-created keys only.
+    #[strum(to_string = "TaprootVSS")]
+    TaprootVSS,
+    /// Fast Schnorr (VSS) variant of EdDSA on curve25519. DKG-created keys only.
+    #[strum(to_string = "EdDSAVSS")]
+    EdDSAVSS,
+    /// Fast Schnorr (VSS) variant of SchnorrkelSubstrate on ristretto. DKG-created keys only.
+    #[strum(to_string = "SchnorrkelSubstrateVSS")]
+    SchnorrkelSubstrateVSS,
+}
+
+impl DWalletSignatureAlgorithm {
+    /// True for the Fast Schnorr (VSS) signature algorithms. These are gated by
+    /// the `fast_schnorr_supported` protocol feature flag, support DKG-created
+    /// keys only (never imported), and do not support the combined
+    /// DKG-and-sign fast path.
+    pub fn is_vss(&self) -> bool {
+        matches!(
+            self,
+            DWalletSignatureAlgorithm::TaprootVSS
+                | DWalletSignatureAlgorithm::EdDSAVSS
+                | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS
+        )
+    }
 }
 
 #[derive(

@@ -13,7 +13,9 @@ use class_groups::publicly_verifiable_secret_sharing::chinese_remainder_theorem:
 };
 use fastcrypto::traits::KeyPair;
 use group::PartyID;
+use group::curve25519;
 pub use ika_protocol_config::ProtocolVersion;
+use mpc::hybrid_public_key_encryption::KnowledgeOfDecryptionKeyUCProof as VssHpkeKnowledgeOfDecryptionKeyUCProof;
 use rand::rngs::{StdRng, ThreadRng};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -57,6 +59,14 @@ pub struct Committee {
     /// Per-validator PVSS HPKE encryption key + proof, ristretto plaintext space.
     pub ristretto_pvss_public_keys_and_proofs:
         HashMap<AuthorityName, RistrettoPvssEncryptionKeyAndProof>,
+    /// Per-validator Fast Schnorr (VSS) HPKE encryption public key (curve25519) +
+    /// UC proof. Single curve-independent key per validator; populated only for
+    /// validators that published the protocol_version-5 bundle. Empty for v4 /
+    /// mainnet-v1.1.8 validators, in which case Fast Schnorr presigns can't run
+    /// for them. Proofs are verified (and unverified holders dropped) at VSS
+    /// presign-input build time.
+    pub vss_schnorr_hpke_public_keys_and_proofs:
+        HashMap<AuthorityName, VssSchnorrHpkeEncryptionKeyAndProof>,
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
@@ -84,6 +94,10 @@ impl Committee {
             AuthorityName,
             RistrettoPvssEncryptionKeyAndProof,
         >,
+        vss_schnorr_hpke_public_keys_and_proofs: HashMap<
+            AuthorityName,
+            VssSchnorrHpkeEncryptionKeyAndProof,
+        >,
         quorum_threshold: u64,
         validity_threshold: u64,
     ) -> Self {
@@ -99,6 +113,7 @@ impl Committee {
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
+            vss_schnorr_hpke_public_keys_and_proofs,
             expanded_keys,
             index_map,
             quorum_threshold,
@@ -134,6 +149,7 @@ impl Committee {
         Self::new(
             epoch,
             voting_weights.into_iter().collect(),
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
@@ -533,6 +549,20 @@ pub type RistrettoPvssEncryptionKeyAndProof = (
     >,
 );
 
+/// Fast Schnorr (VSS) HPKE encryption public key (curve25519, serializable
+/// `Value` form) plus the UC-secure proof of knowledge of the corresponding
+/// decryption key. The proof is verified — and the holder kept only if it passes
+/// — via `mpc::hybrid_public_key_encryption::
+/// verify_uc_proofs_of_knowledge_of_encryption_secret_keys` when building the VSS
+/// presign input; the verified set becomes the presign's
+/// `parties_with_uc_verified_public_keys`.
+///
+/// A single curve25519 key per validator serves all VSS signing curves (the HPKE
+/// transport layer is curve-independent), unlike the three class-groups `*_pvss`
+/// keys which are per plaintext space.
+pub type VssSchnorrHpkeEncryptionKeyAndProof =
+    (curve25519::Value, VssHpkeKnowledgeOfDecryptionKeyUCProof);
+
 /// Combined per-validator on-chain encryption-keys-and-proofs payload.
 ///
 /// BCS-serialized into the Move-side validator field that historically carried
@@ -562,6 +592,34 @@ pub struct ValidatorEncryptionKeysAndProofs {
     pub secp256r1_pvss: Secp256r1PvssEncryptionKeyAndProof,
     /// PVSS HPKE key + proof for the ristretto plaintext space.
     pub ristretto_pvss: RistrettoPvssEncryptionKeyAndProof,
+    /// Fast Schnorr (VSS) HPKE encryption public key (curve25519) + UC proof of
+    /// knowledge of the decryption key. This is the curve25519 HPKE key the VSS
+    /// presign's `party_encryption_keys` requires (distinct from the three
+    /// class-groups `*_pvss` keys above, which share the class-groups decryption
+    /// key over the integers); one key serves all VSS signing curves.
+    ///
+    /// The proof is verified at VSS-presign-input build time via
+    /// `verify_uc_proofs_of_knowledge_of_encryption_secret_keys`, and only
+    /// validators whose proof verifies are admitted to the presign.
+    ///
+    /// New at protocol_version 5 (`fast_schnorr_supported`); appended last so the
+    /// layered decode in [`decode_validator_encryption_keys`] stays
+    /// backward-compatible with the v4 (4-field) bundle.
+    pub vss_schnorr_hpke_public_key_and_proof: VssSchnorrHpkeEncryptionKeyAndProof,
+}
+
+/// Legacy v4 (pre-Fast-Schnorr) shape of [`ValidatorEncryptionKeysAndProofs`] —
+/// the four-field bundle without `vss_schnorr_hpke_public_key`. Used only by the
+/// layered decoder so a validator that published under protocol_version 4 still
+/// decodes after the v5 field was appended.
+///
+/// TEMPORARY: delete once every validator publishes the 5-field v5 bundle.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct LegacyValidatorEncryptionKeysAndProofsV4 {
+    class_groups: ClassGroupsEncryptionKeyAndProof,
+    secp256k1_pvss: Secp256k1PvssEncryptionKeyAndProof,
+    secp256r1_pvss: Secp256r1PvssEncryptionKeyAndProof,
+    ristretto_pvss: RistrettoPvssEncryptionKeyAndProof,
 }
 
 /// Result of shape-tolerant decoding of the Move-side validator encryption-key
@@ -584,6 +642,9 @@ pub struct DecodedValidatorEncryptionKeys {
     pub secp256k1_pvss: Option<Secp256k1PvssEncryptionKeyAndProof>,
     pub secp256r1_pvss: Option<Secp256r1PvssEncryptionKeyAndProof>,
     pub ristretto_pvss: Option<RistrettoPvssEncryptionKeyAndProof>,
+    /// Present only for validators that published the protocol_version-5 bundle
+    /// (Fast Schnorr). `None` for v4 bundles and mainnet-v1.1.8 bare class-groups.
+    pub vss_schnorr_hpke_public_key_and_proof: Option<VssSchnorrHpkeEncryptionKeyAndProof>,
 }
 
 /// Decode the bytes from `MPCDataV1::class_groups_public_key_and_proof()`
@@ -609,14 +670,32 @@ pub struct DecodedValidatorEncryptionKeys {
 /// [`ValidatorEncryptionKeysAndProofs`]; decode sites can then call
 /// `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` directly.
 pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidatorEncryptionKeys> {
+    // v5 bundle (5 fields, incl. the curve25519 VSS HPKE key). Tried first: a v4
+    // (4-field) payload errors here on missing trailing bytes for the 5th field,
+    // and a v5 payload parsed as v4 below would leave trailing bytes (BCS rejects
+    // both), so the layered order is unambiguous.
     if let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(bytes) {
         return Some(DecodedValidatorEncryptionKeys {
             class_groups: bundle.class_groups,
             secp256k1_pvss: Some(bundle.secp256k1_pvss),
             secp256r1_pvss: Some(bundle.secp256r1_pvss),
             ristretto_pvss: Some(bundle.ristretto_pvss),
+            vss_schnorr_hpke_public_key_and_proof: Some(
+                bundle.vss_schnorr_hpke_public_key_and_proof,
+            ),
         });
     }
+    // v4 bundle (4 fields, no VSS HPKE key).
+    if let Ok(bundle) = bcs::from_bytes::<LegacyValidatorEncryptionKeysAndProofsV4>(bytes) {
+        return Some(DecodedValidatorEncryptionKeys {
+            class_groups: bundle.class_groups,
+            secp256k1_pvss: Some(bundle.secp256k1_pvss),
+            secp256r1_pvss: Some(bundle.secp256r1_pvss),
+            ristretto_pvss: Some(bundle.ristretto_pvss),
+            vss_schnorr_hpke_public_key_and_proof: None,
+        });
+    }
+    // mainnet-v1.1.8 bare class-groups shape.
     bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(bytes)
         .ok()
         .map(|class_groups| DecodedValidatorEncryptionKeys {
@@ -624,6 +703,7 @@ pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidator
             secp256k1_pvss: None,
             secp256r1_pvss: None,
             ristretto_pvss: None,
+            vss_schnorr_hpke_public_key_and_proof: None,
         })
 }
 

@@ -20,11 +20,13 @@ use class_groups::{
 };
 use crypto_bigint::Uint;
 use dwallet_rng::RootSeed;
+use group::GroupElement as _;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, RistrettoPvssEncryptionKeyAndProof,
     Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
-    ValidatorEncryptionKeysAndProofs,
+    ValidatorEncryptionKeysAndProofs, VssSchnorrHpkeEncryptionKeyAndProof,
 };
+use mpc::secret_sharing::shamir::known_order::generate_and_uc_prove_encryption_keypair;
 use serde::{Deserialize, Serialize};
 
 pub type ClassGroupsDecryptionKey = [Uint<{ CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS }>; MAX_PRIMES];
@@ -131,6 +133,14 @@ pub struct ClassGroupsAndPvssKeyPairAndProof {
 
     ristretto_pvss_decryption_key: RistrettoPvssDecryptionKey,
     ristretto_pvss_encryption_key_and_proof: RistrettoPvssEncryptionKeyAndProof,
+
+    /// Fast Schnorr (VSS) HPKE encryption public key (curve25519) + UC proof. The
+    /// matching secret key is NOT stored here (it would force `curve25519::Scalar`
+    /// serializability onto this `Serialize` struct); instead it is re-derived
+    /// deterministically from the same `RootSeed` where the validator's private
+    /// MPC key data is assembled (see `vss_schnorr_hpke_secret_key_from_seed`).
+    /// One curve25519 keypair serves all VSS signing curves.
+    vss_schnorr_hpke_public_key_and_proof: VssSchnorrHpkeEncryptionKeyAndProof,
 }
 
 impl ClassGroupsAndPvssKeyPairAndProof {
@@ -210,6 +220,16 @@ impl ClassGroupsAndPvssKeyPairAndProof {
             >(&ristretto_setup, &mut ristretto_rng)
             .unwrap();
 
+        // Fast Schnorr (VSS) HPKE keypair: a single curve25519 keypair (not class
+        // groups, not per-curve) used as the known-order threshold-encryption-to-
+        // sharing transport for the VSS Schnorr presign. The secret is discarded
+        // here and re-derived from the same `RootSeed` where it's needed.
+        let (_vss_hpke_secret, vss_hpke_public, vss_hpke_proof) =
+            generate_and_uc_prove_encryption_keypair(
+                &mut root_seed.vss_schnorr_hpke_encryption_key_rng(),
+            )
+            .unwrap();
+
         ClassGroupsAndPvssKeyPairAndProof {
             class_groups,
             secp256k1_pvss_decryption_key: secp256k1_dec,
@@ -218,7 +238,23 @@ impl ClassGroupsAndPvssKeyPairAndProof {
             secp256r1_pvss_encryption_key_and_proof: (secp256r1_enc, secp256r1_proof),
             ristretto_pvss_decryption_key: ristretto_dec,
             ristretto_pvss_encryption_key_and_proof: (ristretto_enc, ristretto_proof),
+            vss_schnorr_hpke_public_key_and_proof: (vss_hpke_public.value(), vss_hpke_proof),
         }
+    }
+
+    /// Re-derives this validator's Fast Schnorr (VSS) HPKE *secret* key from its
+    /// `RootSeed`, deterministically matching the public key published in
+    /// [`Self::vss_schnorr_hpke_public_key_and_proof`]. Kept out of the struct so
+    /// the `Serialize` derive doesn't require `curve25519::Scalar: Serialize`; the
+    /// secret is needed only locally as the VSS presign `PrivateInput`.
+    pub fn vss_schnorr_hpke_secret_key_from_seed(
+        root_seed: &RootSeed,
+    ) -> group::curve25519::Scalar {
+        let (secret, _public, _proof) = generate_and_uc_prove_encryption_keypair(
+            &mut root_seed.vss_schnorr_hpke_encryption_key_rng(),
+        )
+        .unwrap();
+        secret
     }
 
     pub fn secp256k1_pvss_encryption_key_and_proof(&self) -> Secp256k1PvssEncryptionKeyAndProof {
@@ -255,12 +291,20 @@ impl ClassGroupsAndPvssKeyPairAndProof {
     /// [`ValidatorEncryptionKeysAndProofs`] struct that's BCS-serialized into the
     /// Move-side `class_groups_public_key_and_proof` field. See the doc on
     /// [`ValidatorEncryptionKeysAndProofs`] for the mainnet wire-incompat warning.
+    /// Fast Schnorr (VSS) HPKE encryption public key (curve25519) + UC proof.
+    pub fn vss_schnorr_hpke_public_key_and_proof(&self) -> VssSchnorrHpkeEncryptionKeyAndProof {
+        self.vss_schnorr_hpke_public_key_and_proof.clone()
+    }
+
     pub fn validator_encryption_keys_and_proofs(&self) -> ValidatorEncryptionKeysAndProofs {
         ValidatorEncryptionKeysAndProofs {
             class_groups: self.class_groups.encryption_key_and_proof(),
             secp256k1_pvss: self.secp256k1_pvss_encryption_key_and_proof.clone(),
             secp256r1_pvss: self.secp256r1_pvss_encryption_key_and_proof.clone(),
             ristretto_pvss: self.ristretto_pvss_encryption_key_and_proof.clone(),
+            vss_schnorr_hpke_public_key_and_proof: self
+                .vss_schnorr_hpke_public_key_and_proof
+                .clone(),
         }
     }
 }

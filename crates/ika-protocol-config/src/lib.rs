@@ -17,11 +17,13 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 3;
-const MAX_PROTOCOL_VERSION: u64 = 4;
+const MAX_PROTOCOL_VERSION: u64 = 5;
 
 // Record history of protocol version allocations here:
 //
 // Version 1: Original version.
+// Version 5: Fast Schnorr (VSS) signature algorithms enabled (TaprootVSS,
+//            EdDSAVSS, SchnorrkelSubstrateVSS); DKG-created keys only.
 // Version 4: Internal presign sessions, BLS checkpoints, NOA checkpoints, +
 //            validator-key publication switch from `ClassGroupsEncryptionKeyAndProof`
 //            (mainnet-v1.1.8 shape, v3) to `ValidatorEncryptionKeysAndProofs`
@@ -167,6 +169,11 @@ struct FeatureFlags {
     // If true, enables NOA (Network Owned Address) MPC-signed checkpoints.
     #[serde(skip_serializing_if = "is_false")]
     noa_checkpoints: bool,
+
+    // If true, enables Fast Schnorr (VSS) signature algorithms: TaprootVSS,
+    // EdDSAVSS, SchnorrkelSubstrateVSS. DKG-created keys only.
+    #[serde(skip_serializing_if = "is_false")]
+    fast_schnorr_supported: bool,
 }
 
 #[allow(unused)]
@@ -287,6 +294,11 @@ pub struct ProtocolConfig {
     consensus_gc_depth: Option<u32>,
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     schnorr_presign_second_round_delay: Option<u64>,
+    /// Consensus-round delay for the VSS (Fast Schnorr) presign Aggregation
+    /// round (round 3). AHE Schnorr presign is 2 rounds and ignores this; only
+    /// VSS presign (Dealing → Accusation → Aggregation) uses it. Defaults to the
+    /// same value as `schnorr_presign_second_round_delay`.
+    schnorr_presign_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
@@ -360,6 +372,13 @@ impl ProtocolConfig {
 
     pub fn internal_presign_sessions_enabled(&self) -> bool {
         self.feature_flags.internal_presign_sessions
+    }
+
+    /// True iff Fast Schnorr (VSS) signature algorithms are enabled at this
+    /// protocol version (>= 5). Gates `TaprootVSS`, `EdDSAVSS`, and
+    /// `SchnorrkelSubstrateVSS` request acceptance.
+    pub fn fast_schnorr_supported(&self) -> bool {
+        self.feature_flags.fast_schnorr_supported
     }
 
     /// True iff this protocol_version uses the post-PR-#1707 network DKG /
@@ -597,6 +616,7 @@ impl ProtocolConfig {
             // The delay is measured in consensus rounds.
             decryption_key_reconfiguration_third_round_delay: Some(10),
             schnorr_presign_second_round_delay: Some(8),
+            schnorr_presign_third_round_delay: Some(8),
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
@@ -685,6 +705,9 @@ impl ProtocolConfig {
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
+                5 => {
+                    cfg.feature_flags.fast_schnorr_supported = true;
+                }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
@@ -736,6 +759,16 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_pool_minimum_size()
             }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool sizing.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size()
+            }
         }
     }
 
@@ -759,6 +792,16 @@ impl ProtocolConfig {
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_consensus_round_delay()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's delay.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_consensus_round_delay()
             }
         }
     }
@@ -784,6 +827,16 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_sessions_to_instantiate()
             }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's instantiation rate.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate()
+            }
         }
     }
 
@@ -808,6 +861,16 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_pool_maximum_size()
             }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool cap.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size()
+            }
         }
     }
 
@@ -830,6 +893,14 @@ impl ProtocolConfig {
                 self.internal_schnorrkel_substrate_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_minimum_size(),
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool sizing.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => self.internal_eddsa_presign_pool_minimum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_pool_minimum_size()
+            }
         }
     }
 
@@ -852,6 +923,16 @@ impl ProtocolConfig {
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.internal_taproot_presign_consensus_round_delay()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's delay.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.internal_eddsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_consensus_round_delay()
             }
         }
     }
@@ -878,6 +959,16 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::Taproot => {
                 self.internal_taproot_presign_sessions_to_instantiate()
             }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's instantiation rate.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.internal_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
+            }
         }
     }
 
@@ -900,6 +991,14 @@ impl ProtocolConfig {
                 self.internal_schnorrkel_substrate_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_maximum_size(),
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool cap.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => self.internal_eddsa_presign_pool_maximum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_pool_maximum_size()
+            }
         }
     }
 }

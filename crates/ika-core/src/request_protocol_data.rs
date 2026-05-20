@@ -5,7 +5,7 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashScheme;
-use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
     DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
@@ -209,6 +209,22 @@ pub enum ProtocolData {
 }
 
 impl ProtocolData {
+    /// Returns the signature algorithm this request operates on, if any. Used by
+    /// the protocol-version feature gate (e.g. Fast Schnorr / VSS).
+    pub fn signature_algorithm(&self) -> Option<DWalletSignatureAlgorithm> {
+        match self {
+            ProtocolData::Presign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::InternalPresign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::Sign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::NetworkOwnedAddressSign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::DWalletDKGAndSign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::PartialSignatureVerification { data, .. } => {
+                Some(data.signature_algorithm)
+            }
+            _ => None,
+        }
+    }
+
     /// Returns `None` if this request is not a global presign one (either not a presign, or a targeted presign),
     /// and `Some((presign_id, curve, signature_algorithm, network_key_id))` if it is.
     pub fn is_global_presign(
@@ -228,6 +244,11 @@ impl ProtocolData {
                     DWalletSignatureAlgorithm::EdDSA => true,
                     DWalletSignatureAlgorithm::Taproot => true,
                     DWalletSignatureAlgorithm::SchnorrkelSubstrate => true,
+                    // VSS (Fast Schnorr) variants are global-presign Schnorr,
+                    // DKG-created keys only (never imported).
+                    DWalletSignatureAlgorithm::TaprootVSS => true,
+                    DWalletSignatureAlgorithm::EdDSAVSS => true,
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => true,
                 };
 
                 if is_global_presign {
@@ -298,6 +319,19 @@ pub fn dwallet_dkg_and_sign_protocol_data(
     user_secret_key_share: UserSecretKeyShareEventType,
     sign_during_dkg_request: &SignDuringDKGRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
+    let signature_algorithm = try_into_signature_algorithm(
+        request_event_data.curve,
+        sign_during_dkg_request.signature_algorithm,
+    )?;
+    // Fast Schnorr (VSS) does not support the combined DKG-and-sign fast path:
+    // the upstream combined VSS party is an unimplemented placeholder. VSS
+    // dWallets must follow the separate DKG → presign → sign path.
+    if signature_algorithm.is_vss() {
+        return Err(DwalletMPCError::InvalidInput(format!(
+            "Fast Schnorr (VSS) algorithm {signature_algorithm} is not supported \
+             for the combined DKG-and-sign fast path"
+        )));
+    }
     Ok(ProtocolData::DWalletDKGAndSign {
         data: DWalletDKGAndSignData {
             curve: try_into_curve(request_event_data.curve)?,
@@ -306,10 +340,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
             user_secret_key_share,
             presign_id: sign_during_dkg_request.presign_id,
             presign: sign_during_dkg_request.presign.clone(),
-            signature_algorithm: try_into_signature_algorithm(
-                request_event_data.curve,
-                sign_during_dkg_request.signature_algorithm,
-            )?,
+            signature_algorithm,
             hash_scheme: try_into_hash_scheme(
                 request_event_data.curve,
                 sign_during_dkg_request.signature_algorithm,
