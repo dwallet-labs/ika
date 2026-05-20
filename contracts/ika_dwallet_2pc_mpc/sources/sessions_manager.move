@@ -223,11 +223,26 @@ public(package) fun create(ctx: &mut TxContext): SessionsManager {
 /// - `self`: Mutable reference to the session manager
 ///
 /// ### Effects
+/// - Bumps `last_user_initiated_session_to_complete_in_current_epoch` to cover ALL
+///   user sessions that have been initiated up to this point. Without this, the
+///   sliding-window updater (`update_...`) caps it at `completed + buffer`, which
+///   can leave it strictly below `started_count` when many sessions are in flight.
+///   Combined with the assert in `initiate_user_session` (no new initiations after
+///   lock), this guarantees `completed_count == cap` eventually holds and the
+///   epoch-end gate (`all_current_epoch_sessions_completed`) is reachable. Before
+///   this fix, in-flight sessions completed past the locked cap and the equality
+///   check wedged epoch advance forever.
 /// - Prevents further updates to `last_user_initiated_session_to_complete_in_current_epoch`
 /// - Ensures session completion targets remain stable during epoch transitions
 public(package) fun lock_last_user_initiated_session_to_complete_in_current_epoch(
     self: &mut SessionsManager,
 ) {
+    if (self.user_sessions_keeper.next_session_sequence_number > 0) {
+        let final_cap = self.user_sessions_keeper.next_session_sequence_number - 1;
+        if (self.last_user_initiated_session_to_complete_in_current_epoch < final_cap) {
+            self.last_user_initiated_session_to_complete_in_current_epoch = final_cap;
+        };
+    };
     self.locked_last_user_initiated_session_to_complete_in_current_epoch = true;
 }
 
@@ -626,22 +641,29 @@ fun all_current_epoch_sessions_completed(self: &SessionsManager): bool {
 /// ### Effects
 /// - Updates the last user-initiated session to complete in the current epoch
 fun update_last_user_initiated_session_to_complete_in_current_epoch(self: &mut SessionsManager) {
-    // Don't update during epoch transitions when session management is locked
-    if (!self.locked_last_user_initiated_session_to_complete_in_current_epoch) {
-        // Calculate new target: completed + buffer, but don't exceed latest session
-        let new_last_user_initiated_session_to_complete_in_current_epoch = (
-            self.user_sessions_keeper.completed_sessions_count + self.max_active_sessions_buffer,
-        ).min(
-            self.user_sessions_keeper.next_session_sequence_number - 1,
-        );
-
-        // Sanity check: Only update if the new target is higher (prevent regression)
-        if (
-            self.last_user_initiated_session_to_complete_in_current_epoch < new_last_user_initiated_session_to_complete_in_current_epoch
-        ) {
-            self.last_user_initiated_session_to_complete_in_current_epoch =
-                new_last_user_initiated_session_to_complete_in_current_epoch;
-        };
+    // When the cap is unlocked: slide the target forward by `max_active_sessions_buffer`
+    // ahead of `completed_count`, capped at the latest initiated session. This is the
+    // normal flow-control behavior that bounds the per-epoch session pipeline.
+    //
+    // When the cap is locked: the chain is winding down this epoch and waiting for
+    // in-flight user sessions to complete before advancing. We must keep the cap in
+    // sync with `next_session_sequence_number - 1` so any sessions initiated AFTER
+    // lock are still counted toward the epoch-end equality check
+    // (`completed_count == cap`). Without this, a single post-lock initiation makes
+    // `completed_count` overshoot the frozen cap and the check never holds — the
+    // chain wedges. Equality is intentional, the invariant is "cap covers every
+    // initiated session"; this branch maintains that invariant by absorbing late
+    // initiations into the cap.
+    let latest = self.user_sessions_keeper.next_session_sequence_number - 1;
+    let new_target = if (self.locked_last_user_initiated_session_to_complete_in_current_epoch) {
+        latest
+    } else {
+        (self.user_sessions_keeper.completed_sessions_count + self.max_active_sessions_buffer)
+            .min(latest)
+    };
+    // Sanity check: Only update if the new target is higher (prevent regression).
+    if (self.last_user_initiated_session_to_complete_in_current_epoch < new_target) {
+        self.last_user_initiated_session_to_complete_in_current_epoch = new_target;
     };
 }
 

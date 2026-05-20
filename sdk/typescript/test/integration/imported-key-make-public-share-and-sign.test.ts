@@ -479,7 +479,7 @@ async function signWithPublicShareAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 300000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(

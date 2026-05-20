@@ -1342,23 +1342,25 @@ impl DWalletMPCManager {
     /// chain (see EPOCH_12_WEDGE_ANALYSIS.md). This method mirrors `main`'s direct
     /// Sui-pull instantiation so the validator can always make progress on the
     /// network-key requirement even when consensus voting hasn't agreed yet.
+    ///
+    /// Implementation note: the watch channel's `has_changed` gate is intentionally
+    /// NOT used here. `SuiDataReceivers::clone()` propagates the parent's version
+    /// cursor into the new MPCManager, so the first call at the start of a new epoch
+    /// often sees `has_changed=false` even though the new manager has an empty
+    /// `network_encryption_keys` and needs to load the key for its epoch. Gating on
+    /// `has_changed` is what made commit 409a293b18 leave the wedge intact: at
+    /// epoch boundary the receiver is up-to-date relative to the prior manager's
+    /// last read, so the fallback returned early without ever looking at the data.
+    /// Instead, we pre-filter to keys this manager hasn't loaded yet AND whose data
+    /// matches the current epoch — cheap when the data is stale (we just skip),
+    /// expensive only when there is real work to do.
     pub(crate) async fn maybe_update_network_keys_from_sui(&mut self) -> Vec<ObjectID> {
-        let has_changed = match self.sui_data_receivers.network_keys_receiver.has_changed() {
-            Ok(changed) => changed,
-            Err(err) => {
-                error!(error=?err, "failed to check network keys receiver");
-                return vec![];
-            }
-        };
-        if !has_changed {
-            return vec![];
-        }
-
+        // Snapshot the current state of the watch channel.
+        // `borrow()` (not `borrow_and_update`) — there's nothing to mark seen; we
+        // want to re-read on every batch iteration until the right epoch's data
+        // arrives.
         let new_keys: HashMap<ObjectID, DWalletNetworkEncryptionKeyData> = {
-            let snapshot = self
-                .sui_data_receivers
-                .network_keys_receiver
-                .borrow_and_update();
+            let snapshot = self.sui_data_receivers.network_keys_receiver.borrow();
             snapshot
                 .iter()
                 .map(|(&key_id, key_data)| (key_id, key_data.clone()))
@@ -1367,11 +1369,20 @@ impl DWalletMPCManager {
 
         let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = new_keys
             .into_iter()
-            .filter(|(key_id, _)| {
-                !self
+            .filter(|(key_id, key_data)| {
+                // Skip keys we've already loaded for this manager.
+                if self
                     .network_keys
                     .network_encryption_keys
                     .contains_key(key_id)
+                {
+                    return false;
+                }
+                // Skip stale data — the on-chain key's `current_epoch` hasn't yet
+                // been bumped to ours. `sui_syncer` will push fresh data once
+                // chain state catches up; retrying without an expensive
+                // instantiation in the meantime is cheap.
+                key_data.current_epoch == self.epoch_id
             })
             .collect();
 
@@ -1384,21 +1395,13 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.party_id,
                 )
                 .await;
 
             match res {
                 Ok(key) => {
-                    if key.epoch() != self.epoch_id {
-                        warn!(
-                            key_id=?key_id,
-                            key_epoch=?key.epoch(),
-                            current_epoch=?self.epoch_id,
-                            "Network key epoch does not match current epoch, ignoring"
-                        );
-                        continue;
-                    }
+                    // Pre-filter guarantees this, but assert as a contract.
+                    debug_assert_eq!(key.epoch(), self.epoch_id);
                     if let Err(e) = self
                         .network_keys
                         .update_network_key(key_id, &key, &self.access_structure)

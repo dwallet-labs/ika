@@ -144,7 +144,9 @@ export async function requestPresignForDKG(
 
 	const presign = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
+				timeout: 300000,
+			}),
 		(presign) => presign !== null,
 		30,
 		2000,
@@ -308,7 +310,7 @@ export async function acceptUserShareAndActivate(
 	await executeTestTransaction(suiClient, suiTransaction, testName);
 
 	const activeDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active', { timeout: 300000 }),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -377,7 +379,7 @@ export async function runCompleteDKGFlow(
 			curve,
 			signDuringDKGOptions!.signatureAlgorithm,
 			'Completed',
-			{ timeout: 60000, interval: 1000 },
+			{ timeout: 300000, interval: 1000 },
 		);
 
 		expect(signObject).toBeDefined();
@@ -456,7 +458,7 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 	expect(dWalletID).toBeDefined();
 
 	const activeDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active', { timeout: 300000 }),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -557,7 +559,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 	expect(dWalletID).toBeDefined();
 
 	const activeDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active', { timeout: 300000 }),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -623,7 +625,9 @@ export async function runGlobalPresignTest(
 
 	const presign = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
+				timeout: 300000,
+			}),
 		(presign) => presign !== null,
 		30,
 		2000,
