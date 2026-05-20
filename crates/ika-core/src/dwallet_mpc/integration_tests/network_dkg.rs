@@ -7,6 +7,7 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataSenders;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_network_dkg_event_to_all_parties,
@@ -256,4 +257,125 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
             epoch_id,
         ));
     });
+}
+
+/// Like [`create_network_key_test`] but additionally runs a network reconfiguration
+/// (to the **same** committee at the next epoch) and installs the resulting **V3
+/// reconfiguration output** on every validator's network key.
+///
+/// Fast Schnorr (VSS) sign requires a reconfigured key: the DKG-only public output
+/// does not expose the per-curve secret-key polynomial commitments / masked parts
+/// the VSS sign reads, and each validator recovers its Shamir share from the
+/// reconfiguration dealings using its own (seed-derived, hence committee-stable)
+/// PVSS key — so reconfiguring to the *same* committee keeps those shares
+/// recoverable by the signing validators.
+///
+/// Returns `(next_unused_consensus_round, network_dkg_public_output_bytes, network_key_id)`.
+pub(crate) async fn create_reconfigured_network_key_test(
+    test_state: &mut IntegrationTestState,
+) -> (Round, Vec<u8>, ObjectID) {
+    let (consensus_round, network_key_bytes, key_id) = create_network_key_test(test_state).await;
+
+    let epoch_id = test_state
+        .dwallet_mpc_services
+        .first()
+        .expect("at least one service should exist")
+        .epoch;
+
+    // Reconfigure to the same validators at the next epoch. Use the services'
+    // key-bearing committee, NOT `test_state.committee` (the simple/keyless
+    // committee used only for message routing): reconfiguration decodes the
+    // upcoming committee members' published class-groups + PVSS key bundles, which
+    // only the key-bearing committee carries. Same validators ⇒ the signing
+    // validators can still recover their Shamir shares from the reconfig dealings.
+    let mut next_committee = (*test_state.dwallet_mpc_services[0].committee).clone();
+    next_committee.epoch = epoch_id + 1;
+    for sui_data_sender in &test_state.sui_data_senders {
+        let _ = sui_data_sender
+            .next_epoch_committee_sender
+            .send(next_committee.clone());
+    }
+
+    send_start_network_key_reconfiguration_event(
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [7u8; 32],
+        7,
+        key_id,
+    );
+
+    let (consensus_round, reconfiguration_checkpoint) =
+        utils::advance_mpc_flow_until_completion(test_state, consensus_round).await;
+
+    // Reassemble the (chunked) reconfiguration public output across all
+    // `RespondDWalletMPCNetworkReconfigurationOutput` messages. These bytes are
+    // already `bcs(VersionedDecryptionKeyReconfigurationOutput::V3(..))`, so they go
+    // into `current_reconfiguration_public_output` verbatim.
+    let mut reconfiguration_output_bytes = vec![];
+    for message in reconfiguration_checkpoint.messages() {
+        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
+            message
+        else {
+            continue;
+        };
+        assert!(!message.rejected, "reconfiguration should not be rejected");
+        reconfiguration_output_bytes.extend(message.public_output.clone());
+    }
+    assert!(
+        !reconfiguration_output_bytes.is_empty(),
+        "reconfiguration output should not be empty"
+    );
+
+    // Install the V3 reconfiguration output on every validator's network key.
+    // `create_network_key_test` installed the key with an EMPTY reconfiguration
+    // output (DKG-only public data, which VSS sign rejects). The consensus
+    // status-vote path cannot carry this update: it dedups already-agreed keys
+    // (`handle_network_key_data_messages`) and already-loaded keys
+    // (`instantiate_agreed_keys_from_voted_data`). In production the reconfigured key
+    // is loaded fresh by the next-epoch manager; here we update each manager's key in
+    // place via the same path the installer uses (`update_network_key`).
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        let manager = service.dwallet_mpc_manager_mut();
+        let access_structure = manager.access_structure.clone();
+        let reconfigured_key_data = DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: epoch_id,
+            dkg_at_epoch: 1,
+            current_reconfiguration_public_output: reconfiguration_output_bytes.clone(),
+            network_dkg_public_output: network_key_bytes.clone(),
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        };
+        let reconfigured_key =
+            instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
+                epoch_id,
+                access_structure.clone(),
+                reconfigured_key_data,
+            )
+            .await
+            .expect("instantiate reconfigured network key public data");
+        manager
+            .network_keys
+            .update_network_key(key_id, &reconfigured_key, &access_structure)
+            .await
+            .expect("update validator network key with reconfiguration output");
+    }
+
+    // Verify every validator now exposes a reconfiguration output on the key.
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        let public_data = service
+            .dwallet_mpc_manager()
+            .network_keys
+            .get_network_encryption_key_public_data(&key_id)
+            .unwrap_or_else(|e| {
+                panic!("validator {i} should have the reconfigured network key installed: {e:?}")
+            });
+        assert!(
+            public_data
+                .latest_network_reconfiguration_public_output()
+                .is_some(),
+            "validator {i} should expose a reconfiguration output after reconfiguration",
+        );
+    }
+
+    (consensus_round, network_key_bytes, key_id)
 }

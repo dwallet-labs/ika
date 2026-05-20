@@ -13,7 +13,9 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::NetworkOwnedAddressSignRequest;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::network_owned_address_sign_dkg_session_identifier;
-use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
+use crate::dwallet_mpc::integration_tests::network_dkg::{
+    create_network_key_test, create_reconfigured_network_key_test,
+};
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, build_test_state, create_test_protocol_config_guard,
@@ -557,4 +559,154 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
     info!(
         "Test passed: presign pool exhaustion correctly buffers and later processes excess requests"
     );
+}
+
+// === Fast Schnorr (VSS) NOA sign E2E tests ===
+
+/// End-to-end NOA sign for a Fast Schnorr (VSS) algorithm.
+///
+/// Same shape as [`network_owned_address_sign_flow`], but on a **reconfigured**
+/// network key (VSS sign reads the per-curve secret-key polynomial commitments from
+/// the reconfiguration output and recovers each validator's Shamir share from the
+/// reconfiguration dealings). The NOA DKG emulation yields a `UniversalPublicDKGOutput`
+/// with `X_A = identity`, so the VSS sign's `ToBeEmulated` (emulated centralized
+/// party) path applies — exactly as for AHE NOA sign.
+async fn network_owned_address_vss_sign_flow(
+    curve: DWalletCurve,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    hash_scheme: DWalletHashScheme,
+) {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+
+    let mut test_state = build_test_state(4);
+
+    // VSS sign requires a reconfigured network key.
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_reconfigured_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    info!(
+        ?curve,
+        ?signature_algorithm,
+        ?hash_scheme,
+        "Fast Schnorr (VSS) network-owned-address signing test"
+    );
+
+    // Wait for the internal VSS presign pool to populate.
+    let start_round = test_state.consensus_round as u64;
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        signature_algorithm,
+        network_key_id,
+        start_round,
+    )
+    .await;
+    test_state.consensus_round = consensus_round as usize;
+
+    let pool_size_before = test_state.epoch_stores[0]
+        .presign_pool_size(signature_algorithm, network_key_id)
+        .expect("failed to get pool size");
+    assert!(
+        pool_size_before > 0,
+        "VSS presign pool should have at least one presign"
+    );
+    let presign_session_identifiers_before: HashSet<SessionIdentifier> = test_state.epoch_stores[0]
+        .presign_pools
+        .lock()
+        .unwrap()
+        .get(&(signature_algorithm, network_key_id))
+        .map(|pool| pool.iter().map(|(id, _)| *id).collect())
+        .unwrap_or_default();
+
+    // Send a NetworkOwnedAddressSignRequest to all validators.
+    let test_message = b"test message for network-owned-address VSS sign".to_vec();
+    for sender in &test_state.network_owned_address_sign_request_senders {
+        sender
+            .send(NetworkOwnedAddressSignRequest {
+                message: test_message.clone(),
+                curve,
+                signature_algorithm,
+                hash_scheme,
+            })
+            .await
+            .expect("failed to send network-owned-address VSS sign request");
+    }
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+
+    let sign_output = wait_for_network_owned_address_sign_output(&mut test_state).await;
+    assert_eq!(
+        sign_output.message, test_message,
+        "output message should match request"
+    );
+    assert!(
+        !sign_output.signature.is_empty(),
+        "VSS signature should not be empty"
+    );
+    info!(
+        ?sign_output.session_identifier,
+        signature_len = sign_output.signature.len(),
+        "Received NetworkOwnedAddressSignOutput for VSS"
+    );
+
+    // Verify exactly one presign from the pre-sign snapshot was consumed.
+    let used_presigns = test_state.epoch_stores[0]
+        .used_presigns
+        .lock()
+        .unwrap()
+        .clone();
+    let consumed_from_snapshot: HashSet<_> = presign_session_identifiers_before
+        .iter()
+        .filter(|id| {
+            used_presigns
+                .get(id)
+                .is_some_and(|(used_count, _)| *used_count > 0)
+        })
+        .collect();
+    assert_eq!(
+        consumed_from_snapshot.len(),
+        1,
+        "exactly one VSS presign from the pre-sign pool snapshot should have been consumed"
+    );
+
+    info!(
+        ?curve,
+        ?signature_algorithm,
+        "Fast Schnorr (VSS) network-owned-address sign E2E test completed"
+    );
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_taproot_vss() {
+    network_owned_address_vss_sign_flow(
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::TaprootVSS,
+        DWalletHashScheme::SHA256,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_eddsa_vss() {
+    network_owned_address_vss_sign_flow(
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSAVSS,
+        DWalletHashScheme::SHA512,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_owned_address_sign_schnorrkel_substrate_vss() {
+    network_owned_address_vss_sign_flow(
+        DWalletCurve::Ristretto,
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS,
+        DWalletHashScheme::Merlin,
+    )
+    .await;
 }
