@@ -1,15 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import {
-	createPublicClient,
-	http,
-	type Chain,
-	type Hex,
-	type PublicClient,
-	type Transport,
-} from 'viem';
 import type { PublisherPlugin } from '@ika.xyz/sdk/plugin';
+import { createPublicClient, http } from 'viem';
+import type { Chain, Hex, PublicClient, Transport } from 'viem';
 
 import type { EthereumPublishablePayload } from '../destination/types.js';
 

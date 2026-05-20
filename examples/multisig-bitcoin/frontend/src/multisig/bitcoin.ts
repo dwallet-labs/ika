@@ -13,11 +13,13 @@ import {
 	type BitcoinNetwork as PluginBitcoinNetwork,
 } from '@ika.xyz/plugins/bitcoin/publisher';
 import {
+	assembleSign as btcAssembleSign,
 	buildBip341Preimage,
 	buildCheckSigScript,
 	buildP2trScriptPath,
 	computeTapLeafHash,
 	toXOnlyPubkey,
+	type BitcoinPsbtPrep,
 } from '@ika.xyz/plugins/bitcoin/destination';
 import { bcs } from '@mysten/sui/bcs';
 import { SuiClient } from '@mysten/sui/client';
@@ -278,23 +280,41 @@ export class MultisigBitcoinWallet {
 	}
 
 	/**
-	 * Apply the network's BIP-340 Schnorr signature to the PSBT input as a
-	 * `tapScriptSig` (NOT `tapKeySig` — we're script-path spending), finalize,
-	 * and return the signed tx hex.
+	 * Apply the network's BIP-340 Schnorr signature to the PSBT input and
+	 * return the signed tx hex. Delegates to the bitcoin destination
+	 * plugin's `assembleSign`, which knows how to wire the signature as a
+	 * `tapScriptSig` (NOT `tapKeySig` — we're script-path spending), call
+	 * `finalizeInput`, and extract the broadcast-ready tx. The assemble
+	 * context is reconstructed here from the multisig's locally-cached
+	 * p2tr bundle because the multisig flow splits prepare-time and
+	 * execute-time across separate sessions / tabs / users.
 	 */
-	finalizeTransaction(psbt: bitcoin.Psbt, signature: Uint8Array, inputIndex: number): string {
-		psbt
-			.updateInput(inputIndex, {
-				tapScriptSig: [
-					{
-						pubkey: Buffer.from(this.xOnlyPubkey),
-						signature: Buffer.from(signature),
-						leafHash: this.tapLeafHash,
-					},
-				],
-			})
-			.finalizeAllInputs();
-		return psbt.extractTransaction().toHex();
+	async finalizeTransaction(
+		psbt: bitcoin.Psbt,
+		signature: Uint8Array,
+		inputIndex: number,
+	): Promise<string> {
+		const prep: BitcoinPsbtPrep = {
+			kind: 'psbt',
+			mode: 'p2tr-script',
+			network: this.bitcoinNetwork as PluginBitcoinNetwork,
+			sender: this.address,
+			psbt,
+			inputIndex,
+			hashType: bitcoin.Transaction.SIGHASH_DEFAULT,
+			compressedPubkey: this.publicKey,
+			p2trBundle: {
+				kind: 'p2tr-script',
+				address: this.address,
+				redeem: this.redeem,
+				scriptTree: { output: this.redeem.output },
+				payment: this.p2tr,
+				internalPubkey: this.p2tr.internalPubkey as Buffer,
+			},
+		};
+		const signed = await btcAssembleSign(prep, signature);
+		if (signed.payload.kind !== 'psbt') throw new Error('unreachable: psbt prep');
+		return signed.payload.signedTxHex;
 	}
 
 	/** Broadcast a finalized signed tx hex via the plugin's Esplora publisher. */

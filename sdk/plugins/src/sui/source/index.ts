@@ -9,6 +9,22 @@ export type { AcceptEncryptedShareInput } from './dkg.js';
 export type { ComposeSignArgs } from './sign.js';
 export type { SubmitDKGArgs, SubmitSignArgs } from './submit.js';
 export { isEd25519Keypair } from './types.js';
+export { prepareSign } from './prepare.js';
+export type { PrepareSignInput, PrepareSignOutput } from './prepare.js';
+export {
+	completeFutureSign,
+	composeCompleteFutureSign,
+	composeRequestFutureSign,
+	requestFutureSign,
+} from './future-sign.js';
+export type {
+	CompleteFutureSignInput,
+	CompleteFutureSignOutput,
+	ComposeCompleteFutureSignArgs,
+	ComposeFutureSignArgs,
+	RequestFutureSignInput,
+	RequestFutureSignOutput,
+} from './future-sign.js';
 export type {
 	CreateDWalletInput,
 	PrepareDKGInput,

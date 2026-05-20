@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 export { btc } from './plugin.js';
-export type {
-	BitcoinDestinationClientExtend,
-	BitcoinDestinationDWalletExtend,
-} from './plugin.js';
+export type { BitcoinDestinationClientExtend, BitcoinDestinationDWalletExtend } from './plugin.js';
 export type {
 	BitcoinAddressOptions,
 	BitcoinMode,
 	BitcoinNetwork,
 	BitcoinPreimagePayload,
+	BitcoinPreimagePrep,
+	BitcoinPrepareSignArgs,
+	BitcoinPrepareSignResult,
 	BitcoinPsbtPayload,
+	BitcoinPsbtPrep,
 	BitcoinPublishablePayload,
 	BitcoinPublishableTx,
 	BitcoinSignArgs,
@@ -19,8 +20,11 @@ export type {
 	BitcoinSignedTx,
 	BitcoinSignInput,
 	BitcoinSignOverrides,
+	BitcoinSignPlan,
+	BitcoinSignPrep,
 	BitcoinSupportedCurve,
 } from './types.js';
+export { prepareSign, assembleSign } from './sign.js';
 export {
 	createBitcoinAddressCache,
 	deriveBitcoinAddress,
@@ -34,11 +38,7 @@ export {
 	type BitcoinAddressCache,
 	type P2trBundle,
 } from './address.js';
-export {
-	buildLegacyPreimage,
-	p2pkhScript,
-	type LegacyPreimageArgs,
-} from './preimage/legacy.js';
+export { buildLegacyPreimage, p2pkhScript, type LegacyPreimageArgs } from './preimage/legacy.js';
 export {
 	buildBip143Preimage,
 	p2wpkhScriptCode,
@@ -48,8 +48,4 @@ export {
 	SIGHASH_SINGLE,
 	SIGHASH_ANYONECANPAY,
 } from './preimage/bip143.js';
-export {
-	buildBip341Preimage,
-	computeTapLeafHash,
-	type Bip341Args,
-} from './preimage/bip341.js';
+export { buildBip341Preimage, computeTapLeafHash, type Bip341Args } from './preimage/bip341.js';

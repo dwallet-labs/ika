@@ -18,12 +18,8 @@
 
 import * as bitcoin from 'bitcoinjs-lib';
 
+import { SIGHASH_ANYONECANPAY, SIGHASH_NONE, SIGHASH_SINGLE } from './bip143.js';
 import { BufferWriter } from './writer.js';
-import {
-	SIGHASH_ANYONECANPAY,
-	SIGHASH_NONE,
-	SIGHASH_SINGLE,
-} from './bip143.js';
 
 const { OPS, decompile, compile } = bitcoin.script;
 
@@ -51,7 +47,8 @@ export interface LegacyPreimageArgs {
  */
 export function buildLegacyPreimage(
 	args: LegacyPreimageArgs,
-): { readonly preimage: Uint8Array; readonly digest?: undefined }
+):
+	| { readonly preimage: Uint8Array; readonly digest?: undefined }
 	| { readonly preimage?: undefined; readonly digest: Uint8Array } {
 	const { tx, inputIndex, prevOutScript, hashType } = args;
 	if (inputIndex >= tx.ins.length) {
@@ -134,4 +131,3 @@ export function p2pkhScript(pubkeyHash160: Uint8Array): Uint8Array {
 	out[24] = 0xac;
 	return out;
 }
-

@@ -1,8 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Connection, type Commitment, type SendOptions } from '@solana/web3.js';
 import type { PublisherPlugin } from '@ika.xyz/sdk/plugin';
+import { Connection } from '@solana/web3.js';
+import type { Commitment, SendOptions } from '@solana/web3.js';
 
 import type { SolanaPublishablePayload } from '../destination/types.js';
 
@@ -105,9 +106,8 @@ async function confirmWithBlockhashExpiry(
 	signal: AbortSignal | undefined,
 ): Promise<void> {
 	const POLL_INTERVAL_MS = 500;
-	const wantedStatuses: ReadonlyArray<string> = commitment === 'finalized'
-		? ['finalized']
-		: ['confirmed', 'finalized'];
+	const wantedStatuses: ReadonlyArray<string> =
+		commitment === 'finalized' ? ['finalized'] : ['confirmed', 'finalized'];
 	const deadline = Date.now() + timeoutMs;
 	while (true) {
 		if (signal?.aborted) {

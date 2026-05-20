@@ -320,7 +320,7 @@ export const useMultisigFunctions = () => {
 
 		invariant(psbt, 'PSBT not found');
 
-		const finalizedTransaction = multisig.finalizeTransaction(
+		const finalizedTransaction = await multisig.finalizeTransaction(
 			bitcoin.Psbt.fromBuffer(psbt),
 			Buffer.from(sign.state.Completed.signature),
 			0,
@@ -609,7 +609,7 @@ export const useMultisigFunctions = () => {
 
 		invariant(psbt, 'PSBT not found');
 
-		const finalizedTransaction = multisig.finalizeTransaction(
+		const finalizedTransaction = await multisig.finalizeTransaction(
 			bitcoin.Psbt.fromBuffer(psbt),
 			Buffer.from(sign.state.Completed.signature),
 			0,

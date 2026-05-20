@@ -1,14 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { PublicKey } from '@solana/web3.js';
 import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
+import { PublicKey } from '@solana/web3.js';
 
-import {
-	bytesToHexLower,
-	createCoalescingCache,
-	type CoalescingCache,
-} from '../../internal/cache.js';
+import { bytesToHexLower, createCoalescingCache } from '../../internal/cache.js';
+import type { CoalescingCache } from '../../internal/cache.js';
 
 /**
  * Length check on the dWallet `publicOutput` before WASM derivation. Catches

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 export { eth } from './plugin.js';
-export { assembleEthereumPayload } from './sign.js';
+export { assembleEthereumPayload, assembleSign, prepareSign } from './sign.js';
 export type {
 	EthereumDestinationClientExtend,
 	EthereumDestinationDWalletExtend,
 } from './plugin.js';
 export type {
+	EthereumPrepareSignArgs,
+	EthereumPrepareSignResult,
 	EthereumPublishablePayload,
 	EthereumPublishableTx,
 	EthereumSignArgs,
@@ -15,6 +17,8 @@ export type {
 	EthereumSignedTx,
 	EthereumSignInput,
 	EthereumSignOverrides,
+	EthereumSignPlan,
+	EthereumSignPrep,
 	EthereumSupportedCurve,
 } from './types.js';
 export {

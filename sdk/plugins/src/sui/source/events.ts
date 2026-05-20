@@ -30,10 +30,7 @@ export const parseDkgEvent = (ev: EventLike) =>
 	);
 
 export const parsePresignEvent = (ev: EventLike) =>
-	parse(
-		SessionsManagerModule.DWalletSessionEvent(CoordinatorInnerModule.PresignRequestEvent),
-		ev,
-	);
+	parse(SessionsManagerModule.DWalletSessionEvent(CoordinatorInnerModule.PresignRequestEvent), ev);
 
 export const parseSignEvent = (ev: EventLike) =>
 	parse(SessionsManagerModule.DWalletSessionEvent(CoordinatorInnerModule.SignRequestEvent), ev);
@@ -43,5 +40,11 @@ export const parseImportedKeyEvent = (ev: EventLike) =>
 		SessionsManagerModule.DWalletSessionEvent(
 			CoordinatorInnerModule.DWalletImportedKeyVerificationRequestEvent,
 		),
+		ev,
+	);
+
+export const parseFutureSignEvent = (ev: EventLike) =>
+	parse(
+		SessionsManagerModule.DWalletSessionEvent(CoordinatorInnerModule.FutureSignRequestEvent),
 		ev,
 	);

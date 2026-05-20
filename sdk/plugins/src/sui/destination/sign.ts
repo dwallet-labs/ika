@@ -1,14 +1,21 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 import { messageWithIntent } from '@mysten/sui/cryptography';
 import { toBase64 } from '@mysten/sui/utils';
 import { blake2b } from '@noble/hashes/blake2.js';
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
-import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 
-import { SUI_SCHEME_FLAG, type SuiAddressCache } from './address.js';
-import type { SuiSignedTx, SuiSignInput } from './types.js';
+import { SUI_SCHEME_FLAG } from './address.js';
+import type { SuiAddressCache } from './address.js';
+import type {
+	SuiPrepareSignResult,
+	SuiSignedTx,
+	SuiSignInput,
+	SuiSignPrep,
+	SuiSupportedCurve,
+} from './types.js';
 
 /** Sui uses one (sigAlgo, hash) tuple per scheme. Callers do not pick this. */
 export function signatureAlgorithmForCurve(curve: Curve): SignatureAlgorithm {
@@ -55,19 +62,21 @@ function encodeSuiSerializedSignature(
 }
 
 /**
- * Build the bytes-to-sign, request a signature from the active source, and pack
- * the result into a Sui serialized signature. Accepts the abstract `DWallet`
- * so the destination works against any source plugin.
+ * Build the intent-wrapped payload bytes + 32-byte blake2b digest WITHOUT
+ * submitting anything on chain. Returns `{ prep, preimage, plan }`:
+ * `prep` for `assembleSign`, `preimage` + `plan` for the Move flow that
+ * gates the actual `request_sign` call.
+ *
+ * For `kind: 'transaction'`, requires a `suiClient` so the transaction can
+ * be BCS-encoded (`tx.build({ client })`). The result is wrapped with
+ * `messageWithIntent('TransactionData', ...)`. For `kind: 'message'` the
+ * scope is `PersonalMessage`.
  */
-export async function signCore(
-	ctx: IkaContext,
+export async function prepareSign(
 	dWallet: DWallet,
 	input: SuiSignInput,
 	cache: SuiAddressCache,
-): Promise<SuiSignedTx> {
-	if (!ctx.source) {
-		throw new Error('sui destination: no source plugin registered');
-	}
+): Promise<SuiPrepareSignResult> {
 	const flag = SUI_SCHEME_FLAG[dWallet.curve];
 	if (flag === undefined || flag === 0xff) {
 		throw new Error(
@@ -75,7 +84,6 @@ export async function signCore(
 				`Supported: ED25519, SECP256K1, SECP256R1.`,
 		);
 	}
-
 	const bytes =
 		input.kind === 'transaction'
 			? await input.tx.build({ client: input.suiClient })
@@ -86,16 +94,75 @@ export async function signCore(
 	const intentMessage = messageWithIntent(scope, bytes);
 	const digest = blake2b(intentMessage, { dkLen: 32 });
 
+	const publicKey = await cache.publicKey(dWallet.curve, dWallet.publicOutput);
+	const sender = await cache.suiAddress(dWallet.curve, dWallet.publicOutput);
+
+	return {
+		prep: {
+			bytes,
+			sender,
+			curve: dWallet.curve as SuiSupportedCurve,
+			publicKey,
+		},
+		preimage: digest,
+		plan: {
+			curve: dWallet.curve,
+			signatureAlgorithm: signatureAlgorithmForCurve(dWallet.curve),
+			hash: hashForCurve(dWallet.curve),
+		},
+	};
+}
+
+/**
+ * Wrap the network's raw signature into Sui's serialized-signature byte
+ * string (`[scheme_flag][signature][publicKey]`, base64) and return the
+ * publishable payload. The bytes in the payload are the intent-wrapped
+ * inner payload (transaction data or personal message), which the
+ * publisher submits via `executeTransaction`.
+ */
+export async function assembleSign(prep: SuiSignPrep, signature: Uint8Array): Promise<SuiSignedTx> {
+	const flag = SUI_SCHEME_FLAG[prep.curve];
+	if (flag === undefined || flag === 0xff) {
+		throw new Error(
+			`sui destination does not support curve ${prep.curve}. ` +
+				`Supported: ED25519, SECP256K1, SECP256R1.`,
+		);
+	}
+	const serialized = encodeSuiSerializedSignature(flag, signature, prep.publicKey);
+	return {
+		chain: 'sui',
+		payload: { bytes: prep.bytes, signature: serialized, sender: prep.sender },
+	};
+}
+
+/**
+ * Build the bytes-to-sign, request a signature from the active source, and pack
+ * the result into a Sui serialized signature. Accepts the abstract `DWallet`
+ * so the destination works against any source plugin.
+ *
+ * Equivalent to `prepareSign` → `ctx.source.signMessage` → `assembleSign`.
+ */
+export async function signCore(
+	ctx: IkaContext,
+	dWallet: DWallet,
+	input: SuiSignInput,
+	cache: SuiAddressCache,
+): Promise<SuiSignedTx> {
+	if (!ctx.source) {
+		throw new Error('sui destination: no source plugin registered');
+	}
+	const { prep, preimage, plan } = await prepareSign(dWallet, input, cache);
+
 	// Forward source-specific overrides. They are typed on `SuiSignInput` but
 	// flow through `ctx.source.signMessage`, which names only the base shape;
 	// the cast is required. The Sui source reads these fields; non-Sui sources
 	// ignore unknown fields by contract.
 	const result = await ctx.source.signMessage({
 		dWallet,
-		message: digest,
-		curve: dWallet.curve,
-		signatureAlgorithm: signatureAlgorithmForCurve(dWallet.curve),
-		hash: hashForCurve(dWallet.curve),
+		message: preimage,
+		curve: plan.curve,
+		signatureAlgorithm: plan.signatureAlgorithm,
+		hash: plan.hash,
 		...(input.userShareEncryptionKeys
 			? { userShareEncryptionKeys: input.userShareEncryptionKeys }
 			: {}),
@@ -108,12 +175,5 @@ export async function signCore(
 			: {}),
 	} as Parameters<typeof ctx.source.signMessage>[0]);
 
-	// publicKey and suiAddress are served from the per-instance cache. Both
-	// depend on the same derivation, so repeated signs with this dWallet cost
-	// one WASM call plus one blake2b after the first miss.
-	const publicKey = await cache.publicKey(dWallet.curve, dWallet.publicOutput);
-	const signature = encodeSuiSerializedSignature(flag, result.signature, publicKey);
-	const sender = await cache.suiAddress(dWallet.curve, dWallet.publicOutput);
-
-	return { chain: 'sui', payload: { bytes, signature, sender } };
+	return assembleSign(prep, result.signature);
 }

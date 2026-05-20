@@ -16,16 +16,11 @@
 import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import * as bitcoin from 'bitcoinjs-lib';
 
+import { buildCheckSigScript, hash160, toXOnlyPubkey } from './address.js';
+import type { BitcoinMode, P2trBundle } from './address.js';
 import { buildBip143Preimage, p2wpkhScriptCode } from './preimage/bip143.js';
-import { buildLegacyPreimage } from './preimage/legacy.js';
 import { buildBip341Preimage, computeTapLeafHash } from './preimage/bip341.js';
-import {
-	buildCheckSigScript,
-	hash160,
-	toXOnlyPubkey,
-	type BitcoinMode,
-	type P2trBundle,
-} from './address.js';
+import { buildLegacyPreimage } from './preimage/legacy.js';
 
 export interface ModeSignaturePlan {
 	readonly signatureAlgorithm: SignatureAlgorithm;
@@ -267,8 +262,8 @@ const p2trScriptHandler: BitcoinModeHandler = {
 };
 
 const HANDLERS: Record<BitcoinMode, BitcoinModeHandler> = {
-	'p2pkh': p2pkhHandler,
-	'p2wpkh': p2wpkhHandler,
+	p2pkh: p2pkhHandler,
+	p2wpkh: p2wpkhHandler,
 	'p2sh-p2wpkh': p2shP2wpkhHandler,
 	'p2tr-script': p2trScriptHandler,
 };

@@ -1,16 +1,19 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { Hex } from 'viem';
 import { Curve } from '@ika.xyz/sdk';
 import type { DestinationPlugin, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import type { Hex } from 'viem';
 
 import { createEthereumAddressCache } from './address.js';
-import { signCore } from './sign.js';
+import { assembleSign, prepareSign, signCore } from './sign.js';
 import type {
+	EthereumPrepareSignArgs,
+	EthereumPrepareSignResult,
 	EthereumSignArgs,
 	EthereumSignedTx,
 	EthereumSignInput,
+	EthereumSignPrep,
 	EthereumSupportedCurve,
 } from './types.js';
 
@@ -24,6 +27,15 @@ export interface EthereumDestinationClientExtend {
 		/** Flat-args sign: `ika.ethereum.sign({ dWallet, kind: 'transaction', tx })`. */
 		sign(args: EthereumSignArgs): Promise<EthereumSignedTx>;
 		getAddress(dWallet: DWallet<EthereumSupportedCurve>): Promise<Hex>;
+		/**
+		 * Build the pre-keccak bytes + digest WITHOUT submitting anything on
+		 * chain. Pair with `assembleSign` once a network signature is in hand.
+		 * See the bitcoin destination's docs for the typical "hand-off to a
+		 * custom Move contract" flow — the shape is the same across destinations.
+		 */
+		prepareSign(args: EthereumPrepareSignArgs): Promise<EthereumPrepareSignResult>;
+		/** Apply a 64-byte (r||s) network signature to a previously prepared payload. */
+		assembleSign(prep: EthereumSignPrep, signature: Uint8Array): Promise<EthereumSignedTx>;
 	};
 }
 
@@ -36,6 +48,10 @@ export interface EthereumDestinationDWalletExtend {
 	readonly ethereum: {
 		getAddress(): Promise<Hex>;
 		sign(input: EthereumSignInput): Promise<EthereumSignedTx>;
+		/** See {@link EthereumDestinationClientExtend.ethereum.prepareSign}. */
+		prepareSign(input: EthereumSignInput): Promise<EthereumPrepareSignResult>;
+		/** See {@link EthereumDestinationClientExtend.ethereum.assembleSign}. */
+		assembleSign(prep: EthereumSignPrep, signature: Uint8Array): Promise<EthereumSignedTx>;
 	};
 }
 
@@ -66,6 +82,9 @@ export function eth(): DestinationPlugin<
 			sign: async ({ dWallet, ...input }) =>
 				signCore(requireCtx(ctx), dWallet, input as EthereumSignInput, cache),
 			getAddress: async (dWallet) => cache.address(dWallet.curve, dWallet.publicOutput),
+			prepareSign: async ({ dWallet, ...input }) =>
+				prepareSign(dWallet, input as EthereumSignInput, cache),
+			assembleSign: assembleSign,
 		},
 	};
 
@@ -78,6 +97,8 @@ export function eth(): DestinationPlugin<
 			ethereum: {
 				getAddress: () => cache.address(dWallet.curve, dWallet.publicOutput),
 				sign: (input) => signCore(requireCtx(ctx), dWallet, input, cache),
+				prepareSign: (input) => prepareSign(dWallet, input, cache),
+				assembleSign: assembleSign,
 			},
 		}),
 		install(installCtx) {

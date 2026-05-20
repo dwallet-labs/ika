@@ -1,20 +1,13 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { IkaTransaction } from '@ika.xyz/sdk';
+import type { IkaClient as CoreIkaClient, Presign } from '@ika.xyz/sdk';
 import { Transaction } from '@mysten/sui/transactions';
-import {
-	type IkaClient as CoreIkaClient,
-	IkaTransaction,
-	type Presign,
-} from '@ika.xyz/sdk';
 
 import { findEvent, parsePresignEvent } from './events.js';
 import type { makeExec, makePay } from './execute.js';
-import type {
-	RequestGlobalPresignInput,
-	RequestPresignInput,
-	SuiSourceDefaults,
-} from './types.js';
+import type { RequestGlobalPresignInput, RequestPresignInput, SuiSourceDefaults } from './types.js';
 
 export interface PresignCtx {
 	readonly defaults: SuiSourceDefaults;
@@ -24,7 +17,10 @@ export interface PresignCtx {
 }
 
 /** Per-dWallet presign. Required for imported-key ECDSA; otherwise prefer `requestGlobalPresign`. */
-export async function requestPresign(ctx: PresignCtx, input: RequestPresignInput): Promise<Presign> {
+export async function requestPresign(
+	ctx: PresignCtx,
+	input: RequestPresignInput,
+): Promise<Presign> {
 	const tx = new Transaction();
 	tx.setSender(ctx.defaults.signerAddress);
 	const p = ctx.pay(tx);
@@ -55,8 +51,7 @@ export async function requestGlobalPresign(
 	input: RequestGlobalPresignInput,
 ): Promise<Presign> {
 	const netKeyId =
-		input.networkEncryptionKeyId ??
-		(await ctx.ikaClient.getLatestNetworkEncryptionKey()).id;
+		input.networkEncryptionKeyId ?? (await ctx.ikaClient.getLatestNetworkEncryptionKey()).id;
 
 	const tx = new Transaction();
 	tx.setSender(ctx.defaults.signerAddress);
@@ -102,8 +97,7 @@ export async function presignForSign(
 		args.dWallet.kind === 'imported-key' || args.dWallet.kind === 'imported-key-shared';
 	const needsPerDWallet =
 		isImported &&
-		(args.signatureAlgorithm === 'ECDSASecp256k1' ||
-			args.signatureAlgorithm === 'ECDSASecp256r1');
+		(args.signatureAlgorithm === 'ECDSASecp256k1' || args.signatureAlgorithm === 'ECDSASecp256r1');
 	if (needsPerDWallet) {
 		return requestPresign(ctx, {
 			dWallet: args.dWallet,

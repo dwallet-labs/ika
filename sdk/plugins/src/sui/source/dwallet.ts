@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 import type { Curve, DWallet as RawDWallet } from '@ika.xyz/sdk';
-import { DWallet, type DWalletKind } from '@ika.xyz/sdk/plugin';
+import { DWallet } from '@ika.xyz/sdk/plugin';
+import type { DWalletKind } from '@ika.xyz/sdk/plugin';
 
 /**
  * Sui-source dWallet handle. Holds the BCS-decoded Move object on `raw`

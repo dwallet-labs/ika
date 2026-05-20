@@ -23,7 +23,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
-import * as bitcoin from 'bitcoinjs-lib';
+import type * as bitcoin from 'bitcoinjs-lib';
 
 import { BufferWriter, varSliceSize } from './writer.js';
 

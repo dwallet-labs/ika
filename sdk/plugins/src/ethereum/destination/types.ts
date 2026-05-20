@@ -1,10 +1,17 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import type { Hex, TransactionSerializable, TypedDataDefinition } from 'viem';
-import type { TransactionObjectArgument } from '@mysten/sui/transactions';
-import type { IkaTransaction, Presign, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import type {
+	Curve,
+	Hash,
+	IkaTransaction,
+	Presign,
+	SignatureAlgorithm,
+	UserShareEncryptionKeys,
+} from '@ika.xyz/sdk';
 import type { DWallet, SignedTx } from '@ika.xyz/sdk/plugin';
+import type { TransactionObjectArgument } from '@mysten/sui/transactions';
+import type { Hex, TransactionSerializable, TypedDataDefinition } from 'viem';
 
 /** Ethereum addresses come from secp256k1 only. */
 export type EthereumSupportedCurve = 'SECP256K1';
@@ -21,10 +28,7 @@ export interface EthereumSignOverrides {
 	/** dWalletCap object id override (transferred cap, multisig-held cap, etc.). */
 	readonly dWalletCap?: string;
 	/** Custom message-approval builder for sponsored or multisig approval flows. */
-	readonly buildApproval?: (
-		ikaTx: IkaTransaction,
-		defaultCap: string,
-	) => TransactionObjectArgument;
+	readonly buildApproval?: (ikaTx: IkaTransaction, defaultCap: string) => TransactionObjectArgument;
 	/** Custom presign-cap verifier builder for pre-verified caps from upstream flows. */
 	readonly buildVerifiedPresignCap?: (
 		ikaTx: IkaTransaction,
@@ -78,5 +82,47 @@ export type EthereumPublishableTx = SignedTx<'ethereum', EthereumPublishablePayl
  * narrowed to secp256k1; passing any other curve is a compile-time error.
  */
 export type EthereumSignArgs = EthereumSignInput & {
+	readonly dWallet: DWallet<EthereumSupportedCurve>;
+};
+
+/**
+ * The (curve, signatureAlgorithm, hash) triple the MPC will use. Ethereum
+ * always uses `(SECP256K1, ECDSASecp256k1, KECCAK256)` regardless of which
+ * sign mode; the plan field exists so the prepare/assemble shape is
+ * symmetric with the other destinations.
+ */
+export interface EthereumSignPlan {
+	readonly curve: Curve;
+	readonly signatureAlgorithm: SignatureAlgorithm;
+	readonly hash: Hash;
+}
+
+/**
+ * Assemble context for an Ethereum sign — what `assembleSign` needs to
+ * resolve yParity (via `digest` + `sender`) and serialize the signed
+ * payload (via `input` for `tx` / `message` / `typedData`). No `preimage`
+ * or `plan` here; those live in {@link EthereumPrepareSignResult}.
+ */
+export interface EthereumSignPrep {
+	readonly digest: Hex;
+	readonly sender: Hex;
+	readonly input: EthereumSignInput;
+}
+
+/**
+ * Return shape of `prepareSign`: assemble context plus the handoff data
+ * (`preimage`, `plan`) for the Move flow that gates the actual
+ * `request_sign` call.
+ */
+export interface EthereumPrepareSignResult {
+	/** Assemble context to pass to `assembleSign(prep, signature)`. */
+	readonly prep: EthereumSignPrep;
+	/** Pre-keccak bytes the MPC hashes-then-signs. */
+	readonly preimage: Uint8Array;
+	/** (curve, signatureAlgorithm, hash) the MPC will use. */
+	readonly plan: EthereumSignPlan;
+}
+
+export type EthereumPrepareSignArgs = EthereumSignInput & {
 	readonly dWallet: DWallet<EthereumSupportedCurve>;
 };

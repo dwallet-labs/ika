@@ -21,14 +21,10 @@
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
-import * as bitcoin from 'bitcoinjs-lib';
+import type * as bitcoin from 'bitcoinjs-lib';
 
+import { SIGHASH_ANYONECANPAY, SIGHASH_NONE, SIGHASH_SINGLE } from './bip143.js';
 import { BufferWriter, varSliceSize } from './writer.js';
-import {
-	SIGHASH_ANYONECANPAY,
-	SIGHASH_NONE,
-	SIGHASH_SINGLE,
-} from './bip143.js';
 
 const SIGHASH_DEFAULT = 0x00;
 const SIGHASH_OUTPUT_MASK = 0x03;
@@ -144,11 +140,7 @@ export function buildBip341Preimage(args: Bip341Args): Uint8Array {
 
 	// Size pre-computation per BIP-341.
 	const sigMsgSize =
-		174 -
-		(isAnyoneCanPay ? 49 : 0) -
-		(isNone ? 32 : 0) +
-		(annex ? 32 : 0) +
-		(leafHash ? 37 : 0);
+		174 - (isAnyoneCanPay ? 49 : 0) - (isNone ? 32 : 0) + (annex ? 32 : 0) + (leafHash ? 37 : 0);
 
 	const sigMsg = new Uint8Array(sigMsgSize);
 	const w = new BufferWriter(sigMsg);

@@ -1,16 +1,13 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import type { Hex } from 'viem';
 import { publicKeyToAddress } from 'viem/accounts';
 
-import {
-	bytesToHexLower,
-	createCoalescingCache,
-	type CoalescingCache,
-} from '../../internal/cache.js';
+import { bytesToHexLower, createCoalescingCache } from '../../internal/cache.js';
+import type { CoalescingCache } from '../../internal/cache.js';
 
 /**
  * Ethereum addresses come from secp256k1 only. Ed25519/RISTRETTO dWallets are
@@ -37,10 +34,7 @@ function toUncompressed(pubkey: Uint8Array): Uint8Array {
  * One-shot, unmemoized Ethereum address derivation. Prefer
  * `createEthereumAddressCache()` on hot paths.
  */
-export async function deriveEthereumAddress(
-	curve: Curve,
-	publicOutput: Uint8Array,
-): Promise<Hex> {
+export async function deriveEthereumAddress(curve: Curve, publicOutput: Uint8Array): Promise<Hex> {
 	assertSecp256k1(curve);
 	const pubkey = await publicKeyFromDWalletOutput(curve, publicOutput);
 	const uncompressed = toUncompressed(pubkey);
@@ -64,8 +58,7 @@ export function createEthereumAddressCache(): EthereumAddressCache {
 		clone: (v) => new Uint8Array(v),
 	});
 	const addrCache: CoalescingCache<Hex> = createCoalescingCache();
-	const keyOf = (curve: Curve, bytes: Uint8Array): string =>
-		curve + ':' + bytesToHexLower(bytes);
+	const keyOf = (curve: Curve, bytes: Uint8Array): string => curve + ':' + bytesToHexLower(bytes);
 
 	const uncompressedPubkey = (curve: Curve, publicOutput: Uint8Array): Promise<Uint8Array> => {
 		assertSecp256k1(curve);

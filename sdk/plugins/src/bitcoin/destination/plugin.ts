@@ -5,12 +5,15 @@ import { Curve } from '@ika.xyz/sdk';
 import type { DestinationPlugin, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 
 import { createBitcoinAddressCache } from './address.js';
-import { signCore } from './sign.js';
+import { assembleSign, prepareSign, signCore } from './sign.js';
 import type {
 	BitcoinAddressOptions,
+	BitcoinPrepareSignArgs,
+	BitcoinPrepareSignResult,
 	BitcoinSignArgs,
 	BitcoinSignedTx,
 	BitcoinSignInput,
+	BitcoinSignPrep,
 	BitcoinSupportedCurve,
 } from './types.js';
 
@@ -31,6 +34,15 @@ export interface BitcoinDestinationClientExtend {
 			dWallet: DWallet<BitcoinSupportedCurve>,
 			opts: BitcoinAddressOptions,
 		): Promise<string>;
+		/**
+		 * Build the bytes-to-sign for a Bitcoin spend without submitting
+		 * anything on chain. Returns `{ prep, preimage, plan }`: `prep` for
+		 * `assembleSign`, `preimage` + `plan` for the custom Move flow that
+		 * gates the actual `request_sign`. See {@link prepareSign}.
+		 */
+		prepareSign(args: BitcoinPrepareSignArgs): Promise<BitcoinPrepareSignResult>;
+		/** Apply a network signature to a previously prepared payload. */
+		assembleSign(prep: BitcoinSignPrep, signature: Uint8Array): Promise<BitcoinSignedTx>;
 	};
 }
 
@@ -38,6 +50,10 @@ export interface BitcoinDestinationDWalletExtend {
 	readonly bitcoin: {
 		getAddress(opts: BitcoinAddressOptions): Promise<string>;
 		sign(input: BitcoinSignInput): Promise<BitcoinSignedTx>;
+		/** See {@link BitcoinDestinationClientExtend.bitcoin.prepareSign}. */
+		prepareSign(input: BitcoinSignInput): Promise<BitcoinPrepareSignResult>;
+		/** See {@link BitcoinDestinationClientExtend.bitcoin.assembleSign}. */
+		assembleSign(prep: BitcoinSignPrep, signature: Uint8Array): Promise<BitcoinSignedTx>;
 	};
 }
 
@@ -68,6 +84,9 @@ export function btc(): DestinationPlugin<
 				signCore(requireCtx(ctx), dWallet, input as BitcoinSignInput, cache),
 			getAddress: async (dWallet, opts) =>
 				cache.address(dWallet.curve, dWallet.publicOutput, opts.mode, opts.network),
+			prepareSign: async ({ dWallet, ...input }) =>
+				prepareSign(dWallet, input as BitcoinSignInput, cache),
+			assembleSign: assembleSign,
 		},
 	};
 
@@ -81,6 +100,8 @@ export function btc(): DestinationPlugin<
 				getAddress: (opts) =>
 					cache.address(dWallet.curve, dWallet.publicOutput, opts.mode, opts.network),
 				sign: (input) => signCore(requireCtx(ctx), dWallet, input, cache),
+				prepareSign: (input) => prepareSign(dWallet, input, cache),
+				assembleSign: assembleSign,
 			},
 		}),
 		install(installCtx) {

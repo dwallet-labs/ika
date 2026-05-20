@@ -1,9 +1,9 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import type { Network } from '@ika.xyz/sdk';
 import type { PublisherPlugin } from '@ika.xyz/sdk/plugin';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 import type { SuiSignedPayload } from '../destination/types.js';
 

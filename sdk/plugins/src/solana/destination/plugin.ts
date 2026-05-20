@@ -5,11 +5,14 @@ import { Curve } from '@ika.xyz/sdk';
 import type { DestinationPlugin, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 
 import { createSolanaAddressCache } from './address.js';
-import { signCore } from './sign.js';
+import { assembleSign, prepareSign, signCore } from './sign.js';
 import type {
+	SolanaPrepareSignArgs,
+	SolanaPrepareSignResult,
 	SolanaSignArgs,
 	SolanaSignedTx,
 	SolanaSignInput,
+	SolanaSignPrep,
 	SolanaSupportedCurve,
 } from './types.js';
 
@@ -21,6 +24,15 @@ export interface SolanaDestinationClientExtend {
 	readonly solana: {
 		sign(args: SolanaSignArgs): Promise<SolanaSignedTx>;
 		getAddress(dWallet: DWallet<SolanaSupportedCurve>): Promise<string>;
+		/**
+		 * Build the bytes-to-sign for a Solana payload WITHOUT submitting
+		 * anything on chain. Pair with `assembleSign(prep, signature)` once a
+		 * network signature is in hand. See the bitcoin destination's docs
+		 * for the typical "hand-off to custom Move contract" flow.
+		 */
+		prepareSign(args: SolanaPrepareSignArgs): Promise<SolanaPrepareSignResult>;
+		/** Apply a 64-byte Ed25519 network signature to a prepared payload. */
+		assembleSign(prep: SolanaSignPrep, signature: Uint8Array): Promise<SolanaSignedTx>;
 	};
 }
 
@@ -32,6 +44,10 @@ export interface SolanaDestinationDWalletExtend {
 	readonly solana: {
 		getAddress(): Promise<string>;
 		sign(input: SolanaSignInput): Promise<SolanaSignedTx>;
+		/** See {@link SolanaDestinationClientExtend.solana.prepareSign}. */
+		prepareSign(input: SolanaSignInput): Promise<SolanaPrepareSignResult>;
+		/** See {@link SolanaDestinationClientExtend.solana.assembleSign}. */
+		assembleSign(prep: SolanaSignPrep, signature: Uint8Array): Promise<SolanaSignedTx>;
 	};
 }
 
@@ -58,6 +74,9 @@ export function solana(): DestinationPlugin<
 				signCore(requireCtx(ctx), dWallet, input as SolanaSignInput, cache),
 			getAddress: async (dWallet: DWallet<SolanaSupportedCurve>) =>
 				(await cache.publicKey(dWallet.publicOutput)).toBase58(),
+			prepareSign: async ({ dWallet, ...input }) =>
+				prepareSign(dWallet, input as SolanaSignInput, cache),
+			assembleSign: assembleSign,
 		},
 	};
 
@@ -70,6 +89,8 @@ export function solana(): DestinationPlugin<
 			solana: {
 				getAddress: async () => (await cache.publicKey(dWallet.publicOutput)).toBase58(),
 				sign: (input) => signCore(requireCtx(ctx), dWallet, input, cache),
+				prepareSign: (input) => prepareSign(dWallet, input, cache),
+				assembleSign: assembleSign,
 			},
 		}),
 		install(installCtx) {

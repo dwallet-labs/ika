@@ -1,12 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Transaction } from '@mysten/sui/transactions';
-import type { Curve, IkaClient as CoreIkaClient, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import type { IkaClient as CoreIkaClient, Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 import { IkaTransaction, NetworkError } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
 
-import type { SuiSourceDefaults } from './types.js';
 import type { makeExec } from './execute.js';
+import type { SuiSourceDefaults } from './types.js';
 
 /**
  * Per-source-instance cache of `(usek-sui-address, curve)` pairs already

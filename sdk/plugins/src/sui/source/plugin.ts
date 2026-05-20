@@ -26,6 +26,22 @@ import type { AcceptEncryptedShareInput, DKGCtx } from './dkg.js';
 import type { SuiDWallet } from './dwallet.js';
 import { ImportedKeySharedPartialError } from './errors.js';
 import { makeExec, makePay } from './execute.js';
+import {
+	completeFutureSign,
+	composeCompleteFutureSign,
+	composeRequestFutureSign,
+	requestFutureSign,
+} from './future-sign.js';
+import type {
+	CompleteFutureSignInput,
+	CompleteFutureSignOutput,
+	ComposeCompleteFutureSignArgs,
+	ComposeFutureSignArgs,
+	RequestFutureSignInput,
+	RequestFutureSignOutput,
+} from './future-sign.js';
+import { prepareSign } from './prepare.js';
+import type { PrepareSignInput, PrepareSignOutput } from './prepare.js';
 import { requestGlobalPresign, requestPresign } from './presign.js';
 import { composeSign, requestSign, signMessage } from './sign.js';
 import type { ComposeSignArgs, SignCtx } from './sign.js';
@@ -149,6 +165,20 @@ export interface SuiSourceExtend {
 			sign(args: ComposeSignArgs): Promise<void>;
 			submitDKG(args: Omit<SubmitDKGArgs, 'ikaConfig'>): ReturnType<typeof submitDKG>;
 			submitSign(args: Omit<SubmitSignArgs, 'ikaConfig'>): void;
+			/**
+			 * Compose a `request_future_sign` Move call. Returns the
+			 * `unverifiedPartialUserSignatureCap` argument — the caller
+			 * transfers it inline (to a Move contract, a user, escrow, ...)
+			 * before the PTB executes. The validated cap id can be
+			 * recovered from the `FutureSignRequestEvent` in the exec
+			 * result.
+			 */
+			requestFutureSign(args: ComposeFutureSignArgs): ReturnType<typeof composeRequestFutureSign>;
+			/**
+			 * Compose `request_sign_with_partial_user_signature` (the
+			 * Phase-2 release call) into an in-flight `IkaTransaction`.
+			 */
+			completeFutureSign(args: ComposeCompleteFutureSignArgs): void;
 		};
 
 		// Building blocks. Each submits its own tx; use `transaction()` to compose multiple ops.
@@ -165,6 +195,38 @@ export interface SuiSourceExtend {
 			input: RequestGlobalPresignInput,
 		): Promise<Awaited<ReturnType<typeof requestGlobalPresign>>>;
 		requestSign(input: RequestSignInput): Promise<SuiSignResult>;
+		/**
+		 * Compute the user-side centralized-party sign message WITHOUT
+		 * submitting a sign request. Returns the `userSignMessage` bytes a
+		 * caller can pass into any Move flow that ultimately calls
+		 * `request_sign` — multisig contracts, future-sign, sponsored
+		 * relays. Pair with a destination plugin's `prepareSign(...)` to
+		 * produce the matching `message` and with `assembleSign(...)` to
+		 * package the final payload once the network signature lands.
+		 */
+		prepareSign(input: PrepareSignInput): Promise<PrepareSignOutput>;
+		/**
+		 * Phase 1 of future-sign: lock in `(message, presign,
+		 * userSignMessage)` on chain and produce a validated
+		 * `PartialUserSignatureCap`. The cap can be held by anyone — a
+		 * Move contract gating release, the user's wallet, an escrow.
+		 *
+		 * Pair with a destination's `prepareSign(...)` for the message:
+		 *   const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign(...);
+		 *   const { capId } = await ika.sui.requestFutureSign({
+		 *     dWallet, message: preimage, ...plan, presign,
+		 *     capRecipient: contractOrUser,
+		 *   });
+		 */
+		requestFutureSign(input: RequestFutureSignInput): Promise<RequestFutureSignOutput>;
+		/**
+		 * Phase 2 of future-sign: consume the validated cap from Phase 1
+		 * plus a fresh message approval and trigger the actual MPC sign.
+		 * Returns the sign session id; fetch the signature via
+		 * `ika.sui.client.getSignInParticularState(signId, ..., 'Completed')`
+		 * and finalize via your destination's `assembleSign(prep, sig)`.
+		 */
+		completeFutureSign(input: CompleteFutureSignInput): Promise<CompleteFutureSignOutput>;
 		/** IRREVERSIBLE: publishes the user's secret share on chain. */
 		revealUserSecretShare(input: RevealUserSecretShareInput): Promise<SuiDWallet>;
 		/**
@@ -413,6 +475,22 @@ export function suiSource(
 			await ensureInit();
 			return requestSign(signCtx(), input);
 		};
+		const apiPrepareSign = async (input: PrepareSignInput): Promise<PrepareSignOutput> => {
+			await ensureInit();
+			return prepareSign({ defaults, ikaClient }, input);
+		};
+		const apiRequestFutureSign = async (
+			input: RequestFutureSignInput,
+		): Promise<RequestFutureSignOutput> => {
+			await ensureInit();
+			return requestFutureSign(signCtx(), input);
+		};
+		const apiCompleteFutureSign = async (
+			input: CompleteFutureSignInput,
+		): Promise<CompleteFutureSignOutput> => {
+			await ensureInit();
+			return completeFutureSign(signCtx(), input);
+		};
 		const apiSignMessage = async (input: SuiSignMessageInput): Promise<SuiSignResult> => {
 			await ensureInit();
 			return signMessage(signCtx(), input);
@@ -636,6 +714,10 @@ export function suiSource(
 				sign: (args: ComposeSignArgs) => composeSign(ikaClient, args),
 				submitDKG: (args) => submitDKG({ ...args, ikaConfig: defaults.config }),
 				submitSign: (args) => submitSign({ ...args, ikaConfig: defaults.config }),
+				requestFutureSign: (args: ComposeFutureSignArgs) =>
+					composeRequestFutureSign(ikaClient, args),
+				completeFutureSign: (args: ComposeCompleteFutureSignArgs) =>
+					composeCompleteFutureSign(args),
 			},
 			prepareDKG: apiPrepareDKG,
 			requestDKG: apiRequestDKG,
@@ -646,6 +728,9 @@ export function suiSource(
 			requestPresign: apiRequestPresign,
 			requestGlobalPresign: apiRequestGlobalPresign,
 			requestSign: apiRequestSign,
+			prepareSign: apiPrepareSign,
+			requestFutureSign: apiRequestFutureSign,
+			completeFutureSign: apiCompleteFutureSign,
 			createDWallet: apiCreateDWallet,
 			getDWallet: apiGetDWallet,
 			withSigner: (signer, withOpts) => {

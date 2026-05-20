@@ -14,19 +14,21 @@
  * of the resulting `exec.events`.
  */
 
-import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
+import type {
+	Curve,
+	Hash,
+	IkaConfig,
+	IkaTransaction,
+	Presign,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
 import {
 	coordinatorTransactions,
-	Curve,
 	fromCurveToNumber,
-	type Hash,
-	type IkaConfig,
-	type IkaTransaction,
-	type Presign,
-	type SignatureAlgorithm,
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
 } from '@ika.xyz/sdk';
+import type { Transaction, TransactionObjectArgument } from '@mysten/sui/transactions';
 
 export interface SubmitDKGArgs {
 	readonly ikaConfig: IkaConfig;

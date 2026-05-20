@@ -31,10 +31,14 @@ export class ImportedKeySharedPartialError extends Error {
 		this.verifiedDWallet = args.verifiedDWallet;
 		this.cause = args.cause;
 		this.retryReveal = args.retryReveal;
-		if (typeof (Error as unknown as { captureStackTrace?: unknown }).captureStackTrace === 'function') {
-			(Error as unknown as {
-				captureStackTrace: (target: object, ctor: new (...a: never[]) => unknown) => void;
-			}).captureStackTrace(this, ImportedKeySharedPartialError);
+		if (
+			typeof (Error as unknown as { captureStackTrace?: unknown }).captureStackTrace === 'function'
+		) {
+			(
+				Error as unknown as {
+					captureStackTrace: (target: object, ctor: new (...a: never[]) => unknown) => void;
+				}
+			).captureStackTrace(this, ImportedKeySharedPartialError);
 		}
 	}
 }

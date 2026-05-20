@@ -1,6 +1,8 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 import {
 	concat,
 	hashDomain,
@@ -12,13 +14,17 @@ import {
 	serializeSignature,
 	serializeTransaction,
 	stringToBytes,
-	type Hex,
 } from 'viem';
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
-import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import type { Hex } from 'viem';
 
 import type { EthereumAddressCache } from './address.js';
-import type { EthereumSignedPayload, EthereumSignedTx, EthereumSignInput } from './types.js';
+import type {
+	EthereumPrepareSignResult,
+	EthereumSignedPayload,
+	EthereumSignedTx,
+	EthereumSignInput,
+	EthereumSignPrep,
+} from './types.js';
 
 function bytesToHex(b: Uint8Array): Hex {
 	return ('0x' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')) as Hex;
@@ -34,18 +40,62 @@ function hexToBytes(hex: Hex): Uint8Array {
 }
 
 /**
- * Build the EIP-style digest for the signing mode, ask the active source to
- * sign, then reconstruct the (r, s, v) signature. The MPC protocol returns
- * (r, s) but NOT the recovery byte, so we recover the address under both
- * yParity values and pick the one matching the dWallet's address. This is
- * the same strategy keyspring uses; it is O(1) extra crypto and leaks no
- * information about which y was correct over the wire.
+ * Build the pre-keccak bytes + digest + dWallet address WITHOUT submitting
+ * anything on chain. Returns `{ prep, preimage, plan }`: `prep` for
+ * `assembleSign`, `preimage` + `plan` for the Move flow that gates the
+ * actual `request_sign` call. See the bitcoin destination's docs for the
+ * typical hand-off flow — the shape is the same across destinations.
  *
- * Recovery goes through `recoverAddress({ hash, signature })` rather than the
- * mode-specific helpers (`recoverTransactionAddress`, `recoverMessageAddress`,
- * `recoverTypedDataAddress`). All three reduce to a digest + signature
- * recovery; using the low-level helper avoids re-serializing the transaction
- * once per parity and keeps the recovery logic unified across modes.
+ * `sign()` composes `prepareSign` → `ctx.source.signMessage` →
+ * `assembleSign`. Use prepare/assemble directly when the sign request
+ * doesn't go through the source plugin (multisig, future-sign, sponsored).
+ */
+export async function prepareSign(
+	dWallet: DWallet,
+	input: EthereumSignInput,
+	cache: EthereumAddressCache,
+): Promise<EthereumPrepareSignResult> {
+	if (dWallet.curve !== Curve.SECP256K1) {
+		throw new Error(`ethereum destination does not support curve ${dWallet.curve}. Use SECP256K1.`);
+	}
+	const sender = await cache.address(dWallet.curve, dWallet.publicOutput);
+	return {
+		prep: {
+			digest: digestForInput(input),
+			sender,
+			input,
+		},
+		preimage: preHashForInput(input),
+		plan: {
+			curve: Curve.SECP256K1,
+			signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+			hash: Hash.KECCAK256,
+		},
+	};
+}
+
+/**
+ * Apply the network's 64-byte `(r || s)` signature to a prepared payload.
+ * For `transaction` mode, recovers `yParity` by trying both candidates and
+ * serializes the signed RLP. For `message` / `typedData`, packs `(r, s, v)`
+ * into the 65-byte hex signature viem's recovery helpers expect.
+ *
+ * Throws if neither yParity recovers to the prepared sender — that means
+ * the signature does not verify against the dWallet's public key
+ * (protocol-level bug, not ambiguity).
+ */
+export async function assembleSign(
+	prep: EthereumSignPrep,
+	signature: Uint8Array,
+): Promise<EthereumSignedTx> {
+	const payload = await assembleEthereumPayload(prep.input, signature, prep.sender, prep.digest);
+	return { chain: 'ethereum', payload };
+}
+
+/**
+ * One-shot sign: composes `prepareSign` → `ctx.source.signMessage` →
+ * `assembleSign`. Existing callers stay unchanged; this is the same
+ * implementation factored through the new primitives.
  */
 export async function signCore(
 	ctx: IkaContext,
@@ -56,26 +106,13 @@ export async function signCore(
 	if (!ctx.source) {
 		throw new Error('ethereum destination: no source plugin registered');
 	}
-	if (dWallet.curve !== Curve.SECP256K1) {
-		throw new Error(
-			`ethereum destination does not support curve ${dWallet.curve}. Use SECP256K1.`,
-		);
-	}
-
-	const sender = await cache.address(dWallet.curve, dWallet.publicOutput);
-	// The MPC network applies `hash` to `message` before signing. Pass the
-	// pre-keccak bytes (raw serialized tx / EIP-191 prefix+msg / EIP-712
-	// pre-hash blob) so the on-chain signature recovers from `digest =
-	// digestForInput(input)`. Passing the already-hashed digest would
-	// double-hash and the signature wouldn't recover.
-	const preHash = preHashForInput(input);
-
+	const { prep, preimage, plan } = await prepareSign(dWallet, input, cache);
 	const result = await ctx.source.signMessage({
 		dWallet,
-		message: preHash,
-		curve: Curve.SECP256K1,
-		signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
-		hash: Hash.KECCAK256,
+		message: preimage,
+		curve: plan.curve,
+		signatureAlgorithm: plan.signatureAlgorithm,
+		hash: plan.hash,
 		...(input.userShareEncryptionKeys
 			? { userShareEncryptionKeys: input.userShareEncryptionKeys }
 			: {}),
@@ -87,9 +124,7 @@ export async function signCore(
 			? { buildVerifiedPresignCap: input.buildVerifiedPresignCap }
 			: {}),
 	} as Parameters<typeof ctx.source.signMessage>[0]);
-
-	const payload = await assembleEthereumPayload(input, result.signature, sender);
-	return { chain: 'ethereum', payload };
+	return assembleSign(prep, result.signature);
 }
 
 /**
@@ -107,6 +142,7 @@ export async function assembleEthereumPayload(
 	input: EthereumSignInput,
 	signature: Uint8Array,
 	expectedSender: Hex,
+	digest?: Hex,
 ): Promise<EthereumSignedPayload> {
 	if (signature.length !== 64) {
 		throw new Error(
@@ -115,8 +151,8 @@ export async function assembleEthereumPayload(
 	}
 	const r = bytesToHex(signature.subarray(0, 32));
 	const s = bytesToHex(signature.subarray(32, 64));
-	const digest = digestForInput(input);
-	const yParity = await resolveYParity(digest, expectedSender, r, s);
+	const resolvedDigest = digest ?? digestForInput(input);
+	const yParity = await resolveYParity(resolvedDigest, expectedSender, r, s);
 
 	if (input.kind === 'transaction') {
 		const serialized = serializeTransaction(input.tx, { r, s, yParity });
@@ -136,9 +172,7 @@ function digestForInput(input: EthereumSignInput): Hex {
 	}
 	if (input.kind === 'message') {
 		return hashMessage(
-			typeof input.message === 'string'
-				? input.message
-				: { raw: bytesToHex(input.message) },
+			typeof input.message === 'string' ? input.message : { raw: bytesToHex(input.message) },
 		);
 	}
 	return hashTypedData(input.typedData);
@@ -157,9 +191,7 @@ function preHashForInput(input: EthereumSignInput): Uint8Array {
 	}
 	if (input.kind === 'message') {
 		const msgBytes =
-			typeof input.message === 'string'
-				? stringToBytes(input.message)
-				: input.message;
+			typeof input.message === 'string' ? stringToBytes(input.message) : input.message;
 		// EIP-191 / personal_sign prefix layout. Matches viem's `hashMessage`
 		// pre-keccak input: `0x19` + "Ethereum Signed Message:\n" + decimal
 		// length + raw message bytes.
@@ -178,13 +210,10 @@ function preHashForInput(input: EthereumSignInput): Uint8Array {
 	};
 	const parts: Hex[] = ['0x1901', hashDomain({ domain, types: allTypes })];
 	if (primaryType !== 'EIP712Domain') {
-		parts.push(
-			hashStruct({ data: message, primaryType: primaryType as string, types: allTypes }),
-		);
+		parts.push(hashStruct({ data: message, primaryType: primaryType as string, types: allTypes }));
 	}
 	return hexToBytes(concat(parts) as Hex);
 }
-
 
 /**
  * Recover the signer address under each yParity and return the one matching

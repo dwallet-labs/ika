@@ -1,11 +1,14 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import * as ecc from '@bitcoinerlab/secp256k1';
+import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 import * as bitcoin from 'bitcoinjs-lib';
-import * as ecc from '@bitcoinerlab/secp256k1';
+
+import { bytesToHexLower, createCoalescingCache } from '../../internal/cache.js';
+import type { CoalescingCache } from '../../internal/cache.js';
 
 /**
  * bitcoinjs-lib's P2TR payment requires an ECC backend for the BIP-341
@@ -19,12 +22,6 @@ function ensureEccLib(): void {
 	bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
 	eccInitialized = true;
 }
-
-import {
-	bytesToHexLower,
-	createCoalescingCache,
-	type CoalescingCache,
-} from '../../internal/cache.js';
 
 /**
  * Bitcoin spending mode. Each mode pairs a specific address derivation with
@@ -122,10 +119,7 @@ export interface P2trBundle {
 }
 
 /** Build the P2TR script-path payment bundle for one dWallet on one network. */
-export function buildP2trScriptPath(
-	xOnlyPubkey: Uint8Array,
-	network: BitcoinNetwork,
-): P2trBundle {
+export function buildP2trScriptPath(xOnlyPubkey: Uint8Array, network: BitcoinNetwork): P2trBundle {
 	ensureEccLib();
 	const script = buildCheckSigScript(xOnlyPubkey);
 	const redeem = {
@@ -221,11 +215,7 @@ export interface BitcoinAddressCache {
 		mode: BitcoinMode,
 		network: BitcoinNetwork,
 	): Promise<string>;
-	p2trBundle(
-		curve: Curve,
-		publicOutput: Uint8Array,
-		network: BitcoinNetwork,
-	): Promise<P2trBundle>;
+	p2trBundle(curve: Curve, publicOutput: Uint8Array, network: BitcoinNetwork): Promise<P2trBundle>;
 }
 
 export function createBitcoinAddressCache(): BitcoinAddressCache {
@@ -235,8 +225,7 @@ export function createBitcoinAddressCache(): BitcoinAddressCache {
 	const addrCache: CoalescingCache<string> = createCoalescingCache();
 	const p2trCache: CoalescingCache<P2trBundle> = createCoalescingCache();
 
-	const pkKey = (curve: Curve, bytes: Uint8Array): string =>
-		curve + ':' + bytesToHexLower(bytes);
+	const pkKey = (curve: Curve, bytes: Uint8Array): string => curve + ':' + bytesToHexLower(bytes);
 	const addrKey = (
 		curve: Curve,
 		bytes: Uint8Array,

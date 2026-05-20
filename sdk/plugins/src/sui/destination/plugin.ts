@@ -5,8 +5,16 @@ import { Curve } from '@ika.xyz/sdk';
 import type { DestinationPlugin, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 
 import { createAddressCache } from './address.js';
-import { signCore } from './sign.js';
-import type { SuiSignArgs, SuiSignedTx, SuiSignInput, SuiSupportedCurve } from './types.js';
+import { assembleSign, prepareSign, signCore } from './sign.js';
+import type {
+	SuiPrepareSignArgs,
+	SuiPrepareSignResult,
+	SuiSignArgs,
+	SuiSignedTx,
+	SuiSignInput,
+	SuiSignPrep,
+	SuiSupportedCurve,
+} from './types.js';
 
 /**
  * Client-extension shape on `ika.sui.*` after `.use(sui())`. The `sign`
@@ -18,6 +26,15 @@ export interface SuiDestinationClientExtend {
 		/** Flat-args sign: `ika.sui.sign({ dWallet, kind: 'message', message })`. */
 		sign(args: SuiSignArgs): Promise<SuiSignedTx>;
 		getAddress(dWallet: DWallet<SuiSupportedCurve>): Promise<string>;
+		/**
+		 * Build the intent-wrapped payload bytes + blake2b digest WITHOUT
+		 * submitting anything on chain. Pair with `assembleSign(prep,
+		 * signature)` once a network signature is in hand. See the bitcoin
+		 * destination's docs for the "hand-off to custom Move contract" flow.
+		 */
+		prepareSign(args: SuiPrepareSignArgs): Promise<SuiPrepareSignResult>;
+		/** Wrap a network signature into Sui's serialized-signature byte string. */
+		assembleSign(prep: SuiSignPrep, signature: Uint8Array): Promise<SuiSignedTx>;
 	};
 }
 
@@ -32,6 +49,10 @@ export interface SuiDestinationDWalletExtend {
 		/** Derive this dWallet's Sui address. Cached per destination instance. */
 		getAddress(): Promise<string>;
 		sign(input: SuiSignInput): Promise<SuiSignedTx>;
+		/** See {@link SuiDestinationClientExtend.sui.prepareSign}. */
+		prepareSign(input: SuiSignInput): Promise<SuiPrepareSignResult>;
+		/** See {@link SuiDestinationClientExtend.sui.assembleSign}. */
+		assembleSign(prep: SuiSignPrep, signature: Uint8Array): Promise<SuiSignedTx>;
 	};
 }
 
@@ -60,6 +81,9 @@ export function sui(): DestinationPlugin<
 				signCore(requireCtx(ctx), dWallet, input as SuiSignInput, cache),
 			getAddress: async (dWallet: DWallet<SuiSupportedCurve>) =>
 				cache.suiAddress(dWallet.curve, dWallet.publicOutput),
+			prepareSign: async ({ dWallet, ...input }) =>
+				prepareSign(dWallet, input as SuiSignInput, cache),
+			assembleSign: assembleSign,
 		},
 	};
 
@@ -72,6 +96,8 @@ export function sui(): DestinationPlugin<
 			sui: {
 				getAddress: () => cache.suiAddress(dWallet.curve, dWallet.publicOutput),
 				sign: (input) => signCore(requireCtx(ctx), dWallet, input, cache),
+				prepareSign: (input) => prepareSign(dWallet, input, cache),
+				assembleSign: assembleSign,
 			},
 		}),
 		install(installCtx) {

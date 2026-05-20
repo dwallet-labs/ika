@@ -1,15 +1,12 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { blake2b } from '@noble/hashes/blake2.js';
 import { Curve, publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 import type { SignatureScheme } from '@mysten/sui/cryptography';
+import { blake2b } from '@noble/hashes/blake2.js';
 
-import {
-	bytesToHexLower,
-	createCoalescingCache,
-	type CoalescingCache,
-} from '../../internal/cache.js';
+import { bytesToHexLower, createCoalescingCache } from '../../internal/cache.js';
+import type { CoalescingCache } from '../../internal/cache.js';
 
 /** Sui signature-scheme flag byte per curve. Used in address derivation and serialized-signature framing. */
 export const SUI_SCHEME_FLAG: Record<Curve, number> = {

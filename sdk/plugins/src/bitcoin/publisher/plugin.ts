@@ -3,10 +3,7 @@
 
 import type { PublisherPlugin } from '@ika.xyz/sdk/plugin';
 
-import type {
-	BitcoinNetwork,
-	BitcoinPublishablePayload,
-} from '../destination/types.js';
+import type { BitcoinNetwork, BitcoinPublishablePayload } from '../destination/types.js';
 
 export interface BitcoinPublisherOptions {
 	/**

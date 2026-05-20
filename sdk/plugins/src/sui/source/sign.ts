@@ -1,24 +1,26 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-import { Transaction, type TransactionObjectArgument } from '@mysten/sui/transactions';
-import {
-	type Curve,
-	type Hash,
-	type IkaClient as CoreIkaClient,
-	IkaTransaction,
-	type ImportedKeyDWallet,
-	type ImportedSharedDWallet,
-	type Presign,
-	type SharedDWallet,
-	type SignatureAlgorithm,
-	type ZeroTrustDWallet,
+import { IkaTransaction } from '@ika.xyz/sdk';
+import type {
+	IkaClient as CoreIkaClient,
+	Curve,
+	Hash,
+	ImportedKeyDWallet,
+	ImportedSharedDWallet,
+	Presign,
+	SharedDWallet,
+	SignatureAlgorithm,
+	ZeroTrustDWallet,
 } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+import type { TransactionObjectArgument } from '@mysten/sui/transactions';
 
 import type { SuiDWallet } from './dwallet.js';
 import { findEvent, parseSignEvent } from './events.js';
 import type { makeExec, makePay } from './execute.js';
-import { presignForSign, type PresignCtx } from './presign.js';
+import { presignForSign } from './presign.js';
+import type { PresignCtx } from './presign.js';
 import type {
 	RequestSignInput,
 	SuiSignMessageInput,
@@ -67,10 +69,7 @@ export interface ComposeSignArgs {
 	/** Pre-verified presign cap. Takes precedence over `buildVerifiedPresignCap`. */
 	readonly verifiedPresignCap?: TransactionObjectArgument;
 	/** Approval builder. Invoked only when `messageApproval` is omitted. */
-	readonly buildApproval?: (
-		ikaTx: IkaTransaction,
-		defaultCap: string,
-	) => TransactionObjectArgument;
+	readonly buildApproval?: (ikaTx: IkaTransaction, defaultCap: string) => TransactionObjectArgument;
 	/** Presign-cap builder. Invoked only when `verifiedPresignCap` is omitted. */
 	readonly buildVerifiedPresignCap?: (
 		ikaTx: IkaTransaction,
@@ -88,10 +87,7 @@ export interface ComposeSignArgs {
  * Does not execute the tx; the caller submits it (typically via
  * `ika.sui.transaction(...)`).
  */
-export async function composeSign(
-	ikaClient: CoreIkaClient,
-	args: ComposeSignArgs,
-): Promise<void> {
+export async function composeSign(ikaClient: CoreIkaClient, args: ComposeSignArgs): Promise<void> {
 	const dWallet = args.dWallet;
 	const raw = dWallet.raw;
 	const kind = dWallet.kind;
@@ -115,7 +111,7 @@ export async function composeSign(
 						signatureAlgorithm: args.signatureAlgorithm,
 						hashScheme: args.hash,
 						message: args.message,
-				  }));
+					}));
 		if (kind === 'imported-key-shared') {
 			await args.ikaTx.requestSignWithImportedKey({
 				dWallet: raw as ImportedSharedDWallet,
@@ -160,7 +156,7 @@ export async function composeSign(
 						signatureAlgorithm: args.signatureAlgorithm,
 						hashScheme: args.hash,
 						message: args.message,
-				  }));
+					}));
 		if (kind === 'shared') {
 			await args.ikaTx.requestSign({
 				dWallet: raw as SharedDWallet,
@@ -292,7 +288,10 @@ export async function requestSign(ctx: SignCtx, input: RequestSignInput): Promis
  * pass through user-supplied customization (presign, USEK, approval hook,
  * etc.) without re-implementing it.
  */
-export async function signMessage(ctx: SignCtx, input: SuiSignMessageInput): Promise<SuiSignResult> {
+export async function signMessage(
+	ctx: SignCtx,
+	input: SuiSignMessageInput,
+): Promise<SuiSignResult> {
 	return requestSign(ctx, {
 		dWallet: input.dWallet,
 		message: input.message,
