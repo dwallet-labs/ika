@@ -154,8 +154,8 @@ msim doesn't control, and any tokio/tracing call from them hits
 `NodeHandle::current().unwrap()` and `rayon-core` aborts the process
 (bypasses `panic_handler`).
 
-The fix in PR #3 was to drop the cryptography-private `parallel` feature
-under `cfg(msim)` via `[target.'cfg(not(msim))'.dependencies]` overrides in
+The workaround in this repo is to drop the cryptography-private `parallel`
+feature under `cfg(msim)` via `[target.'cfg(not(msim))'.dependencies]` overrides in
 `ika-core` and `dwallet-classgroups-types`. That reads backwards but is the
 only direction Cargo accepts — feature unification is additive only, so to
 turn a feature OFF under msim you list the base dep without it and re-add
