@@ -255,14 +255,39 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+                if data.signature_algorithm.is_vss() {
+                    // Fast Schnorr (VSS) NOA sign reuses the external-sign compute path
+                    // (`SignVSS`): VSS has no AHE decryption-key shares / decrypters, so
+                    // the NOA-vs-external compute distinction collapses. Output is still
+                    // routed to the NOA channel by the request's session type. The
+                    // presign (popped from the internal VSS pool) carries the private
+                    // nonce output, read by the manager as for external VSS sign.
+                    let reconfiguration_public_output = decryption_key_shares
+                        .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
+                        .latest_network_reconfiguration_public_output()
+                        .ok_or_else(|| {
+                            DwalletMPCError::InvalidInput(
+                                "Fast Schnorr (VSS) sign requires a reconfigured network key"
+                                    .to_string(),
+                            )
+                        })?;
+                    ProtocolCryptographicData::SignVSS {
+                        data: SignData::from(data),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        reconfiguration_public_output,
+                        presign_private_output,
+                    }
+                } else {
+                    let decryption_key_shares = decryption_key_shares
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::NetworkOwnedAddressSign {
-                    data: data.clone(),
-                    public_input: public_input.clone(),
-                    advance_request,
-                    decryption_key_shares: decryption_key_shares.clone(),
+                    ProtocolCryptographicData::NetworkOwnedAddressSign {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
                 }
             }
             ProtocolData::DWalletDKGAndSign {

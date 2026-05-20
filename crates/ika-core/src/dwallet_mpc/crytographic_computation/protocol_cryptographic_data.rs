@@ -75,12 +75,15 @@ pub(crate) enum ProtocolCryptographicData {
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
-    /// Fast Schnorr (VSS) sign. Unlike AHE `Sign`, the private input is not the
-    /// class-groups decryption key shares but the validator's VSS secret-key
-    /// Shamir shares (recovered at compute time from `reconfiguration_public_output`
-    /// + the validator's PVSS keys via `root_seed`) joined with the persisted
-    /// presign nonce data (`presign_private_output`). The non-serializable 8-field
-    /// VSS `PrivateInput` is assembled in `compute_mpc`.
+    /// Fast Schnorr (VSS) sign. Serves both external (`ProtocolData::Sign`) and NOA
+    /// (`ProtocolData::NetworkOwnedAddressSign`) VSS signs: VSS has no AHE decrypters,
+    /// so the AHE NOA-vs-external compute split is unnecessary — NOA output is still
+    /// routed to its channel by the request's session type. Unlike AHE `Sign`, the
+    /// private input is not the class-groups decryption key shares but the validator's
+    /// VSS secret-key Shamir shares (recovered at compute time from
+    /// `reconfiguration_public_output` + the validator's PVSS keys via `root_seed`)
+    /// joined with the persisted presign nonce data (`presign_private_output`). The
+    /// non-serializable 8-field VSS `PrivateInput` is assembled in `compute_mpc`.
     SignVSS {
         data: SignData,
         public_input: SignPublicInputByProtocol,
@@ -635,17 +638,29 @@ impl DWalletMPCManager {
                 messages_by_consensus_round,
                 ..
             } => {
-                // For a Fast Schnorr (VSS) sign, load this presign session's persisted
+                // For a Fast Schnorr (VSS) sign — external (`Sign`) or NOA
+                // (`NetworkOwnedAddressSign`) — load this presign session's persisted
                 // private nonce output (keyed by the presign `session_id`, recovered
                 // from the public presign). `None` (missing row) is a soft-fail handled
                 // downstream — this validator drops out of the sign quorum.
-                let presign_private_output = match protocol_data {
+                let vss_presign = match protocol_data {
                     ProtocolData::Sign { data, presign, .. }
                         if data.signature_algorithm.is_vss() =>
                     {
+                        Some((data.signature_algorithm, presign))
+                    }
+                    ProtocolData::NetworkOwnedAddressSign { data, presign, .. }
+                        if data.signature_algorithm.is_vss() =>
+                    {
+                        Some((data.signature_algorithm, presign))
+                    }
+                    _ => None,
+                };
+                let presign_private_output = match vss_presign {
+                    Some((signature_algorithm, presign)) => {
                         let presign_session_id =
                             crate::dwallet_mpc::sign::vss_public_presign_session_id(
-                                data.signature_algorithm,
+                                signature_algorithm,
                                 presign,
                             )?;
                         self.epoch_store
@@ -656,7 +671,7 @@ impl DWalletMPCManager {
                                 ))
                             })?
                     }
-                    _ => None,
+                    None => None,
                 };
 
                 // Fast Schnorr (VSS) requires a uniform weight-1 access structure
