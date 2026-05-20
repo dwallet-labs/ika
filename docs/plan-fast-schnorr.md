@@ -26,8 +26,9 @@ TypeScript SDK. AHE-mode variants stay for backward compatibility with
 already-deployed dWallets. **Fast Schnorr supports DKG-created dWallets
 only — never imported keys** (an imported user secret cannot be Shamir-
 shared by the network), and **does not support the combined
-DKG-and-sign fast path** (the upstream combined party is an unimplemented
-placeholder — see §"Combined DKG-and-sign" below).
+DKG-and-sign fast path** (excluded by scoping decision — the upstream combined
+party is implemented but intentionally not wired; see §"Combined DKG-and-sign"
+below).
 
 This plan was written after reading the pinned upstream crate
 (`~/.cargo/git/checkouts/cryptography-private-b809ba535a56ff30/84fa8da/2pc-mpc/`)
@@ -55,9 +56,9 @@ The three aliases (confirmed verbatim):
 
 ```rust
 // 2pc-mpc/src/lib.rs
-twopc_mpc::secp256k1::class_groups::vss::TaprootVSSProtocol             // line 1422
-twopc_mpc::curve25519::class_groups::vss::EdDSAVSSProtocol              // line 1266
-twopc_mpc::ristretto::class_groups::vss::SchnorrkelSubstrateVSSProtocol // line 1340
+twopc_mpc::secp256k1::vss::TaprootVSSProtocol             // line 1422
+twopc_mpc::curve25519::vss::EdDSAVSSProtocol              // line 1266
+twopc_mpc::ristretto::vss::SchnorrkelSubstrateVSSProtocol // line 1340
 ```
 
 Each is `crate::vss::schnorr::Protocol<SCALAR_LIMBS, FUND_DISC_LIMBS,
@@ -317,9 +318,9 @@ Hash schemes mirror the AHE sibling on the same curve.
 
 - `crates/ika-types/src/messages_dwallet_mpc.rs:553-558` — add:
   ```rust
-  pub type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::class_groups::vss::TaprootVSSProtocol;
-  pub type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::class_groups::vss::EdDSAVSSProtocol;
-  pub type RistrettoSchnorrkelSubstrateVSSProtocol = twopc_mpc::ristretto::class_groups::vss::SchnorrkelSubstrateVSSProtocol;
+  pub type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::vss::TaprootVSSProtocol;
+  pub type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::vss::EdDSAVSSProtocol;
+  pub type RistrettoSchnorrkelSubstrateVSSProtocol = twopc_mpc::ristretto::vss::SchnorrkelSubstrateVSSProtocol;
   ```
 
 ### Validator MPC dispatch
@@ -547,10 +548,12 @@ construction is mechanical). Add the weight-1 defensive assert here too.
 
 ### Phase 7 — Combined DKG-and-sign: **VSS is excluded**
 
-The upstream combined `DKGSignParty` for VSS is an **unimplemented
-placeholder** (`schnorr/vss/sign/decentralized_party/party.rs:438` —
-"placeholder - not yet implemented for VSS"). There is no atomic VSS
-DKG-and-sign to dispatch to. **Decision:** VSS Schnorr does **not** support
+The upstream combined `DKGSignParty` for VSS carries a **stale doc-comment**
+calling it a "placeholder - not yet implemented for VSS"
+(`schnorr/vss/sign/decentralized_party/party.rs:438`), but the type is in fact
+fully implemented (a real `advance` that delegates to `SignParty`). The
+exclusion below is therefore a **scoping decision**, not an upstream limitation.
+**Decision:** VSS Schnorr does **not** support
 the combined DKG-and-sign fast path in this activation. A DKG-and-sign
 request that names a VSS algorithm must be **rejected** — at the Move layer
 (don't expose VSS through the combined entrypoint) and at the Rust
@@ -660,15 +663,16 @@ cargo clippy --all-targets --all-features
    fail on missing row. Co-located with `used_presigns` / `assigned_presigns_*`.
 3. **Round counts** — VSS presign = 3 rounds (Dealing, Accusation,
    Aggregation), VSS sign = 2. The single `schnorr_presign_second_round_delay`
-   knob is insufficient; add a VSS-only third-round (Aggregation) delay
+   knob is insufficient; a VSS-only third-round (Aggregation) delay
+   `schnorr_presign_third_round_delay` is wired through to the presign dispatch
    (defaulting to the same value).
 4. **`is_fast_schnorr_supported` on Move** — **no.** Move has no version
    gate; VSS is enabled by populating the supported VecMap. The gate is the
    Rust `fast_schnorr_supported: bool` feature flag at protocol version 5.
 5. **Sig-algo IDs** — per-curve, not global: TaprootVSS=2 (secp256k1),
    EdDSAVSS=1 (curve25519), SchnorrkelSubstrateVSS=1 (ristretto).
-6. **Combined DKG-and-sign** — **excluded** for VSS (upstream placeholder);
-   rejected at the gate.
+6. **Combined DKG-and-sign** — **excluded** for VSS by scoping decision (the
+   upstream party is implemented but intentionally not wired); rejected at the gate.
 7. **Centralized party / WASM** — no new function and no new WASM binding;
    reuse the generic helpers via three new type aliases + match arms.
 8. **Imported-key DKG-only** — requires a **new explicit Move deny check**

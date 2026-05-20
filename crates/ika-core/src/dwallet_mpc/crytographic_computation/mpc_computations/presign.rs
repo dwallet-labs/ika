@@ -104,12 +104,11 @@ impl PresignAdvanceRequestByProtocol {
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
         schnorr_presign_second_round_delay: u64,
+        // Consensus-round delay for the VSS presign Aggregation round (round 3).
+        // Only the VSS arms use it; AHE presign is 2 rounds and ignores it.
+        schnorr_presign_third_round_delay: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
-        // VSS presign Aggregation (round 3) reuses the second-round delay; the
-        // separate `schnorr_presign_third_round_delay` config knob defaults to the
-        // same value and is reserved for tuning round 3 independently later.
-        let schnorr_presign_third_round_delay = schnorr_presign_second_round_delay;
         let advance_request = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                 let advance_request =
@@ -415,10 +414,12 @@ impl PresignPublicInputByProtocol {
 
                 PresignPublicInputByProtocol::Taproot(pub_input)
             }
-            // VSS (Fast Schnorr) presign PublicInput carries the per-party PVSS HPKE
-            // encryption keys + the UC-verified party set, in addition to the
-            // protocol public parameters. Keys are sourced from the validator's
-            // per-curve published PVSS encryption keys (UC-verified at reconfig).
+            // VSS (Fast Schnorr) presign PublicInput carries the per-party curve25519
+            // HPKE encryption keys + the UC-verified party set, in addition to the
+            // protocol public parameters. These are the single `vss_schnorr_hpke`
+            // curve25519 keys (one per validator, curve-independent) — NOT the three
+            // per-curve class-groups `*_pvss` keys; their UC proofs are verified here
+            // at input-build time (see `vss_party_encryption_keys`).
             DWalletSignatureAlgorithm::TaprootVSS => {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =

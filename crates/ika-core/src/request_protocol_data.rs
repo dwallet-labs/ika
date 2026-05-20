@@ -324,8 +324,9 @@ pub fn dwallet_dkg_and_sign_protocol_data(
         sign_during_dkg_request.signature_algorithm,
     )?;
     // Fast Schnorr (VSS) does not support the combined DKG-and-sign fast path:
-    // the upstream combined VSS party is an unimplemented placeholder. VSS
-    // dWallets must follow the separate DKG → presign → sign path.
+    // it is deferred by decision in this activation (the upstream combined VSS
+    // party exists but is intentionally not wired here). VSS dWallets must follow
+    // the separate DKG → presign → sign path.
     if signature_algorithm.is_vss() {
         return Err(DwalletMPCError::InvalidInput(format!(
             "Fast Schnorr (VSS) algorithm {signature_algorithm} is not supported \

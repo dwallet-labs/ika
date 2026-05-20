@@ -81,7 +81,7 @@ impl ProtocolCryptographicData {
         // for this sign's presign session, read by the manager (which has the
         // epoch store). Only populated for Fast Schnorr (VSS) sign requests.
         presign_private_output: Option<Vec<u8>>,
-        _protocol_config: &ProtocolConfig,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::ImportedKeyVerification { data, .. } => {
@@ -142,6 +142,7 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
+                    protocol_config.schnorr_presign_third_round_delay(),
                     serialized_messages_by_consensus_round,
                 )?;
 
@@ -166,6 +167,7 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
+                    protocol_config.schnorr_presign_third_round_delay(),
                     serialized_messages_by_consensus_round,
                 )?;
 

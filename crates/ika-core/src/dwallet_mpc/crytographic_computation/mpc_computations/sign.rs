@@ -395,9 +395,10 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                 advance_request.map(Self::Secp256r1)
             }
             // Fast Schnorr (VSS) does not support the combined DKG-and-sign fast
-            // path (upstream placeholder). Such requests are rejected at
-            // construction (`dwallet_dkg_and_sign_protocol_data`), so this is
-            // unreachable; kept exhaustive with a clear error as defense-in-depth.
+            // path (deferred by decision; the upstream combined VSS party exists
+            // but is not wired here). Such requests are rejected at construction
+            // (`dwallet_dkg_and_sign_protocol_data`), so this is unreachable; kept
+            // exhaustive with a clear error as defense-in-depth.
             DWalletSignatureAlgorithm::TaprootVSS
             | DWalletSignatureAlgorithm::EdDSAVSS
             | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
@@ -604,11 +605,12 @@ fn vss_reconfiguration_public_output(
     }
 }
 
-/// Deserializes the persisted VSS presign `PrivateOutput` (`Vec<PrivatePresignOutput>`)
-/// and returns the entry matching the public presign's `session_id` +
-/// `presign_blending_index`. `None` private output (missing row) → soft-fail error
-/// so this validator drops out of the sign quorum rather than crashing the session.
-fn vss_presign_private_output_entry<P>(
+/// Deserializes the persisted VSS presign `PrivateOutput` (`Vec<PrivatePresignOutput>`).
+/// The caller selects the matching entry by `session_id` + `presign_blending_index`;
+/// the args here are used only for the error message. `None` private output (missing
+/// row) → soft-fail error so this validator drops out of the sign quorum rather than
+/// crashing the session.
+fn vss_presign_private_outputs<P>(
     presign_private_output: Option<Vec<u8>>,
     session_id: commitment::CommitmentSizedNumber,
     presign_blending_index: u16,
@@ -671,7 +673,7 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_output_entry::<Secp256k1TaprootVSSProtocol>(
+    let private_presign_outputs = vss_presign_private_outputs::<Secp256k1TaprootVSSProtocol>(
         presign_private_output,
         session_id,
         presign_blending_index,
@@ -749,7 +751,7 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_output_entry::<Curve25519EdDSAVSSProtocol>(
+    let private_presign_outputs = vss_presign_private_outputs::<Curve25519EdDSAVSSProtocol>(
         presign_private_output,
         session_id,
         presign_blending_index,
@@ -823,7 +825,7 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_output_entry::<
+    let private_presign_outputs = vss_presign_private_outputs::<
         RistrettoSchnorrkelSubstrateVSSProtocol,
     >(presign_private_output, session_id, presign_blending_index)?;
     let entry = private_presign_outputs
@@ -1393,8 +1395,9 @@ impl DKGAndSignPublicInputByProtocol {
                     )?,
                 ))
             }
-            // Fast Schnorr (VSS) has no combined DKG-and-sign (upstream placeholder);
-            // rejected at request construction, kept exhaustive here as defense-in-depth.
+            // Fast Schnorr (VSS) has no combined DKG-and-sign (deferred by decision;
+            // upstream party exists but is not wired here); rejected at request
+            // construction, kept exhaustive here as defense-in-depth.
             DWalletSignatureAlgorithm::TaprootVSS
             | DWalletSignatureAlgorithm::EdDSAVSS
             | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {

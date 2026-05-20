@@ -658,6 +658,28 @@ impl DWalletMPCManager {
                     }
                     _ => None,
                 };
+
+                // Fast Schnorr (VSS) requires a uniform weight-1 access structure
+                // (the upstream VSS presign/sign parties reject anything else). ika's
+                // count-based committee satisfies this today, but it is not an asserted
+                // invariant — guard here so a future move to genuine stake-weighting
+                // fails loudly at the VSS boundary with a clear error rather than deep
+                // in the crypto layer.
+                if protocol_data
+                    .signature_algorithm()
+                    .is_some_and(|algorithm| algorithm.is_vss())
+                    && !self
+                        .access_structure
+                        .party_to_weight
+                        .values()
+                        .all(|&weight| weight == 1)
+                {
+                    return Err(DwalletMPCError::InvalidInput(
+                        "Fast Schnorr (VSS) requires a uniform weight-1 access \
+                         structure, but this committee has non-unit weights"
+                            .to_string(),
+                    ));
+                }
                 ProtocolCryptographicData::try_new_mpc(
                     protocol_data,
                     self.party_id,

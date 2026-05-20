@@ -810,12 +810,14 @@ impl DWalletMPCManager {
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
                 for signature_algorithm in signature_algorithms {
-                    // Fast Schnorr (VSS) is in the supported-algorithm map but only
-                    // instantiate internal VSS presigns once the feature is enabled
-                    // at this protocol version.
-                    if signature_algorithm.is_vss()
-                        && !self.protocol_config.fast_schnorr_supported()
-                    {
+                    // Fast Schnorr (VSS): do NOT instantiate internal presigns. This
+                    // pool is consumed only by the NOA (network-owned-address) sign
+                    // path (via `pop_presign`), which is not VSS-wired; external VSS
+                    // signs carry their own user-requested presign and never draw from
+                    // this pool. So an internal VSS presign could only feed a NOA-VSS
+                    // sign, which is unsupported — generating them is pure waste. Wire
+                    // a per-algorithm guard back here once NOA-VSS sign exists.
+                    if signature_algorithm.is_vss() {
                         continue;
                     }
                     let is_network_owned_address_signing_presign =
