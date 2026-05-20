@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"types": "../dist/esm/sui/index.d.ts",
+	"import": "../dist/esm/sui/index.js",
+	"main": "../dist/cjs/sui/index.js",
+	"sideEffects": false
+}

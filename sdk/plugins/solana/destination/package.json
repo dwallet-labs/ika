@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"types": "../../dist/esm/solana/destination/index.d.ts",
+	"import": "../../dist/esm/solana/destination/index.js",
+	"main": "../../dist/cjs/solana/destination/index.js",
+	"sideEffects": false
+}

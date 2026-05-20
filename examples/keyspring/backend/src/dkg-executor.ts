@@ -341,7 +341,7 @@ export class DKGExecutorService {
 			dWalletObjectId: ids.dWalletObjectId,
 			encryptedUserSecretKeyShareId: ids.encryptedUserSecretKeyShareId,
 			ethereumAddress,
-			digest: exec.digest,
+			digest: exec.digest ?? '',
 		};
 	}
 
@@ -475,7 +475,7 @@ export class DKGExecutorService {
 			}
 		}
 
-		return { signatureHex, signId, digest: exec.digest, ethTxHash };
+		return { signatureHex, signId, digest: exec.digest ?? '', ethTxHash };
 	}
 
 	async getEthTxParams(address: string): Promise<{
@@ -552,8 +552,13 @@ function curveFromNumber(n: number): Curve {
 }
 
 interface ExecEvent {
-	type: string;
-	bcs: string;
+	readonly eventType: string;
+	readonly bcs?: number[] | Uint8Array | null;
+}
+
+function eventBcsBytes(event: ExecEvent): Uint8Array | null {
+	if (!event.bcs) return null;
+	return event.bcs instanceof Uint8Array ? event.bcs : Uint8Array.from(event.bcs);
 }
 
 function parseDWalletIds(events: ExecEvent[]): {
@@ -567,18 +572,20 @@ function parseDWalletIds(events: ExecEvent[]): {
 		encryptedUserSecretKeyShareId: null as string | null,
 	};
 	for (const event of events) {
-		if (!event.type.includes('DWalletSessionEvent')) continue;
+		if (!event.eventType.includes('DWalletSessionEvent')) continue;
+		const bytes = eventBcsBytes(event);
+		if (!bytes) continue;
 		try {
 			const parsed = SessionsManagerModule.DWalletSessionEvent(
 				CoordinatorInnerModule.DWalletDKGRequestEvent,
-			).fromBase64(event.bcs);
+			).parse(bytes);
 			out.dWalletCapObjectId = parsed.event_data.dwallet_cap_id;
 			out.dWalletObjectId = parsed.event_data.dwallet_id;
 			out.encryptedUserSecretKeyShareId =
 				parsed.event_data.user_secret_key_share.Encrypted
 					?.encrypted_user_secret_key_share_id || null;
 		} catch (err) {
-			logger.warn({ event: event.type, err }, 'Failed to parse DWalletSessionEvent');
+			logger.warn({ event: event.eventType, err }, 'Failed to parse DWalletSessionEvent');
 		}
 	}
 	return out;
@@ -586,14 +593,16 @@ function parseDWalletIds(events: ExecEvent[]): {
 
 function parsePresignId(events: ExecEvent[]): string | null {
 	for (const event of events) {
-		if (!event.type.includes('PresignRequestEvent')) continue;
+		if (!event.eventType.includes('PresignRequestEvent')) continue;
+		const bytes = eventBcsBytes(event);
+		if (!bytes) continue;
 		try {
 			const parsed = SessionsManagerModule.DWalletSessionEvent(
 				CoordinatorInnerModule.PresignRequestEvent,
-			).fromBase64(event.bcs);
+			).parse(bytes);
 			return parsed.event_data.presign_id;
 		} catch (err) {
-			logger.warn({ event: event.type, err }, 'Failed to parse presign event');
+			logger.warn({ event: event.eventType, err }, 'Failed to parse presign event');
 		}
 	}
 	return null;
@@ -601,14 +610,16 @@ function parsePresignId(events: ExecEvent[]): string | null {
 
 function parseSignId(events: ExecEvent[]): string | null {
 	for (const event of events) {
-		if (!event.type.includes('SignRequestEvent')) continue;
+		if (!event.eventType.includes('SignRequestEvent')) continue;
+		const bytes = eventBcsBytes(event);
+		if (!bytes) continue;
 		try {
 			const parsed = SessionsManagerModule.DWalletSessionEvent(
 				CoordinatorInnerModule.SignRequestEvent,
-			).fromBase64(event.bcs);
+			).parse(bytes);
 			return parsed.event_data.sign_id;
 		} catch (err) {
-			logger.warn({ event: event.type, err }, 'Failed to parse sign event');
+			logger.warn({ event: event.eventType, err }, 'Failed to parse sign event');
 		}
 	}
 	return null;

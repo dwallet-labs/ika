@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"types": "../../dist/esm/ethereum/publisher/index.d.ts",
+	"import": "../../dist/esm/ethereum/publisher/index.js",
+	"main": "../../dist/cjs/ethereum/publisher/index.js",
+	"sideEffects": false
+}

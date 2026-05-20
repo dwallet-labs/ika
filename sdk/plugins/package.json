@@ -10,64 +10,85 @@
 	"types": "./dist/cjs/index.d.ts",
 	"exports": {
 		".": {
+			"types": "./dist/esm/index.d.ts",
 			"import": "./dist/esm/index.js",
 			"require": "./dist/cjs/index.js"
 		},
 		"./sui": {
+			"types": "./dist/esm/sui/index.d.ts",
 			"import": "./dist/esm/sui/index.js",
 			"require": "./dist/cjs/sui/index.js"
 		},
 		"./sui/source": {
+			"types": "./dist/esm/sui/source/index.d.ts",
 			"import": "./dist/esm/sui/source/index.js",
 			"require": "./dist/cjs/sui/source/index.js"
 		},
 		"./sui/destination": {
+			"types": "./dist/esm/sui/destination/index.d.ts",
 			"import": "./dist/esm/sui/destination/index.js",
 			"require": "./dist/cjs/sui/destination/index.js"
 		},
 		"./sui/publisher": {
+			"types": "./dist/esm/sui/publisher/index.d.ts",
 			"import": "./dist/esm/sui/publisher/index.js",
 			"require": "./dist/cjs/sui/publisher/index.js"
 		},
 		"./solana": {
+			"types": "./dist/esm/solana/index.d.ts",
 			"import": "./dist/esm/solana/index.js",
 			"require": "./dist/cjs/solana/index.js"
 		},
 		"./solana/destination": {
+			"types": "./dist/esm/solana/destination/index.d.ts",
 			"import": "./dist/esm/solana/destination/index.js",
 			"require": "./dist/cjs/solana/destination/index.js"
 		},
 		"./solana/publisher": {
+			"types": "./dist/esm/solana/publisher/index.d.ts",
 			"import": "./dist/esm/solana/publisher/index.js",
 			"require": "./dist/cjs/solana/publisher/index.js"
 		},
 		"./ethereum": {
+			"types": "./dist/esm/ethereum/index.d.ts",
 			"import": "./dist/esm/ethereum/index.js",
 			"require": "./dist/cjs/ethereum/index.js"
 		},
 		"./ethereum/destination": {
+			"types": "./dist/esm/ethereum/destination/index.d.ts",
 			"import": "./dist/esm/ethereum/destination/index.js",
 			"require": "./dist/cjs/ethereum/destination/index.js"
 		},
 		"./ethereum/publisher": {
+			"types": "./dist/esm/ethereum/publisher/index.d.ts",
 			"import": "./dist/esm/ethereum/publisher/index.js",
 			"require": "./dist/cjs/ethereum/publisher/index.js"
 		},
 		"./bitcoin": {
+			"types": "./dist/esm/bitcoin/index.d.ts",
 			"import": "./dist/esm/bitcoin/index.js",
 			"require": "./dist/cjs/bitcoin/index.js"
 		},
 		"./bitcoin/destination": {
+			"types": "./dist/esm/bitcoin/destination/index.d.ts",
 			"import": "./dist/esm/bitcoin/destination/index.js",
 			"require": "./dist/cjs/bitcoin/destination/index.js"
 		},
 		"./bitcoin/publisher": {
+			"types": "./dist/esm/bitcoin/publisher/index.d.ts",
 			"import": "./dist/esm/bitcoin/publisher/index.js",
 			"require": "./dist/cjs/bitcoin/publisher/index.js"
 		}
 	},
+	"scripts": {
+		"build": "build-package"
+	},
 	"files": [
-		"dist"
+		"bitcoin",
+		"dist",
+		"ethereum",
+		"solana",
+		"sui"
 	],
 	"engines": {
 		"node": ">=18"
@@ -96,6 +117,7 @@
 		"@noble/hashes": "^2.0.1"
 	},
 	"devDependencies": {
+		"@ika.xyz/build-scripts": "workspace:*",
 		"@ika.xyz/sdk": "workspace:*",
 		"@mysten/sui": "^2.16.3",
 		"@solana/web3.js": "^1.95.0",

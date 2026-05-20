@@ -14,6 +14,7 @@
 	},
 	"dependencies": {
 		"@bitcoinerlab/secp256k1": "^1.2.0",
+		"@ika.xyz/plugins": "workspace:*",
 		"@ika.xyz/sdk": "^0.2.2",
 		"@mysten/codegen": "^0.5.9",
 		"@mysten/dapp-kit": "^0.19.8",

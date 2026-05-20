@@ -34,12 +34,20 @@ import type { SuiDWallet } from './dwallet.js';
  * the produced PTB (used to parse `PresignRequestEvent`, `SignRequestEvent`,
  * etc.). dApp Kit's mutation must be called with `options: { showEvents:
  * true }` so the events array is populated.
+ *
+ * `digest` is optional but recommended — consumers that submit follow-up
+ * txs depending on this one (analytics, retries, polling) need it. The
+ * SDK's keypair-mode executor populates it; wallet-signer integrations
+ * should pass it through from their hook return.
  */
 export interface SuiTxExecutionResult {
-	readonly events?: ReadonlyArray<{
-		readonly eventType: string;
-		readonly bcs?: number[] | Uint8Array | null;
-	}> | null;
+	readonly digest?: string;
+	readonly events?:
+		| Array<{
+				readonly eventType: string;
+				readonly bcs?: number[] | Uint8Array | null;
+		  }>
+		| null;
 }
 
 /**
