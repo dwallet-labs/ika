@@ -58,11 +58,12 @@ opt-level = 2
 
 [profile.simulator]
 inherits = "test"
-debug = true
-debug-assertions = true
-overflow-checks = true
-# opt-level 3 (release-equivalent). The crypto (class-groups) is otherwise far
-# too slow under opt-level 1; the simtest stack's smoke test was timing out.
+# Match `--release` for the simulator profile: class-groups crypto is
+# unusable under debug-assertions / overflow-checks even at opt-level 3.
+# Keep line-table debuginfo for backtraces.
+debug = 1
+debug-assertions = false
+overflow-checks = false
 opt-level = 3
 
 [workspace.lints.rust]

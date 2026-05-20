@@ -158,8 +158,9 @@ Gotchas worth knowing before touching simtest code:
 - **mysten-sim pin:** rev `213e543` (tokio 1.49.0) to match the workspace
   tokio. Older pins ship 1.38.1 and the `[patch.crates-io.tokio]` patch
   silently no-ops.
-- **`[profile.simulator]`** uses `opt-level = 3` — class-groups crypto is
-  unusable below that.
+- **`[profile.simulator]`** matches release (`opt-level = 3`,
+  `debug-assertions = false`, `overflow-checks = false`) — class-groups
+  crypto is unusable otherwise. `debug = 1` keeps line-table backtraces.
 - **Stale msim rot:** if `cargo simtest build` hits an `unresolved import`
   under `--cfg msim`, suspect a Sui-fork `#[cfg(msim)]` block referencing
   ika-renamed-but-not-actually-aliased symbols (`ika_simulator::*`,
