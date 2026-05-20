@@ -106,7 +106,7 @@ impl IkaNodeHandle {
 
 #[cfg(msim)]
 impl IkaNodeHandle {
-    fn guard(&self) -> ika_simulator::runtime::NodeEnterGuard {
+    fn guard(&self) -> sui_simulator::runtime::NodeEnterGuard {
         self.inner().sim_state.sim_node.enter_node()
     }
 
@@ -129,7 +129,7 @@ impl Drop for IkaNodeHandle {
     fn drop(&mut self) {
         if self.shutdown_on_drop {
             let node_id = self.inner().sim_state.sim_node.id();
-            ika_simulator::runtime::Handle::try_current().map(|h| h.delete_node(node_id));
+            sui_simulator::runtime::Handle::try_current().map(|h| h.delete_node(node_id));
         }
     }
 }

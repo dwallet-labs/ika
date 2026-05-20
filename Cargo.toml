@@ -24,6 +24,7 @@ members = [
     "crates/ika-move-contracts",
     "crates/ika-network",
     "crates/ika-archival",
+    "crates/ika-test-cluster",
 ]
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
@@ -60,8 +61,9 @@ inherits = "test"
 debug = true
 debug-assertions = true
 overflow-checks = true
-# opt-level 1 gives >5x speedup for simulator tests without slowing down build times very much.
-opt-level = 1
+# opt-level 3 (release-equivalent). The crypto (class-groups) is otherwise far
+# too slow under opt-level 1; the simtest stack's smoke test was timing out.
+opt-level = 3
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
@@ -225,6 +227,7 @@ tempfile = "3.20.0"
 test-fuzz = "7.2.0"
 thiserror = "2.0.12"
 tokio = "1.44.2"
+toml_edit = "0.22"
 tokio-retry = "0.3"
 tokio-stream = { version = "0.1.14", features = ["sync", "net"] }
 tonic = { version = "0.14.2", features = [
@@ -338,6 +341,7 @@ ika-types = { path = "crates/ika-types" }
 ika-move-contracts = { path = "crates/ika-move-contracts" }
 ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
+ika-test-cluster = { path = "crates/ika-test-cluster" }
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee553b25f9f619722391de33edbe2f7412c" }

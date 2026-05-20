@@ -123,6 +123,52 @@ cargo test --release -p ika-core dwallet_mpc::integration_tests
 cd sdk/typescript && pnpm test
 ```
 
+## Simtest
+
+`cargo simtest` (driver `scripts/simtest/cargo-simtest`) runs deterministic
+single-threaded tests via mysten-sim. Smoke entry point:
+`crates/ika-test-cluster/` (`IkaTestCluster` + `IkaTestClusterBuilder`).
+
+Gotchas worth knowing before touching simtest code:
+
+- **Rayon panics under msim.** Rayon workers are real OS threads with no msim
+  node context, so any tokio/tracing call from them hits
+  `NodeHandle::current().unwrap()` and `rayon-core` aborts the process
+  (bypasses `panic_handler`). The cryptography-private `parallel` feature is
+  therefore disabled under `cfg(msim)` via
+  `[target.'cfg(not(msim))'.dependencies]` overrides in `ika-core` and
+  `dwallet-classgroups-types`. Direct `rayon::spawn_fifo` sites in
+  `dwallet_mpc/crytographic_computation/{orchestrator,mpc_computations/network_dkg}.rs`
+  also capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter
+  it as the first line of the closure. New rayon-from-msim-node code needs
+  both patterns.
+- **Move build under msim** breaks the moment it touches sui-framework
+  (move-package-alt git-fetches via `tokio::process`, which msim doesn't
+  emulate). `IkaTestClusterBuilder` works around this by rewriting each
+  `Move.toml` to use explicit local-path deps on Sui framework + Move stdlib
+  (`ika_move_contracts::save_contracts_to_temp_dir_for_simtest`). The
+  `SIMTEST_STATIC_INIT_MOVE` warm-up uses the no-dep stub at
+  `crates/ika-test-cluster/move-stub/` for the same reason.
+- **IP allocation:** ika-config allocates from `10.11.0.x` (sui-config uses
+  `10.10.0.x` and they each have their own thread-local `SimAddressManager`).
+- **`Pub.<env>.toml`** persists across runs and breaks the next publish if
+  its absolute paths point at a deleted temp dir. `IkaTestClusterBuilder`
+  chdirs into the contracts temp dir before publish so the pubfile dies with
+  the `TempDir`.
+- **mysten-sim pin:** rev `213e543` (tokio 1.49.0) to match the workspace
+  tokio. Older pins ship 1.38.1 and the `[patch.crates-io.tokio]` patch
+  silently no-ops.
+- **`[profile.simulator]`** uses `opt-level = 3` — class-groups crypto is
+  unusable below that.
+- **Stale msim rot:** if `cargo simtest build` hits an `unresolved import`
+  under `--cfg msim`, suspect a Sui-fork `#[cfg(msim)]` block referencing
+  ika-renamed-but-not-actually-aliased symbols (`ika_simulator::*`,
+  `OIDCProvider`, `safe_mode`, etc.).
+- **Open follow-up:** the smoke test exceeds the `< 5 min` wall budget on
+  sequential crypto. The fix is the deferred `chore/simtest-crypto-mock`
+  branch — feature-gated mocked class-groups (mirroring how `cargo-simtest`
+  already mocks `blst`).
+
 ## Cryptography Notes
 
 - 2PC-MPC: Two-party computation where one party is emulated by n-party MPC
