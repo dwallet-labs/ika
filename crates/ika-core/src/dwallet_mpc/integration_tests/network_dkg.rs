@@ -275,7 +275,30 @@ pub(crate) async fn create_reconfigured_network_key_test(
     test_state: &mut IntegrationTestState,
 ) -> (Round, Vec<u8>, ObjectID) {
     let (consensus_round, network_key_bytes, key_id) = create_network_key_test(test_state).await;
+    let consensus_round = reconfigure_network_key(
+        test_state,
+        consensus_round,
+        key_id,
+        network_key_bytes.clone(),
+    )
+    .await;
+    (consensus_round, network_key_bytes, key_id)
+}
 
+/// Runs a network reconfiguration (to the same key-bearing committee at the next
+/// epoch) on an already-created network key, then installs the resulting V3
+/// reconfiguration output on every validator's key in place. Returns the next
+/// unused consensus round.
+///
+/// Split out of [`create_reconfigured_network_key_test`] so a caller can create
+/// dWallets *before* reconfiguring — the dWallet DKG runs against the pre-reconfig
+/// key, exactly as the user-driven sign flow does.
+pub(crate) async fn reconfigure_network_key(
+    test_state: &mut IntegrationTestState,
+    consensus_round: Round,
+    key_id: ObjectID,
+    network_key_bytes: Vec<u8>,
+) -> Round {
     let epoch_id = test_state
         .dwallet_mpc_services
         .first()
@@ -299,8 +322,8 @@ pub(crate) async fn create_reconfigured_network_key_test(
     send_start_network_key_reconfiguration_event(
         epoch_id,
         &mut test_state.sui_data_senders,
-        [7u8; 32],
-        7,
+        [10u8; 32],
+        10,
         key_id,
     );
 
@@ -377,5 +400,5 @@ pub(crate) async fn create_reconfigured_network_key_test(
         );
     }
 
-    (consensus_round, network_key_bytes, key_id)
+    consensus_round
 }
