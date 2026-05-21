@@ -6,24 +6,24 @@ Builds binaries (5 platforms), Docker images (4 images), uploads to GCP, creates
 
 ### Secrets
 
-| Secret | Purpose |
-|--------|---------|
-| `GH_DEPLOY_KEY` | SSH key for cloning `dwallet-labs/cryptography-private` (private dependency) |
-| `GAR_KEY` | Google Cloud service account JSON for Artifact Registry |
-| `GITHUB_TOKEN` | Automatic — creates draft releases |
-| `HOMEBREW_TAP_DEPLOY_KEY` | SSH deploy key with write access to `ika-xyz/homebrew-tap` |
+| Secret                    | Purpose                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `GH_DEPLOY_KEY`           | SSH key for cloning `dwallet-labs/cryptography-private` (private dependency) |
+| `GAR_KEY`                 | Google Cloud service account JSON for Artifact Registry                      |
+| `GITHUB_TOKEN`            | Automatic — creates draft releases                                           |
+| `HOMEBREW_TAP_DEPLOY_KEY` | SSH deploy key with write access to `ika-xyz/homebrew-tap`                   |
 
 ### Runner labels
 
 Configured in the `version` job outputs — change there to update all jobs:
 
-| Label | Used by |
-|-------|---------|
-| `linux-32-runner` | Linux builds, Docker packaging |
-| `macos-13` | macOS Intel CLI build |
-| `macos-latest` | macOS Apple Silicon CLI build |
-| `windows-latest` | Windows CLI build |
-| `ubuntu-latest` | Version resolution, uploads, release, homebrew |
+| Label             | Used by                                        |
+| ----------------- | ---------------------------------------------- |
+| `linux-32-runner` | Linux builds, Docker packaging                 |
+| `macos-13`        | macOS Intel CLI build                          |
+| `macos-latest`    | macOS Apple Silicon CLI build                  |
+| `windows-latest`  | Windows CLI build                              |
+| `ubuntu-latest`   | Version resolution, uploads, release, homebrew |
 
 ## Release Publish (via tag)
 
@@ -50,6 +50,7 @@ release/{network}-{version}
 - `version`: must match `Cargo.toml` workspace version
 
 Examples:
+
 - `release/mainnet-1.2.0` — full release + Homebrew update
 - `release/testnet-1.2.0` — full release, no Homebrew
 - `release/devnet-1.2.0` — full release, no Homebrew
@@ -72,22 +73,22 @@ Manual dispatch builds and uploads everything but does **not** create a GitHub r
 
 ### Binaries
 
-| Platform | Binaries | Method |
-|----------|----------|--------|
-| linux-x64 | ika, ika-validator, ika-fullnode, ika-notifier, ika-proxy | Docker (reproducible) |
-| linux-arm64 | ika, ika-validator, ika-fullnode, ika-notifier | Docker (cross-compile) |
-| macos-x64 | ika | Native runner |
-| macos-arm64 | ika | Native runner |
-| windows-x64 | ika.exe | Native runner |
+| Platform    | Binaries                                                  | Method                 |
+| ----------- | --------------------------------------------------------- | ---------------------- |
+| linux-x64   | ika, ika-validator, ika-fullnode, ika-notifier, ika-proxy | Docker (reproducible)  |
+| linux-arm64 | ika, ika-validator, ika-fullnode, ika-notifier            | Docker (cross-compile) |
+| macos-x64   | ika                                                       | Native runner          |
+| macos-arm64 | ika                                                       | Native runner          |
+| windows-x64 | ika.exe                                                   | Native runner          |
 
 ### Docker images
 
-| Image | Registry | Binary |
-|-------|----------|--------|
+| Image         | Registry                                             | Binary        |
+| ------------- | ---------------------------------------------------- | ------------- |
 | ika-validator | `us-docker.pkg.dev/.../ika-common-public-containers` | ika-validator |
-| ika-fullnode | `us-docker.pkg.dev/.../ika-common-public-containers` | ika-fullnode |
-| ika-notifier | `us-docker.pkg.dev/.../ika-common-public-containers` | ika-notifier |
-| ika-proxy | `us-docker.pkg.dev/.../ika-common-containers` | ika-proxy |
+| ika-fullnode  | `us-docker.pkg.dev/.../ika-common-public-containers` | ika-fullnode  |
+| ika-notifier  | `us-docker.pkg.dev/.../ika-common-public-containers` | ika-notifier  |
+| ika-proxy     | `us-docker.pkg.dev/.../ika-common-containers`        | ika-proxy     |
 
 Docker tag format: `{network}-v{version}` (e.g., `mainnet-v1.2.0`)
 
@@ -103,12 +104,12 @@ version ──┬── build-linux (x64, arm64) ──┬── docker (4x para
 
 ## Where artifacts end up
 
-| Destination | What | When |
-|-------------|------|------|
-| GCP Artifact Registry (binaries) | All platform binaries | Always |
-| GCP Artifact Registry (Docker) | 4 Docker images | Always |
-| GitHub Release (draft) | Platform tarballs | Tag push only |
-| Homebrew (`ika-xyz/homebrew-tap`) | Updated formula | Mainnet tag push only |
+| Destination                       | What                  | When                  |
+| --------------------------------- | --------------------- | --------------------- |
+| GCP Artifact Registry (binaries)  | All platform binaries | Always                |
+| GCP Artifact Registry (Docker)    | 4 Docker images       | Always                |
+| GitHub Release (draft)            | Platform tarballs     | Tag push only         |
+| Homebrew (`ika-xyz/homebrew-tap`) | Updated formula       | Mainnet tag push only |
 
 ## After the release
 
@@ -120,6 +121,7 @@ The GitHub release is created as a **draft**. After verifying:
 4. Click **Publish release**
 
 Users can then install via:
+
 ```bash
 brew install ika-xyz/tap/ika
 ```

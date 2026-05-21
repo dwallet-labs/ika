@@ -7,8 +7,8 @@ metadata:
     requires:
       bins:
         - node
-    emoji: "⚡"
-    homepage: "https://ika.xyz"
+    emoji: '⚡'
+    homepage: 'https://ika.xyz'
     tags:
       - typescript
       - sdk
@@ -45,14 +45,14 @@ import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 
 const suiClient = new SuiJsonRpcClient({
-    url: getJsonRpcFullnodeUrl('testnet'),
-    network: 'testnet',
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
 });
 
 const ikaClient = new IkaClient({
-    suiClient,
-    config: getNetworkConfig('testnet'), // or 'mainnet'
-    cache: true,
+	suiClient,
+	config: getNetworkConfig('testnet'), // or 'mainnet'
+	cache: true,
 });
 await ikaClient.initialize();
 ```
@@ -60,59 +60,59 @@ await ikaClient.initialize();
 ## Enums
 
 ```typescript
-import { Curve, SignatureAlgorithm, Hash } from '@ika.xyz/sdk';
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 
 // Curves
-Curve.SECP256K1   // Bitcoin, Ethereum
-Curve.SECP256R1   // WebAuthn, P-256
-Curve.ED25519     // Solana, Substrate
-Curve.RISTRETTO   // Privacy
+Curve.SECP256K1; // Bitcoin, Ethereum
+Curve.SECP256R1; // WebAuthn, P-256
+Curve.ED25519; // Solana, Substrate
+Curve.RISTRETTO; // Privacy
 
 // Signature Algorithms
-SignatureAlgorithm.ECDSASecp256k1      // SECP256K1
-SignatureAlgorithm.Taproot             // SECP256K1
-SignatureAlgorithm.ECDSASecp256r1      // SECP256R1
-SignatureAlgorithm.EdDSA               // ED25519
-SignatureAlgorithm.SchnorrkelSubstrate // RISTRETTO
+SignatureAlgorithm.ECDSASecp256k1; // SECP256K1
+SignatureAlgorithm.Taproot; // SECP256K1
+SignatureAlgorithm.ECDSASecp256r1; // SECP256R1
+SignatureAlgorithm.EdDSA; // ED25519
+SignatureAlgorithm.SchnorrkelSubstrate; // RISTRETTO
 
 // Hashes
-Hash.KECCAK256     // ECDSASecp256k1
-Hash.SHA256        // ECDSASecp256k1, Taproot, ECDSASecp256r1
-Hash.DoubleSHA256  // ECDSASecp256k1
-Hash.SHA512        // EdDSA
-Hash.Merlin        // SchnorrkelSubstrate
+Hash.KECCAK256; // ECDSASecp256k1
+Hash.SHA256; // ECDSASecp256k1, Taproot, ECDSASecp256r1
+Hash.DoubleSHA256; // ECDSASecp256k1
+Hash.SHA512; // EdDSA
+Hash.Merlin; // SchnorrkelSubstrate
 ```
 
 ## Valid Combinations Quick Reference
 
-| Chain | Curve | SignatureAlgorithm | Hash |
-|---|---|---|---|
-| Ethereum | SECP256K1 | ECDSASecp256k1 | KECCAK256 |
-| Bitcoin Taproot | SECP256K1 | Taproot | SHA256 |
-| Bitcoin Legacy | SECP256K1 | ECDSASecp256k1 | DoubleSHA256 |
-| Solana | ED25519 | EdDSA | SHA512 |
-| WebAuthn | SECP256R1 | ECDSASecp256r1 | SHA256 |
-| Substrate | RISTRETTO | SchnorrkelSubstrate | Merlin |
+| Chain           | Curve     | SignatureAlgorithm  | Hash         |
+| --------------- | --------- | ------------------- | ------------ |
+| Ethereum        | SECP256K1 | ECDSASecp256k1      | KECCAK256    |
+| Bitcoin Taproot | SECP256K1 | Taproot             | SHA256       |
+| Bitcoin Legacy  | SECP256K1 | ECDSASecp256k1      | DoubleSHA256 |
+| Solana          | ED25519   | EdDSA               | SHA512       |
+| WebAuthn        | SECP256R1 | ECDSASecp256r1      | SHA256       |
+| Substrate       | RISTRETTO | SchnorrkelSubstrate | Merlin       |
 
 ## dWallet Types
 
-| Kind | Description | Use Case |
-|---|---|---|
-| `zero-trust` | Encrypted user share, user must participate in signing | Personal wallets, max security |
-| `shared` | Public user share, network signs autonomously | DAOs, contracts, automation |
-| `imported-key` | Existing private key imported (encrypted share) | Migrating existing wallets |
-| `imported-key-shared` | Imported key with public share | Migrated wallets for contracts |
+| Kind                  | Description                                            | Use Case                       |
+| --------------------- | ------------------------------------------------------ | ------------------------------ |
+| `zero-trust`          | Encrypted user share, user must participate in signing | Personal wallets, max security |
+| `shared`              | Public user share, network signs autonomously          | DAOs, contracts, automation    |
+| `imported-key`        | Existing private key imported (encrypted share)        | Migrating existing wallets     |
+| `imported-key-shared` | Imported key with public share                         | Migrated wallets for contracts |
 
 ## Core Flow: Shared dWallet (Most Common)
 
 ### 1. Create Encryption Keys
 
 ```typescript
-import { UserShareEncryptionKeys, Curve } from '@ika.xyz/sdk';
+import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(
-    new TextEncoder().encode('your-seed'),
-    Curve.SECP256K1,
+	new TextEncoder().encode('your-seed'),
+	Curve.SECP256K1,
 );
 ```
 
@@ -131,22 +131,28 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 ### 3. DKG (Create dWallet)
 
 ```typescript
-import { prepareDKGAsync, createRandomSessionIdentifier } from '@ika.xyz/sdk';
+import { createRandomSessionIdentifier, prepareDKGAsync } from '@ika.xyz/sdk';
 
 const sessionIdBytes = createRandomSessionIdentifier();
-const dkgData = await prepareDKGAsync(ikaClient, Curve.SECP256K1, keys, sessionIdBytes, senderAddress);
+const dkgData = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	keys,
+	sessionIdBytes,
+	senderAddress,
+);
 const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const sessionId = ikaTx.registerSessionIdentifier(sessionIdBytes);
 const [dwalletCap, signId] = await ikaTx.requestDWalletDKG({
-    dkgRequestInput: dkgData,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
-    sessionIdentifier: sessionId,
-    dwalletNetworkEncryptionKeyId: networkKey.id,
-    curve: Curve.SECP256K1,
+	dkgRequestInput: dkgData,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	sessionIdentifier: sessionId,
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
 });
 const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -157,7 +163,10 @@ const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx,
 import { publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
 
 const dWallet = await ikaClient.getDWalletInParticularState(dwalletId, 'Active');
-const publicKey = await publicKeyFromDWalletOutput(Curve.SECP256K1, Uint8Array.from(dWallet.state.Active.public_output));
+const publicKey = await publicKeyFromDWalletOutput(
+	Curve.SECP256K1,
+	Uint8Array.from(dWallet.state.Active.public_output),
+);
 ```
 
 ### 5. Request Presign
@@ -166,11 +175,11 @@ const publicKey = await publicKeyFromDWalletOutput(Curve.SECP256K1, Uint8Array.f
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx });
 ikaTx.requestGlobalPresign({
-    dwalletNetworkEncryptionKeyId: networkKey.id,
-    curve: Curve.SECP256K1,
-    signatureAlgorithm: SignatureAlgorithm.Taproot,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.Taproot,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 ```
 
@@ -185,27 +194,35 @@ const pp = await ikaClient.getProtocolPublicParameters(dWallet);
 
 // Create user signature
 const msgSig = await createUserSignMessageWithPublicOutput(
-    pp, Uint8Array.from(dWallet.state.Active.public_output),
-    Uint8Array.from(dWallet.public_user_secret_key_share),
-    Uint8Array.from(presign.state.Completed.presign),
-    message, Hash.SHA256, SignatureAlgorithm.Taproot, Curve.SECP256K1,
+	pp,
+	Uint8Array.from(dWallet.state.Active.public_output),
+	Uint8Array.from(dWallet.public_user_secret_key_share),
+	Uint8Array.from(presign.state.Completed.presign),
+	message,
+	Hash.SHA256,
+	SignatureAlgorithm.Taproot,
+	Curve.SECP256K1,
 );
 
 // Build & execute sign transaction
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const signRef = await ikaTx.requestSign({
-    dWallet, messageApproval: ikaTx.approveMessage({
-        dWalletCap, curve: Curve.SECP256K1,
-        signatureAlgorithm: SignatureAlgorithm.Taproot,
-        hashScheme: Hash.SHA256, message,
-    }),
-    hashScheme: Hash.SHA256,
-    verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
-    presign, message,
-    signatureScheme: SignatureAlgorithm.Taproot,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dWallet,
+	messageApproval: ikaTx.approveMessage({
+		dWalletCap,
+		curve: Curve.SECP256K1,
+		signatureAlgorithm: SignatureAlgorithm.Taproot,
+		hashScheme: Hash.SHA256,
+		message,
+	}),
+	hashScheme: Hash.SHA256,
+	verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
+	presign,
+	message,
+	signatureScheme: SignatureAlgorithm.Taproot,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 ```
 
@@ -215,7 +232,10 @@ const signRef = await ikaTx.requestSign({
 import { parseSignatureFromSignOutput } from '@ika.xyz/sdk';
 
 const sign = await ikaClient.getSignInParticularState(
-    signId, Curve.SECP256K1, SignatureAlgorithm.Taproot, 'Completed',
+	signId,
+	Curve.SECP256K1,
+	SignatureAlgorithm.Taproot,
+	'Completed',
 );
 // sign.state.Completed.signature is already parsed
 ```
@@ -281,15 +301,15 @@ const bytes = keys.toShareEncryptionKeysBytes();
 const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(bytes);
 
 // Properties
-keys.getSuiAddress();            // Sui address for registration
+keys.getSuiAddress(); // Sui address for registration
 keys.getSigningPublicKeyBytes(); // Ed25519 public key bytes
-keys.encryptionKey;              // Class-groups public key
-keys.decryptionKey;              // Class-groups private key
-keys.curve;                      // Curve used
-keys.legacyHash;                 // true if legacy hash derivation
+keys.encryptionKey; // Class-groups public key
+keys.decryptionKey; // Class-groups private key
+keys.curve; // Curve used
+keys.legacyHash; // true if legacy hash derivation
 
 // Operations
-await keys.getEncryptionKeySignature();     // Proof of ownership
+await keys.getEncryptionKeySignature(); // Proof of ownership
 await keys.getUserOutputSignature(dWallet, userPublicOutput); // Authorize dWallet
 await keys.decryptUserShare(dWallet, encShare, pp); // Decrypt secret share
 ```
@@ -312,11 +332,11 @@ const config = getNetworkConfig('testnet'); // or 'mainnet'
 
 ```typescript
 import {
-    IkaClientError,       // Base error
-    ObjectNotFoundError,  // Object not found on chain
-    InvalidObjectError,   // Object parsing failed
-    NetworkError,         // Network operation failure
-    CacheError,           // Caching operation failure
+	CacheError, // Caching operation failure
+	IkaClientError, // Base error
+	InvalidObjectError, // Object parsing failed
+	NetworkError, // Network operation failure
+	ObjectNotFoundError, // Object not found on chain
 } from '@ika.xyz/sdk';
 ```
 
@@ -329,7 +349,12 @@ import { coordinatorTransactions } from '@ika.xyz/sdk';
 
 // All functions follow: (ikaConfig, coordinatorObjectRef, ...params, tx)
 coordinatorTransactions.registerSessionIdentifier(config, coordRef, sessionBytes, tx);
-coordinatorTransactions.requestDWalletDKGWithPublicUserSecretKeyShare(config, coordRef, ...params, tx);
+coordinatorTransactions.requestDWalletDKGWithPublicUserSecretKeyShare(
+	config,
+	coordRef,
+	...params,
+	tx,
+);
 coordinatorTransactions.requestGlobalPresign(config, coordRef, ...params, tx);
 coordinatorTransactions.requestSignAndReturnId(config, coordRef, ...params, tx);
 coordinatorTransactions.approveMessage(config, coordRef, ...params, tx);
@@ -340,30 +365,47 @@ coordinatorTransactions.approveMessage(config, coordRef, ...params, tx);
 
 ```typescript
 // Core
-import { IkaClient, IkaTransaction, getNetworkConfig } from '@ika.xyz/sdk';
-
 // Keys
-import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 // Cryptography
-import {
-    prepareDKGAsync, createRandomSessionIdentifier,
-    createUserSignMessageWithPublicOutput, publicKeyFromDWalletOutput,
-    parseSignatureFromSignOutput, prepareImportedKeyDWalletVerification,
-} from '@ika.xyz/sdk';
 
 // Types
-import { Curve, SignatureAlgorithm, Hash } from '@ika.xyz/sdk';
-import type { DWallet, SharedDWallet, ZeroTrustDWallet, ImportedKeyDWallet } from '@ika.xyz/sdk';
-import type { Presign, Sign, EncryptedUserSecretKeyShare } from '@ika.xyz/sdk';
-import type { DWalletWithState, PresignWithState, SignWithState } from '@ika.xyz/sdk';
 
 // Validation
-import {
-    validateHashSignatureCombination, validateCurveSignatureAlgorithm,
-    fromCurveToNumber, fromSignatureAlgorithmToNumber, fromHashToNumber,
-} from '@ika.xyz/sdk';
 
 // Low-level
-import { coordinatorTransactions, systemTransactions } from '@ika.xyz/sdk';
+import {
+	coordinatorTransactions,
+	createRandomSessionIdentifier,
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	fromCurveToNumber,
+	fromHashToNumber,
+	fromSignatureAlgorithmToNumber,
+	getNetworkConfig,
+	Hash,
+	IkaClient,
+	IkaTransaction,
+	parseSignatureFromSignOutput,
+	prepareDKGAsync,
+	prepareImportedKeyDWalletVerification,
+	publicKeyFromDWalletOutput,
+	SignatureAlgorithm,
+	systemTransactions,
+	UserShareEncryptionKeys,
+	validateCurveSignatureAlgorithm,
+	validateHashSignatureCombination,
+} from '@ika.xyz/sdk';
+import type {
+	DWallet,
+	DWalletWithState,
+	EncryptedUserSecretKeyShare,
+	ImportedKeyDWallet,
+	Presign,
+	PresignWithState,
+	SharedDWallet,
+	Sign,
+	SignWithState,
+	ZeroTrustDWallet,
+} from '@ika.xyz/sdk';
 ```

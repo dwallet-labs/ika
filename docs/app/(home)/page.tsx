@@ -5,7 +5,8 @@ import Link from 'next/link';
 const features = [
 	{
 		title: 'Solana Integration',
-		description: 'Build Solana programs that control dWallets for cross-chain signing. Pinocchio, Anchor, and Native frameworks supported.',
+		description:
+			'Build Solana programs that control dWallets for cross-chain signing. Pinocchio, Anchor, and Native frameworks supported.',
 		href: 'https://solana-pre-alpha.ika.xyz',
 		icon: Globe,
 		gradient: 'from-[#9945FF] to-[#14F195]',
@@ -67,9 +68,9 @@ export default function HomePage() {
 
 						{/* Subtitle */}
 						<p className="mx-auto mt-6 max-w-3xl text-lg text-fd-muted-foreground sm:text-xl">
-							Ika enables bridgeless capital markets. Move value across any blockchain
-							without bridges, wrapping, or centralized custody. Powered by dWallets and
-							2PC-MPC cryptography.
+							Ika enables bridgeless capital markets. Move value across any blockchain without
+							bridges, wrapping, or centralized custody. Powered by dWallets and 2PC-MPC
+							cryptography.
 						</p>
 
 						{/* Solana callout */}
@@ -78,7 +79,13 @@ export default function HomePage() {
 							target="_blank"
 							className="mt-6 inline-flex items-center gap-2.5 rounded-full bg-gradient-to-r from-[#9945FF]/10 to-[#14F195]/10 dark:from-[#9945FF]/20 dark:to-[#14F195]/20 border border-[#9945FF]/40 dark:border-[#9945FF]/30 px-5 py-2 transition-all hover:scale-105 hover:shadow-lg hover:shadow-[#9945FF]/10"
 						>
-							<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="dark:brightness-0 dark:invert" />
+							<Image
+								src="/solana-logo.svg"
+								alt="Solana"
+								width={16}
+								height={16}
+								className="dark:brightness-0 dark:invert"
+							/>
 							<span className="text-sm font-medium text-[#9945FF] dark:text-[#14F195]">
 								Solana Pre-Alpha is live — Build dWallet programs now
 							</span>
@@ -87,10 +94,7 @@ export default function HomePage() {
 
 						{/* CTA Buttons */}
 						<div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-							<Link
-								href="/docs/sdk"
-								className="btn-primary inline-flex items-center gap-2"
-							>
+							<Link href="/docs/sdk" className="btn-primary inline-flex items-center gap-2">
 								<Code2 className="h-5 w-5" />
 								Get Started
 							</Link>
@@ -124,8 +128,8 @@ export default function HomePage() {
 							</div>
 							<h3 className="text-lg font-semibold mb-2">No Bridges Required</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								Sign transactions natively on any blockchain. No wrapped tokens, no
-								bridge exploits, no centralized custodians.
+								Sign transactions natively on any blockchain. No wrapped tokens, no bridge exploits,
+								no centralized custodians.
 							</p>
 						</div>
 						<div className="text-center">
@@ -134,8 +138,8 @@ export default function HomePage() {
 							</div>
 							<h3 className="text-lg font-semibold mb-2">Zero-Trust Security</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								2PC-MPC cryptography ensures no party, not even the network, can sign
-								without user consent. Non-collusive by design.
+								2PC-MPC cryptography ensures no party, not even the network, can sign without user
+								consent. Non-collusive by design.
 							</p>
 						</div>
 						<div className="text-center">
@@ -144,8 +148,8 @@ export default function HomePage() {
 							</div>
 							<h3 className="text-lg font-semibold mb-2">Programmable Signing</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								Build smart contract logic on Sui that controls signing on any chain.
-								DeFi, custody, governance, all composable.
+								Build smart contract logic on Sui that controls signing on any chain. DeFi, custody,
+								governance, all composable.
 							</p>
 						</div>
 					</div>
@@ -227,8 +231,8 @@ export default function HomePage() {
 									Ready to get started?
 								</h2>
 								<p className="mt-4 text-fd-muted-foreground">
-									Install the Ika SDK and start building bridgeless multi-chain
-									applications with dWallets in minutes.
+									Install the Ika SDK and start building bridgeless multi-chain applications with
+									dWallets in minutes.
 								</p>
 								<div className="mt-6">
 									<code className="inline-flex items-center gap-2 rounded-lg bg-fd-muted px-4 py-2 text-sm font-mono">
@@ -241,10 +245,7 @@ export default function HomePage() {
 								<Link href="/docs/sdk" className="btn-primary text-center">
 									Read the Docs
 								</Link>
-								<Link
-									href="/docs/sdk/setup-localnet"
-									className="btn-secondary text-center"
-								>
+								<Link href="/docs/sdk/setup-localnet" className="btn-secondary text-center">
 									Setup Localnet
 								</Link>
 							</div>

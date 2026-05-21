@@ -71,38 +71,52 @@ function TabIcon({ config }: { config: TabConfig }) {
 export default function Layout({ children }: { children: ReactNode }) {
 	return (
 		<>
-		<Banner id="solana-banner" className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-pink-500 text-white">
-			<a href="https://solana-pre-alpha.ika.xyz" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-3 text-sm font-medium text-white no-underline hover:opacity-90 transition-opacity">
-				<Image src="/solana-logo.svg" alt="Solana" width={16} height={16} className="brightness-0 invert" />
-				<span>
-					Solana Pre-Alpha is live! dWallets now support Solana for native cross-chain signing.
-				</span>
-				<ArrowRight className="h-4 w-4" />
-			</a>
-		</Banner>
-		<DocsLayout
-			tree={source.pageTree}
-			{...baseOptions}
-			sidebar={{
-				tabs: {
-					transform(option, node) {
-						const key = option.url.split('/')[2] ?? '';
-						const config = tabConfig[key];
+			<Banner
+				id="solana-banner"
+				className="bg-gradient-to-r from-purple-600 via-fuchsia-500 to-pink-500 text-white"
+			>
+				<a
+					href="https://solana-pre-alpha.ika.xyz"
+					target="_blank"
+					rel="noopener noreferrer"
+					className="flex items-center justify-center gap-3 text-sm font-medium text-white no-underline hover:opacity-90 transition-opacity"
+				>
+					<Image
+						src="/solana-logo.svg"
+						alt="Solana"
+						width={16}
+						height={16}
+						className="brightness-0 invert"
+					/>
+					<span>
+						Solana Pre-Alpha is live! dWallets now support Solana for native cross-chain signing.
+					</span>
+					<ArrowRight className="h-4 w-4" />
+				</a>
+			</Banner>
+			<DocsLayout
+				tree={source.pageTree}
+				{...baseOptions}
+				sidebar={{
+					tabs: {
+						transform(option, node) {
+							const key = option.url.split('/')[2] ?? '';
+							const config = tabConfig[key];
 
-						if (config) {
-							return {
-								...option,
-								icon: <TabIcon config={config} />,
-								description: config.description,
-							};
-						}
-						return option;
+							if (config) {
+								return {
+									...option,
+									icon: <TabIcon config={config} />,
+									description: config.description,
+								};
+							}
+							return option;
+						},
 					},
-				},
-			}}
-		>
-			{children}
-		</DocsLayout>
+				}}
+			>
+				{children}
+			</DocsLayout>
 		</>
 	);
 }

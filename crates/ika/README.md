@@ -79,8 +79,8 @@ ika
 
 Commands accept named values (not numeric IDs):
 
-| Parameter               | Accepted values                                             |
-| ----------------------- | ----------------------------------------------------------- |
+| Parameter               | Accepted values                                            |
+| ----------------------- | ---------------------------------------------------------- |
 | `--curve`               | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`           |
 | `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`                  |
 | `--hash-scheme`         | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |

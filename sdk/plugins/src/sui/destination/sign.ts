@@ -143,9 +143,7 @@ export async function assembleSign(prep: SuiSignPrep, signature: Uint8Array): Pr
 	// produce a malformed serialized signature that Sui's parser splits at
 	// the wrong offset and validators reject with an opaque error.
 	if (signature.length !== 64) {
-		throw new Error(
-			`sui destination: expected 64-byte signature, got ${signature.length}`,
-		);
+		throw new Error(`sui destination: expected 64-byte signature, got ${signature.length}`);
 	}
 	const serialized = encodeSuiSerializedSignature(flag, signature, prep.publicKey);
 	return {

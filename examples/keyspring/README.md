@@ -96,11 +96,11 @@ Your Wallet                    Ika Network                   Base Sepolia
 
 The backend uses three plugins from `@ika.xyz/plugins`:
 
-| Plugin                          | Role                                                        |
-| ------------------------------- | ----------------------------------------------------------- |
-| `suiSource`                     | Sui-side transaction envelope: fee coins, signing, exec     |
-| `ethPublisher`                  | Broadcasts signed Ethereum txs to Base Sepolia              |
-| `assembleEthereumPayload`       | Helper: (r,s) + tx → serialized signed tx (yParity recovery) |
+| Plugin                    | Role                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| `suiSource`               | Sui-side transaction envelope: fee coins, signing, exec      |
+| `ethPublisher`            | Broadcasts signed Ethereum txs to Base Sepolia               |
+| `assembleEthereumPayload` | Helper: (r,s) + tx → serialized signed tx (yParity recovery) |
 
 The source is constructed **without a USEK** — the backend never sees user
 key material. Two non-custodial primitives bridge the gap:
@@ -150,12 +150,12 @@ When using a passkey instead of a wallet:
 
 ### Backend Environment
 
-| Variable               | Description                                     | Default   |
-| ---------------------- | ----------------------------------------------- | --------- |
-| `PORT`                 | Server port                                     | `3001`    |
-| `SUI_ADMIN_SECRET_KEY` | bech32 `suiprivkey...` Sui signer               | Required  |
-| `SUI_NETWORK`          | `testnet` or `mainnet`                          | `testnet` |
-| `SUI_RPC_URL`          | Override the Sui RPC endpoint                   | optional  |
+| Variable               | Description                       | Default   |
+| ---------------------- | --------------------------------- | --------- |
+| `PORT`                 | Server port                       | `3001`    |
+| `SUI_ADMIN_SECRET_KEY` | bech32 `suiprivkey...` Sui signer | Required  |
+| `SUI_NETWORK`          | `testnet` or `mainnet`            | `testnet` |
+| `SUI_RPC_URL`          | Override the Sui RPC endpoint     | optional  |
 
 ### Frontend Environment
 

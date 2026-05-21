@@ -1,4 +1,10 @@
 import {
+	assembleEthereumPayload,
+	deriveEthereumAddress,
+} from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import {
 	coordinatorTransactions,
 	Curve,
 	Hash,
@@ -6,15 +12,7 @@ import {
 	publicKeyFromCentralizedDKGOutput,
 	SignatureAlgorithm,
 } from '@ika.xyz/sdk';
-
-const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource } from '@ika.xyz/plugins/sui/source';
-import {
-	assembleEthereumPayload,
-	deriveEthereumAddress,
-} from '@ika.xyz/plugins/ethereum/destination';
-import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
@@ -30,6 +28,8 @@ import type {
 	SignRequest,
 	SignRequestInput,
 } from './types.js';
+
+const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 
 const TIMEOUTS = {
 	SIGN_WAIT: 120_000,
@@ -259,10 +259,7 @@ export class DKGExecutorService {
 			log.info('Processing sign request');
 			const result = await this.executeSign(request.data);
 			Object.assign(request, { status: 'completed', ...result });
-			log.info(
-				{ signId: result.signId, ethTxHash: result.ethTxHash },
-				'Sign completed',
-			);
+			log.info({ signId: result.signId, ethTxHash: result.ethTxHash }, 'Sign completed');
 		} catch (error) {
 			request.status = 'failed';
 			request.error = error instanceof Error ? error.message : String(error);
@@ -331,10 +328,7 @@ export class DKGExecutorService {
 			Curve.SECP256K1,
 			new Uint8Array(data.userPublicOutput),
 		);
-		const ethereumAddress = await deriveEthereumAddress(
-			Curve.SECP256K1,
-			publicKey,
-		);
+		const ethereumAddress = await deriveEthereumAddress(Curve.SECP256K1, publicKey);
 
 		return {
 			dWalletCapObjectId: ids.dWalletCapObjectId,
@@ -582,8 +576,8 @@ function parseDWalletIds(events: ExecEvent[]): {
 			out.dWalletCapObjectId = parsed.event_data.dwallet_cap_id;
 			out.dWalletObjectId = parsed.event_data.dwallet_id;
 			out.encryptedUserSecretKeyShareId =
-				parsed.event_data.user_secret_key_share.Encrypted
-					?.encrypted_user_secret_key_share_id || null;
+				parsed.event_data.user_secret_key_share.Encrypted?.encrypted_user_secret_key_share_id ||
+				null;
 		} catch (err) {
 			logger.warn({ event: event.eventType, err }, 'Failed to parse DWalletSessionEvent');
 		}

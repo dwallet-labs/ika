@@ -1,18 +1,6 @@
 'use client';
 
 import {
-	Curve,
-	DWalletWithState,
-	Hash,
-	IkaClient,
-	objResToBcs,
-	SignatureAlgorithm,
-} from '@ika.xyz/sdk';
-import {
-	bitcoinPublisher,
-	type BitcoinNetwork as PluginBitcoinNetwork,
-} from '@ika.xyz/plugins/bitcoin/publisher';
-import {
 	assembleSign as btcAssembleSign,
 	buildBip341Preimage,
 	buildCheckSigScript,
@@ -21,6 +9,18 @@ import {
 	toXOnlyPubkey,
 	type BitcoinPsbtPrep,
 } from '@ika.xyz/plugins/bitcoin/destination';
+import {
+	bitcoinPublisher,
+	type BitcoinNetwork as PluginBitcoinNetwork,
+} from '@ika.xyz/plugins/bitcoin/publisher';
+import {
+	Curve,
+	DWalletWithState,
+	Hash,
+	IkaClient,
+	objResToBcs,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
 import { bcs } from '@mysten/sui/bcs';
 import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';

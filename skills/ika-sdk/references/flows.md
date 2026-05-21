@@ -5,19 +5,32 @@ Complete flows for every dWallet operation type.
 ## Prerequisites (All Flows)
 
 ```typescript
-import { getNetworkConfig, IkaClient, IkaTransaction, UserShareEncryptionKeys,
-    Curve, SignatureAlgorithm, Hash, prepareDKGAsync, createRandomSessionIdentifier,
-    createUserSignMessageWithPublicOutput, publicKeyFromDWalletOutput,
-    parseSignatureFromSignOutput, prepareImportedKeyDWalletVerification,
+import {
+	createRandomSessionIdentifier,
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	getNetworkConfig,
+	Hash,
+	IkaClient,
+	IkaTransaction,
+	parseSignatureFromSignOutput,
+	prepareDKGAsync,
+	prepareImportedKeyDWalletVerification,
+	publicKeyFromDWalletOutput,
+	SignatureAlgorithm,
+	UserShareEncryptionKeys,
 } from '@ika.xyz/sdk';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { Transaction } from '@mysten/sui/transactions';
 
 const suiClient = new SuiJsonRpcClient({
-    url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet',
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
 });
 const ikaClient = new IkaClient({
-    suiClient, config: getNetworkConfig('testnet'), cache: true,
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
 });
 await ikaClient.initialize();
 const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
@@ -33,8 +46,8 @@ Most common flow. Network signs autonomously - no user participation at sign tim
 
 ```typescript
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(
-    new TextEncoder().encode('your-deterministic-seed'),
-    Curve.SECP256K1,
+	new TextEncoder().encode('your-deterministic-seed'),
+	Curve.SECP256K1,
 );
 ```
 
@@ -51,20 +64,26 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 
 ```typescript
 const sessionIdBytes = createRandomSessionIdentifier();
-const dkgData = await prepareDKGAsync(ikaClient, Curve.SECP256K1, keys, sessionIdBytes, senderAddress);
+const dkgData = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	keys,
+	sessionIdBytes,
+	senderAddress,
+);
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const sessionId = ikaTx.registerSessionIdentifier(sessionIdBytes);
 const [dwalletCap, signId] = await ikaTx.requestDWalletDKGWithPublicUserShare({
-    publicKeyShareAndProof: dkgData.userDKGMessage,
-    publicUserSecretKeyShare: dkgData.userSecretKeyShare,
-    userPublicOutput: dkgData.userPublicOutput,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
-    sessionIdentifier: sessionId,
-    dwalletNetworkEncryptionKeyId: networkKey.id,
-    curve: Curve.SECP256K1,
+	publicKeyShareAndProof: dkgData.userDKGMessage,
+	publicUserSecretKeyShare: dkgData.userSecretKeyShare,
+	userPublicOutput: dkgData.userPublicOutput,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	sessionIdentifier: sessionId,
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
 });
 const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 // Extract dwalletId from result events
@@ -75,7 +94,8 @@ const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx,
 ```typescript
 const dWallet = await ikaClient.getDWalletInParticularState(dwalletId, 'Active');
 const publicKey = await publicKeyFromDWalletOutput(
-    Curve.SECP256K1, Uint8Array.from(dWallet.state.Active.public_output),
+	Curve.SECP256K1,
+	Uint8Array.from(dWallet.state.Active.public_output),
 );
 // publicKey → derive ETH/BTC address
 ```
@@ -86,11 +106,11 @@ const publicKey = await publicKeyFromDWalletOutput(
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx });
 const presignRef = ikaTx.requestGlobalPresign({
-    dwalletNetworkEncryptionKeyId: networkKey.id,
-    curve: Curve.SECP256K1,
-    signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 // Extract presignId from result events
@@ -103,27 +123,34 @@ const presign = await ikaClient.getPresignInParticularState(presignId, 'Complete
 const pp = await ikaClient.getProtocolPublicParameters(dWallet);
 
 const msgSig = await createUserSignMessageWithPublicOutput(
-    pp, Uint8Array.from(dWallet.state.Active.public_output),
-    Uint8Array.from(dWallet.public_user_secret_key_share),
-    Uint8Array.from(presign.state.Completed.presign),
-    message, Hash.KECCAK256, SignatureAlgorithm.ECDSASecp256k1, Curve.SECP256K1,
+	pp,
+	Uint8Array.from(dWallet.state.Active.public_output),
+	Uint8Array.from(dWallet.public_user_secret_key_share),
+	Uint8Array.from(presign.state.Completed.presign),
+	message,
+	Hash.KECCAK256,
+	SignatureAlgorithm.ECDSASecp256k1,
+	Curve.SECP256K1,
 );
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const signRef = await ikaTx.requestSign({
-    dWallet,
-    messageApproval: ikaTx.approveMessage({
-        dWalletCap, curve: Curve.SECP256K1,
-        signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
-        hashScheme: Hash.KECCAK256, message,
-    }),
-    hashScheme: Hash.KECCAK256,
-    verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
-    presign, message,
-    signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dWallet,
+	messageApproval: ikaTx.approveMessage({
+		dWalletCap,
+		curve: Curve.SECP256K1,
+		signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+		hashScheme: Hash.KECCAK256,
+		message,
+	}),
+	hashScheme: Hash.KECCAK256,
+	verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
+	presign,
+	message,
+	signatureScheme: SignatureAlgorithm.ECDSASecp256k1,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -132,7 +159,10 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 
 ```typescript
 const sign = await ikaClient.getSignInParticularState(
-    signId, Curve.SECP256K1, SignatureAlgorithm.ECDSASecp256k1, 'Completed',
+	signId,
+	Curve.SECP256K1,
+	SignatureAlgorithm.ECDSASecp256k1,
+	'Completed',
 );
 // sign.state.Completed.signature is already parsed, ready for broadcast
 ```
@@ -147,12 +177,12 @@ User must participate in every signing operation. Maximum security.
 
 ```typescript
 const [dwalletCap, signId] = await ikaTx.requestDWalletDKG({
-    dkgRequestInput: dkgData,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
-    sessionIdentifier: sessionId,
-    dwalletNetworkEncryptionKeyId: networkKey.id,
-    curve: Curve.SECP256K1,
+	dkgRequestInput: dkgData,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	sessionIdentifier: sessionId,
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
 });
 ```
 
@@ -162,9 +192,9 @@ const [dwalletCap, signId] = await ikaTx.requestDWalletDKG({
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 await ikaTx.acceptEncryptedUserShare({
-    dWallet,
-    userPublicOutput: dkgData.userPublicOutput,
-    encryptedUserSecretKeyShareId: encShareId,
+	dWallet,
+	userPublicOutput: dkgData.userPublicOutput,
+	encryptedUserSecretKeyShareId: encShareId,
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -173,12 +203,11 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 
 ```typescript
 const encShare = await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
-    encShareId, 'KeyHolderSigned',
+	encShareId,
+	'KeyHolderSigned',
 );
 const pp = await ikaClient.getProtocolPublicParameters(dWallet);
-const { secretShare, verifiedPublicOutput } = await keys.decryptUserShare(
-    dWallet, encShare, pp,
-);
+const { secretShare, verifiedPublicOutput } = await keys.decryptUserShare(dWallet, encShare, pp);
 // Use secretShare in createUserSignMessageWithPublicOutput
 ```
 
@@ -208,7 +237,12 @@ Import an existing private key into the Ika network.
 ```typescript
 const sessionIdBytes = createRandomSessionIdentifier();
 const importData = await prepareImportedKeyDWalletVerification(
-    ikaClient, Curve.SECP256K1, sessionIdBytes, senderAddress, keys, privateKey,
+	ikaClient,
+	Curve.SECP256K1,
+	sessionIdBytes,
+	senderAddress,
+	keys,
+	privateKey,
 );
 // importData: { userPublicOutput, userMessage, encryptedUserShareAndProof }
 ```
@@ -220,12 +254,12 @@ const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const sessionId = ikaTx.registerSessionIdentifier(sessionIdBytes);
 await ikaTx.requestImportedKeyDWalletVerification({
-    importDWalletVerificationRequestInput: importData,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
-    sessionIdentifier: sessionId,
-    signerPublicKey: keys.getSigningPublicKeyBytes(),
-    curve: Curve.SECP256K1,
+	importDWalletVerificationRequestInput: importData,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	sessionIdentifier: sessionId,
+	signerPublicKey: keys.getSigningPublicKeyBytes(),
+	curve: Curve.SECP256K1,
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -284,12 +318,16 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 
 ```typescript
 const tx = new Transaction();
-const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: recipientKeys });
+const ikaTx = new IkaTransaction({
+	ikaClient,
+	transaction: tx,
+	userShareEncryptionKeys: recipientKeys,
+});
 await ikaTx.acceptEncryptedUserShare({
-    dWallet,
-    sourceEncryptionKey: senderEncryptionKey,   // MUST be known out-of-band, not fetched
-    sourceEncryptedUserSecretKeyShare: sourceEncShare,
-    destinationEncryptedUserSecretKeyShare: destEncShare,
+	dWallet,
+	sourceEncryptionKey: senderEncryptionKey, // MUST be known out-of-band, not fetched
+	sourceEncryptedUserSecretKeyShare: sourceEncShare,
+	destinationEncryptedUserSecretKeyShare: destEncShare,
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -308,13 +346,14 @@ Compute partial signature first, approve message later. Useful for DAOs/governan
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 const futureSignRef = await ikaTx.requestFutureSign({
-    dWallet,
-    hashScheme: Hash.SHA256,
-    verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
-    presign, message,
-    signatureScheme: SignatureAlgorithm.Taproot,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dWallet,
+	hashScheme: Hash.SHA256,
+	verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
+	presign,
+	message,
+	signatureScheme: SignatureAlgorithm.Taproot,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 // Extract partialUserSignatureId from events
@@ -324,7 +363,8 @@ const result = await suiClient.core.signAndExecuteTransaction({ transaction: tx,
 
 ```typescript
 const partialSig = await ikaClient.getPartialUserSignatureInParticularState(
-    partialUserSignatureId, 'NetworkVerificationCompleted',
+	partialUserSignatureId,
+	'NetworkVerificationCompleted',
 );
 ```
 
@@ -354,10 +394,10 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 ikaTx.makeDWalletUserSecretKeySharesPublic({
-    dWallet: zeroTrustDWallet,
-    secretShare: savedUserSecretKeyShare,
-    ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
-    suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	dWallet: zeroTrustDWallet,
+	secretShare: savedUserSecretKeyShare,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -366,14 +406,14 @@ await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypai
 
 ## Chain-Specific Configurations
 
-| Target Chain | Curve | SignatureAlgorithm | Hash | Notes |
-|---|---|---|---|---|
-| Ethereum | SECP256K1 | ECDSASecp256k1 | KECCAK256 | Standard ECDSA |
-| Bitcoin Legacy | SECP256K1 | ECDSASecp256k1 | DoubleSHA256 | P2PKH/P2SH |
-| Bitcoin Taproot | SECP256K1 | Taproot | SHA256 | BIP-340 Schnorr |
-| Solana | ED25519 | EdDSA | SHA512 | Ed25519 signing |
-| WebAuthn/P-256 | SECP256R1 | ECDSASecp256r1 | SHA256 | Passkeys |
-| Substrate | RISTRETTO | SchnorrkelSubstrate | Merlin | Polkadot/Kusama |
+| Target Chain    | Curve     | SignatureAlgorithm  | Hash         | Notes           |
+| --------------- | --------- | ------------------- | ------------ | --------------- |
+| Ethereum        | SECP256K1 | ECDSASecp256k1      | KECCAK256    | Standard ECDSA  |
+| Bitcoin Legacy  | SECP256K1 | ECDSASecp256k1      | DoubleSHA256 | P2PKH/P2SH      |
+| Bitcoin Taproot | SECP256K1 | Taproot             | SHA256       | BIP-340 Schnorr |
+| Solana          | ED25519   | EdDSA               | SHA512       | Ed25519 signing |
+| WebAuthn/P-256  | SECP256R1 | ECDSASecp256r1      | SHA256       | Passkeys        |
+| Substrate       | RISTRETTO | SchnorrkelSubstrate | Merlin       | Polkadot/Kusama |
 
 ---
 
@@ -388,9 +428,7 @@ Derive cross-chain wallet from any authentication source.
 // - KDF output: any 32+ byte deterministic secret
 
 const seed = await wallet.signMessage('ika-keyspring-v1');
-const keys = await UserShareEncryptionKeys.fromRootSeedKey(
-    new Uint8Array(seed), Curve.SECP256K1,
-);
+const keys = await UserShareEncryptionKeys.fromRootSeedKey(new Uint8Array(seed), Curve.SECP256K1);
 // Proceed with DKG → the resulting dWallet public key maps to an ETH address
 ```
 

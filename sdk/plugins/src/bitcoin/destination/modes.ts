@@ -17,6 +17,12 @@ import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import * as bitcoin from 'bitcoinjs-lib';
 
+import { buildCheckSigScript, hash160, toXOnlyPubkey } from './address.js';
+import type { BitcoinMode, P2trBundle } from './address.js';
+import { buildBip143Preimage, p2wpkhScriptCode } from './preimage/bip143.js';
+import { buildBip341Preimage, computeTapLeafHash } from './preimage/bip341.js';
+import { buildLegacyPreimage } from './preimage/legacy.js';
+
 const SECP256K1_N = secp256k1.Point.Fn.ORDER;
 const SECP256K1_N_HALF = SECP256K1_N >> 1n;
 
@@ -40,12 +46,6 @@ function normalizeLowS(rs: Uint8Array): Uint8Array {
 	}
 	return out;
 }
-
-import { buildCheckSigScript, hash160, toXOnlyPubkey } from './address.js';
-import type { BitcoinMode, P2trBundle } from './address.js';
-import { buildBip143Preimage, p2wpkhScriptCode } from './preimage/bip143.js';
-import { buildBip341Preimage, computeTapLeafHash } from './preimage/bip341.js';
-import { buildLegacyPreimage } from './preimage/legacy.js';
 
 export interface ModeSignaturePlan {
 	readonly signatureAlgorithm: SignatureAlgorithm;

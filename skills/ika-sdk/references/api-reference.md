@@ -605,42 +605,42 @@ Key functions (50+):
 
 ```typescript
 // DKG
-registerSessionIdentifier(config, coordRef, sessionBytes, tx)
-requestDWalletDKGWithPublicUserSecretKeyShare(config, coordRef, ...params, tx)
-requestDWalletDKG(config, coordRef, ...params, tx)
+registerSessionIdentifier(config, coordRef, sessionBytes, tx);
+requestDWalletDKGWithPublicUserSecretKeyShare(config, coordRef, ...params, tx);
+requestDWalletDKG(config, coordRef, ...params, tx);
 
 // Presign
-requestGlobalPresign(config, coordRef, ...params, tx)
-requestPresign(config, coordRef, ...params, tx)
+requestGlobalPresign(config, coordRef, ...params, tx);
+requestPresign(config, coordRef, ...params, tx);
 
 // Sign
-requestSignAndReturnId(config, coordRef, ...params, tx)
-requestSignWithImportedKey(config, coordRef, ...params, tx)
+requestSignAndReturnId(config, coordRef, ...params, tx);
+requestSignWithImportedKey(config, coordRef, ...params, tx);
 
 // Future Sign
-requestFutureSignAndReturnId(config, coordRef, ...params, tx)
-futureSign(config, coordRef, ...params, tx)
+requestFutureSignAndReturnId(config, coordRef, ...params, tx);
+futureSign(config, coordRef, ...params, tx);
 
 // Approval
-approveMessage(config, coordRef, ...params, tx)
-approveImportedKeyMessage(config, coordRef, ...params, tx)
+approveMessage(config, coordRef, ...params, tx);
+approveImportedKeyMessage(config, coordRef, ...params, tx);
 
 // Verification
-verifyPresignCap(config, coordRef, ...params, tx)
+verifyPresignCap(config, coordRef, ...params, tx);
 
 // Encryption
-registerEncryptionKey(config, coordRef, ...params, tx)
-getActiveEncryptionKey(config, coordRef, address, tx)
+registerEncryptionKey(config, coordRef, ...params, tx);
+getActiveEncryptionKey(config, coordRef, address, tx);
 
 // Transfer
-requestReEncryptUserShareFor(config, coordRef, ...params, tx)
-acceptEncryptedUserShare(config, coordRef, ...params, tx)
+requestReEncryptUserShareFor(config, coordRef, ...params, tx);
+acceptEncryptedUserShare(config, coordRef, ...params, tx);
 
 // Convert
-makeDWalletUserSecretKeySharesPublic(config, coordRef, ...params, tx)
+makeDWalletUserSecretKeySharesPublic(config, coordRef, ...params, tx);
 
 // Import
-requestImportedKeyDWalletVerification(config, coordRef, ...params, tx)
+requestImportedKeyDWalletVerification(config, coordRef, ...params, tx);
 ```
 
 ---

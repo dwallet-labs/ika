@@ -488,9 +488,7 @@ export function suiSource(
 			await ensureInit();
 			return requestSign(signCtx(), input);
 		};
-		const apiPrepareSignMessage = async (
-			input: PrepareSignInput,
-		): Promise<PrepareSignOutput> => {
+		const apiPrepareSignMessage = async (input: PrepareSignInput): Promise<PrepareSignOutput> => {
 			await ensureInit();
 			return prepareSignMessage({ defaults, ikaClient }, input);
 		};

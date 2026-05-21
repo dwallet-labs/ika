@@ -40,7 +40,8 @@ Pre-built binaries are available from [GitHub Releases](https://github.com/dwall
 - Windows x64
 
 <Note title="Prerequisite">
-	The Ika CLI uses the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install) for key management and on-chain operations. Make sure you have it installed before using Ika.
+	The Ika CLI uses the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install)
+	for key management and on-chain operations. Make sure you have it installed before using Ika.
 </Note>
 
 ## Initial Configuration
@@ -118,8 +119,8 @@ ika
 
 Commands accept named values (not numeric IDs):
 
-| Parameter               | Accepted values                                             |
-| ----------------------- | ----------------------------------------------------------- |
+| Parameter               | Accepted values                                            |
+| ----------------------- | ---------------------------------------------------------- |
 | `--curve`               | `secp256k1`, `secp256r1`, `ed25519`, `ristretto`           |
 | `--signature-algorithm` | `ecdsa`, `taproot`, `eddsa`, `schnorrkel`                  |
 | `--hash-scheme`         | `keccak256`, `sha256`, `double-sha256`, `sha512`, `merlin` |
@@ -158,8 +159,9 @@ ika dwallet sign \
 
 <Info title="Auto-detection">
 	IKA/SUI coins are auto-detected from the active wallet. When `--dwallet-id` is provided, the curve
-	and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified.
-	The secret share can also be omitted — the CLI will decrypt it from chain using your keystore-derived key.
+	and DKG output are auto-fetched from chain. The presign cap is auto-verified if unverified. The
+	secret share can also be omitted — the CLI will decrypt it from chain using your keystore-derived
+	key.
 </Info>
 
 ### Key Management
