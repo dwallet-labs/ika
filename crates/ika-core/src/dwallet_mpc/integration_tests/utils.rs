@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
@@ -548,7 +548,7 @@ pub fn build_committee_with_random_seeds(
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
-        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&seed);
+        let class_groups_key_pair = ValidatorMPCSecrets::from_seed(&seed);
         committee.class_groups_public_keys_and_proofs.insert(
             *authority_name,
             class_groups_key_pair
@@ -575,9 +575,9 @@ pub fn build_committee_with_random_seeds(
         // VSS presign PublicInput (`vss_party_encryption_keys` verifies these proofs
         // and admits only proven dealers); without it a VSS presign has no verified
         // dealers and never completes.
-        committee.vss_schnorr_hpke_public_keys_and_proofs.insert(
+        committee.vss_hpke_public_keys_and_proofs.insert(
             *authority_name,
-            class_groups_key_pair.vss_schnorr_hpke_public_key_and_proof(),
+            class_groups_key_pair.vss_hpke_public_key_and_proof(),
         );
     }
     (committee, seeds)

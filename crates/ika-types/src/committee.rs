@@ -65,8 +65,7 @@ pub struct Committee {
     /// mainnet-v1.1.8 validators, in which case Fast Schnorr presigns can't run
     /// for them. Proofs are verified (and unverified holders dropped) at VSS
     /// presign-input build time.
-    pub vss_schnorr_hpke_public_keys_and_proofs:
-        HashMap<AuthorityName, VssSchnorrHpkeEncryptionKeyAndProof>,
+    pub vss_hpke_public_keys_and_proofs: HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
@@ -94,10 +93,7 @@ impl Committee {
             AuthorityName,
             RistrettoPvssEncryptionKeyAndProof,
         >,
-        vss_schnorr_hpke_public_keys_and_proofs: HashMap<
-            AuthorityName,
-            VssSchnorrHpkeEncryptionKeyAndProof,
-        >,
+        vss_hpke_public_keys_and_proofs: HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
         quorum_threshold: u64,
         validity_threshold: u64,
     ) -> Self {
@@ -113,7 +109,7 @@ impl Committee {
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
-            vss_schnorr_hpke_public_keys_and_proofs,
+            vss_hpke_public_keys_and_proofs,
             expanded_keys,
             index_map,
             quorum_threshold,
@@ -560,8 +556,7 @@ pub type RistrettoPvssEncryptionKeyAndProof = (
 /// A single curve25519 key per validator serves all VSS signing curves (the HPKE
 /// transport layer is curve-independent), unlike the three class-groups `*_pvss`
 /// keys which are per plaintext space.
-pub type VssSchnorrHpkeEncryptionKeyAndProof =
-    (curve25519::Value, VssHpkeKnowledgeOfDecryptionKeyUCProof);
+pub type VssHpkeEncryptionKeyAndProof = (curve25519::Value, VssHpkeKnowledgeOfDecryptionKeyUCProof);
 
 /// Combined per-validator on-chain encryption-keys-and-proofs payload.
 ///
@@ -605,11 +600,11 @@ pub struct ValidatorEncryptionKeysAndProofs {
     /// New at protocol_version 5 (`fast_schnorr_supported`); appended last so the
     /// layered decode in [`decode_validator_encryption_keys`] stays
     /// backward-compatible with the v4 (4-field) bundle.
-    pub vss_schnorr_hpke_public_key_and_proof: VssSchnorrHpkeEncryptionKeyAndProof,
+    pub vss_hpke_public_key_and_proof: VssHpkeEncryptionKeyAndProof,
 }
 
 /// Legacy v4 (pre-Fast-Schnorr) shape of [`ValidatorEncryptionKeysAndProofs`] —
-/// the four-field bundle without `vss_schnorr_hpke_public_key`. Used only by the
+/// the four-field bundle without `vss_hpke_public_key`. Used only by the
 /// layered decoder so a validator that published under protocol_version 4 still
 /// decodes after the v5 field was appended.
 ///
@@ -644,7 +639,7 @@ pub struct DecodedValidatorEncryptionKeys {
     pub ristretto_pvss: Option<RistrettoPvssEncryptionKeyAndProof>,
     /// Present only for validators that published the protocol_version-5 bundle
     /// (Fast Schnorr). `None` for v4 bundles and mainnet-v1.1.8 bare class-groups.
-    pub vss_schnorr_hpke_public_key_and_proof: Option<VssSchnorrHpkeEncryptionKeyAndProof>,
+    pub vss_hpke_public_key_and_proof: Option<VssHpkeEncryptionKeyAndProof>,
 }
 
 /// Decode the bytes from `MPCDataV1::class_groups_public_key_and_proof()`
@@ -680,9 +675,7 @@ pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidator
             secp256k1_pvss: Some(bundle.secp256k1_pvss),
             secp256r1_pvss: Some(bundle.secp256r1_pvss),
             ristretto_pvss: Some(bundle.ristretto_pvss),
-            vss_schnorr_hpke_public_key_and_proof: Some(
-                bundle.vss_schnorr_hpke_public_key_and_proof,
-            ),
+            vss_hpke_public_key_and_proof: Some(bundle.vss_hpke_public_key_and_proof),
         });
     }
     // v4 bundle (4 fields, no VSS HPKE key).
@@ -692,7 +685,7 @@ pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidator
             secp256k1_pvss: Some(bundle.secp256k1_pvss),
             secp256r1_pvss: Some(bundle.secp256r1_pvss),
             ristretto_pvss: Some(bundle.ristretto_pvss),
-            vss_schnorr_hpke_public_key_and_proof: None,
+            vss_hpke_public_key_and_proof: None,
         });
     }
     // mainnet-v1.1.8 bare class-groups shape.
@@ -703,12 +696,12 @@ pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidator
             secp256k1_pvss: None,
             secp256r1_pvss: None,
             ristretto_pvss: None,
-            vss_schnorr_hpke_public_key_and_proof: None,
+            vss_hpke_public_key_and_proof: None,
         })
 }
 
 // Tests for `decode_validator_encryption_keys` live in
 // `crates/dwallet-classgroups-types/src/lib.rs`'s `mod tests`, alongside the
-// existing `ClassGroupsAndPvssKeyPairAndProof::from_seed` round-trip test
+// existing `ValidatorMPCSecrets::from_seed` round-trip test
 // — placing them here would create a circular `ika-types` ↔
 // `dwallet-classgroups-types` dev-dependency.

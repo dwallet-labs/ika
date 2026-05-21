@@ -151,7 +151,7 @@ impl RootSeed {
         ChaCha20Rng::from_seed(self.pvss_ristretto_decryption_key_seed())
     }
 
-    fn vss_schnorr_hpke_encryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+    fn vss_hpke_encryption_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
         let mut transcript = Transcript::new(b"Fast Schnorr VSS HPKE Encryption Key Seed");
         transcript.append_message(b"root seed", &self.0);
         let mut seed = [0u8; Self::SEED_LENGTH];
@@ -169,8 +169,8 @@ impl RootSeed {
     /// Domain-separated from `class_groups_decryption_key_rng` and the three
     /// per-curve class-groups PVSS RNGs so the secret never coincides with any
     /// of them.
-    pub fn vss_schnorr_hpke_encryption_key_rng(&self) -> ChaCha20Rng {
-        ChaCha20Rng::from_seed(self.vss_schnorr_hpke_encryption_key_seed())
+    pub fn vss_hpke_encryption_key_rng(&self) -> ChaCha20Rng {
+        ChaCha20Rng::from_seed(self.vss_hpke_encryption_key_seed())
     }
 
     /// Instantiates a deterministic secure pseudo-random generator (using the ChaCha20 algorithm)

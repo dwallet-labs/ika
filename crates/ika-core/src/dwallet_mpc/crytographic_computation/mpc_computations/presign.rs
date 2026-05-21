@@ -248,7 +248,7 @@ fn vss_party_encryption_keys(
 ) -> DwalletMPCResult<(HashMap<PartyID, curve25519::GroupElement>, HashSet<PartyID>)> {
     let public_parameters = curve25519::PublicParameters::default();
     let keys_and_proofs = validator_mpc_keys_by_party_id
-        .vss_schnorr_hpke
+        .vss_hpke
         .iter()
         .map(|(party_id, (encryption_key_value, proof))| {
             let encryption_key =
@@ -416,7 +416,7 @@ impl PresignPublicInputByProtocol {
             }
             // VSS (Fast Schnorr) presign PublicInput carries the per-party curve25519
             // HPKE encryption keys + the UC-verified party set, in addition to the
-            // protocol public parameters. These are the single `vss_schnorr_hpke`
+            // protocol public parameters. These are the single `vss_hpke`
             // curve25519 keys (one per validator, curve-independent) — NOT the three
             // per-curve class-groups `*_pvss` keys; their UC proofs are verified here
             // at input-build time (see `vss_party_encryption_keys`).

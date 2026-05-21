@@ -1493,9 +1493,7 @@ fn vss_presign_private_input(
     root_seed: &RootSeed,
 ) -> twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput {
     twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput::new(
-        dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof::vss_schnorr_hpke_secret_key_from_seed(
-            root_seed,
-        ),
+        dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(root_seed),
     )
 }
 

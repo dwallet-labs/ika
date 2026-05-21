@@ -14,7 +14,7 @@ use sui_types::{base_types::SuiAddress, multiaddr::Multiaddr};
 use crate::{IkaPackagesConfigFile, read_ika_sui_config_yaml};
 use clap::*;
 use colored::Colorize;
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
@@ -998,8 +998,7 @@ impl IkaValidatorCommand {
                 // `ValidatorEncryptionKeysAndProofs` bundle. Reading is shape-
                 // tolerant on either side via `decode_validator_encryption_keys`.
                 let mpc_root_seed = RootSeed::random_seed();
-                let new_validator_keys =
-                    ClassGroupsAndPvssKeyPairAndProof::from_seed(&mpc_root_seed);
+                let new_validator_keys = ValidatorMPCSecrets::from_seed(&mpc_root_seed);
 
                 let mpc_data_bytes = if legacy_class_groups_only {
                     bcs::to_bytes(&new_validator_keys.class_groups.encryption_key_and_proof())?
@@ -1266,9 +1265,7 @@ fn make_key_files(
 
 /// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE)
 /// from a seed file if it exists, otherwise generates and saves the seed.
-fn read_or_generate_root_seed(
-    seed_path: PathBuf,
-) -> Result<Box<ClassGroupsAndPvssKeyPairAndProof>> {
+fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ValidatorMPCSecrets>> {
     let seed = match RootSeed::from_file(seed_path.clone()) {
         Ok(seed) => {
             println!("Use existing seed: {seed_path:?}.",);
@@ -1282,9 +1279,7 @@ fn read_or_generate_root_seed(
         }
     };
 
-    Ok(Box::new(ClassGroupsAndPvssKeyPairAndProof::from_seed(
-        &seed,
-    )))
+    Ok(Box::new(ValidatorMPCSecrets::from_seed(&seed)))
 }
 
 pub fn write_transaction_response(

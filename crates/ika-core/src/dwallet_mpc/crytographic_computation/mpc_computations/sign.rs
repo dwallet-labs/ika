@@ -12,7 +12,7 @@ use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::request_protocol_data::SignData;
 use class_groups::CiphertextSpaceGroupElement;
 use commitment::CommitmentSizedNumber;
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
@@ -658,7 +658,7 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
         )))
     })?;
 
-    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
     let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
         .compute_secp256k1_shamir_shares_of_secret_key_share_parts(
             party_id,
@@ -732,7 +732,7 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
         )))
     })?;
 
-    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
     let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
         // curve25519's threshold-encryption-to-sharing uses the ristretto PVSS key
         // (same const-generic discriminant limbs; the validator publishes no
@@ -810,7 +810,7 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
         )))
     })?;
 
-    let validator_keys = ClassGroupsAndPvssKeyPairAndProof::from_seed(root_seed);
+    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
     let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
         .compute_ristretto_shamir_shares_of_secret_key_share_parts(
             party_id,

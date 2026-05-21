@@ -1413,9 +1413,7 @@ impl AuthorityPerEpochStore {
             self.committee.secp256k1_pvss_public_keys_and_proofs.clone(),
             self.committee.secp256r1_pvss_public_keys_and_proofs.clone(),
             self.committee.ristretto_pvss_public_keys_and_proofs.clone(),
-            self.committee
-                .vss_schnorr_hpke_public_keys_and_proofs
-                .clone(),
+            self.committee.vss_hpke_public_keys_and_proofs.clone(),
             self.committee.quorum_threshold,
             self.committee.validity_threshold,
         );
