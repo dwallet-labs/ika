@@ -4,6 +4,15 @@ import Link from 'next/link';
 
 const features = [
 	{
+		title: 'Solana Integration (pre-alpha)',
+		description:
+			'Use Solana as the coordination chain. Pinocchio, Anchor, and Native frameworks supported.',
+		href: 'https://solana-pre-alpha.ika.xyz',
+		icon: Globe,
+		gradient: 'from-[#9945FF] to-[#14F195]',
+		external: true,
+	},
+	{
 		title: 'Get Started',
 		description: 'Sign your first Bitcoin transaction with a dWallet in under ten minutes.',
 		href: '/docs/get-started',
@@ -37,14 +46,6 @@ const features = [
 		href: '/docs/build/move-integration',
 		icon: Layers,
 		gradient: 'from-indigo-500 to-blue-500',
-	},
-	{
-		title: 'Solana Integration (pre-alpha)',
-		description: 'Use Solana as the coordination chain. Devnet only, separate SDK.',
-		href: 'https://solana-pre-alpha.ika.xyz',
-		icon: Globe,
-		gradient: 'from-[#9945FF] to-[#14F195]',
-		external: true,
 	},
 	{
 		title: 'Operate a validator',
@@ -86,9 +87,9 @@ export default function HomePage() {
 
 						{/* Subtitle */}
 						<p className="mx-auto mt-6 max-w-3xl text-lg text-fd-muted-foreground sm:text-xl">
-							Ika is a permissionless MPC signing network on Sui. dWallets sign for Bitcoin,
-							Ethereum, Solana, Sui, and other chains without bridges, wrapping, or centralized
-							custody.
+							Ika is a permissionless MPC signing network. Coordinate on Solana (pre-alpha) or on
+							Sui today. dWallets sign for Bitcoin, Ethereum, Solana, Sui, and other chains without
+							bridges, wrapping, or centralized custody.
 						</p>
 
 						{/* Solana callout */}
@@ -169,8 +170,8 @@ export default function HomePage() {
 							</div>
 							<h3 className="text-lg font-semibold mb-2">Programmable</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								Sui Move contracts hold dWallet capabilities and gate signatures behind any logic the
-								Sui transaction model supports.
+								Solana programs (pre-alpha) and Sui Move contracts hold dWallet capabilities and
+								gate signatures behind on-chain logic.
 							</p>
 						</div>
 					</div>
@@ -250,14 +251,39 @@ export default function HomePage() {
 									Ready to build?
 								</h2>
 								<p className="mt-4 text-fd-muted-foreground">
-									Install the SDK and the plugin layer. Sign your first Bitcoin transaction in a few
-									minutes.
+									Start on the Solana pre-alpha or install the Sui-coordinated SDK and plugin
+									layer.
 								</p>
-								<div className="mt-6 space-y-2">
-									<code className="inline-flex items-center gap-2 rounded-lg bg-fd-muted px-4 py-2 text-sm font-mono">
-										<span className="text-pink-600 dark:text-pink-400">$</span>
-										pnpm add @ika.xyz/sdk @ika.xyz/plugins @mysten/sui
-									</code>
+								<div className="mt-6 flex flex-col gap-3">
+									<div className="flex flex-col gap-1.5">
+										<span className="text-xs uppercase tracking-wide text-fd-muted-foreground">
+											Solana (pre-alpha)
+										</span>
+										<Link
+											href="https://solana-pre-alpha.ika.xyz"
+											target="_blank"
+											rel="noopener noreferrer"
+											className="inline-flex w-fit items-center gap-2 rounded-lg bg-gradient-to-r from-[#9945FF]/10 to-[#14F195]/10 border border-[#9945FF]/40 px-4 py-2 text-sm font-medium text-[#9945FF] dark:text-[#14F195] hover:scale-[1.02] transition-transform"
+										>
+											<Image
+												src="/solana-logo.svg"
+												alt="Solana"
+												width={14}
+												height={14}
+												className="dark:brightness-0 dark:invert"
+											/>
+											Open the Solana pre-alpha docs
+										</Link>
+									</div>
+									<div className="flex flex-col gap-1.5">
+										<span className="text-xs uppercase tracking-wide text-fd-muted-foreground">
+											Sui
+										</span>
+										<code className="inline-flex w-fit items-center gap-2 rounded-lg bg-fd-muted px-4 py-2 text-sm font-mono">
+											<span className="text-pink-600 dark:text-pink-400">$</span>
+											pnpm add @ika.xyz/sdk @ika.xyz/plugins @mysten/sui
+										</code>
+									</div>
 								</div>
 							</div>
 							<div className="flex flex-col sm:flex-row gap-4 lg:justify-end">
@@ -282,6 +308,14 @@ export default function HomePage() {
 						</p>
 						<div className="flex items-center gap-6">
 							<Link
+								href="https://solana-pre-alpha.ika.xyz"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+							>
+								Solana (pre-alpha)
+							</Link>
+							<Link
 								href="https://github.com/dwallet-labs/ika"
 								target="_blank"
 								rel="noopener noreferrer"
@@ -295,14 +329,6 @@ export default function HomePage() {
 								className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
 							>
 								Whitepaper
-							</Link>
-							<Link
-								href="https://solana-pre-alpha.ika.xyz"
-								target="_blank"
-								rel="noopener noreferrer"
-								className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
-							>
-								Solana (pre-alpha)
 							</Link>
 						</div>
 					</div>
