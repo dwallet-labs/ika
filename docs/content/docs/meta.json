@@ -1,7 +1,6 @@
 {
 	"title": "Documentation",
 	"pages": [
-		"get-started",
 		"learn",
 		"build",
 		"solana-integration",

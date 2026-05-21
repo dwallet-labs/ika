@@ -35,3 +35,7 @@
 # Code examples (placeholder) -> Recipes
 /docs/code-examples                                /docs/build/recipes                      301
 /docs/code-examples/*                              /docs/build/recipes/:splat               301
+
+# Get Started folded into Learn as the Quickstart page
+/docs/get-started                                  /docs/learn/quickstart                   301
+/docs/get-started/*                                /docs/learn/quickstart                   301

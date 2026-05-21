@@ -3,5 +3,6 @@
 	"pages": [
 		"index"
 	],
-	"icon": "Globe"
+	"icon": "Globe",
+	"root": true
 }

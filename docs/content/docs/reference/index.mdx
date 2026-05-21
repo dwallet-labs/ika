@@ -3,15 +3,35 @@ title: Reference
 description: Lookup tables for curves, signature algorithms, hash schemes, event types, network configs, and Move modules.
 ---
 
-This section is reference material. It is meant to be navigated by
-search and skimming, not read top to bottom.
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Grid3x3, Zap, Globe2, Package2 } from 'lucide-react';
 
-- [Curve / signature algorithm / hash matrix](./curve-signature-hash-matrix):
-  every supported tuple and the on-chain enum numbers.
-- [Events](./events): on-chain events the SDK parses, with their
-  module paths and the inner BCS types.
-- [Network configs](./network-configs): package IDs, object IDs, and
-  RPC endpoints for testnet, mainnet, and how to assemble one for
-  localnet.
-- [Move modules](./move-modules): packages and modules deployed by
-  Ika, with pointers to the source.
+Lookup material. Meant to be navigated by search and skimming, not
+read top to bottom.
+
+<Cards>
+	<Card
+		icon={<Grid3x3 />}
+		title="Curve / signature / hash matrix"
+		description="Every supported (curve, signature algorithm, hash) tuple with its on-chain enum numbers. Pick the row that matches your destination chain."
+		href="./curve-signature-hash-matrix"
+	/>
+	<Card
+		icon={<Zap />}
+		title="Events"
+		description="On-chain events the SDK parses, with their module paths and the inner BCS types you can deserialize against."
+		href="./events"
+	/>
+	<Card
+		icon={<Globe2 />}
+		title="Network configs"
+		description="Package IDs, object IDs, and RPC endpoints for testnet and mainnet, plus how to assemble a config for localnet."
+		href="./network-configs"
+	/>
+	<Card
+		icon={<Package2 />}
+		title="Move modules"
+		description="Packages and modules deployed by Ika, with pointers to the on-chain Move source you can read."
+		href="./move-modules"
+	/>
+</Cards>

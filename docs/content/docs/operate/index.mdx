@@ -3,19 +3,44 @@ title: Operate
 description: Run the CLI, operate a validator, and configure for testnet, mainnet, or localnet.
 ---
 
-This section is for the operators of Ika rather than the applications
-that use it.
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Terminal, ServerCog, Activity, Network } from 'lucide-react';
 
-- **[CLI](./cli)**: the `ika` command-line tool. dWallet commands,
-  validator commands, config commands.
-- **[Validator setup](./validator-setup)**: hardware, keys, and
-  initial configuration to join the validator set.
-- **[Validator operations](./validator-operations)**: monitoring,
-  upgrades, key rotation, incident response.
-- **[Networks](./networks)**: testnet, mainnet, and localnet
-  endpoints, plus how to run a local stack for development.
+For operators of Ika rather than applications that consume it. If you
+are an application developer, only [Networks](./networks) is likely
+relevant: it covers localnet for hands-on development and which
+mainnet/testnet endpoints to trust.
 
-If you are an application developer, this section is mostly
-optional. The exception is [Networks](./networks), which covers
-localnet for hands-on development and which mainnet/testnet endpoints
-to trust.
+## Tools
+
+<Cards>
+	<Card
+		icon={<Terminal />}
+		title="CLI"
+		description="The ika command-line tool. dWallet commands, validator commands, config commands."
+		href="./cli"
+	/>
+	<Card
+		icon={<Network />}
+		title="Networks"
+		description="Testnet, mainnet, and localnet endpoints. How to spin up a local Ika stack with docker-compose for development."
+		href="./networks"
+	/>
+</Cards>
+
+## Validators
+
+<Cards>
+	<Card
+		icon={<ServerCog />}
+		title="Validator setup"
+		description="Hardware requirements, key material, network configuration, and the steps to join the validator set."
+		href="./validator-setup"
+	/>
+	<Card
+		icon={<Activity />}
+		title="Validator operations"
+		description="Monitoring, upgrades, key rotation, and incident response for a running node."
+		href="./validator-operations"
+	/>
+</Cards>

@@ -112,13 +112,66 @@ separate namespaces.
 
 ## Where to go next
 
-- [Architecture](./index): you are reading it.
-- [prepareSign and assembleSign](./prepare-and-assemble): two-phase
-  signing.
-- [Future-sign](./future-sign): release a signature later.
-- Per-chain destinations: [Bitcoin](./bitcoin),
-  [Ethereum](./ethereum), [Solana](./solana-destination),
-  [Sui](./sui-destination).
-- [Publishers](./publishers).
-- [Writing your own plugin](./writing-your-own): build a custom
-  source, destination, or publisher.
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Workflow, Hourglass, Bitcoin, Coins, Sparkle, FileCog, Send, Wand2 } from 'lucide-react';
+
+<Cards>
+	<Card
+		icon={<Workflow />}
+		title="prepareSign and assembleSign"
+		description="The two-phase signing API. Split preimage build, network sign, and assembly so you can gate the network call yourself."
+		href="./prepare-and-assemble"
+	/>
+	<Card
+		icon={<Hourglass />}
+		title="Future-sign"
+		description="Commit to a signature now, release it later under contract gating. The Phase-1 + Phase-2 pattern."
+		href="./future-sign"
+	/>
+</Cards>
+
+### Per-chain destinations
+
+<Cards>
+	<Card
+		icon={<Bitcoin />}
+		title="Bitcoin"
+		description="Taproot, P2WPKH, P2SH-P2WPKH, P2PKH. PSBT-mode and preimage-mode signing."
+		href="./bitcoin"
+	/>
+	<Card
+		icon={<Coins />}
+		title="Ethereum"
+		description="EIP-1559, 2930, and legacy transactions. Personal_sign (EIP-191) and typed data (EIP-712)."
+		href="./ethereum"
+	/>
+	<Card
+		icon={<Sparkle />}
+		title="Solana"
+		description="VersionedTransaction signing and personal-message signing for Solana addresses."
+		href="./solana-destination"
+	/>
+	<Card
+		icon={<FileCog />}
+		title="Sui"
+		description="TransactionData and PersonalMessage signing across ed25519, secp256k1, and secp256r1 with the correct intent prefix."
+		href="./sui-destination"
+	/>
+</Cards>
+
+### Publishing and custom plugins
+
+<Cards>
+	<Card
+		icon={<Send />}
+		title="Publishers"
+		description="Per-chain broadcasters. Esplora for Bitcoin, JSON-RPC for Ethereum and Solana, the Sui client for Sui."
+		href="./publishers"
+	/>
+	<Card
+		icon={<Wand2 />}
+		title="Writing your own plugin"
+		description="Build a custom source, destination, or publisher. Contract definitions and how they compose."
+		href="./writing-your-own"
+	/>
+</Cards>

@@ -3,22 +3,61 @@ title: Build
 description: SDK, plugin layer, Move integration, and end-to-end recipes for shipping with Ika.
 ---
 
-This section is for developers writing applications against Ika. It is
-organized into five subsections:
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Layers, Boxes, Package, FileCode2, BookMarked, Wand2 } from 'lucide-react';
 
-- **[Architecture](./architecture)**: the three layers (SDK, plugins,
-  on-chain coordinator) and how they fit together.
-- **[SDK](./sdk)**: `@ika.xyz/sdk`. The protocol client and the Sui
-  transaction builder. Use this directly when you need control over
-  every Move call.
-- **[Plugins](./plugins)**: `@ika.xyz/plugins`. Chain-aware wrappers
-  over the SDK that handle address derivation, preimage construction,
-  signature assembly, and broadcasting. Use these for the typical
-  application case.
-- **[Move integration](./move-integration)**: writing Move contracts
-  on Sui that consume dWallet capabilities.
-- **[Recipes](./recipes)**: end-to-end runnable patterns.
+For developers writing applications against Ika. Most applications
+should start with [Plugins](./plugins) and drop down into the
+[SDK](./sdk) only where they need full control. The plugin layer is a
+thin wrapper; nothing in it is hidden from you.
 
-Most applications should start with the [Plugins](./plugins) layer and
-drop down into the [SDK](./sdk) only where they need full control. The
-plugin layer is a thin wrapper; nothing in it is hidden from you.
+## Start here
+
+<Cards>
+	<Card
+		icon={<Layers />}
+		title="Architecture"
+		description="The three layers (SDK, plugins, on-chain coordinator) and how they fit together. Read this once before picking a layer."
+		href="./architecture"
+	/>
+	<Card
+		icon={<Boxes />}
+		title="Plugins"
+		description="@ika.xyz/plugins. Chain-aware source/destination/publisher composition. The recommended entry point for typical apps."
+		href="./plugins"
+	/>
+</Cards>
+
+## Lower-level APIs
+
+<Cards>
+	<Card
+		icon={<Package />}
+		title="SDK"
+		description="@ika.xyz/sdk. The protocol client and the Sui transaction builder. Drop down here when you need to compose Move calls directly."
+		href="./sdk"
+	/>
+	<Card
+		icon={<FileCode2 />}
+		title="Move integration"
+		description="Writing Sui Move contracts that consume dWallet capabilities, message approvals, presign caps, and future-sign caps."
+		href="./move-integration"
+	/>
+</Cards>
+
+## Patterns and extension
+
+<Cards>
+	<Card
+		icon={<BookMarked />}
+		title="Recipes"
+		description="End-to-end runnable patterns: shared Bitcoin, zero-trust Ethereum, imported-key migration, future-sign, multisig gating, sponsored DKG."
+		href="./recipes"
+	/>
+	<Card
+		icon={<Wand2 />}
+		title="Writing your own plugins"
+		description="Build a source, destination, or publisher plugin. Covers the contracts and how they compose."
+		href="./plugins/writing-your-own"
+	/>
+</Cards>

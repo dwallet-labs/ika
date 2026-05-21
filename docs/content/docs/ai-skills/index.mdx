@@ -3,6 +3,8 @@ title: AI Skills
 description: Install Ika skills for Claude Code and other AI coding agents to get expert-level assistance with dWallet development, Move integration, and node operations.
 ---
 
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Code2, Terminal, FileCode2, ServerCog } from 'lucide-react';
 import { Info, Note } from '@/components/InfoBox';
 
 Ika ships a set of [agent skills](https://github.com/vercel-labs/skills),
@@ -15,12 +17,32 @@ Cline, GitHub Copilot, Windsurf, and others.
 
 ## Available skills
 
-| Skill | What it covers |
-|-------|----------------|
-| **[ika-sdk](./ika-sdk)** | Building applications with `@ika.xyz/sdk` and the `@ika.xyz/plugins` layer. Includes the source/destination/publisher composition model. |
-| **[ika-cli](./ika-cli)** | Using the Ika command-line tool for dWallet operations, validator management, and administration. |
-| **[ika-move](./ika-move)** | Writing Sui Move contracts that consume dWallet capabilities. Covers DKG, presign, sign, and future-sign integration patterns. |
-| **[ika-operator](./ika-operator)** | Deploying and operating Ika validator and fullnode infrastructure. |
+<Cards>
+	<Card
+		icon={<Code2 />}
+		title="ika-sdk"
+		description="Building applications with @ika.xyz/sdk and the @ika.xyz/plugins layer. Source/destination/publisher composition."
+		href="./ika-sdk"
+	/>
+	<Card
+		icon={<Terminal />}
+		title="ika-cli"
+		description="The ika command-line tool for dWallet operations, validator management, and admin tasks."
+		href="./ika-cli"
+	/>
+	<Card
+		icon={<FileCode2 />}
+		title="ika-move"
+		description="Writing Sui Move contracts that consume dWallet capabilities. DKG, presign, sign, and future-sign patterns."
+		href="./ika-move"
+	/>
+	<Card
+		icon={<ServerCog />}
+		title="ika-operator"
+		description="Deploying and operating Ika validator and fullnode infrastructure."
+		href="./ika-operator"
+	/>
+</Cards>
 
 ## Install
 
@@ -75,11 +97,3 @@ npx skills update                  # update all skills
 npx skills remove ika-sdk          # remove a skill
 ```
 
-## Per-skill detail
-
-Click into each skill's page for what it covers and how to invoke it:
-
-- [ika-sdk](./ika-sdk)
-- [ika-cli](./ika-cli)
-- [ika-move](./ika-move)
-- [ika-operator](./ika-operator)

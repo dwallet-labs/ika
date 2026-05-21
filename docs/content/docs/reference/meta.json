@@ -7,5 +7,6 @@
 		"network-configs",
 		"move-modules"
 	],
-	"icon": "Library"
+	"icon": "Library",
+	"root": true
 }

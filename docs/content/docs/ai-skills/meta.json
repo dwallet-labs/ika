@@ -7,5 +7,6 @@
 		"ika-move",
 		"ika-operator"
 	],
-	"icon": "Bot"
+	"icon": "Bot",
+	"root": true
 }

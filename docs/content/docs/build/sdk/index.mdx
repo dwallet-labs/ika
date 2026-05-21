@@ -3,26 +3,66 @@ title: SDK
 description: The protocol client and the Sui transaction builder.
 ---
 
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Settings, Network, Layers, KeyRound, Cpu, Code2 } from 'lucide-react';
+
 `@ika.xyz/sdk` exposes the core protocol surface as a TypeScript
 package. It is independent of the plugin layer: you can write an
 application against the SDK directly, dropping the plugin abstractions
 entirely if you need full control over Move call construction.
 
-The pages in this section:
-
-- [Setup](./setup): install, configure, and verify.
-- [IkaClient](./ika-client): on-chain reads and protocol public
-  parameters.
-- [IkaTransaction](./ika-transaction): the transaction builder. DKG,
-  presign, sign, future-sign, accept share, reveal share.
-- [User Share Encryption Keys](./user-share-encryption-keys): the
-  user-side keypair bundle, deterministically derived from a seed.
-- [Cryptography helpers](./cryptography-helpers): the WASM-backed
-  primitives the SDK exposes to callers.
-- [Low-level](./low-level): the raw Move call builders for callers
-  that need to compose at the coordinator-call level.
-
-If you are starting fresh, the [Plugins](../plugins) layer is what most
-applications want. Use the SDK directly when you need to compose
+If you are starting fresh, the [Plugins](../plugins) layer is what
+most applications want. Use the SDK directly when you need to compose
 multiple coordinator operations into a single PTB, or when the plugin
 ergonomics do not fit your application.
+
+## Getting set up
+
+<Cards>
+	<Card
+		icon={<Settings />}
+		title="Setup"
+		description="Install the package, configure the network, and verify the client connects to the coordinator."
+		href="./setup"
+	/>
+</Cards>
+
+## Core API
+
+<Cards>
+	<Card
+		icon={<Network />}
+		title="IkaClient"
+		description="On-chain reads, protocol public parameters, polling helpers, and cache management."
+		href="./ika-client"
+	/>
+	<Card
+		icon={<Layers />}
+		title="IkaTransaction"
+		description="The transaction builder. DKG, presign, sign, future-sign, accept share, reveal share."
+		href="./ika-transaction"
+	/>
+	<Card
+		icon={<KeyRound />}
+		title="User Share Encryption Keys"
+		description="The user-side keypair bundle. Deterministically derived from a seed; serializable for storage."
+		href="./user-share-encryption-keys"
+	/>
+</Cards>
+
+## Lower-level
+
+<Cards>
+	<Card
+		icon={<Cpu />}
+		title="Cryptography helpers"
+		description="The WASM-backed primitives the SDK exposes: prepare DKG, build user sign messages, parse signatures, public keys from outputs."
+		href="./cryptography-helpers"
+	/>
+	<Card
+		icon={<Code2 />}
+		title="Low-level Move builders"
+		description="Raw coordinator Move calls for callers that need to compose at the coordinator-call level instead of via IkaTransaction."
+		href="./low-level"
+	/>
+</Cards>

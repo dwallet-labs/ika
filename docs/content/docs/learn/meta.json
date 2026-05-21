@@ -2,6 +2,8 @@
 	"title": "Learn",
 	"pages": [
 		"index",
+		"quickstart",
+		"---Concepts---",
 		"what-is-ika",
 		"dwallets",
 		"trust-model",
@@ -10,5 +12,6 @@
 		"multi-chain-vs-cross-chain",
 		"whitepaper"
 	],
-	"icon": "BookOpen"
+	"icon": "BookOpen",
+	"root": true
 }

@@ -7,5 +7,6 @@
 		"validator-operations",
 		"networks"
 	],
-	"icon": "Server"
+	"icon": "Server",
+	"root": true
 }

@@ -13,9 +13,9 @@ const features = [
 		external: true,
 	},
 	{
-		title: 'Get Started',
+		title: 'Quickstart',
 		description: 'Sign your first Bitcoin transaction with a dWallet in under ten minutes.',
-		href: '/docs/get-started',
+		href: '/docs/learn/quickstart',
 		icon: Zap,
 		gradient: 'from-pink-500 to-rose-500',
 	},
@@ -114,7 +114,7 @@ export default function HomePage() {
 						{/* CTA Buttons */}
 						<div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
 							<Link
-								href="/docs/get-started"
+								href="/docs/learn/quickstart"
 								className="btn-primary inline-flex items-center gap-2"
 							>
 								<Zap className="h-5 w-5" />
@@ -287,7 +287,7 @@ export default function HomePage() {
 								</div>
 							</div>
 							<div className="flex flex-col sm:flex-row gap-4 lg:justify-end">
-								<Link href="/docs/get-started" className="btn-primary text-center">
+								<Link href="/docs/learn/quickstart" className="btn-primary text-center">
 									Get Started
 								</Link>
 								<Link href="/docs/learn/trust-model" className="btn-secondary text-center">

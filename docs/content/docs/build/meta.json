@@ -8,5 +8,6 @@
 		"move-integration",
 		"recipes"
 	],
-	"icon": "Code2"
+	"icon": "Code2",
+	"root": true
 }
