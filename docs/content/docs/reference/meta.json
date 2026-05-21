@@ -1,11 +1,11 @@
 {
 	"title": "Reference",
-	"root": true,
 	"pages": [
 		"index",
 		"curve-signature-hash-matrix",
 		"events",
 		"network-configs",
 		"move-modules"
-	]
+	],
+	"icon": "Library"
 }

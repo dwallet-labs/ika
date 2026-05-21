@@ -1,5 +1,7 @@
 {
 	"title": "Get Started",
-	"root": true,
-	"pages": ["index"]
+	"pages": [
+		"index"
+	],
+	"icon": "Zap"
 }

@@ -1,5 +1,12 @@
 {
 	"title": "Build",
-	"root": true,
-	"pages": ["index", "architecture", "sdk", "plugins", "move-integration", "recipes"]
+	"pages": [
+		"index",
+		"architecture",
+		"sdk",
+		"plugins",
+		"move-integration",
+		"recipes"
+	],
+	"icon": "Code2"
 }
