@@ -234,7 +234,7 @@ impl ValidatorMPCSecrets {
         // sharing transport for the VSS Schnorr presign. The secret is discarded
         // here and re-derived from the same `RootSeed` where it's needed.
         let (_vss_hpke_secret, vss_hpke_public, vss_hpke_proof) =
-            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_encryption_key_rng())
+            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
                 .unwrap();
 
         ValidatorMPCSecrets {
@@ -257,7 +257,7 @@ impl ValidatorMPCSecrets {
     /// is far cheaper than building the full struct's class-groups material.
     pub fn vss_hpke_secret_key_from_seed(root_seed: &RootSeed) -> group::curve25519::Scalar {
         let (secret, _public, _proof) =
-            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_encryption_key_rng())
+            generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
                 .unwrap();
         secret
     }
