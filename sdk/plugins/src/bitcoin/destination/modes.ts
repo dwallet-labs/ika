@@ -14,7 +14,32 @@
  */
 
 import { Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import * as bitcoin from 'bitcoinjs-lib';
+
+const SECP256K1_N = secp256k1.Point.Fn.ORDER;
+const SECP256K1_N_HALF = SECP256K1_N >> 1n;
+
+/**
+ * Normalize an ECDSA (r||s) signature to low-S form. Required by Bitcoin
+ * Core's BIP-146 / standard relay policy — high-S signatures are valid
+ * under consensus but won't propagate through default-policy nodes, so
+ * the tx silently fails to confirm.
+ */
+function normalizeLowS(rs: Uint8Array): Uint8Array {
+	if (rs.length !== 64) return rs;
+	let sBig = 0n;
+	for (let i = 32; i < 64; i++) sBig = (sBig << 8n) | BigInt(rs[i]);
+	if (sBig <= SECP256K1_N_HALF) return rs;
+	let flipped = SECP256K1_N - sBig;
+	const out = new Uint8Array(64);
+	out.set(rs.subarray(0, 32), 0);
+	for (let i = 31; i >= 0; i--) {
+		out[32 + i] = Number(flipped & 0xffn);
+		flipped = flipped >> 8n;
+	}
+	return out;
+}
 
 import { buildCheckSigScript, hash160, toXOnlyPubkey } from './address.js';
 import type { BitcoinMode, P2trBundle } from './address.js';
@@ -240,6 +265,11 @@ const p2trScriptHandler: BitcoinModeHandler = {
 		if (!args.p2trBundle) {
 			throw new Error('bitcoin destination: p2tr-script requires `p2trBundle`');
 		}
+		if (args.signature.length !== 64) {
+			throw new Error(
+				`bitcoin destination: p2tr-script expects 64-byte schnorr signature, got ${args.signature.length}`,
+			);
+		}
 		const xOnly = toXOnlyPubkey(args.compressedPubkey);
 		const leafScript = buildCheckSigScript(xOnly);
 		const leafHash = computeTapLeafHash(leafScript);
@@ -286,16 +316,17 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
  * suffix, which is the exact wire format Bitcoin PSBT's `partialSig` expects.
  *
  * The DER encoding follows BIP-66's strict rules: positive integers with no
- * leading zeros (except a 0x00 padding byte when the high bit is set). Low-S
- * normalization is left to the MPC — Ika produces canonical signatures, so
- * we don't re-normalize here.
+ * leading zeros (except a 0x00 padding byte when the high bit is set). We
+ * also re-normalize to low-S so default-policy mempools (BIP-146) accept
+ * the resulting tx regardless of whether the MPC emitted canonical s.
  */
 function encodeDerEcdsaWithHashType(rs: Uint8Array, hashType: number): Uint8Array {
 	if (rs.length !== 64) {
 		throw new Error(`encodeDerEcdsaWithHashType: expected 64-byte (r||s), got ${rs.length}`);
 	}
-	const r = stripLeadingZeros(rs.subarray(0, 32));
-	const s = stripLeadingZeros(rs.subarray(32, 64));
+	const normalized = normalizeLowS(rs);
+	const r = stripLeadingZeros(normalized.subarray(0, 32));
+	const s = stripLeadingZeros(normalized.subarray(32, 64));
 	const der = derEncode(r, s);
 	const out = new Uint8Array(der.length + 1);
 	out.set(der, 0);

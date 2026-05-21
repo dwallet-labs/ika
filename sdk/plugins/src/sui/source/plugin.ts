@@ -249,19 +249,27 @@ export interface SuiSourceExtend {
 		 * init state, and USEK registration cache are SHARED — `withSigner`
 		 * is a scoping helper, not a new source.
 		 *
-		 * Use inline for a single call:
+		 * USER SHARE ENCRYPTION KEYS: by default the bound view INHERITS the
+		 * outer source's `userShareEncryptionKeys`. That matches the canonical
+		 * "backend funds DKG, user receives cap, backend USEK still controls
+		 * decryption" pattern. When the new signer represents a different
+		 * principal whose USEK differs (multi-tenant backends, account
+		 * switching), pass `userShareEncryptionKeys` explicitly to override:
+		 *
+		 *   const userView = ika.sui.withSigner(userWallet, { userShareEncryptionKeys: userKeys });
+		 *
+		 * Inline single call:
 		 *   await ika.sui.withSigner(userWallet).signMessage({ dWallet, ... });
 		 *
-		 * Or bind for a whole flow:
-		 *   const userView = ika.sui.withSigner(userWallet);
-		 *   await userView.requestSign({ ... });
-		 *
-		 * Compose with `capRecipient` on DKG inputs to send the resulting
-		 * cap to the user's address while a backend keypair funds the DKG:
+		 * Pair with `capRecipient` on DKG inputs to send the resulting cap
+		 * to the user's address while a backend keypair funds the DKG:
 		 *   await ika.sui.createDWallet({ kind: 'shared', curve, capRecipient: userAddress });
 		 *   await ika.sui.withSigner(userWallet).requestSign({ ... });
 		 */
-		withSigner(signer: SuiSigner, opts?: { signerAddress?: string }): SuiSourceExtend['sui'];
+		withSigner(
+			signer: SuiSigner,
+			opts?: { signerAddress?: string; userShareEncryptionKeys?: UserShareEncryptionKeys },
+		): SuiSourceExtend['sui'];
 	};
 }
 
@@ -739,6 +747,11 @@ export function suiSource(
 					...defaults,
 					signAndExecute: swap.signAndExecute,
 					signerAddress: swap.signerAddress,
+					// Honor an explicit USEK override; otherwise inherit. The
+					// inheritance is documented on the type so the multi-tenant
+					// footgun is visible at the call site.
+					userShareEncryptionKeys:
+						withOpts?.userShareEncryptionKeys ?? defaults.userShareEncryptionKeys,
 				}).suiNs;
 			},
 		};

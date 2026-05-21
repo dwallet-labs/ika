@@ -3,10 +3,10 @@
 # → destination → broadcast) can be exercised end-to-end without mocks.
 #
 # Start everything:
-#   docker compose -f sdk/typescript/test/localnet/docker-compose.yml up -d
+#   docker compose -f sdk/plugins/test/localnet/docker-compose.yml up -d
 #
 # Stop:
-#   docker compose -f sdk/typescript/test/localnet/docker-compose.yml down -v
+#   docker compose -f sdk/plugins/test/localnet/docker-compose.yml down -v
 #
 # Ports (host-side):
 #   18443  Bitcoin Core regtest JSON-RPC
@@ -117,7 +117,7 @@ services:
     # unless `crates/` changes.
     build:
       context: ../../../..
-      dockerfile: sdk/typescript/test/localnet/Dockerfile.ika
+      dockerfile: sdk/plugins/test/localnet/Dockerfile.ika
       args:
         GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     depends_on:

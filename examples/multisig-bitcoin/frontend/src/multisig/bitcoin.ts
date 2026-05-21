@@ -66,7 +66,7 @@ export class MultisigBitcoinWallet {
 	private readonly bitcoinNetwork: 'testnet' | 'mainnet';
 	private readonly apiBaseUrl: string;
 	private readonly p2tr: bitcoin.payments.Payment;
-	private readonly redeem: { output: Buffer; redeemVersion: number };
+	private readonly redeem: { output: Uint8Array; redeemVersion: number };
 	private readonly tapLeafHash: Buffer;
 	private readonly xOnlyPubkey: Uint8Array;
 	private readonly publisher: ReturnType<typeof bitcoinPublisher>;

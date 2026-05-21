@@ -3,8 +3,10 @@
 
 import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import {
 	concat,
+	getTypesForEIP712Domain,
 	hashDomain,
 	hashMessage,
 	hashStruct,
@@ -35,6 +37,41 @@ function hexToBytes(hex: Hex): Uint8Array {
 	const out = new Uint8Array(h.length / 2);
 	for (let i = 0; i < out.length; i++) {
 		out[i] = parseInt(h.substr(i * 2, 2), 16);
+	}
+	return out;
+}
+
+const SECP256K1_N = secp256k1.Point.Fn.ORDER;
+const SECP256K1_N_HALF = SECP256K1_N >> 1n;
+
+/**
+ * Normalize an ECDSA signature to low-S form (EIP-2). Returns the
+ * canonical (r, s) bytes; the caller must rediscover yParity via recovery
+ * because flipping `s = N - s` flips the parity of the R point's y-coord.
+ *
+ * Required because:
+ *   - Post-Homestead Ethereum nodes reject high-S transactions with
+ *     "invalid s value" at `eth_sendRawTransaction`.
+ *   - OpenZeppelin's `ECDSA.recover` (used by Permit2, EIP-2612, most
+ *     DEX off-chain orders) rejects high-S explicitly.
+ *   - viem's `recoverAddress` accepts both forms so a malleable sig would
+ *     pass `resolveYParity` without warning, then fail on chain.
+ *
+ * The Ika MPC may or may not enforce low-S internally. Re-normalize here
+ * unconditionally so the destination is safe regardless.
+ */
+function normalizeLowS(signature: Uint8Array): Uint8Array {
+	if (signature.length !== 64) return signature;
+	const sBytes = signature.subarray(32, 64);
+	let sBig = 0n;
+	for (let i = 0; i < 32; i++) sBig = (sBig << 8n) | BigInt(sBytes[i]);
+	if (sBig <= SECP256K1_N_HALF) return signature;
+	let flipped = SECP256K1_N - sBig;
+	const out = new Uint8Array(64);
+	out.set(signature.subarray(0, 32), 0);
+	for (let i = 31; i >= 0; i--) {
+		out[32 + i] = Number(flipped & 0xffn);
+		flipped = flipped >> 8n;
 	}
 	return out;
 }
@@ -149,13 +186,25 @@ export async function assembleEthereumPayload(
 			`ethereum destination: expected 64-byte (r||s) signature, got ${signature.length}`,
 		);
 	}
-	const r = bytesToHex(signature.subarray(0, 32));
-	const s = bytesToHex(signature.subarray(32, 64));
+	// EIP-2: normalize to low-S so mainnet nodes and OpenZeppelin-based
+	// verifiers accept the signature. yParity is recovered empirically,
+	// so the parity flip from negating s is handled below.
+	const normalized = normalizeLowS(signature);
+	const r = bytesToHex(normalized.subarray(0, 32));
+	const s = bytesToHex(normalized.subarray(32, 64));
 	const resolvedDigest = digest ?? digestForInput(input);
 	const yParity = await resolveYParity(resolvedDigest, expectedSender, r, s);
 
 	if (input.kind === 'transaction') {
-		const serialized = serializeTransaction(input.tx, { r, s, yParity });
+		// Legacy transactions: viem's `serializeTransactionLegacy` reads
+		// `signature.v` rather than `yParity`. Build a legacy-shape
+		// signature triple so EIP-155 v-rewriting still works.
+		const txType = (input.tx as { type?: string }).type;
+		const sig =
+			txType === 'legacy'
+				? { r, s, v: BigInt(yParity) + 27n }
+				: { r, s, yParity };
+		const serialized = serializeTransaction(input.tx, sig);
 		const hash = keccak256(serialized);
 		return { kind: 'transaction', serialized, hash, sender: expectedSender };
 	}
@@ -203,9 +252,13 @@ function preHashForInput(input: EthereumSignInput): Uint8Array {
 	}
 	// EIP-712: pre-hash = 0x1901 || domainSeparator || hashStruct(message).
 	// viem's hashTypedData applies keccak256 over exactly this blob.
+	// When the caller omits `EIP712Domain` from `types` (the conventional
+	// shape), viem derives it from the actual domain fields — mirror that
+	// so the preimage matches what `digestForInput` (and on-chain
+	// verifiers) compute.
 	const { domain = {}, message, primaryType, types } = input.typedData;
 	const allTypes = {
-		EIP712Domain: types?.EIP712Domain ?? [],
+		EIP712Domain: types?.EIP712Domain ?? getTypesForEIP712Domain({ domain }),
 		...types,
 	};
 	const parts: Hex[] = ['0x1901', hashDomain({ domain, types: allTypes })];

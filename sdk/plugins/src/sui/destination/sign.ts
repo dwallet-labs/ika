@@ -3,6 +3,7 @@
 
 import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+import { bcs } from '@mysten/sui/bcs';
 import { messageWithIntent } from '@mysten/sui/cryptography';
 import { toBase64 } from '@mysten/sui/utils';
 import { blake2b } from '@noble/hashes/blake2.js';
@@ -84,14 +85,23 @@ export async function prepareSign(
 				`Supported: ED25519, SECP256K1, SECP256R1.`,
 		);
 	}
+	// For `transaction`, `bytes` is the BCS-encoded TransactionData that the
+	// publisher will submit. For `message`, `bytes` is the raw caller message
+	// that consumers (e.g. `publicKey.verifyPersonalMessage(message, sig)`)
+	// will pass back in. The intent-wrapped inner bytes differ between the
+	// two: transactions use the raw TransactionData, but PersonalMessage
+	// canonically wraps the message as `bcs.byteVector()` first — matching
+	// `@mysten/sui` `Signer.signPersonalMessage`. See keypair.ts:71.
 	const bytes =
 		input.kind === 'transaction'
 			? await input.tx.build({ client: input.suiClient })
 			: input.message;
+	const innerBytes =
+		input.kind === 'transaction' ? bytes : bcs.vector(bcs.u8()).serialize(bytes).toBytes();
 
 	const scope: 'TransactionData' | 'PersonalMessage' =
 		input.kind === 'transaction' ? 'TransactionData' : 'PersonalMessage';
-	const intentMessage = messageWithIntent(scope, bytes);
+	const intentMessage = messageWithIntent(scope, innerBytes);
 	const digest = blake2b(intentMessage, { dkLen: 32 });
 
 	const publicKey = await cache.publicKey(dWallet.curve, dWallet.publicOutput);
@@ -126,6 +136,15 @@ export async function assembleSign(prep: SuiSignPrep, signature: Uint8Array): Pr
 		throw new Error(
 			`sui destination does not support curve ${prep.curve}. ` +
 				`Supported: ED25519, SECP256K1, SECP256R1.`,
+		);
+	}
+	// All three supported curves produce 64-byte signatures (Ed25519 EdDSA,
+	// secp256k1 ECDSA, secp256r1 ECDSA). A wrong-length signature here would
+	// produce a malformed serialized signature that Sui's parser splits at
+	// the wrong offset and validators reject with an opaque error.
+	if (signature.length !== 64) {
+		throw new Error(
+			`sui destination: expected 64-byte signature, got ${signature.length}`,
 		);
 	}
 	const serialized = encodeSuiSerializedSignature(flag, signature, prep.publicKey);

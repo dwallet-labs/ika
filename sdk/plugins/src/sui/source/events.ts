@@ -8,12 +8,23 @@ const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 export type EventLike = { eventType: string; bcs?: number[] | Uint8Array | null };
 export type TxLike = { events?: ReadonlyArray<EventLike> | null } | undefined;
 
-export function findEvent(txData: TxLike, partialType: string): EventLike {
+/**
+ * Match by the canonical inner module path (e.g. `::coordinator_inner::SignRequestEvent`)
+ * rather than a bare struct-name substring. This anchors the match to the
+ * coordinator's module path so a malicious wallet returning fabricated
+ * events whose type happens to end in the bare struct name (or a foreign
+ * package emitting a same-named struct) cannot satisfy the find.
+ *
+ * The `>` terminator in the matched suffix prevents a foreign struct
+ * starting with the same name (e.g. `SignRequestEventExt`) from matching.
+ */
+export function findEvent(txData: TxLike, innerEventName: string): EventLike {
 	const events = txData?.events ?? [];
-	const ev = events.find((e) => e.eventType.includes(partialType));
+	const needle = `::coordinator_inner::${innerEventName}>`;
+	const ev = events.find((e) => e.eventType.endsWith(needle));
 	if (!ev) {
 		throw new Error(
-			`event '${partialType}' not found; got: ${events.map((e) => e.eventType).join(', ')}`,
+			`event ending in '${needle}' not found; got: ${events.map((e) => e.eventType).join(', ')}`,
 		);
 	}
 	return ev;

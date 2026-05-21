@@ -58,6 +58,11 @@ export async function assembleSign(
 	prep: SolanaSignPrep,
 	signature: Uint8Array,
 ): Promise<SolanaSignedTx> {
+	if (signature.length !== 64) {
+		throw new Error(
+			`solana destination: expected 64-byte Ed25519 signature, got ${signature.length}`,
+		);
+	}
 	if (prep.input.kind === 'transaction') {
 		const pubkey = new PublicKey(prep.sender);
 		prep.input.tx.addSignature(pubkey, signature);

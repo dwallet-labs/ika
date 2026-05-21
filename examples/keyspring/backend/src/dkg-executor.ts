@@ -572,7 +572,7 @@ function parseDWalletIds(events: ExecEvent[]): {
 		encryptedUserSecretKeyShareId: null as string | null,
 	};
 	for (const event of events) {
-		if (!event.eventType.includes('DWalletSessionEvent')) continue;
+		if (!event.eventType.endsWith('::coordinator_inner::DWalletDKGRequestEvent>')) continue;
 		const bytes = eventBcsBytes(event);
 		if (!bytes) continue;
 		try {
@@ -593,7 +593,7 @@ function parseDWalletIds(events: ExecEvent[]): {
 
 function parsePresignId(events: ExecEvent[]): string | null {
 	for (const event of events) {
-		if (!event.eventType.includes('PresignRequestEvent')) continue;
+		if (!event.eventType.endsWith('::coordinator_inner::PresignRequestEvent>')) continue;
 		const bytes = eventBcsBytes(event);
 		if (!bytes) continue;
 		try {
@@ -610,7 +610,7 @@ function parsePresignId(events: ExecEvent[]): string | null {
 
 function parseSignId(events: ExecEvent[]): string | null {
 	for (const event of events) {
-		if (!event.eventType.includes('SignRequestEvent')) continue;
+		if (!event.eventType.endsWith('::coordinator_inner::SignRequestEvent>')) continue;
 		const bytes = eventBcsBytes(event);
 		if (!bytes) continue;
 		try {

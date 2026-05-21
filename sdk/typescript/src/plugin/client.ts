@@ -394,7 +394,20 @@ class IkaClientImpl {
 		for (const dest of this.#destinations.values()) {
 			if (!dest.supportedCurves.includes(dWallet.curve)) continue;
 			const namespace = dest.dWalletExtend(dWallet, this.#context);
-			for (const [key, value] of Object.entries(namespace)) {
+			if (namespace == null || typeof namespace !== 'object') {
+				throw new Error(
+					`decorate: destination plugin '${dest.name}' returned ${typeof namespace} ` +
+						`from dWalletExtend; expected an object of namespace key → method maps.`,
+				);
+			}
+			for (const key of Reflect.ownKeys(namespace)) {
+				if (typeof key !== 'string') {
+					throw new Error(
+						`decorate: destination plugin '${dest.name}' contributed a non-string ` +
+							`key (${String(key)}). dWalletExtend keys must be strings.`,
+					);
+				}
+				const value = (namespace as Record<string, unknown>)[key];
 				if (key in pending) {
 					throw new Error(
 						`decorate: dWallet-level collision on key '${key}' between ` +

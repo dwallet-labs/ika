@@ -16,19 +16,19 @@ assembly, and (optionally) broadcasting — so application code only deals with 
 
 Three plugin roles, each addressing one concern:
 
-| Role            | Job                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------ |
-| **Source**      | Manages the dWallet on Sui (DKG, encryption keys, presign requests, sign coordination).                |
+| Role            | Job                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Source**      | Manages the dWallet on Sui (DKG, encryption keys, presign requests, sign coordination).                        |
 | **Destination** | Knows how a target chain encodes addresses + sighashes (BTC/ETH/SOL/SUI). Owns `prepareSign` + `assembleSign`. |
-| **Publisher**   | Broadcasts the assembled, signed transaction to the destination chain's network.                       |
+| **Publisher**   | Broadcasts the assembled, signed transaction to the destination chain's network.                               |
 
 Compose them on a single `IkaClient` instance:
 
 ```ts
-import { IkaClient } from '@ika.xyz/sdk/plugin';
-import { suiSource } from '@ika.xyz/plugins/sui/source';
 import { btc } from '@ika.xyz/plugins/bitcoin/destination';
 import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
 
 const ika = await new IkaClient()
 	.use(suiSource({ network: 'testnet', signer }))
@@ -36,7 +36,12 @@ const ika = await new IkaClient()
 	.use(bitcoinPublisher({ network: 'testnet' }));
 
 const dWallet = await ika.sui.createDWallet({ kind: 'shared', curve: 'SECP256K1' });
-const signed = await dWallet.bitcoin.sign({ kind: 'psbt', psbt, inputIndex: 0, mode: 'p2tr-script' });
+const signed = await dWallet.bitcoin.sign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2tr-script',
+});
 const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
 ```
 
@@ -58,18 +63,19 @@ your application needs. Node >= 18.
 Each plugin is reachable via its own subpath so bundlers can tree-shake the chains you don't use:
 
 ```ts
-import { suiSource } from '@ika.xyz/plugins/sui/source';
-import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
-import { sui } from '@ika.xyz/plugins/sui/destination';
-
-import { btc, deriveBitcoinAddress, buildP2trScriptPath } from '@ika.xyz/plugins/bitcoin/destination';
+import {
+	btc,
+	buildP2trScriptPath,
+	deriveBitcoinAddress,
+} from '@ika.xyz/plugins/bitcoin/destination';
 import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
-
 import { eth } from '@ika.xyz/plugins/ethereum/destination';
 import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
-
 import { solana } from '@ika.xyz/plugins/solana/destination';
 import { solanaDevnet, solanaMainnet } from '@ika.xyz/plugins/solana/publisher';
+import { sui } from '@ika.xyz/plugins/sui/destination';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
 ```
 
 The root `@ika.xyz/plugins` re-exports everything, but prefer the subpaths to avoid pulling in

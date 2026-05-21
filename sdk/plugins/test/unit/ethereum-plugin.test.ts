@@ -253,6 +253,123 @@ describe('ethereum destination — sign (transaction)', () => {
 			}),
 		).rejects.toThrow(/neither yParity recovered/);
 	});
+
+	it('signs an EIP-712 typed-data payload when caller omits types.EIP712Domain', async () => {
+		const fx = makeFixture();
+		const plugin = eth();
+		const ctx = buildCtx();
+		await plugin.install?.(ctx);
+
+		const typedData = {
+			domain: {
+				name: 'Test',
+				version: '1',
+				chainId: 1,
+				verifyingContract: '0x000000000000000000000000000000000000beef' as Hex,
+			},
+			types: {
+				Mail: [
+					{ name: 'from', type: 'address' },
+					{ name: 'to', type: 'address' },
+					{ name: 'contents', type: 'string' },
+				],
+			},
+			primaryType: 'Mail' as const,
+			message: {
+				from: fx.address,
+				to: '0x000000000000000000000000000000000000dead' as Hex,
+				contents: 'hello',
+			},
+		};
+		const signed = await plugin.extend.ethereum.sign({
+			dWallet: fakeDWallet(fx.publicOutput),
+			kind: 'typedData',
+			typedData,
+		});
+		expect(signed.payload.kind).toBe('typedData');
+		if (signed.payload.kind !== 'typedData') throw new Error('unreachable');
+		expect(signed.payload.sender.toLowerCase()).toBe(fx.address.toLowerCase());
+		expect(signed.payload.signature).toMatch(/^0x[0-9a-f]{130}$/i);
+	});
+
+	it('signs a legacy transaction without crashing on signature.v', async () => {
+		const fx = makeFixture();
+		const plugin = eth();
+		const ctx = buildCtx();
+		await plugin.install?.(ctx);
+
+		const tx = {
+			type: 'legacy' as const,
+			chainId: 1,
+			nonce: 0,
+			to: '0x000000000000000000000000000000000000dead' as Hex,
+			value: 1n,
+			gasPrice: 1_000_000_000n,
+			gas: 21_000n,
+		};
+		const signed = await plugin.extend.ethereum.sign({
+			dWallet: fakeDWallet(fx.publicOutput),
+			kind: 'transaction',
+			tx,
+		});
+		expect(signed.payload.kind).toBe('transaction');
+		if (signed.payload.kind !== 'transaction') throw new Error('unreachable');
+		expect(signed.payload.serialized).toMatch(/^0x[0-9a-f]+$/);
+		// Legacy tx hash recovers to sender via viem's recoverTransactionAddress
+		// (covered transitively — if assembly didn't crash, the path works).
+	});
+
+	it('normalizes high-S signatures to low-S (EIP-2 conformance)', async () => {
+		// Build a high-S signature directly and feed it through assembleEthereumPayload.
+		const fx = makeFixture();
+		const plugin = eth();
+		// Custom source that returns a deliberately high-S signature.
+		const ctx: IkaContext = {
+			source: {
+				chain: 'sui',
+				async signMessage(input: { message: Uint8Array }): Promise<BaseSignResult> {
+					// Sign the keccak256 of the preimage. noble's default is lowS=true,
+					// so flip the s manually to construct a high-S input.
+					const digest = new Uint8Array(keccak_256(input.message));
+					const lowS = secp256k1.sign(digest, fx.privateKey, { prehash: false });
+					const sBytes = lowS.subarray(32, 64);
+					let s = 0n;
+					for (let i = 0; i < 32; i++) s = (s << 8n) | BigInt(sBytes[i]);
+					const N = secp256k1.Point.Fn.ORDER;
+					let high = N - s;
+					const flipped = new Uint8Array(64);
+					flipped.set(lowS.subarray(0, 32), 0);
+					for (let i = 31; i >= 0; i--) {
+						flipped[32 + i] = Number(high & 0xffn);
+						high = high >> 8n;
+					}
+					return {
+						signature: flipped,
+						curve: Curve.SECP256K1,
+						signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+						hash: Hash.KECCAK256,
+					};
+				},
+				async getDWallet() {
+					throw new Error('not used');
+				},
+			} as unknown as IkaContext['source'],
+			client: { decorate: async (d) => d, ready: async () => {} },
+		};
+		await plugin.install?.(ctx);
+		const signed = await plugin.extend.ethereum.sign({
+			dWallet: fakeDWallet(fx.publicOutput),
+			kind: 'message',
+			message: new TextEncoder().encode('low-s test'),
+		});
+		if (signed.payload.kind !== 'message') throw new Error('unreachable');
+		// Pull s from the assembled signature and assert it's in the low half.
+		const sigHex = signed.payload.signature;
+		const sHex = sigHex.slice(2 + 64, 2 + 128);
+		const N = secp256k1.Point.Fn.ORDER;
+		const sBig = BigInt('0x' + sHex);
+		expect(sBig <= N >> 1n).toBe(true);
+	});
 });
 
 // -----------------------------------------------------------------------------
