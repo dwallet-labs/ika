@@ -668,3 +668,333 @@ IkaClientError              // Base error class
 ├── NetworkError            // Network operation failure
 └── CacheError              // Caching operation failure
 ```
+
+---
+
+## Plugin Layer (`@ika.xyz/plugins`)
+
+The plugin layer composes onto a dedicated `IkaClient` exported from
+`@ika.xyz/sdk/plugin`. Three plugin roles: source, destination, and
+publisher.
+
+### Plugin host
+
+```typescript
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import type {
+    BaseSignResult,
+    DWallet,
+    IkaContext,
+    SignMessageInput,
+} from '@ika.xyz/sdk/plugin';
+
+const ika = await new IkaClient()
+    .use(suiSource({ network: 'testnet', signer, suiClient }))
+    .use(btc())
+    .use(bitcoinPublisher({ network: 'testnet' }));
+```
+
+`use` returns the same client for chaining. The host enforces:
+- One source maximum.
+- Destinations and publishers are keyed by `chain`; registering a
+  second plugin for the same chain throws.
+- The decorate phase runs once per dWallet on first signing call,
+  attaching per-chain namespaces to the dWallet handle.
+
+`ika.publish({ chain, payload })` routes to the registered publisher.
+
+### Source plugin: `suiSource`
+
+```typescript
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+
+const source = suiSource({
+    network: 'testnet',                       // or 'mainnet'
+    signer,                                   // Ed25519Keypair or SuiWalletSigner
+    suiClient?,                               // override default
+    config?,                                  // override IkaConfig (localnet)
+    userShareEncryptionKeys?,                 // default USEK for zero-trust flows
+    signerAddress?,                           // override sender address
+    ikaFeePerOp?: bigint,                     // default 500_000_000 (0.5 IKA)
+    suiGasPerOp?: bigint,                     // default 1_000_000
+    postTxSleepMs?: number,                   // default 2_000
+    timeouts?: { dkg?, presign?, sign?, shareVerify? },
+    rpcUrl?: string,                          // custom Sui RPC
+});
+```
+
+Surface exposed on `ika.sui`:
+
+```typescript
+// High-level
+createDWallet(input: CreateDWalletInput): Promise<SuiDWallet>;
+getDWallet(id: string): Promise<SuiDWallet>;
+
+// DKG building blocks
+prepareDKG(input: PrepareDKGInput): Promise<PrepareDKGOutput>;
+requestDKG(input: RequestZeroTrustDKGInput): Promise<SuiDWallet>;
+requestDKGWithPublicShare(input: RequestSharedDKGInput): Promise<SuiDWallet>;
+requestImportedKeyVerification(input: RequestImportedKeyInput): Promise<RequestImportedKeyOutput>;
+revealUserSecretShare(input: RevealUserSecretShareInput): Promise<SuiDWallet>;
+acceptEncryptedShare(input: AcceptEncryptedShareInput): Promise<SuiDWallet>;
+
+// Presign
+requestPresign(input: RequestPresignInput): Promise<Presign>;
+requestGlobalPresign(input: RequestGlobalPresignInput): Promise<Presign>;
+
+// Sign
+requestSign(input: SuiSignMessageInput): Promise<SuiSignResult>;
+prepareSignMessage(input: PrepareSignInput): Promise<PrepareSignOutput>;
+
+// Future-sign
+requestFutureSign(input: RequestFutureSignInput): Promise<RequestFutureSignOutput>;
+completeFutureSign(input: CompleteFutureSignInput): Promise<CompleteFutureSignOutput>;
+
+// Composition
+transaction<T>(build: (b: SuiTxBuilder) => Promise<T> | T, opts?): Promise<{ result, exec }>;
+compose: {
+    sign(args: ComposeSignArgs): Promise<void>;
+    submitDKG(args): Promise<...>;
+    submitSign(args): void;
+    requestFutureSign(args: ComposeFutureSignArgs): TransactionObjectArgument;
+    completeFutureSign(args: ComposeCompleteFutureSignArgs): void;
+};
+
+// Rebinding
+withSigner(
+    signer: SuiSigner,
+    opts?: { signerAddress?: string; userShareEncryptionKeys?: UserShareEncryptionKeys },
+): SuiSourceExtend['sui'];
+
+// Plumbing
+readonly address: string;
+readonly config: IkaConfig;
+readonly client: CoreIkaClient;
+ready(): Promise<CoreIkaClient>;
+```
+
+`SuiSigner` is either an `Ed25519Keypair` or a `SuiWalletSigner`:
+
+```typescript
+interface SuiWalletSigner {
+    address: string;
+    signAndExecuteTransaction(tx: Transaction): Promise<SuiTxExecutionResult>;
+}
+```
+
+`SuiTxExecutionResult` is the minimal shape the source needs to parse
+events:
+
+```typescript
+interface SuiTxExecutionResult {
+    digest?: string;
+    events?: Array<{
+        eventType: string;
+        bcs?: number[] | Uint8Array | null;
+    }> | null;
+}
+```
+
+### Destination plugins
+
+All four follow the same shape:
+
+```typescript
+// Bitcoin
+import { btc, deriveBitcoinAddress, buildP2trScriptPath } from '@ika.xyz/plugins/bitcoin/destination';
+import type { BitcoinMode, BitcoinSignInput, BitcoinSignedTx } from '@ika.xyz/plugins/bitcoin/destination';
+
+// Ethereum
+import { eth, deriveEthereumAddress } from '@ika.xyz/plugins/ethereum/destination';
+import type { EthereumSignInput, EthereumSignedTx } from '@ika.xyz/plugins/ethereum/destination';
+
+// Solana
+import { solana, deriveSolanaPublicKey } from '@ika.xyz/plugins/solana/destination';
+import type { SolanaSignInput, SolanaSignedTx } from '@ika.xyz/plugins/solana/destination';
+
+// Sui (signing for Sui from a Sui-coordinated dWallet)
+import { sui, deriveSuiAddress } from '@ika.xyz/plugins/sui/destination';
+import type { SuiSignInput, SuiSignedTx, SuiSupportedCurve } from '@ika.xyz/plugins/sui/destination';
+```
+
+Each destination decorates the returned `SuiDWallet` with a
+chain-specific namespace:
+
+```typescript
+dWallet.bitcoin.getAddress(opts): Promise<string>;
+dWallet.bitcoin.prepareSign(input): Promise<{ prep, preimage, plan }>;
+dWallet.bitcoin.assembleSign(prep, signature): Promise<SignedTx>;
+dWallet.bitcoin.sign(input): Promise<SignedTx>;
+```
+
+(Replace `bitcoin` with `ethereum`, `solana`, `sui` for the
+others.)
+
+Per-chain input shapes:
+
+```typescript
+// Bitcoin
+type BitcoinSignInput =
+    | { kind: 'psbt'; psbt; inputIndex; mode; hashType?; network? }
+    | { kind: 'preimage'; preimage; mode };
+type BitcoinMode = 'p2pkh' | 'p2wpkh' | 'p2sh-p2wpkh' | 'p2tr-script';
+
+// Ethereum
+type EthereumSignInput =
+    | { kind: 'transaction'; tx: TransactionSerializable }
+    | { kind: 'message'; message: string | Uint8Array }
+    | { kind: 'typedData'; typedData: TypedData };
+
+// Solana
+type SolanaSignInput =
+    | { kind: 'transaction'; tx: VersionedTransaction }
+    | { kind: 'message'; message: Uint8Array };
+
+// Sui
+type SuiSignInput =
+    | { kind: 'transaction'; tx: Transaction; suiClient: SuiJsonRpcClient }
+    | { kind: 'message'; message: Uint8Array };
+```
+
+### Publisher plugins
+
+```typescript
+// Bitcoin
+const pub = bitcoinPublisher({
+    apiBaseUrl: defaultEsploraUrl('testnet'),
+    broadcast?: (rawHex: string) => Promise<{ txid: string }>,
+});
+
+// Ethereum
+const pub = ethPublisher({
+    chain: sepolia,                          // viem chain
+    url: 'https://...',
+    confirm?: boolean,
+    confirmations?: number,
+    confirmTimeoutMs?: number,
+});
+
+// Solana
+const pub = solanaDevnet({ confirm?, confirmTimeoutMs?, commitment? });
+const pub = solanaMainnet({ ... });
+const pub = solanaPublisher({ connection, confirm?, ... });
+
+// Sui
+const pub = suiPublisher({ suiClient });
+```
+
+All publishers implement:
+
+```typescript
+interface PublisherPlugin {
+    chain: 'bitcoin' | 'ethereum' | 'solana' | 'sui';
+    broadcast(signed: SignedTx): Promise<string>;
+}
+```
+
+### `prepareSign` and `assembleSign`
+
+Every destination exposes the two-phase form:
+
+```typescript
+const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign(input);
+// prep: assembleSign reads this
+// preimage: bytes to send to the MPC's signMessage
+// plan: { curve, signatureAlgorithm, hash }
+
+const signed = await dWallet.bitcoin.assembleSign(prep, signature);
+```
+
+Use when the signature does not flow through `ctx.source.signMessage`:
+multisig contracts, future-sign, sponsored relays, persisted-then-
+replayed flows.
+
+### Future-sign
+
+```typescript
+// Phase 1
+const { capId, partialSignatureId } = await ika.sui.requestFutureSign({
+    dWallet,
+    message,
+    signatureAlgorithm,
+    hash,
+    presign,
+    capRecipient?: string,
+});
+
+// Phase 2 (must match all four fields)
+const { signId } = await ika.sui.completeFutureSign({
+    dWallet,
+    partialUserSignatureCap: capId,
+    message,
+    signatureAlgorithm,
+    hash,
+    presign,
+});
+```
+
+On-chain coordinator verifies `(dwallet_id, message,
+signature_algorithm, hash_scheme)` match between the captured
+partial-signature object and the supplied message approval. Phase 2
+aborts with `EMessageApprovalMismatch` if any field differs.
+
+### `withSigner` and `capRecipient`
+
+```typescript
+// DKG submitted by backend, capability routed to user
+const dWallet = await ika.sui.createDWallet({
+    kind: 'zero-trust',
+    curve: Curve.SECP256K1,
+    capRecipient: userSuiAddress,
+});
+
+// Subsequent ops as the user
+const userView = ika.sui.withSigner(userSigner, {
+    userShareEncryptionKeys: userKeys, // recommended for multi-tenant
+});
+```
+
+`withSigner` shares the underlying `IkaClient`, init state, and
+caches. If `userShareEncryptionKeys` is not supplied on the options,
+the outer source's USEK is inherited. Make this explicit on
+multi-tenant deployments.
+
+### Subpath imports
+
+The plugins package exposes per-chain subpaths so bundlers can drop
+chains you do not use:
+
+```
+@ika.xyz/plugins/sui/source
+@ika.xyz/plugins/sui/destination
+@ika.xyz/plugins/sui/publisher
+
+@ika.xyz/plugins/bitcoin/destination
+@ika.xyz/plugins/bitcoin/publisher
+
+@ika.xyz/plugins/ethereum/destination
+@ika.xyz/plugins/ethereum/publisher
+
+@ika.xyz/plugins/solana/destination
+@ika.xyz/plugins/solana/publisher
+```
+
+The root `@ika.xyz/plugins` re-exports everything. Prefer subpath
+imports unless you genuinely need everything.
+
+### Per-chain destination notes
+
+- **Bitcoin**: P2TR is script-path only (NUMS internal pubkey). The
+  plugin re-normalizes ECDSA signatures to low-S before DER encoding.
+- **Ethereum**: yParity recovered empirically by trying both. The
+  plugin re-normalizes ECDSA to low-S; viem's `recoverAddress`
+  accepts both forms so the parity flip is handled. EIP-712 with
+  caller-omitted `EIP712Domain` falls back to
+  `getTypesForEIP712Domain({ domain })`. Legacy txs detected via
+  viem's `getTransactionType`.
+- **Solana**: 32-byte Ed25519 pubkey is the address. No pre-hash;
+  Ed25519 internally consumes the message via SHA-512.
+- **Sui**: 64-byte signature length checked. PersonalMessage
+  signatures BCS-wrap the message before applying the intent prefix,
+  matching `@mysten/sui` `Signer.signPersonalMessage` so
+  `PublicKey.verifyPersonalMessage` accepts the result.

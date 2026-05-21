@@ -1,0 +1,76 @@
+---
+title: dWallets
+description: The unit Ika manages. Four kinds, one shared lifecycle, and what state lives where.
+---
+
+A dWallet is an on-chain object on Sui that represents one key pair under
+joint MPC control. Producing a signature for it requires the user share
+and a threshold of validator shares. Neither side can sign alone.
+
+The on-chain object stores the public key (the public DKG output) and a
+capability handle that authorizes message approvals. The user share lives
+either on the user's device (zero-trust kinds) or on chain in plaintext
+(shared kinds). Validator shares are encrypted under the network's
+threshold encryption key and reshared at each epoch.
+
+## The four kinds
+
+| Kind | User share location | Who needs to participate at sign time |
+|------|---------------------|----------------------------------------|
+| **Zero-trust** | Encrypted on chain (under the user's class-groups key) and plaintext on the user's device | User and validators |
+| **Shared** | Plaintext on chain | Validators only |
+| **Imported-key** | Same as zero-trust, but the share comes from a key the user already has | User and validators |
+| **Imported-key-shared** | Same as shared, but the share comes from an existing key | Validators only |
+
+Shared kinds publish the user's share so that anyone holding the dWallet
+capability can request signatures without the original user being
+present. This is the right choice for DAOs, smart-contract-controlled
+treasuries, and automated signers. It cannot be reversed: once a share
+is public, the dWallet is permanently in the shared regime.
+
+Imported-key kinds exist for migrating an existing wallet into Ika. The
+user provides their secret in a verifiable way; from that point forward
+the network co-signs.
+
+## Lifecycle
+
+Every dWallet follows the same three-step lifecycle:
+
+1. **DKG**: the user runs the centralized portion of the protocol
+   locally (producing a public share, a secret share, and a
+   commitment), then submits a Sui transaction. The validator network
+   runs its half of the DKG and writes the public output on chain. The
+   dWallet starts in an awaiting state and transitions to `Active` once
+   the user signs an acceptance over the public output.
+2. **Presign**: signatures are produced in two phases. The expensive
+   half (the presign) does not depend on the message and can be
+   batched. Per-dWallet presigns are required for imported-key ECDSA;
+   for everything else a global presign pool serves all dWallets of the
+   same curve and signature algorithm.
+3. **Sign**: the user produces the centralized sign message, the
+   network consumes a presign and runs two MPC rounds, and the
+   signature lands on chain as a standard wire-format signature for the
+   target chain to verify.
+
+A future-sign flow exists for cases where the user wants to commit to a
+signature now but only release it later. The user produces a
+`PartialUserSignatureCap` that anchors the message, the signature
+algorithm, the hash scheme, and the dWallet id; whoever holds that cap
+can complete the signature later by pairing it with a fresh message
+approval that must match all four fields.
+
+## What it signs
+
+The same dWallet abstraction signs across curves. One dWallet is bound to
+one curve at DKG time; the curve determines which signature algorithms
+and hash schemes are valid for that key. See the
+[curve/signature algorithm/hash matrix](../reference/curve-signature-hash-matrix)
+for the supported combinations.
+
+## What survives an attacker
+
+The trust model is treated in detail on the next page. The short version:
+forging a signature requires breaking both the user share (held by the
+user for zero-trust kinds, on chain for shared kinds) and a threshold of
+validator shares. Liveness assumes a majority of honest validators above
+the broadcast-channel limit.

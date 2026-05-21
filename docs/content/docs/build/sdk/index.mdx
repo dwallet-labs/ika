@@ -1,0 +1,28 @@
+---
+title: SDK
+description: The protocol client and the Sui transaction builder.
+---
+
+`@ika.xyz/sdk` exposes the core protocol surface as a TypeScript
+package. It is independent of the plugin layer: you can write an
+application against the SDK directly, dropping the plugin abstractions
+entirely if you need full control over Move call construction.
+
+The pages in this section:
+
+- [Setup](./setup): install, configure, and verify.
+- [IkaClient](./ika-client): on-chain reads and protocol public
+  parameters.
+- [IkaTransaction](./ika-transaction): the transaction builder. DKG,
+  presign, sign, future-sign, accept share, reveal share.
+- [User Share Encryption Keys](./user-share-encryption-keys): the
+  user-side keypair bundle, deterministically derived from a seed.
+- [Cryptography helpers](./cryptography-helpers): the WASM-backed
+  primitives the SDK exposes to callers.
+- [Low-level](./low-level): the raw Move call builders for callers
+  that need to compose at the coordinator-call level.
+
+If you are starting fresh, the [Plugins](../plugins) layer is what most
+applications want. Use the SDK directly when you need to compose
+multiple coordinator operations into a single PTB, or when the plugin
+ergonomics do not fit your application.

@@ -1,0 +1,154 @@
+---
+title: Get Started
+description: Sign your first Bitcoin transaction with a dWallet in under ten minutes.
+---
+
+This is a hands-on walk-through. By the end you will have created a
+shared dWallet on Sui testnet, derived its Bitcoin testnet address,
+signed a Bitcoin transaction, and broadcast it.
+
+If you have not read [What is Ika](../learn/what-is-ika), skim it
+first; the rest of this page assumes the basics.
+
+## Prerequisites
+
+- Node 18 or later, with `pnpm`.
+- A Sui testnet account with some SUI for gas. The Sui faucet gives
+  you 10 SUI per request.
+- A small amount of IKA on Sui testnet for coordinator fees. Use
+  `coinWithBalance` to allocate as shown below.
+- A Bitcoin testnet faucet you can call for funding. Mempool space and
+  Bitcoinerlab both work.
+
+## Install
+
+```bash
+mkdir ika-quickstart && cd ika-quickstart
+pnpm init
+pnpm add @ika.xyz/sdk @ika.xyz/plugins @mysten/sui bitcoinjs-lib @bitcoinerlab/secp256k1
+```
+
+## Connect
+
+```ts
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher, defaultEsploraUrl } from '@ika.xyz/plugins/bitcoin/publisher';
+import { Curve } from '@ika.xyz/sdk';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+
+const signer = Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!);
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer, suiClient }))
+	.use(btc())
+	.use(bitcoinPublisher({ apiBaseUrl: defaultEsploraUrl('testnet') }));
+```
+
+`suiSource` registers Sui as the coordination chain. `btc` adds
+Bitcoin signing to every dWallet you create. `bitcoinPublisher` lets
+you broadcast through Esplora.
+
+## Create a shared dWallet
+
+```ts
+const dWallet = await ika.sui.createDWallet({
+	kind: 'shared',
+	curve: Curve.SECP256K1,
+});
+
+console.log('dWallet id:', dWallet.id);
+console.log('cap id:', dWallet.dWalletCapId);
+```
+
+For a shared dWallet the network DKG runs, the user share is
+published on chain, and the dWallet becomes signable in around 30
+seconds. For a zero-trust dWallet you would also need a
+`UserShareEncryptionKeys` instance and the corresponding acceptance
+step. The recipes in [Build](../build/recipes) cover that.
+
+## Derive the Bitcoin address
+
+```ts
+const address = await dWallet.bitcoin.getAddress({
+	mode: 'p2wpkh',
+	network: 'testnet',
+});
+
+console.log('Bitcoin testnet address:', address);
+```
+
+P2WPKH is the most-common segwit address type. The plugin also
+supports `p2pkh`, `p2sh-p2wpkh`, and `p2tr-script`.
+
+Fund this address with the Bitcoin testnet faucet of your choice and
+wait for one confirmation.
+
+## Build and sign a transaction
+
+```ts
+import * as bitcoin from 'bitcoinjs-lib';
+import * as ecc from '@bitcoinerlab/secp256k1';
+
+bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
+
+// Fetch a UTXO. Esplora returns them at GET /address/<addr>/utxo.
+const resp = await fetch(`${defaultEsploraUrl('testnet')}/address/${address}/utxo`);
+const utxos = await resp.json();
+if (utxos.length === 0) throw new Error('Fund the address first.');
+const utxo = utxos[0];
+
+const psbt = new bitcoin.Psbt({ network: bitcoin.networks.testnet });
+psbt.addInput({
+	hash: utxo.txid,
+	index: utxo.vout,
+	witnessUtxo: {
+		script: bitcoin.address.toOutputScript(address, bitcoin.networks.testnet),
+		value: BigInt(utxo.value),
+	},
+});
+
+// Send most of the input back to the same address minus a 300-sat fee.
+psbt.addOutput({
+	address,
+	value: BigInt(utxo.value) - 300n,
+});
+
+const signed = await dWallet.bitcoin.sign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2wpkh',
+});
+
+console.log('signed payload kind:', signed.payload.kind);
+```
+
+The signing call runs a presign and a sign through the validator
+network. Total wall time is in the low seconds on testnet.
+
+## Broadcast
+
+```ts
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+console.log('broadcast txid:', txid);
+```
+
+The transaction is now in the Bitcoin testnet mempool. It confirms
+under standard mempool policy.
+
+## Where to go next
+
+- The trust model and what guarantees survive which failure:
+  [Trust model](../learn/trust-model).
+- Other dWallet kinds (zero-trust for personal wallets, imported-key
+  for migration): [dWallets](../learn/dwallets).
+- Per-chain plugin details: [Plugins](../build/plugins).
+- More end-to-end patterns: [Recipes](../build/recipes).

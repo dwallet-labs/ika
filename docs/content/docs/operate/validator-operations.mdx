@@ -1,0 +1,111 @@
+---
+title: Validator operations
+description: Day-to-day operations, monitoring, upgrades, key rotation, and incident response.
+---
+
+This page covers what an Ika validator does after the node is up. For
+the one-time setup, see [Validator setup](./validator-setup).
+
+## Monitoring
+
+The validator exposes Prometheus metrics on a configurable port. The
+metrics that matter most for day-to-day health:
+
+- **MPC session throughput**. How many DKG, presign, and sign
+  sessions per minute. A stable number is expected; a sudden drop
+  usually points to a consensus or RPC issue rather than to MPC
+  itself.
+- **Round duration**. Per-round latency for each protocol step.
+  Healthy sign rounds complete in well under a second on production
+  hardware. Multi-second rounds indicate either an underprovisioned
+  validator or network issues with peer validators.
+- **Consensus participation**. Mysticeti consensus output cadence.
+  Validators that fall out of consensus stop signing.
+- **Class-groups decryption participation**. Decryption-share
+  production rate during reconfiguration. A validator that
+  consistently fails to produce shares will be excluded from future
+  reconfigurations.
+
+Wire these into your monitoring stack with alerts on sustained
+abnormal values, not transient spikes.
+
+## Logging
+
+Default log level is `info,ika_core=info,ika_node=warn,sui_node=warn`.
+For debugging, raise `ika_core` to `debug`. Verbose logging is fine
+for short investigations but produces large volumes; do not leave it
+on long-term.
+
+The interesting structured fields:
+
+- `session_identifier`: pin a particular MPC session across log
+  lines.
+- `mpc_protocol`: which protocol step (DKG, presign, sign, network
+  encryption key reconfiguration).
+- `attempt_number`: how many retries this round has consumed.
+
+## Upgrades
+
+Validators run the same binary. The protocol version is a separate,
+on-chain field. When a protocol upgrade lands:
+
+1. Coordinate with other validators on the upgrade window.
+2. Update binaries on every validator host.
+3. Restart in rolling fashion.
+4. The new protocol version activates at the next epoch boundary,
+   either automatically (for soft upgrades) or via a system call
+   (for hard upgrades).
+
+Do not upgrade one validator while the others remain on the old
+binary unless the upgrade documentation explicitly says so. The MPC
+protocol assumes binary-level compatibility within an epoch.
+
+## Key rotation
+
+Three kinds of rotation:
+
+- **Authority key**: rotate via the system module. The old key
+  retains slashing liability until the next epoch closes.
+- **Network key**: rotate similarly. Networking continues seamlessly;
+  the new key is announced in advance through consensus.
+- **Class-groups share**: rotates automatically at every epoch
+  boundary as part of network encryption key reconfiguration. No
+  manual rotation needed.
+
+The network's public encryption key does not rotate. Reconfiguration
+moves the threshold shares onto a new committee; the public key, the
+on-chain handles to it, and every dWallet's public output stay the
+same.
+
+## Incident response
+
+The protocol has identifiable abort: if a validator deviates, the
+network names the cheater. The on-chain coordinator can slash via the
+staking module. Common scenarios:
+
+- **A validator fails to produce decryption shares**. The network
+  records the missed contribution. After consecutive misses the
+  validator is excluded from the next reconfiguration; recovery is
+  to fix the validator and rejoin at the following epoch.
+- **A validator emits malformed messages**. Other validators ignore
+  the messages and continue; if the deviation is sustained, the
+  protocol identifies the validator as faulty and proceeds without
+  it (within the n/3 bound).
+- **The network falls below n/3 Byzantine**. No signatures are
+  produced; safety is preserved but liveness is lost until the
+  validator set is repaired. Do not attempt to sign through; restore
+  the validator set first.
+
+## Disaster recovery
+
+The validator's state is recoverable from chain plus the validator's
+keystore. To rebuild a validator from scratch:
+
+1. Restore the keystore from a secure offline backup.
+2. Start the binary against the same network configuration.
+3. The validator catches up by replaying consensus checkpoints.
+4. The next reconfiguration reissues the class-groups share to the
+   restored validator.
+
+Do not run a single keystore on two hosts simultaneously. The
+consensus protocol slashes validators that double-sign.

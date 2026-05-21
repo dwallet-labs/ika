@@ -1,0 +1,85 @@
+---
+title: AI Skills
+description: Install Ika skills for Claude Code and other AI coding agents to get expert-level assistance with dWallet development, Move integration, and node operations.
+---
+
+import { Info, Note } from '@/components/InfoBox';
+
+Ika ships a set of [agent skills](https://github.com/vercel-labs/skills),
+reusable instruction sets that give AI coding agents structured
+knowledge about the protocol, the SDK, the plugin layer, the CLI,
+the Move contract surface, and validator operations.
+
+Skills work with 40+ AI coding agents including Claude Code, Cursor,
+Cline, GitHub Copilot, Windsurf, and others.
+
+## Available skills
+
+| Skill | What it covers |
+|-------|----------------|
+| **[ika-sdk](./ika-sdk)** | Building applications with `@ika.xyz/sdk` and the `@ika.xyz/plugins` layer. Includes the source/destination/publisher composition model. |
+| **[ika-cli](./ika-cli)** | Using the Ika command-line tool for dWallet operations, validator management, and administration. |
+| **[ika-move](./ika-move)** | Writing Sui Move contracts that consume dWallet capabilities. Covers DKG, presign, sign, and future-sign integration patterns. |
+| **[ika-operator](./ika-operator)** | Deploying and operating Ika validator and fullnode infrastructure. |
+
+## Install
+
+Use the [skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+# All skills:
+npx skills add dwallet-labs/ika
+
+# Or one at a time:
+npx skills add dwallet-labs/ika -s ika-sdk
+npx skills add dwallet-labs/ika -s ika-cli
+npx skills add dwallet-labs/ika -s ika-move
+npx skills add dwallet-labs/ika -s ika-operator
+```
+
+By default skills install into the current project. Use `-g` for a
+global install across all projects. The skills CLI detects which
+agents you have installed and prompts you to choose; target a specific
+agent with `-a <agent>`.
+
+## How skills work
+
+Each skill is a `SKILL.md` plus a `references/` directory:
+
+```
+skills/ika-sdk/
+├── SKILL.md              # Quick reference, loaded on trigger
+└── references/           # Detailed docs, loaded on demand
+    ├── api-reference.md
+    ├── flows.md
+    └── types-and-validation.md
+```
+
+When the AI agent encounters a relevant task (importing
+`@ika.xyz/sdk`, writing Move code that depends on the coordinator,
+running a `ika` CLI command), the skill is automatically loaded into
+its context.
+
+<Note title="Open source">
+	Skills are maintained in the [Ika repository](https://github.com/dwallet-labs/ika/tree/main/skills)
+	under the [Agent Skills specification](https://github.com/vercel-labs/skills). Contributions
+	welcome.
+</Note>
+
+## Managing installed skills
+
+```bash
+npx skills list                    # list installed skills
+npx skills check                   # check for updates
+npx skills update                  # update all skills
+npx skills remove ika-sdk          # remove a skill
+```
+
+## Per-skill detail
+
+Click into each skill's page for what it covers and how to invoke it:
+
+- [ika-sdk](./ika-sdk)
+- [ika-cli](./ika-cli)
+- [ika-move](./ika-move)
+- [ika-operator](./ika-operator)

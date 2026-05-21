@@ -433,3 +433,199 @@ const keys = await UserShareEncryptionKeys.fromRootSeedKey(new Uint8Array(seed),
 ```
 
 Key insight: `fromRootSeedKey` is deterministic. Same seed always produces same keys. The dWallet's public key deterministically maps to addresses on target chains.
+
+---
+
+## Plugin Layer Flows
+
+The flows above use the bare SDK. The plugin layer (`@ika.xyz/plugins`)
+is the recommended path for most applications. It wraps the same
+operations with chain-aware ergonomics: address derivation, preimage
+construction, signature assembly, and broadcasting.
+
+### Plugin host setup
+
+```typescript
+import { Curve } from '@ika.xyz/sdk';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher, defaultEsploraUrl } from '@ika.xyz/plugins/bitcoin/publisher';
+
+const ika = await new IkaClient()
+    .use(suiSource({ network: 'testnet', signer, suiClient }))
+    .use(btc())
+    .use(bitcoinPublisher({ apiBaseUrl: defaultEsploraUrl('testnet') }));
+```
+
+### Shared dWallet to Bitcoin (one-shot)
+
+```typescript
+const dWallet = await ika.sui.createDWallet({
+    kind: 'shared',
+    curve: Curve.SECP256K1,
+});
+
+const address = await dWallet.bitcoin.getAddress({ mode: 'p2wpkh', network: 'testnet' });
+
+// Build a PSBT against `address` ...
+
+const signed = await dWallet.bitcoin.sign({
+    kind: 'psbt',
+    psbt,
+    inputIndex: 0,
+    mode: 'p2wpkh',
+});
+
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+### Zero-trust dWallet (USEK threaded through source)
+
+```typescript
+const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+
+const ika = await new IkaClient()
+    .use(suiSource({
+        network: 'testnet',
+        signer,
+        suiClient,
+        userShareEncryptionKeys: keys,
+    }))
+    .use(eth())
+    .use(ethPublisher({ chain: sepolia, url: process.env.SEPOLIA_RPC! }));
+
+// register encryption key once per (user, curve)
+const tx = new Transaction();
+const ikaTx = new IkaTransaction({ ikaClient: ika.sui.client, transaction: tx, userShareEncryptionKeys: keys });
+await ikaTx.registerEncryptionKey({ curve: Curve.SECP256K1 });
+await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer });
+
+// DKG. The source automatically encrypts the user share under the USEK,
+// submits the on-chain DKG request, polls, and signs the acceptance.
+const dWallet = await ika.sui.createDWallet({
+    kind: 'zero-trust',
+    curve: Curve.SECP256K1,
+});
+
+const signed = await dWallet.ethereum.sign({ kind: 'transaction', tx: { type: 'eip1559', ... } });
+const txHash = await ika.publish({ chain: 'ethereum', payload: signed.payload });
+```
+
+### Two-phase signing (prepareSign / assembleSign)
+
+```typescript
+// Phase 1: derive preimage and plan
+const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign({
+    kind: 'psbt',
+    psbt,
+    inputIndex: 0,
+    mode: 'p2tr-script',
+});
+
+// Custom gating: Move multisig vote, sponsored relay, persistence, ...
+const signature = await yourCustomFlow(preimage, plan);
+
+// Phase 2: assemble with the signature
+const signed = await dWallet.bitcoin.assembleSign(prep, signature);
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+`prep` is what the destination needs to reassemble the signed payload.
+`preimage` is what the MPC consumes. `plan` is `{ curve,
+signatureAlgorithm, hash }`.
+
+### Future-sign with a Move multisig
+
+```typescript
+// Phase 1: user authorizes a specific message and transfers cap to contract.
+const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign({ ... });
+const presign = await ika.sui.requestGlobalPresign({
+    curve: plan.curve,
+    signatureAlgorithm: plan.signatureAlgorithm,
+});
+
+const { capId, partialSignatureId } = await ika.sui.requestFutureSign({
+    dWallet,
+    message: preimage,
+    signatureAlgorithm: plan.signatureAlgorithm,
+    hash: plan.hash,
+    presign,
+    capRecipient: multisigContractAddress,
+});
+
+// Persist prep, capId, partialSignatureId.
+
+// Phase 2: the multisig contract gates the redemption. Once quorum:
+//   coordinator::request_sign_with_partial_user_signature(coordinator, cap, approval, ctx)
+// is called from inside Move. The watcher then:
+const sign = await ika.sui.client.getSignInParticularState(
+    signId,
+    plan.curve,
+    plan.signatureAlgorithm,
+    'Completed',
+);
+const signed = await dWallet.bitcoin.assembleSign(prep, sign.state.Completed.signature);
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+The coordinator binds Phase 1 to `(dwallet, message, sig_algo,
+hash_scheme)`. Phase 2 must present an approval matching all four
+fields exactly. A cap holder cannot redeem against a different
+message.
+
+### Backend funds DKG, user signs
+
+```typescript
+// Backend, holding a funding signer:
+const dWallet = await ika.sui.createDWallet({
+    kind: 'zero-trust',
+    curve: Curve.SECP256K1,
+    capRecipient: userSuiAddress,
+});
+
+// Later, user side:
+const userView = ika.sui.withSigner(userSigner, {
+    userShareEncryptionKeys: userKeys, // explicit on multi-tenant backends
+});
+
+const signed = await dWallet.ethereum.sign({ kind: 'transaction', tx });
+```
+
+`capRecipient` routes the dWallet capability without changing who
+submits the DKG transaction. `withSigner` rebinds the source for
+subsequent operations.
+
+### Hash-application invariant
+
+Across every plugin destination:
+
+- The destination builds the chain-specific preimage.
+- The destination passes `{ preimage, hash, signatureAlgorithm,
+  curve }` to the source's `signMessage`.
+- The MPC applies the hash internally and signs.
+- The destination assembles the signed payload from the returned 64-byte
+  signature.
+
+The client never pre-hashes before calling
+`createUserSignMessageWithPublicOutput`. The single exception is Sui:
+the plugin pre-digests to 32-byte blake2b client-side because Sui's
+signature scheme treats the digest itself as the input to the inner
+hash. Both the plugin's pre-digest and the MPC's inner hash form the
+preimage that Sui validators replicate.
+
+### ECDSA low-S normalization
+
+The Bitcoin and Ethereum destinations re-normalize ECDSA signatures
+to low-S before assembly. The live MPC may or may not emit canonical
+signatures; the plugins do not depend on that. Consumers building
+their own chain support should normalize the same way.
+
+### Bitcoin Taproot constraint
+
+P2TR support is script-path only. The plugin builds addresses with a
+NUMS internal pubkey so key-path spending is provably impossible by
+construction. Spending always reveals the
+`OP_PUSHBYTES_32 <xOnly> OP_CHECKSIG` leaf and signs with the Schnorr
+key. This is a permanent property of the MPC scheme; the protocol
+cannot tweak the MPC key.

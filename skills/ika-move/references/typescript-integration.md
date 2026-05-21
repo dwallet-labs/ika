@@ -2,6 +2,14 @@
 
 Complete patterns for TypeScript SDK interaction with Move contracts.
 
+The examples below use the bare `@ika.xyz/sdk` because that is the
+right tool when your Move contract owns the orchestration. For
+typical application code that combines Move integration with
+cross-chain signing, see also `@ika.xyz/plugins` and the `ika-sdk`
+skill, which adds destination plugins (Bitcoin, Ethereum, Solana,
+Sui), the `prepareSign` / `assembleSign` two-phase API, and the
+future-sign capability flow that pairs naturally with Move multisig.
+
 ## SDK Setup
 
 ```typescript

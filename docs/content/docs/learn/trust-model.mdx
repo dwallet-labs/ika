@@ -1,0 +1,122 @@
+---
+title: Trust model
+description: Who can do what, what survives a compromise, and where the boundaries lie.
+---
+
+This page is the source of truth for what Ika does and does not guarantee.
+If you are storing value behind a dWallet, read it carefully.
+
+## Access structure
+
+Producing a signature for a dWallet requires both:
+
+1. The user share (held on the user's device for zero-trust and
+   imported-key dWallets; on chain for shared and imported-key-shared
+   dWallets).
+2. A threshold of validator shares (stake-weighted; the broadcast
+   channel admits at most one third Byzantine stake).
+
+The shared dWallet kinds publish the user share on chain, so the
+"requires the user" half of the access structure is replaced by
+"requires the dWallet capability." In both cases the validator
+participation requirement is identical.
+
+## Forgery resistance
+
+Forging a signature for a zero-trust or imported-key dWallet requires
+both:
+
+- Compromising more than one third of stake-weighted validators, and
+- Recovering the user share (either from the user's device or via the
+  Ed25519 acceptance signing key registered on chain).
+
+Compromising the validator network alone is not sufficient. This is the
+core "zero-trust" property: a fully malicious validator set cannot sign
+on behalf of an honest user.
+
+Forging for a shared dWallet only requires the validator threshold,
+since the user share is public. Holding the dWallet capability is what
+authorizes message approval at sign time, so an attacker also needs the
+capability holder's permission (or compromise of that holder).
+
+## Liveness
+
+Liveness requires more than one third of stake-weighted validators to be
+honest and online. If the validator set drops below this threshold, the
+broadcast channel underlying the protocol can no longer agree, and no
+new signatures are produced.
+
+Censorship resistance has the same boundary. As long as more than two
+thirds of stake is honest, the network cannot be made to refuse a valid
+signature request.
+
+## What an attacker cannot do (within the assumptions)
+
+- An attacker controlling fewer than one third of stake cannot forge,
+  block, or censor.
+- An attacker controlling the entire validator set but no user share
+  cannot produce a signature for a zero-trust or imported-key dWallet.
+- An attacker who learns one user's share cannot produce signatures
+  for any other dWallet, because user shares are bound to specific
+  public keys at DKG time.
+- An attacker who steals the user's Ed25519 acceptance signing key
+  cannot retroactively sign messages; the key only authorizes binding
+  the user to a particular DKG output.
+
+## What an attacker can do (within the assumptions)
+
+- A user who loses their share for a zero-trust dWallet loses the
+  ability to sign with it. The on-chain encrypted backup recovers only
+  if the user still holds the class-groups decryption key in their
+  USEK.
+- A validator set that exceeds the one third corruption ceiling can
+  fork the broadcast channel, in which case no signatures should be
+  trusted until the validator set is repaired. The protocol does not
+  guarantee safety in this regime.
+- The validator set can refuse to process requests (denial of service)
+  even when corruption is below the safety threshold, if the corrupt
+  validators are at least one third minus one. This degrades liveness
+  without breaking safety.
+
+## What the cryptography assumes
+
+The proofs in the underlying paper rely on:
+
+- Hardness of the elliptic curve discrete log on the target curve.
+- Hardness of the underlying class-groups assumptions for the
+  threshold encryption layer.
+- The random oracle model for the per-signature randomization. The
+  paper notes that the randomization must commit to the public key,
+  the presigns, and the message together; removing any of these inputs
+  makes attacks feasible.
+
+Static corruption only. The simulation does not handle an adaptive
+adversary that compromises validators mid-protocol. If you need
+resilience against adaptive corruption, this is not the protocol for
+you yet.
+
+## Reconfiguration
+
+The validator committee changes every epoch. When that happens, the
+network reshares its part of every key onto the new committee. The
+network's threshold encryption public key stays the same; only the
+distribution of shares over validators changes. Every dWallet's
+on-chain public key is stable across reconfigurations, and so is every
+address derived from it.
+
+## Bitcoin Taproot is script-path only
+
+Bitcoin Taproot supports two spending modes: key-path (spending under
+the tweaked output key) and script-path (revealing a script in the
+merkle tree). Ika cannot tweak the MPC key, so it cannot produce a
+key-path signature. The plugin layer builds taproot output addresses
+with a NUMS internal pubkey, which makes key-path spending provably
+impossible by design; the only way to spend such a UTXO is by revealing
+the script-path. This is a permanent property of the construction, not
+a temporary limitation.
+
+## Conservative phrasing for downstream docs
+
+When other pages say "signatures cannot be forged" or "the network
+cannot sign without the user," the conditions above always apply. Do
+not strengthen those claims when quoting them.

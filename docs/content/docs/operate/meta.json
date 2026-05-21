@@ -1,0 +1,5 @@
+{
+	"title": "Operate",
+	"root": true,
+	"pages": ["index", "cli", "validator-setup", "validator-operations", "networks"]
+}

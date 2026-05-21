@@ -1,0 +1,132 @@
+---
+title: Cryptography
+description: Curves, signature schemes, hash schemes, and the threshold encryption layer.
+---
+
+This page lists the primitives Ika uses and where each one applies.
+
+## Curves
+
+Four curves are supported. Each dWallet is bound to one curve at DKG
+time and signs only with the signature algorithms that curve supports.
+
+| Curve | Use |
+|-------|-----|
+| `secp256k1` | Bitcoin, Ethereum, and most EVM-compatible chains. |
+| `secp256r1` (P-256) | WebAuthn, JOSE, and other standards-driven contexts. Also one of Sui's accepted curves. |
+| `ed25519` | Solana, Sui (default), and any chain that uses EdDSA. |
+| `ristretto` | Substrate / Schnorrkel. |
+
+## Signature algorithms
+
+Five concrete signature algorithms are wired through the MPC:
+
+| Curve | Algorithm | Hash schemes accepted |
+|-------|-----------|------------------------|
+| `secp256k1` | `ECDSASecp256k1` | `KECCAK256`, `SHA256`, `DoubleSHA256` |
+| `secp256k1` | `Taproot` (BIP-340 Schnorr) | `SHA256` |
+| `secp256r1` | `ECDSASecp256r1` | `SHA256` |
+| `ed25519` | `EdDSA` | `SHA512` |
+| `ristretto` | `SchnorrkelSubstrate` | `Merlin` |
+
+The full lookup table with on-chain enum values lives in the
+[curve/signature/hash matrix](../reference/curve-signature-hash-matrix).
+
+The hash is applied inside the MPC, not by the client and not by the
+destination chain. The client passes the raw message and the hash
+scheme; the network applies the hash and signs. Chains that expect to
+verify by re-hashing the same preimage (Bitcoin, Ethereum) get a
+matching signature; chains that sign a pre-digest (Sui) handle that
+inside the destination plugin.
+
+## Threshold encryption
+
+The protocol uses a threshold additively homomorphic encryption scheme
+to hold the network's share of every dWallet's signing key. Two
+constructions are possible per the protocol paper: Paillier (through
+the [Tiresias](https://eprint.iacr.org/2023/998) protocol) and class
+groups.
+
+Ika's live implementation uses **class groups exclusively**. This is
+the Castagnos-Laguillaumie family of constructions adapted for use
+with the secp256k1, secp256r1, ed25519, and ristretto plaintext spaces.
+No Paillier and no Tiresias are on any current code path.
+
+What gets encrypted under the network's threshold encryption key:
+
+- Each validator's share of every dWallet's network-side signing-key
+  share. These are reshared at each epoch boundary onto whatever the
+  next validator set turns out to be.
+
+A second, separate class-groups keypair lives on the user side. This
+is the **User Share Encryption Key (USEK)**. It is what encrypts a
+user's secret share of a zero-trust or imported-key dWallet for
+on-chain backup. The USEK is deterministically derived from a 32-byte
+seed, so it can be reproduced from a recovery phrase.
+
+## Acceptance signing key
+
+Every USEK also carries an Ed25519 signing key. It is used for:
+
+- Signing the class-groups encryption key when registering it on
+  chain. This binds the address of the Ed25519 key to a particular
+  class-groups key.
+- Signing the dWallet's public DKG output at acceptance time. This
+  binds the user's intent to a specific DKG result.
+- Signing transferred dWallet outputs when one user reassigns a
+  dWallet to another.
+
+The Ed25519 key is derived from the same 32-byte seed as the
+class-groups key, using a separate domain-separated derivation so the
+two keys never collide.
+
+## Session identifiers
+
+Every MPC session is identified by a 32-byte preimage chosen by the
+client. The on-chain identifier is the keccak256 of a version byte, a
+domain separator (`USER` or `SYSTEM`), and the preimage. Two flows
+exist:
+
+- **Random session identifier**: 32 fresh random bytes. Use this for
+  every fresh signing operation.
+- **Deterministic session identifier**: derived from the message to be
+  signed and the sender's address. Use this when reproducibility is
+  required, for example to retry without producing a fresh on-chain
+  identifier.
+
+## Public-key stability across reconfigurations
+
+When the validator committee changes (every epoch), the network
+reshares its part of every key onto the new committee. The on-chain
+public key of the network's threshold encryption layer, and the
+on-chain public key of every dWallet, do not change. Addresses derived
+from those keys are stable across reconfigurations.
+
+## Signature wire format
+
+Sign outputs come back as 64-byte raw signatures (`r || s` for ECDSA,
+`R || s` for Ed25519, BIP-340 `r_x || s` for Taproot, scheme-specific
+for Schnorrkel-Substrate). The plugin layer wraps them into the
+encoding each chain expects: DER for Bitcoin PSBT inputs, recoverable
+`(r, s, v)` for Ethereum, raw 64 bytes for Solana, and the Sui
+serialized-signature format for Sui.
+
+## What is not promised
+
+- ECDSA signatures are not guaranteed low-S out of the box. The
+  Ethereum and Bitcoin plugins normalize defensively before assembling
+  the final transaction.
+- The randomness inside MPC rounds is deterministic from the session
+  identifier and the round index, by design (rerunning a round
+  produces the same outgoing message). This is required for recovery
+  semantics and is documented as such in the implementation; do not
+  reuse session-identifier-derived randomness for any other purpose.
+- Static corruption only. The papers do not cover adaptive corruption
+  during a live protocol run.
+
+## Implementation references
+
+The cryptographic primitives live in the private dependency
+[`dwallet-labs/inkrypto`](https://github.com/dwallet-labs/inkrypto).
+The Rust integration is in `crates/ika-core/src/dwallet_mpc/` and the
+user-side WASM bindings are in `crates/dwallet-mpc-centralized-party/`.

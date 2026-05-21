@@ -1,0 +1,14 @@
+{
+	"title": "Learn",
+	"root": true,
+	"pages": [
+		"index",
+		"what-is-ika",
+		"dwallets",
+		"trust-model",
+		"2pc-mpc",
+		"cryptography",
+		"multi-chain-vs-cross-chain",
+		"whitepaper"
+	]
+}

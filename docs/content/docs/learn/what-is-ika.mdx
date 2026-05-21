@@ -1,0 +1,50 @@
+---
+title: What is Ika
+description: A short, accurate answer to what Ika is and what it lets you do.
+---
+
+Ika is a permissionless network of validators on Sui that jointly sign on
+behalf of users. Each signing key is split between a user and a threshold
+of validators; producing a signature requires both. Validators never see
+the user's share, and the user cannot sign alone.
+
+The network is curve-agnostic. The same dWallet abstraction signs for
+Bitcoin, Ethereum, Solana, Sui, Substrate, and any other chain that
+accepts a standard ECDSA, Schnorr, EdDSA, or Schnorrkel signature.
+
+## What you can do with it
+
+- **Hold a key that no single party controls.** Standard custodial
+  wallets and standard multi-sig contracts both place trust in a group
+  whose private keys exist somewhere. With Ika, the key was never
+  reconstructed in a single place to begin with.
+- **Sign cross-chain without bridges.** A dWallet's address on
+  destination chain X is a regular address on chain X. Spending a UTXO
+  or sending a token from that address looks identical to spending from
+  any other address.
+- **Build flows where the validator set rotates without rotating user
+  keys.** When the validator committee changes, the network reshares
+  its part of the key. The public key on chain stays the same, and so
+  do every address derived from it.
+- **Compose Move contracts with off-chain signing.** A Sui Move
+  contract that holds a dWallet's capability can gate signatures behind
+  any logic that the Sui transaction model supports.
+
+## What you do not get from it
+
+- **A custody product.** Ika is a protocol and an SDK. Building a
+  product on top of it requires choosing how user keys are stored,
+  recovered, and audited.
+- **Synchronous, low-latency signing.** A signature involves a presign
+  phase and a sign phase, each of which is a small number of MPC
+  rounds. Expect seconds, not milliseconds.
+- **Cross-chain consensus.** Ika produces signatures that any chain can
+  verify, but it does not run consensus on the destination chains. You
+  still need to broadcast and confirm there.
+
+## How to read the rest of the docs
+
+If you already know what Ika is and want to ship something, jump to
+[Get Started](../get-started). If you want to understand the trust
+model before writing code, continue with [dWallets](./dwallets) and
+[Trust model](./trust-model).

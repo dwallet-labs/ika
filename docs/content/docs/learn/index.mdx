@@ -1,0 +1,26 @@
+---
+title: Learn
+description: Concepts, trust model, and cryptography behind Ika and dWallets.
+---
+
+This section explains how Ika works. Read it in order if you are new. Each
+page is short, technical, and sources its claims from the protocol papers
+and the live implementation.
+
+1. [What is Ika](./what-is-ika) sets the scope: what the network does and
+   who it is for.
+2. [dWallets](./dwallets) defines the unit, the four kinds, and how each
+   one is created and signed against.
+3. [Trust model](./trust-model) is the most important page if you plan to
+   store value. It states what survives which failure.
+4. [2PC-MPC](./2pc-mpc) covers the threshold-signing protocol Ika
+   implements, at a level a developer can follow without reading the
+   papers in full.
+5. [Cryptography](./cryptography) lists the primitives in use: curves,
+   signature schemes, hashes, and the threshold encryption layer.
+6. [Multi-chain vs cross-chain](./multi-chain-vs-cross-chain) clarifies
+   the difference and where Ika sits.
+7. [Whitepaper](./whitepaper) links the academic references.
+
+When the [Build](../build) section refers to a concept, it links back
+here.

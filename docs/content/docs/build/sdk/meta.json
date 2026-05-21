@@ -1,0 +1,13 @@
+{
+	"title": "SDK",
+	"root": true,
+	"pages": [
+		"index",
+		"setup",
+		"ika-client",
+		"ika-transaction",
+		"user-share-encryption-keys",
+		"cryptography-helpers",
+		"low-level"
+	]
+}
