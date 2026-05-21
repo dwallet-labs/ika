@@ -33,9 +33,11 @@ use sui_types::messages_consensus::Round;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::info;
 
-/// Test presign pool: maps (algorithm, key_id) to a list of (session_id, presign_bytes).
-type TestPresignPool =
-    Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, Vec<u8>)>>>>;
+/// Test presign pool: maps (algorithm, key_id) to a list of (session_id, blending_index,
+/// presign_bytes). The blending index is the presign's position in its inserted vector.
+type TestPresignPool = Arc<
+    Mutex<HashMap<(DWalletSignatureAlgorithm, ObjectID), Vec<(SessionIdentifier, u16, Vec<u8>)>>>,
+>;
 
 /// A testing implementation of the `AuthorityPerEpochStoreTrait`.
 /// Records all received data for testing purposes.
@@ -64,14 +66,13 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
     pub(crate) presign_pools: TestPresignPool,
-    /// Tracks presign session usage counts.
-    /// Maps session ID → (used_count, total_inserted_count).
-    /// A presign is considered fully used only when all presigns from that session
-    /// have been consumed (used_count >= total_count).
-    pub(crate) used_presigns: Arc<Mutex<HashMap<SessionIdentifier, (u64, u64)>>>,
-    /// Assigned presigns keyed by (signature_algorithm, session_identifier).
+    /// Tracks which individual presigns have been consumed for signing.
+    /// Keyed by (session_identifier, blending_index) to uniquely identify a single presign
+    /// within the blended vector produced by a presign session.
+    pub(crate) used_presigns: Arc<Mutex<HashMap<(SessionIdentifier, u16), ()>>>,
+    /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
     pub(crate) assigned_presigns:
-        Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier), AssignedPresign>>>,
+        Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -248,20 +249,20 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // Deduplicate by session_identifier: production code overwrites on the same
         // (key_id, session_sequence_number) key, so only one copy of each session's
         // presigns should exist in the pool. Skip if already present.
-        let already_exists = pool.iter().any(|(sid, _)| *sid == session_identifier);
+        let already_exists = pool.iter().any(|(sid, _, _)| *sid == session_identifier);
         if already_exists {
             return Ok(());
         }
 
-        let count = presigns.len() as u64;
-        for presign in presigns {
-            pool.push((session_identifier, presign));
-        }
-
-        // Track inserted count for is_presign_used checks.
-        let mut used = self.used_presigns.lock().unwrap();
-        let entry = used.entry(session_identifier).or_insert((0, 0));
-        entry.1 += count;
+        // Tag each presign with its blending index (its position in the inserted vector).
+        pool.extend(
+            presigns
+                .into_iter()
+                .enumerate()
+                .map(|(blending_index, presign)| {
+                    (session_identifier, blending_index as u16, presign)
+                }),
+        );
 
         Ok(())
     }
@@ -280,28 +281,34 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
         let mut pools = self.presign_pools.lock().unwrap();
         let key = (signature_algorithm, dwallet_network_encryption_key_id);
         Ok(pools.get_mut(&key).and_then(|pool| pool.pop()))
     }
 
-    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
-        let mut used = self.used_presigns.lock().unwrap();
-        let entry = used.entry(presign_session_id).or_insert((0, 0));
-        entry.0 += 1;
+    fn mark_presign_as_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<()> {
+        self.used_presigns
+            .lock()
+            .unwrap()
+            .insert((presign_session_id, presign_blending_index), ());
         Ok(())
     }
 
-    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        let used = self.used_presigns.lock().unwrap();
-        match used.get(&presign_session_id) {
-            // A session is "used" if:
-            // - It was marked without prior insert (total=0, used>0): external use
-            // - All batch presigns have been consumed (used >= total, total > 0)
-            Some((used_count, total_count)) => Ok(*used_count > 0 && *used_count >= *total_count),
-            None => Ok(false),
-        }
+    fn is_presign_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<bool> {
+        Ok(self
+            .used_presigns
+            .lock()
+            .unwrap()
+            .contains_key(&(presign_session_id, presign_blending_index)))
     }
 
     fn next_idle_status_update(
@@ -373,12 +380,13 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
-    ) -> IkaResult<Option<SessionIdentifier>> {
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
         let popped = self.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?;
         match popped {
-            Some((session_id, presign_bytes)) => {
+            Some((session_id, blending_index, presign_bytes)) => {
                 let assigned = AssignedPresign {
                     session_identifier: session_id,
+                    blending_index,
                     presign: presign_bytes,
                     user_verification_key,
                     dwallet_id,
@@ -387,8 +395,8 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
                 self.assigned_presigns
                     .lock()
                     .unwrap()
-                    .insert((signature_algorithm, session_id), assigned);
-                Ok(Some(session_id))
+                    .insert((signature_algorithm, session_id, blending_index), assigned);
+                Ok(Some((session_id, blending_index)))
             }
             None => Ok(None),
         }
@@ -398,12 +406,13 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
         Ok(self
             .assigned_presigns
             .lock()
             .unwrap()
-            .get(&(signature_algorithm, session_identifier))
+            .get(&(signature_algorithm, session_identifier, blending_index))
             .cloned())
     }
 
@@ -411,12 +420,13 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
-        Ok(self
-            .assigned_presigns
-            .lock()
-            .unwrap()
-            .remove(&(signature_algorithm, session_identifier)))
+        Ok(self.assigned_presigns.lock().unwrap().remove(&(
+            signature_algorithm,
+            session_identifier,
+            blending_index,
+        )))
     }
 }
 
