@@ -116,12 +116,16 @@ async fn network_owned_address_sign_flow(
         pool_size_before > 0,
         "pool should have at least one presign"
     );
-    let presign_session_identifiers_before: HashSet<SessionIdentifier> = test_state.epoch_stores[0]
+    let presigns_before: HashSet<(SessionIdentifier, u16)> = test_state.epoch_stores[0]
         .presign_pools
         .lock()
         .unwrap()
         .get(&(signature_algorithm, network_key_id))
-        .map(|pool| pool.iter().map(|(id, _)| *id).collect())
+        .map(|pool| {
+            pool.iter()
+                .map(|(id, blending_index, _)| (*id, *blending_index))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Send a NetworkOwnedAddressSignRequest to all validators via the channel.
@@ -181,13 +185,9 @@ async fn network_owned_address_sign_flow(
         .lock()
         .unwrap()
         .clone();
-    let consumed_from_snapshot: HashSet<_> = presign_session_identifiers_before
+    let consumed_from_snapshot: HashSet<_> = presigns_before
         .iter()
-        .filter(|id| {
-            used_presigns
-                .get(id)
-                .is_some_and(|(used_count, _)| *used_count > 0)
-        })
+        .filter(|presign_key| used_presigns.contains_key(presign_key))
         .collect();
     info!(
         used_presigns_count = used_presigns.len(),
