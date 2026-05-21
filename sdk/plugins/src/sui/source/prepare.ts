@@ -67,7 +67,7 @@ export interface PrepareSignCtx {
 	readonly ikaClient: CoreIkaClient;
 }
 
-export async function prepareSign(
+export async function prepareSignMessage(
 	ctx: PrepareSignCtx,
 	input: PrepareSignInput,
 ): Promise<PrepareSignOutput> {
@@ -81,7 +81,7 @@ export async function prepareSign(
 	const completed = input.presign.state.Completed;
 	if (!completed) {
 		throw new Error(
-			'sui source: prepareSign requires a Completed presign. ' +
+			'sui source: prepareSignMessage requires a Completed presign. ' +
 				"Pass `presign` from `ikaClient.getPresignInParticularState(id, 'Completed')`.",
 		);
 	}
@@ -111,7 +111,7 @@ function extractPublicOutput(raw: SuiDWallet['raw']): Uint8Array {
 	const state = (raw as { state: { Active?: { public_output: number[] | Uint8Array } } }).state;
 	const active = state?.Active?.public_output;
 	if (!active) {
-		throw new Error('sui source: prepareSign requires an Active dWallet');
+		throw new Error('sui source: prepareSignMessage requires an Active dWallet');
 	}
 	return Uint8Array.from(active);
 }
@@ -139,11 +139,11 @@ async function resolveUserSecretShare(
 	}
 
 	// Zero-trust / imported-key: encrypted share + USEK decryption.
-	const usek = resolveUsek(ctx.defaults, input.userShareEncryptionKeys, 'prepareSign');
+	const usek = resolveUsek(ctx.defaults, input.userShareEncryptionKeys, 'prepareSignMessage');
 	const encShareId = input.encryptedShareId ?? dWallet.encryptedShareId;
 	if (!encShareId) {
 		throw new Error(
-			`sui source: ${kind} prepareSign requires \`encryptedShareId\`. ` +
+			`sui source: ${kind} prepareSignMessage requires \`encryptedShareId\`. ` +
 				`Pass it explicitly or use a dWallet handle that carries it.`,
 		);
 	}

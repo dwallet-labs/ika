@@ -40,7 +40,7 @@ import type {
 	RequestFutureSignInput,
 	RequestFutureSignOutput,
 } from './future-sign.js';
-import { prepareSign } from './prepare.js';
+import { prepareSignMessage } from './prepare.js';
 import type { PrepareSignInput, PrepareSignOutput } from './prepare.js';
 import { requestGlobalPresign, requestPresign } from './presign.js';
 import { composeSign, requestSign, signMessage } from './sign.js';
@@ -204,7 +204,12 @@ export interface SuiSourceExtend {
 		 * produce the matching `message` and with `assembleSign(...)` to
 		 * package the final payload once the network signature lands.
 		 */
-		prepareSign(input: PrepareSignInput): Promise<PrepareSignOutput>;
+		/**
+		 * Named `prepareSignMessage` rather than `prepareSign` so it does
+		 * not collide with each destination's `prepareSign(...)` when a
+		 * source and destination both target the `sui` namespace.
+		 */
+		prepareSignMessage(input: PrepareSignInput): Promise<PrepareSignOutput>;
 		/**
 		 * Phase 1 of future-sign: lock in `(message, presign,
 		 * userSignMessage)` on chain and produce a validated
@@ -483,9 +488,11 @@ export function suiSource(
 			await ensureInit();
 			return requestSign(signCtx(), input);
 		};
-		const apiPrepareSign = async (input: PrepareSignInput): Promise<PrepareSignOutput> => {
+		const apiPrepareSignMessage = async (
+			input: PrepareSignInput,
+		): Promise<PrepareSignOutput> => {
 			await ensureInit();
-			return prepareSign({ defaults, ikaClient }, input);
+			return prepareSignMessage({ defaults, ikaClient }, input);
 		};
 		const apiRequestFutureSign = async (
 			input: RequestFutureSignInput,
@@ -736,7 +743,7 @@ export function suiSource(
 			requestPresign: apiRequestPresign,
 			requestGlobalPresign: apiRequestGlobalPresign,
 			requestSign: apiRequestSign,
-			prepareSign: apiPrepareSign,
+			prepareSignMessage: apiPrepareSignMessage,
 			requestFutureSign: apiRequestFutureSign,
 			completeFutureSign: apiCompleteFutureSign,
 			createDWallet: apiCreateDWallet,

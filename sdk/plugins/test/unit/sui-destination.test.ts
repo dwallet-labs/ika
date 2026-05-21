@@ -8,8 +8,8 @@
 // resulting signature.
 
 import { sui } from '@ika.xyz/plugins/sui/destination';
-import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import type { SuiSupportedCurve } from '@ika.xyz/plugins/sui/destination';
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
 import type { BaseSignResult, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { ed25519 } from '@noble/curves/ed25519.js';
