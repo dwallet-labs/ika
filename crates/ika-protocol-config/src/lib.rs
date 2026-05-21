@@ -564,16 +564,6 @@ impl ProtocolConfig {
     }
 
     fn get_for_version_impl(version: ProtocolVersion, _chain: Chain) -> Self {
-        #[cfg(msim)]
-        {
-            // populate the fake simulator version # with a different base tx cost.
-            if version == ProtocolVersion::MAX_ALLOWED {
-                let mut config = Self::get_for_version_impl(version - 1, Chain::Unknown);
-                config.base_tx_cost_fixed = Some(config.base_tx_cost_fixed() + 1000);
-                return config;
-            }
-        }
-
         // IMPORTANT: Never modify the value of any constant for a pre-existing protocol version.
         // To change the values here you must create a new protocol version with the new values!
         let mut cfg = Self {

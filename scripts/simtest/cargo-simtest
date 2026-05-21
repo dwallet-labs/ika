@@ -54,9 +54,9 @@ if [ -n "$LOCAL_MSIM_PATH" ]; then
 else
   cargo_patch_args=(
     --config 'patch.crates-io.tokio.git = "https://github.com/MystenLabs/mysten-sim.git"'
-    --config 'patch.crates-io.tokio.rev = "9c6636c399d5c60a1759f1670b1c07b3d408799a"'
+    --config 'patch.crates-io.tokio.rev = "213e543d83b91c4aa904166bef255a6c0054c8a7"'
     --config 'patch.crates-io.futures-timer.git = "https://github.com/MystenLabs/mysten-sim.git"'
-    --config 'patch.crates-io.futures-timer.rev = "9c6636c399d5c60a1759f1670b1c07b3d408799a"'
+    --config 'patch.crates-io.futures-timer.rev = "213e543d83b91c4aa904166bef255a6c0054c8a7"'
   )
 fi
 
@@ -96,10 +96,14 @@ fi
 # Must supply a new temp dir - the test is deterministic and can't choose one randomly itself.
 export TMPDIR=$(mktemp -d)
 
-# Set the example move package for the simtest static initializer
-# https://github.com/MystenLabs/sui/blob/7bc276d534c6c758ac2cfefe96431c2b1318ca01/crates/ika-proc-macros/src/lib.rs#L52
+# Point the sui-proc-macros static initializer at a self-contained Move package
+# with `implicit-dependencies = false` and no deps. The macro just calls
+# `BuildConfig::build_async` to warm up move-package-alt lazy statics; it does
+# not need real on-chain logic. We can't reuse contracts/ika here because its
+# sources `use sui::*`, which pulls in sui-framework via git, and
+# move-package-alt's git fetcher uses `tokio::process` (panics under msim).
 root_dir=$(git rev-parse --show-toplevel)
-export SIMTEST_STATIC_INIT_MOVE=$root_dir"/examples/move/basics"
+export SIMTEST_STATIC_INIT_MOVE=$root_dir"/crates/ika-test-cluster/move-stub"
 
 cargo ${CARGO_COMMAND[@]} \
   --config "build.rustflags = [$RUST_FLAGS]" \

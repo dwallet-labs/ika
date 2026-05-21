@@ -740,7 +740,7 @@ impl AuthorityState {
             std::process::exit(1);
 
             #[cfg(msim)]
-            ika_simulator::task::shutdown_current_node();
+            sui_simulator::task::shutdown_current_node();
         }
     }
 
