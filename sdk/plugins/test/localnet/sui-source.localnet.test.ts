@@ -321,7 +321,7 @@ describe('sui source localnet — full e2e through ika MPC + all destinations', 
 						// loaded (epoch reconfiguration overlap).
 						sendOptions: { skipPreflight: true },
 						confirm: true,
-						confirmTimeoutMs: 60_000,
+						confirmTimeoutMs: 180_000,
 						commitment: 'confirmed',
 					}),
 				],
@@ -330,15 +330,20 @@ describe('sui source localnet — full e2e through ika MPC + all destinations', 
 			const dWalletAddress = await dWallet.solana.getAddress();
 			const payer = new PublicKey(dWalletAddress);
 			const airdropSig = await conn.requestAirdrop(payer, 2 * LAMPORTS_PER_SOL);
-			const airdropLatest = await conn.getLatestBlockhash('confirmed');
-			await conn.confirmTransaction(
-				{
-					signature: airdropSig,
-					blockhash: airdropLatest.blockhash,
-					lastValidBlockHeight: airdropLatest.lastValidBlockHeight,
-				},
-				'confirmed',
-			);
+			// Poll the airdrop signature status instead of using
+			// `confirmTransaction({ blockhash, lastValidBlockHeight, ... })`.
+			// On the older test-validator the websocket signature
+			// subscription hangs, and waiting on lastValidBlockHeight
+			// fails once block height passes the airdrop's blockhash
+			// window — both spurious from the plugin's POV.
+			const airdropDeadline = Date.now() + 90_000;
+			while (Date.now() < airdropDeadline) {
+				const statuses = await conn.getSignatureStatuses([airdropSig]);
+				const s = statuses.value[0];
+				if (s && (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized'))
+					break;
+				await new Promise((r) => setTimeout(r, 500));
+			}
 			expect(await conn.getBalance(payer, 'confirmed')).toBeGreaterThanOrEqual(LAMPORTS_PER_SOL);
 
 			// Pre-request the global presign so the sign tx itself doesn't
