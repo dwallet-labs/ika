@@ -808,9 +808,13 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
-    // Fast Schnorr (VSS) internal presign pools — separate from their AHE siblings
-    // because VSS presign bytes are a different format (a VSS sign must never pop an
-    // AHE presign, or vice versa).
+    /// Fast Schnorr (VSS) internal presign pools. Same structure as the AHE pools
+    /// above: keyed by `(network_encryption_key_id: ObjectID, session_sequence_number:
+    /// u64)`, value `(SessionIdentifier, Vec<presign_bytes>)` — the session that
+    /// produced the presigns plus its list of serialized presigns, consumed
+    /// lowest-sequence-number-first within a given key ID. Kept separate from their
+    /// AHE siblings because VSS presign bytes are a different format (a VSS sign must
+    /// never pop an AHE presign, or vice versa).
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_taproot_vss: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
