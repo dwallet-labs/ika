@@ -1,43 +1,64 @@
-import { BookOpen, Code2, Globe, Layers, Puzzle, Terminal, Zap } from 'lucide-react';
+import { BookOpen, Code2, Globe, Layers, Puzzle, Send, Terminal, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 
 const features = [
 	{
-		title: 'Solana Integration',
-		description:
-			'Build Solana programs that control dWallets for cross-chain signing. Pinocchio, Anchor, and Native frameworks supported.',
-		href: 'https://solana-pre-alpha.ika.xyz',
-		icon: Globe,
-		gradient: 'from-[#9945FF] to-[#14F195]',
-	},
-	{
-		title: 'SDK',
-		description: 'TypeScript SDK for building applications with dWallets',
-		href: '/docs/sdk',
-		icon: Code2,
+		title: 'Get Started',
+		description: 'Sign your first Bitcoin transaction with a dWallet in under ten minutes.',
+		href: '/docs/get-started',
+		icon: Zap,
 		gradient: 'from-pink-500 to-rose-500',
 	},
 	{
-		title: 'CLI',
-		description: 'Create dWallets, sign messages, and manage the network from the terminal',
-		href: '/docs/cli',
-		icon: Terminal,
+		title: 'Learn',
+		description: 'Concepts, trust model, and the 2PC-MPC protocol behind dWallets.',
+		href: '/docs/learn',
+		icon: BookOpen,
+		gradient: 'from-blue-500 to-cyan-500',
+	},
+	{
+		title: 'Build with the SDK',
+		description: 'The TypeScript SDK and the plugin layer for cross-chain signing.',
+		href: '/docs/build',
+		icon: Code2,
 		gradient: 'from-violet-500 to-purple-500',
 	},
 	{
-		title: 'Move Integration',
-		description: 'Integrate dWallets into your Move smart contracts',
-		href: '/docs/move-integration',
+		title: 'Plugins',
+		description: 'Bitcoin, Ethereum, Solana, and Sui destinations. Compose them on one client.',
+		href: '/docs/build/plugins',
 		icon: Puzzle,
 		gradient: 'from-purple-500 to-indigo-500',
 	},
 	{
-		title: 'Core Concepts',
-		description: 'Understand the fundamentals of dWallets and Ika',
-		href: '/docs/core-concepts/dwallets',
-		icon: BookOpen,
-		gradient: 'from-blue-500 to-cyan-500',
+		title: 'Move integration',
+		description: 'Consume dWallet capabilities from Sui Move contracts.',
+		href: '/docs/build/move-integration',
+		icon: Layers,
+		gradient: 'from-indigo-500 to-blue-500',
+	},
+	{
+		title: 'Solana Integration (pre-alpha)',
+		description: 'Use Solana as the coordination chain. Devnet only, separate SDK.',
+		href: 'https://solana-pre-alpha.ika.xyz',
+		icon: Globe,
+		gradient: 'from-[#9945FF] to-[#14F195]',
+		external: true,
+	},
+	{
+		title: 'Operate a validator',
+		description: 'Hardware, keys, configuration, monitoring, and incident response.',
+		href: '/docs/operate',
+		icon: Terminal,
+		gradient: 'from-emerald-500 to-teal-500',
+	},
+	{
+		title: 'AI Skills',
+		description: 'Claude Code and other agents get expert context for Ika out of the box.',
+		href: '/docs/ai-skills',
+		icon: Send,
+		gradient: 'from-amber-500 to-orange-500',
 	},
 ];
 
@@ -46,11 +67,8 @@ export default function HomePage() {
 		<main className="min-h-screen">
 			{/* Hero Section */}
 			<section className="relative overflow-hidden">
-				{/* Background gradient */}
 				<div className="absolute inset-0 bg-hero-gradient dark:bg-hero-gradient-dark" />
 				<div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-pink-100/50 via-transparent to-transparent dark:from-pink-900/20" />
-
-				{/* Grid pattern overlay */}
 				<div className="absolute inset-0 bg-[linear-gradient(to_right,#ec489910_1px,transparent_1px),linear-gradient(to_bottom,#ec489910_1px,transparent_1px)] bg-[size:4rem_4rem]" />
 
 				<div className="relative mx-auto max-w-6xl px-6 py-24 sm:py-32 lg:py-40">
@@ -68,9 +86,9 @@ export default function HomePage() {
 
 						{/* Subtitle */}
 						<p className="mx-auto mt-6 max-w-3xl text-lg text-fd-muted-foreground sm:text-xl">
-							Ika enables bridgeless capital markets. Move value across any blockchain without
-							bridges, wrapping, or centralized custody. Powered by dWallets and 2PC-MPC
-							cryptography.
+							Ika is a permissionless MPC signing network on Sui. dWallets sign for Bitcoin,
+							Ethereum, Solana, Sui, and other chains without bridges, wrapping, or centralized
+							custody.
 						</p>
 
 						{/* Solana callout */}
@@ -87,15 +105,18 @@ export default function HomePage() {
 								className="dark:brightness-0 dark:invert"
 							/>
 							<span className="text-sm font-medium text-[#9945FF] dark:text-[#14F195]">
-								Solana Pre-Alpha is live — Build dWallet programs now
+								Solana coordination chain (pre-alpha) is live on devnet
 							</span>
 							<span className="h-1.5 w-1.5 rounded-full bg-[#14F195] animate-pulse" />
 						</Link>
 
 						{/* CTA Buttons */}
 						<div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-							<Link href="/docs/sdk" className="btn-primary inline-flex items-center gap-2">
-								<Code2 className="h-5 w-5" />
+							<Link
+								href="/docs/get-started"
+								className="btn-primary inline-flex items-center gap-2"
+							>
+								<Zap className="h-5 w-5" />
 								Get Started
 							</Link>
 							<Link
@@ -126,30 +147,30 @@ export default function HomePage() {
 							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-lg">
 								<Globe className="h-6 w-6" />
 							</div>
-							<h3 className="text-lg font-semibold mb-2">No Bridges Required</h3>
+							<h3 className="text-lg font-semibold mb-2">No bridges</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								Sign transactions natively on any blockchain. No wrapped tokens, no bridge exploits,
-								no centralized custodians.
+								A dWallet's signature on Bitcoin is a regular Bitcoin signature. No wrapped tokens, no
+								bridge layer, no centralized custodian.
 							</p>
 						</div>
 						<div className="text-center">
 							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 text-white shadow-lg">
 								<Layers className="h-6 w-6" />
 							</div>
-							<h3 className="text-lg font-semibold mb-2">Zero-Trust Security</h3>
+							<h3 className="text-lg font-semibold mb-2">Zero-trust signing</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								2PC-MPC cryptography ensures no party, not even the network, can sign without user
-								consent. Non-collusive by design.
+								The signing key is split between the user and the validator network. Neither side can
+								sign alone.
 							</p>
 						</div>
 						<div className="text-center">
 							<div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg">
 								<Zap className="h-6 w-6" />
 							</div>
-							<h3 className="text-lg font-semibold mb-2">Programmable Signing</h3>
+							<h3 className="text-lg font-semibold mb-2">Programmable</h3>
 							<p className="text-sm text-fd-muted-foreground">
-								Build smart contract logic on Sui that controls signing on any chain. DeFi, custody,
-								governance, all composable.
+								Sui Move contracts hold dWallet capabilities and gate signatures behind any logic the
+								Sui transaction model supports.
 							</p>
 						</div>
 					</div>
@@ -161,10 +182,10 @@ export default function HomePage() {
 				<div className="mx-auto max-w-6xl px-6">
 					<div className="text-center mb-16">
 						<h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-							Explore the Documentation
+							Explore the documentation
 						</h2>
 						<p className="mt-4 text-lg text-fd-muted-foreground">
-							Everything you need to build with dWallets
+							Everything you need to build, operate, or learn.
 						</p>
 					</div>
 
@@ -173,23 +194,22 @@ export default function HomePage() {
 							<Link
 								key={feature.title}
 								href={feature.href}
+								target={feature.external ? '_blank' : undefined}
+								rel={feature.external ? 'noopener noreferrer' : undefined}
 								className="group relative overflow-hidden rounded-2xl border border-fd-border bg-fd-card p-6 transition-all duration-300 hover:border-pink-300 dark:hover:border-pink-700 hover:shadow-lg hover:shadow-pink-500/10 card-hover"
 								style={{ animationDelay: `${index * 100}ms` }}
 							>
-								{/* Gradient background on hover */}
 								<div
 									className={`absolute inset-0 bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-5 transition-opacity duration-300`}
 								/>
 
 								<div className="relative">
-									{/* Icon */}
 									<div
 										className={`mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${feature.gradient} text-white shadow-lg`}
 									>
 										<feature.icon className="h-6 w-6" />
 									</div>
 
-									{/* Content */}
 									<h3 className="text-xl font-semibold mb-2 group-hover:text-pink-600 dark:group-hover:text-pink-400 transition-colors">
 										{feature.title}
 									</h3>
@@ -197,7 +217,6 @@ export default function HomePage() {
 										{feature.description}
 									</p>
 
-									{/* Arrow */}
 									<div className="mt-4 flex items-center text-sm font-medium text-pink-600 dark:text-pink-400">
 										Learn more
 										<svg
@@ -228,25 +247,25 @@ export default function HomePage() {
 						<div className="grid gap-8 lg:grid-cols-2 lg:gap-12 items-center">
 							<div>
 								<h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-									Ready to get started?
+									Ready to build?
 								</h2>
 								<p className="mt-4 text-fd-muted-foreground">
-									Install the Ika SDK and start building bridgeless multi-chain applications with
-									dWallets in minutes.
+									Install the SDK and the plugin layer. Sign your first Bitcoin transaction in a few
+									minutes.
 								</p>
-								<div className="mt-6">
+								<div className="mt-6 space-y-2">
 									<code className="inline-flex items-center gap-2 rounded-lg bg-fd-muted px-4 py-2 text-sm font-mono">
 										<span className="text-pink-600 dark:text-pink-400">$</span>
-										pnpm add @ika.xyz/sdk
+										pnpm add @ika.xyz/sdk @ika.xyz/plugins @mysten/sui
 									</code>
 								</div>
 							</div>
 							<div className="flex flex-col sm:flex-row gap-4 lg:justify-end">
-								<Link href="/docs/sdk" className="btn-primary text-center">
-									Read the Docs
+								<Link href="/docs/get-started" className="btn-primary text-center">
+									Get Started
 								</Link>
-								<Link href="/docs/sdk/setup-localnet" className="btn-secondary text-center">
-									Setup Localnet
+								<Link href="/docs/learn/trust-model" className="btn-secondary text-center">
+									Trust model
 								</Link>
 							</div>
 						</div>
@@ -276,6 +295,14 @@ export default function HomePage() {
 								className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
 							>
 								Whitepaper
+							</Link>
+							<Link
+								href="https://solana-pre-alpha.ika.xyz"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="text-fd-muted-foreground hover:text-fd-foreground transition-colors"
+							>
+								Solana (pre-alpha)
 							</Link>
 						</div>
 					</div>
