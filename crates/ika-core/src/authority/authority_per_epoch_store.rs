@@ -282,7 +282,7 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>>;
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>>;
 
     /// Returns the next idle status updates after the given consensus round.
     fn next_idle_status_update(
@@ -315,26 +315,37 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> IkaResult<Option<(Round, Vec<ConsensusNOAObservation>)>>;
 
     /// Marks a presign as used so it cannot be reused.
-    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()>;
+    fn mark_presign_as_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<()>;
 
     /// Checks if a presign has already been used.
-    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool>;
+    fn is_presign_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<bool>;
 
-    /// Persists a Fast Schnorr (VSS) presign's private output (`bcs(Vec<PrivatePresignOutput>)`)
-    /// keyed by the presign session id, so the later sign can recover the nonce
-    /// shares. Self-prunes at epoch rotation. VSS sessions only.
+    /// Persists a single Fast Schnorr (VSS) presign's private output
+    /// (`bcs(PrivatePresignOutput)`) keyed by `(presign session id, blending index)`,
+    /// so the later sign can recover the nonce shares for that exact blended presign.
+    /// Self-prunes at epoch rotation. VSS sessions only.
     fn store_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
         private_output: Vec<u8>,
     ) -> IkaResult<()>;
 
-    /// Loads a persisted VSS presign private output by session id, if present.
-    /// Absent on a non-VSS presign, after epoch rotation, or on disk loss — the
-    /// sign treats `None` as a soft-fail (this validator drops out of the quorum).
+    /// Loads a persisted VSS presign private output by `(session id, blending index)`,
+    /// if present. Absent on a non-VSS presign, after epoch rotation, or on disk loss
+    /// — the sign treats `None` as a soft-fail (this validator drops out of the quorum).
     fn get_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
     ) -> IkaResult<Option<Vec<u8>>>;
 
     /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
@@ -346,13 +357,14 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
-    ) -> IkaResult<Option<SessionIdentifier>>;
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>>;
 
-    /// Retrieves an assigned presign by session identifier and signature algorithm.
+    /// Retrieves an assigned presign by session identifier, blending index, and signature algorithm.
     fn get_assigned_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>>;
 
     /// Pops an assigned presign from the pool. Used when the presign is consumed for signing.
@@ -360,6 +372,7 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>>;
 }
 
@@ -490,7 +503,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
         let tables = self.tables()?;
         tables.pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
     }
@@ -570,31 +583,45 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         }
     }
 
-    fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
+    fn mark_presign_as_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<()> {
         let tables = self.tables()?;
-        tables.mark_presign_as_used(presign_session_id)
+        tables.mark_presign_as_used(presign_session_id, presign_blending_index)
     }
 
-    fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
+    fn is_presign_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<bool> {
         let tables = self.tables()?;
-        tables.is_presign_used(presign_session_id)
+        tables.is_presign_used(presign_session_id, presign_blending_index)
     }
 
     fn store_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
         private_output: Vec<u8>,
     ) -> IkaResult<()> {
         let tables = self.tables()?;
-        tables.store_presign_private_output(presign_session_id, private_output)
+        tables.store_presign_private_output(
+            presign_session_id,
+            presign_blending_index,
+            private_output,
+        )
     }
 
     fn get_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
     ) -> IkaResult<Option<Vec<u8>>> {
         let tables = self.tables()?;
-        tables.get_presign_private_output(presign_session_id)
+        tables.get_presign_private_output(presign_session_id, presign_blending_index)
     }
 
     fn assign_presign(
@@ -604,7 +631,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
-    ) -> IkaResult<Option<SessionIdentifier>> {
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
         let tables = self.tables()?;
         tables.assign_presign(
             signature_algorithm,
@@ -619,18 +646,20 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
         let tables = self.tables()?;
-        tables.get_assigned_presign(signature_algorithm, session_identifier)
+        tables.get_assigned_presign(signature_algorithm, session_identifier, blending_index)
     }
 
     fn pop_assigned_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
         let tables = self.tables()?;
-        tables.pop_assigned_presign(signature_algorithm, session_identifier)
+        tables.pop_assigned_presign(signature_algorithm, session_identifier, blending_index)
     }
 }
 
@@ -702,8 +731,10 @@ pub enum ReconfigCertStatus {
 
 /// Presign pool DB table type.
 /// Key: (network_encryption_key_id, session_sequence_number).
-/// Value: (session_identifier, list of serialized presign bytes).
-type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>;
+/// Value: (session_identifier, list of (blending_index, serialized presign bytes)).
+/// The blending index is the presign's position in the originally-inserted vector;
+/// together with the session identifier it uniquely identifies a single presign.
+type PresignPoolTable = DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>;
 
 /// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
 #[derive(DBMapUtils)]
@@ -794,34 +825,37 @@ pub struct AuthorityEpochTables {
     /// Internal presign pools, keyed by (network_encryption_key_id, session_sequence_number).
     /// Each entry contains presigns generated by that session, along with the session identifier.
     /// Presigns are consumed in order (lowest session sequence number first) within a given key ID.
-    /// Value is (SessionIdentifier, Vec<presign_bytes>) - the session ID and list of presigns.
+    /// Value is (SessionIdentifier, Vec<(blending_index, presign_bytes)>) - the session ID and
+    /// list of presigns, each tagged with its blending index (position in the inserted vector).
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_ecdsa_secp256k1:
-        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_ecdsa_secp256r1:
-        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
-    internal_presign_pool_eddsa: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+    internal_presign_pool_eddsa: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
-    internal_presign_pool_taproot: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+    internal_presign_pool_taproot: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate:
-        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     /// Fast Schnorr (VSS) internal presign pools. Same structure as the AHE pools
     /// above: keyed by `(network_encryption_key_id: ObjectID, session_sequence_number:
-    /// u64)`, value `(SessionIdentifier, Vec<presign_bytes>)` — the session that
-    /// produced the presigns plus its list of serialized presigns, consumed
-    /// lowest-sequence-number-first within a given key ID. Kept separate from their
-    /// AHE siblings because VSS presign bytes are a different format (a VSS sign must
-    /// never pop an AHE presign, or vice versa).
+    /// u64)`, value `(SessionIdentifier, Vec<(blending_index, presign_bytes)>)` — the
+    /// session that produced the presigns plus its blending-index-tagged serialized
+    /// presigns, consumed lowest-sequence-number-first within a given key ID. Kept
+    /// separate from their AHE siblings because VSS presign bytes are a different
+    /// format (a VSS sign must never pop an AHE presign, or vice versa).
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
-    internal_presign_pool_taproot_vss: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+    internal_presign_pool_taproot_vss:
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
-    internal_presign_pool_eddsa_vss: DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+    internal_presign_pool_eddsa_vss:
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate_vss:
-        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<Vec<u8>>)>,
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
 
     /// Tracks the total count of presigns in each pool by (signature algorithm, network encryption key ID).
     /// Value is the count.
@@ -848,47 +882,48 @@ pub struct AuthorityEpochTables {
     noa_observations: DBMap<Round, Vec<ConsensusNOAObservation>>,
 
     /// Tracks presigns that have been consumed for signing.
-    /// Key: SessionIdentifier - the session ID of the presign session that created the presign
+    /// Key: (SessionIdentifier, blending_index) - uniquely identifies a single presign within
+    /// the blended vector produced by the presign session that created it.
     /// Value: () - just marks it as used
     /// Once a presign is used, it should never be used again.
-    used_presigns: DBMap<SessionIdentifier, ()>,
+    used_presigns: DBMap<(SessionIdentifier, u16), ()>,
 
     /// Assigned presigns pools for external presigns.
-    /// Key: SessionIdentifier - the session ID that uniquely identifies this assigned presign
+    /// Key: (SessionIdentifier, blending_index) - uniquely identifies this assigned presign
     /// Value: AssignedPresign - contains presign data, user verification key, dwallet_id (for non-global), and epoch
     /// These expire at the end of the epoch and are used for external sign requests.
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_ecdsa_secp256k1: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_ecdsa_secp256k1: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_ecdsa_secp256r1: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_ecdsa_secp256r1: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_eddsa: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_eddsa: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_taproot: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_taproot: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_schnorrkel_substrate: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_schnorrkel_substrate: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     // Fast Schnorr (VSS) assigned-presign pools (separate from AHE siblings).
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_taproot_vss: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_taproot_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_eddsa_vss: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_eddsa_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
-    assigned_presigns_schnorrkel_substrate_vss: DBMap<SessionIdentifier, AssignedPresign>,
+    assigned_presigns_schnorrkel_substrate_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
 
     /// Per-validator secret nonce shares from Fast Schnorr (VSS) presign sessions,
     /// persisted between presign-finalize and sign so the sign party can rebuild its
     /// `PrivateInput`. AHE Schnorr has no such secret presign output (its nonce lives
     /// encrypted inside the on-chain presign), so only VSS sessions write here.
     ///
-    /// Key: the presign session_id (`CommitmentSizedNumber`), recoverable at sign time
-    ///      from the public `schnorr::vss::Presign` bytes the sign session receives.
-    /// Value: `bcs(Vec<PrivatePresignOutput>)` — one entry per presign blending index;
-    ///        the sign session selects the matching `presign_blending_index`.
+    /// Key: `(presign session_id, blending_index)` — uniquely identifies a single
+    ///      blended presign, matching the pool/`used_presigns` keying. Carried from
+    ///      the presign pop, so the sign no longer re-parses it from the public presign.
+    /// Value: `bcs(PrivatePresignOutput)` — the single output for that blending index.
     ///
     /// Self-prunes on epoch rotation (per-epoch physical DB drop). A missing row at
     /// sign time is a soft-fail that excludes this validator's contribution, not a
     /// hard error — the 2f+1 quorum absorbs it.
-    presign_private_outputs: DBMap<CommitmentSizedNumber, Vec<u8>>,
+    presign_private_outputs: DBMap<(CommitmentSizedNumber, u16), Vec<u8>>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1032,6 +1067,13 @@ impl AuthorityEpochTables {
         let table = self.presign_pool_table(signature_algorithm);
         let key = (dwallet_network_encryption_key_id, session_sequence_number);
 
+        // Tag each presign with its blending index (its position in the inserted vector).
+        let blended_presigns: Vec<(u16, Vec<u8>)> = presigns
+            .into_iter()
+            .enumerate()
+            .map(|(blending_index, presign)| (blending_index as u16, presign))
+            .collect();
+
         let size_key = (signature_algorithm, dwallet_network_encryption_key_id);
         let current_size = self
             .internal_presign_pool_sizes
@@ -1040,7 +1082,7 @@ impl AuthorityEpochTables {
 
         // Batch both writes atomically to prevent size counter drift.
         let mut batch = table.batch();
-        batch.insert_batch(table, [(&key, &(session_identifier, presigns))])?;
+        batch.insert_batch(table, [(&key, &(session_identifier, blended_presigns))])?;
         batch.insert_batch(
             &self.internal_presign_pool_sizes,
             [(&size_key, &(current_size + num_presigns))],
@@ -1065,20 +1107,21 @@ impl AuthorityEpochTables {
     }
 
     /// Pops a single presign from the pool for the given signature algorithm and network
-    /// encryption key. Returns the session identifier and presign bytes, or None if the pool
-    /// is empty. Presigns are consumed in order of session sequence number (lowest first).
+    /// encryption key. Returns the session identifier, the presign's blending index, and presign
+    /// bytes, or None if the pool is empty. Presigns are consumed in order of session sequence
+    /// number (lowest first).
     pub fn pop_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(SessionIdentifier, Vec<u8>)>> {
-        let Some((batch, session_identifier, presign)) =
+    ) -> IkaResult<Option<(SessionIdentifier, u16, Vec<u8>)>> {
+        let Some((batch, session_identifier, blending_index, presign)) =
             self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
         else {
             return Ok(None);
         };
         batch.write()?;
-        Ok(Some((session_identifier, presign)))
+        Ok(Some((session_identifier, blending_index, presign)))
     }
 
     /// Prepares a presign pop without committing, returning the uncommitted batch.
@@ -1088,7 +1131,7 @@ impl AuthorityEpochTables {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-    ) -> IkaResult<Option<(DBBatch, SessionIdentifier, Vec<u8>)>> {
+    ) -> IkaResult<Option<(DBBatch, SessionIdentifier, u16, Vec<u8>)>> {
         let table = self.presign_pool_table(signature_algorithm);
 
         // Get the first entry for this network encryption key ID.
@@ -1132,8 +1175,8 @@ impl AuthorityEpochTables {
             return Ok(None);
         }
 
-        // Remove the first presign from the vec
-        let presign = presigns.remove(0);
+        // Remove the first presign from the vec, along with its blending index.
+        let (blending_index, presign) = presigns.remove(0);
 
         // Read size counter before batch
         let size_key = (signature_algorithm, dwallet_network_encryption_key_id);
@@ -1162,42 +1205,59 @@ impl AuthorityEpochTables {
             [(&size_key, &(current_size.saturating_sub(1)))],
         )?;
 
-        Ok(Some((batch, session_identifier, presign)))
+        Ok(Some((batch, session_identifier, blending_index, presign)))
     }
 
     /// Marks a presign as used so it cannot be reused.
-    pub fn mark_presign_as_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<()> {
-        self.used_presigns.insert(&presign_session_id, &())?;
+    pub fn mark_presign_as_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<()> {
+        self.used_presigns
+            .insert(&(presign_session_id, presign_blending_index), &())?;
         Ok(())
     }
 
     /// Checks if a presign has already been used.
-    pub fn is_presign_used(&self, presign_session_id: SessionIdentifier) -> IkaResult<bool> {
-        Ok(self.used_presigns.contains_key(&presign_session_id)?)
+    pub fn is_presign_used(
+        &self,
+        presign_session_id: SessionIdentifier,
+        presign_blending_index: u16,
+    ) -> IkaResult<bool> {
+        Ok(self
+            .used_presigns
+            .contains_key(&(presign_session_id, presign_blending_index))?)
     }
 
     pub fn store_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
         private_output: Vec<u8>,
     ) -> IkaResult<()> {
-        self.presign_private_outputs
-            .insert(&presign_session_id, &private_output)?;
+        self.presign_private_outputs.insert(
+            &(presign_session_id, presign_blending_index),
+            &private_output,
+        )?;
         Ok(())
     }
 
     pub fn get_presign_private_output(
         &self,
         presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
     ) -> IkaResult<Option<Vec<u8>>> {
-        Ok(self.presign_private_outputs.get(&presign_session_id)?)
+        Ok(self
+            .presign_private_outputs
+            .get(&(presign_session_id, presign_blending_index))?)
     }
 
     /// Returns a reference to the assigned presign pool table for the given signature algorithm.
     fn assigned_presign_pool_table(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
-    ) -> &DBMap<SessionIdentifier, AssignedPresign> {
+    ) -> &DBMap<(SessionIdentifier, u16), AssignedPresign> {
         match signature_algorithm {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => &self.assigned_presigns_ecdsa_secp256k1,
             DWalletSignatureAlgorithm::ECDSASecp256r1 => &self.assigned_presigns_ecdsa_secp256r1,
@@ -1223,8 +1283,8 @@ impl AuthorityEpochTables {
         user_verification_key: Option<Vec<u8>>,
         dwallet_id: Option<ObjectID>,
         current_epoch: u64,
-    ) -> IkaResult<Option<SessionIdentifier>> {
-        let Some((mut batch, session_identifier, presign)) =
+    ) -> IkaResult<Option<(SessionIdentifier, u16)>> {
+        let Some((mut batch, session_identifier, blending_index, presign)) =
             self.prepare_pop_presign(signature_algorithm, dwallet_network_encryption_key_id)?
         else {
             return Ok(None);
@@ -1232,6 +1292,7 @@ impl AuthorityEpochTables {
 
         let assigned_presign = AssignedPresign {
             session_identifier,
+            blending_index,
             presign,
             user_verification_key,
             dwallet_id,
@@ -1240,20 +1301,24 @@ impl AuthorityEpochTables {
 
         // Extend the pop batch with the assigned pool insert, then commit atomically.
         let assigned_table = self.assigned_presign_pool_table(signature_algorithm);
-        batch.insert_batch(assigned_table, [(&session_identifier, &assigned_presign)])?;
+        batch.insert_batch(
+            assigned_table,
+            [(&(session_identifier, blending_index), &assigned_presign)],
+        )?;
         batch.write()?;
 
-        Ok(Some(session_identifier))
+        Ok(Some((session_identifier, blending_index)))
     }
 
-    /// Retrieves an assigned presign by session identifier and signature algorithm.
+    /// Retrieves an assigned presign by session identifier, blending index, and signature algorithm.
     pub fn get_assigned_presign(
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
         let table = self.assigned_presign_pool_table(signature_algorithm);
-        Ok(table.get(&session_identifier)?)
+        Ok(table.get(&(session_identifier, blending_index))?)
     }
 
     /// Pops an assigned presign from the pool. Used when the presign is consumed for signing.
@@ -1261,11 +1326,12 @@ impl AuthorityEpochTables {
         &self,
         signature_algorithm: DWalletSignatureAlgorithm,
         session_identifier: SessionIdentifier,
+        blending_index: u16,
     ) -> IkaResult<Option<AssignedPresign>> {
         let table = self.assigned_presign_pool_table(signature_algorithm);
-        let assigned_presign = table.get(&session_identifier)?;
+        let assigned_presign = table.get(&(session_identifier, blending_index))?;
         if assigned_presign.is_some() {
-            table.remove(&session_identifier)?;
+            table.remove(&(session_identifier, blending_index))?;
         }
         Ok(assigned_presign)
     }
@@ -2958,13 +3024,16 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (popped_session, first_presign) =
+        let (popped_session, first_blending_index, first_presign) =
             tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(popped_session, session_id);
+        assert_eq!(first_blending_index, 0);
         assert_eq!(first_presign, vec![1u8, 2, 3]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, second_presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, second_blending_index, second_presign) =
+            tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        assert_eq!(second_blending_index, 1);
         assert_eq!(second_presign, vec![4u8, 5, 6]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
@@ -2992,13 +3061,15 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 2);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, presign) = tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
+        let (popped_session, _, presign) =
+            tables.pop_presign(algorithm, key_id_a).unwrap().unwrap();
         assert_eq!(popped_session, session_id_a);
         assert_eq!(presign, vec![10u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_a).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 3);
 
-        let (popped_session, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (popped_session, _, presign) =
+            tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
         assert_eq!(popped_session, session_id_b);
         assert_eq!(presign, vec![20u8]);
 
@@ -3009,7 +3080,7 @@ mod tests {
 
         // key_id_b still has presigns
         assert_eq!(tables.presign_pool_size(algorithm, key_id_b).unwrap(), 2);
-        let (_, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id_b).unwrap().unwrap();
         assert_eq!(presign, vec![21u8]);
     }
 
@@ -3051,13 +3122,13 @@ mod tests {
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
         // Should pop in ascending session_sequence_number order
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![5u8]);
 
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![10u8]);
 
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![20u8]);
 
         assert!(tables.pop_presign(algorithm, key_id).unwrap().is_none());
@@ -3087,15 +3158,15 @@ mod tests {
 
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 3);
 
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![1u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 2);
 
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![2u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 1);
 
-        let (_, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(algorithm, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![3u8]);
         assert_eq!(tables.presign_pool_size(algorithm, key_id).unwrap(), 0);
 
@@ -3121,13 +3192,13 @@ mod tests {
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 1);
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
 
-        let (_, presign) = tables.pop_presign(ecdsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(ecdsa, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![100u8]);
         assert_eq!(tables.presign_pool_size(ecdsa, key_id).unwrap(), 0);
 
         // EdDSA pool unaffected
         assert_eq!(tables.presign_pool_size(eddsa, key_id).unwrap(), 1);
-        let (_, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
+        let (_, _, presign) = tables.pop_presign(eddsa, key_id).unwrap().unwrap();
         assert_eq!(presign, vec![200u8]);
     }
 }

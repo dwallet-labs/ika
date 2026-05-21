@@ -531,13 +531,14 @@ impl SignPublicInputByProtocol {
 // `message_centralized_signature` selects `SignData::ToBeEmulated` (NOA path);
 // otherwise `SignData::Unverified(deserialized_sign_message)` (user-driven path).
 
-/// Recovers the presign `session_id` from a public VSS presign — the key under
-/// which this presign's private nonce output was persisted at presign-finalize.
-/// Deserializes the curve-specific public `schnorr::vss::Presign`.
-pub(crate) fn vss_public_presign_session_id(
+/// Recovers BOTH the presign `session_id` and the `presign_blending_index` from a
+/// public VSS presign — the composite key under which this presign's private nonce
+/// output was persisted at presign-finalize. Parses the curve-specific public
+/// `schnorr::vss::Presign` exactly once.
+pub(crate) fn vss_public_presign_identity(
     signature_algorithm: DWalletSignatureAlgorithm,
     presign: &SerializedWrappedMPCPublicOutput,
-) -> DwalletMPCResult<commitment::CommitmentSizedNumber> {
+) -> DwalletMPCResult<(commitment::CommitmentSizedNumber, u16)> {
     let versioned: VersionedPresignOutput = bcs::from_bytes(presign).map_err(|e| {
         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
             "failed to deserialize VSS presign output: {e}"
@@ -548,29 +549,94 @@ pub(crate) fn vss_public_presign_session_id(
             "Fast Schnorr (VSS) presign must be V2".to_string(),
         ));
     };
-    let decode = |bytes: &[u8]| -> DwalletMPCResult<commitment::CommitmentSizedNumber> {
-        match signature_algorithm {
-            DWalletSignatureAlgorithm::TaprootVSS => Ok(bcs::from_bytes::<
+    match signature_algorithm {
+        DWalletSignatureAlgorithm::TaprootVSS => {
+            let presign = bcs::from_bytes::<
                 <Secp256k1TaprootVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
-            >(bytes)
-            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
-            .session_id),
-            DWalletSignatureAlgorithm::EdDSAVSS => Ok(bcs::from_bytes::<
-                <Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
-            >(bytes)
-            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
-            .session_id),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => Ok(bcs::from_bytes::<
-                <RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
-            >(bytes)
-            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?
-            .session_id),
-            _ => Err(DwalletMPCError::InvalidInput(format!(
-                "{signature_algorithm} is not a Fast Schnorr (VSS) algorithm"
-            ))),
+            >(&inner)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?;
+            Ok((presign.session_id, presign.presign_blending_index))
         }
-    };
-    decode(&inner)
+        DWalletSignatureAlgorithm::EdDSAVSS => {
+            let presign = bcs::from_bytes::<
+                <Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+            >(&inner)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?;
+            Ok((presign.session_id, presign.presign_blending_index))
+        }
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            let presign = bcs::from_bytes::<
+                <RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+            >(&inner)
+            .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?;
+            Ok((presign.session_id, presign.presign_blending_index))
+        }
+        _ => Err(DwalletMPCError::InvalidInput(format!(
+            "{signature_algorithm} is not a Fast Schnorr (VSS) algorithm"
+        ))),
+    }
+}
+
+/// Splits a blended VSS presign `PrivateOutput` (`bcs(Vec<PrivatePresignOutput>)`,
+/// as produced by the GOD layer at presign-finalize) into one serialized
+/// `PrivatePresignOutput` per blending index. Each persisted row is then keyed by
+/// `(session_id, blending_index)`. Non-VSS algorithms cannot reach this path (the
+/// caller guards with `is_vss()`); they return an `InvalidInput` error.
+///
+/// The concrete `Vec<PrivatePresignOutput>` type is deserialized per arm so the entry
+/// `.presign_blending_index` field is reachable directly (a generic over the protocol's
+/// associated `PrivateOutput` cannot name that field without a bespoke trait).
+fn blended_vss_private_output_bcs_error(e: bcs::Error) -> DwalletMPCError {
+    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+        "failed to (de)serialize blended VSS presign private output: {e}"
+    )))
+}
+
+pub(crate) fn split_vss_presign_private_outputs(
+    signature_algorithm: DWalletSignatureAlgorithm,
+    private_output: &[u8],
+) -> DwalletMPCResult<Vec<(u16, Vec<u8>)>> {
+    match signature_algorithm {
+        DWalletSignatureAlgorithm::TaprootVSS => bcs::from_bytes::<
+            <<Secp256k1TaprootVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput,
+        >(private_output)
+        .map_err(blended_vss_private_output_bcs_error)?
+        .into_iter()
+        .map(|entry| {
+            Ok((
+                entry.presign_blending_index,
+                bcs::to_bytes(&entry).map_err(blended_vss_private_output_bcs_error)?,
+            ))
+        })
+        .collect(),
+        DWalletSignatureAlgorithm::EdDSAVSS => bcs::from_bytes::<
+            <<Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput,
+        >(private_output)
+        .map_err(blended_vss_private_output_bcs_error)?
+        .into_iter()
+        .map(|entry| {
+            Ok((
+                entry.presign_blending_index,
+                bcs::to_bytes(&entry).map_err(blended_vss_private_output_bcs_error)?,
+            ))
+        })
+        .collect(),
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => bcs::from_bytes::<
+            <<RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput,
+        >(private_output)
+        .map_err(blended_vss_private_output_bcs_error)?
+        .into_iter()
+        .map(|entry| {
+            Ok((
+                entry.presign_blending_index,
+                bcs::to_bytes(&entry).map_err(blended_vss_private_output_bcs_error)?,
+            ))
+        })
+        .collect(),
+        _ => Err(DwalletMPCError::InvalidInput(format!(
+            "{signature_algorithm} is not a Fast Schnorr (VSS) algorithm"
+        ))),
+    }
 }
 
 /// The network key's current threshold-encryption-to-sharing material, in serialized
@@ -617,23 +683,24 @@ enum VssSecretKeyShareSource {
     NetworkDkg(<twopc_mpc::decentralized_party::dkg::Party as Party>::PublicOutput),
 }
 
+fn v3_public_output_bcs_error(what: &str, e: bcs::Error) -> DwalletMPCError {
+    DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+        "failed to deserialize {what} V3 public output: {e}"
+    )))
+}
+
 impl VssSecretKeyShareSource {
     fn from_versioned(source: &VssSecretKeySharesVersionedSource) -> DwalletMPCResult<Self> {
-        let bcs_error = |what: &str, e: bcs::Error| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "failed to deserialize {what} V3 public output: {e}"
-            )))
-        };
         match source {
             VssSecretKeySharesVersionedSource::Reconfiguration(
                 VersionedDecryptionKeyReconfigurationOutput::V3(bytes),
-            ) => Ok(Self::Reconfiguration(
-                bcs::from_bytes(bytes).map_err(|e| bcs_error("reconfiguration", e))?,
-            )),
+            ) => Ok(Self::Reconfiguration(bcs::from_bytes(bytes).map_err(
+                |e| v3_public_output_bcs_error("reconfiguration", e),
+            )?)),
             VssSecretKeySharesVersionedSource::NetworkDkg(VersionedNetworkDkgOutput::V3(bytes)) => {
-                Ok(Self::NetworkDkg(
-                    bcs::from_bytes(bytes).map_err(|e| bcs_error("network DKG", e))?,
-                ))
+                Ok(Self::NetworkDkg(bcs::from_bytes(bytes).map_err(|e| {
+                    v3_public_output_bcs_error("network DKG", e)
+                })?))
             }
             // Pre-V3 network keys predate the threshold-encryption-to-sharing output
             // VSS needs; such a key must reconfigure to a V3 output before it can sign.
@@ -783,20 +850,18 @@ impl VssSecretKeyShareSource {
     }
 }
 
-/// Deserializes the persisted VSS presign `PrivateOutput` (`Vec<PrivatePresignOutput>`).
-/// The caller selects the matching entry by `session_id` + `presign_blending_index`;
-/// the args here are used only for the error message. `None` private output (missing
-/// row) → soft-fail error so this validator drops out of the sign quorum rather than
-/// crashing the session.
-fn vss_presign_private_outputs<P>(
+/// Deserializes a single persisted VSS presign entry. Each row is now keyed by
+/// `(session_id, presign_blending_index)` and stores exactly one serialized
+/// `PrivatePresignOutput`, so no per-entry selection is needed; the args are used only
+/// for the error message. `None` private output (missing row) → soft-fail error so this
+/// validator drops out of the sign quorum rather than crashing the session.
+fn vss_presign_private_output<Entry>(
     presign_private_output: Option<Vec<u8>>,
     session_id: commitment::CommitmentSizedNumber,
     presign_blending_index: u16,
-) -> DwalletMPCResult<<<P as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput>
+) -> DwalletMPCResult<Entry>
 where
-    P: twopc_mpc::presign::Protocol,
-    <<P as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput:
-        serde::de::DeserializeOwned,
+    Entry: serde::de::DeserializeOwned,
 {
     let bytes = presign_private_output.ok_or_else(|| {
         DwalletMPCError::InvalidInput(format!(
@@ -832,23 +897,9 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_outputs::<Secp256k1TaprootVSSProtocol>(
-        presign_private_output,
-        session_id,
-        presign_blending_index,
-    )?;
-    let entry = private_presign_outputs
-        .into_iter()
-        .find(|output| {
-            output.session_id == session_id
-                && output.presign_blending_index == presign_blending_index
-        })
-        .ok_or_else(|| {
-            DwalletMPCError::InvalidInput(format!(
-                "no persisted VSS presign output for session {session_id:?} blending index \
-                 {presign_blending_index}"
-            ))
-        })?;
+    let entry = vss_presign_private_output::<
+        <<<Secp256k1TaprootVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
+    >(presign_private_output, session_id, presign_blending_index)?;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
@@ -890,23 +941,9 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_outputs::<Curve25519EdDSAVSSProtocol>(
-        presign_private_output,
-        session_id,
-        presign_blending_index,
-    )?;
-    let entry = private_presign_outputs
-        .into_iter()
-        .find(|output| {
-            output.session_id == session_id
-                && output.presign_blending_index == presign_blending_index
-        })
-        .ok_or_else(|| {
-            DwalletMPCError::InvalidInput(format!(
-                "no persisted VSS presign output for session {session_id:?} blending index \
-                 {presign_blending_index}"
-            ))
-        })?;
+    let entry = vss_presign_private_output::<
+        <<<Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
+    >(presign_private_output, session_id, presign_blending_index)?;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
@@ -945,21 +982,9 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
-    let private_presign_outputs = vss_presign_private_outputs::<
-        RistrettoSchnorrkelSubstrateVSSProtocol,
+    let entry = vss_presign_private_output::<
+        <<<RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
     >(presign_private_output, session_id, presign_blending_index)?;
-    let entry = private_presign_outputs
-        .into_iter()
-        .find(|output| {
-            output.session_id == session_id
-                && output.presign_blending_index == presign_blending_index
-        })
-        .ok_or_else(|| {
-            DwalletMPCError::InvalidInput(format!(
-                "no persisted VSS presign output for session {session_id:?} blending index \
-                 {presign_blending_index}"
-            ))
-        })?;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {

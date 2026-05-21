@@ -1250,7 +1250,7 @@ impl DWalletMPCService {
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {
-                        Ok(Some((_presign_session_id, presign))) => {
+                        Ok(Some((_presign_session_id, _presign_blending_index, presign))) => {
                             match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
                                 Ok(presign) => {
                                     info!(
@@ -1560,31 +1560,56 @@ impl DWalletMPCService {
                     );
 
                     // Fast Schnorr (VSS) presign: persist the private nonce-share
-                    // output (`bcs(Vec<PrivatePresignOutput>)`, already serialized
-                    // by the GOD layer) keyed by the presign session id, for the
-                    // later sign to recover. All other protocols (AHE presign, DKG,
-                    // reconfig, sign) have empty/irrelevant private outputs — skip.
+                    // output. The GOD layer produces a blended
+                    // `bcs(Vec<PrivatePresignOutput>)`; split it into one serialized
+                    // `PrivatePresignOutput` per blending index and persist each row
+                    // keyed by `(presign session id, blending index)`, for the later
+                    // sign to recover. All other protocols (AHE presign, DKG, reconfig,
+                    // sign) have empty/irrelevant private outputs — skip.
                     if matches!(
                         request.protocol_data,
                         ProtocolData::Presign { .. } | ProtocolData::InternalPresign { .. }
-                    ) && request
+                    ) && let Some(signature_algorithm) = request
                         .protocol_data
                         .signature_algorithm()
-                        .is_some_and(|algorithm| algorithm.is_vss())
+                        .filter(|algorithm| algorithm.is_vss())
                     {
                         let presign_session_id = CommitmentSizedNumber::from_le_slice(
                             session_identifier.to_vec().as_slice(),
                         );
-                        if let Err(err) = self
-                            .epoch_store
-                            .store_presign_private_output(presign_session_id, private_output)
-                        {
-                            error!(
-                                ?session_identifier,
-                                validator=?validator_name,
-                                error=?err,
-                                "failed to persist VSS presign private output"
-                            );
+                        match crate::dwallet_mpc::sign::split_vss_presign_private_outputs(
+                            signature_algorithm,
+                            &private_output,
+                        ) {
+                            Ok(entries) => {
+                                entries
+                                    .into_iter()
+                                    .for_each(|(blending_index, entry_bytes)| {
+                                        if let Err(err) =
+                                            self.epoch_store.store_presign_private_output(
+                                                presign_session_id,
+                                                blending_index,
+                                                entry_bytes,
+                                            )
+                                        {
+                                            error!(
+                                                ?session_identifier,
+                                                validator=?validator_name,
+                                                ?blending_index,
+                                                error=?err,
+                                                "failed to persist VSS presign private output"
+                                            );
+                                        }
+                                    });
+                            }
+                            Err(err) => {
+                                error!(
+                                    ?session_identifier,
+                                    validator=?validator_name,
+                                    error=?err,
+                                    "failed to split blended VSS presign private output"
+                                );
+                            }
                         }
                     }
 

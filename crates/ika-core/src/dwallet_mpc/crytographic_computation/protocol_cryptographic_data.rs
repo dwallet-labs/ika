@@ -658,13 +658,13 @@ impl DWalletMPCManager {
                 };
                 let presign_private_output = match vss_presign {
                     Some((signature_algorithm, presign)) => {
-                        let presign_session_id =
-                            crate::dwallet_mpc::sign::vss_public_presign_session_id(
+                        let (presign_session_id, presign_blending_index) =
+                            crate::dwallet_mpc::sign::vss_public_presign_identity(
                                 signature_algorithm,
                                 presign,
                             )?;
                         self.epoch_store
-                            .get_presign_private_output(presign_session_id)
+                            .get_presign_private_output(presign_session_id, presign_blending_index)
                             .map_err(|e| {
                                 DwalletMPCError::InvalidInput(format!(
                                     "failed to read persisted VSS presign output: {e}"
