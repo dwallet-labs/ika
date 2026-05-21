@@ -1249,7 +1249,7 @@ impl DWalletMPCService {
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {
-                        Ok(Some((_presign_session_id, presign))) => {
+                        Ok(Some((_presign_session_id, _presign_blending_index, presign))) => {
                             match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
                                 Ok(presign) => {
                                     info!(

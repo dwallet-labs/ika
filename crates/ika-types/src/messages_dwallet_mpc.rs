@@ -213,6 +213,9 @@ impl ConsensusNOAObservation {
 pub struct AssignedPresign {
     /// The session identifier of the presign session that created this presign.
     pub session_identifier: SessionIdentifier,
+    /// The blending index: the presign's position in the blended vector produced by the presign
+    /// session. Together with the session identifier it uniquely identifies a single presign.
+    pub blending_index: u16,
     /// The actual presign data.
     pub presign: Vec<u8>,
     /// The user verification key associated with the dWallet (if applicable).

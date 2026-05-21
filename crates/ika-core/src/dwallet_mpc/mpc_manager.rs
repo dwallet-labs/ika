@@ -993,11 +993,11 @@ impl DWalletMPCManager {
         };
 
         // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign) = match self
+        let (presign_session_id, presign_blending_index, presign) = match self
             .epoch_store
             .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
         {
-            Ok(Some(pair)) => pair,
+            Ok(Some(triple)) => triple,
             Ok(None) => {
                 error!(
                     ?signature_algorithm,
@@ -1021,11 +1021,12 @@ impl DWalletMPCManager {
         // Check if this presign has already been used (safety check)
         if self
             .epoch_store
-            .is_presign_used(presign_session_id)
+            .is_presign_used(presign_session_id, presign_blending_index)
             .unwrap_or(false)
         {
             error!(
                 ?presign_session_id,
+                ?presign_blending_index,
                 should_never_happen = true,
                 "Presign has already been used — this should not happen"
             );
@@ -1033,9 +1034,13 @@ impl DWalletMPCManager {
         }
 
         // Mark the presign as used to prevent double-spending
-        if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
+        if let Err(e) = self
+            .epoch_store
+            .mark_presign_as_used(presign_session_id, presign_blending_index)
+        {
             error!(
                 ?presign_session_id,
+                ?presign_blending_index,
                 error = ?e,
                 should_never_happen = true,
                 "Failed to mark presign as used"
