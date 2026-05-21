@@ -10,8 +10,9 @@
 **/target
 .pre-commit*
 
-# Move build directory
-build
+# Move build directory (Move package build artifacts)
+contracts/**/build/
+deployed_contracts/**/build/
 storage
 !crates/ika-types/src/storage
 

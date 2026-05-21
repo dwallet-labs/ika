@@ -1,0 +1,145 @@
+---
+title: Shared dWallet to Bitcoin
+description: Create a shared dWallet on Sui and sign a Bitcoin testnet transaction end to end.
+---
+
+This is the canonical Bitcoin signing flow. A shared dWallet is the
+right choice when no individual user holds the share; the validator
+network co-signs anything the dWallet capability authorizes.
+
+A condensed version of this lives in
+[Get Started](../../get-started). This page covers the same flow with
+more detail and one extra step: an explicit presign request, useful
+when you want to amortize presigning across many sign operations.
+
+## Setup
+
+```ts
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher, defaultEsploraUrl } from '@ika.xyz/plugins/bitcoin/publisher';
+import { Curve, SignatureAlgorithm } from '@ika.xyz/sdk';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+
+const signer = Ed25519Keypair.fromSecretKey(process.env.SUI_PRIVATE_KEY!);
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer, suiClient }))
+	.use(btc())
+	.use(bitcoinPublisher({ apiBaseUrl: defaultEsploraUrl('testnet') }));
+```
+
+## Create the dWallet
+
+```ts
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
+```
+
+`ika.bitcoin.createDWallet` is sugar over the source-level
+`ika.sui.createDWallet({ kind, curve: Curve.SECP256K1 })`. Use the
+source-level call directly when you need to override
+`networkEncryptionKeyId`, `capRecipient`, or pass in a pre-computed
+DKG payload.
+
+After this resolves the dWallet is in the `Active` state and signable.
+For shared dWallets the user share is on chain, so anyone with the
+dWallet cap can request signatures.
+
+## Pre-request a presign
+
+Most applications do not need this step. The plugin will request a
+presign on the fly during `sign`. Pre-requesting is useful when you
+want to spread the network work over time.
+
+```ts
+const presign = await ika.sui.requestGlobalPresign({
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.ECDSASecp256k1,
+});
+```
+
+You can request several presigns in advance and consume one per sign
+operation.
+
+## Fund the dWallet
+
+```ts
+const address = await dWallet.bitcoin.getAddress({
+	mode: 'p2wpkh',
+	network: 'testnet',
+});
+```
+
+Fund this address via the Bitcoin testnet faucet of your choice and
+wait for confirmation.
+
+## Build and sign
+
+```ts
+import * as bitcoin from 'bitcoinjs-lib';
+import * as ecc from '@bitcoinerlab/secp256k1';
+
+bitcoin.initEccLib(ecc as Parameters<typeof bitcoin.initEccLib>[0]);
+
+const resp = await fetch(`${defaultEsploraUrl('testnet')}/address/${address}/utxo`);
+const [utxo] = await resp.json();
+
+const psbt = new bitcoin.Psbt({ network: bitcoin.networks.testnet });
+psbt.addInput({
+	hash: utxo.txid,
+	index: utxo.vout,
+	witnessUtxo: {
+		script: bitcoin.address.toOutputScript(address, bitcoin.networks.testnet),
+		value: BigInt(utxo.value),
+	},
+});
+
+psbt.addOutput({
+	address,
+	value: BigInt(utxo.value) - 300n,
+});
+
+const signed = await dWallet.bitcoin.sign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2wpkh',
+});
+```
+
+## Broadcast
+
+```ts
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+## What just happened
+
+1. `createDWallet` ran the network DKG and wrote the public output on
+   chain. The user share was published in plaintext because the kind
+   is shared.
+2. `requestGlobalPresign` reserved a presign object the validators
+   computed without the message.
+3. `sign` produced the user-side sign message, the validator network
+   ran two MPC rounds, and the network's part of the signature landed
+   on chain.
+4. The plugin combined the network signature into a low-S DER form
+   and updated the PSBT.
+5. The publisher posted the resulting transaction to Esplora.
+
+## What can go wrong
+
+- **No UTXO at the dWallet address**: the faucet has not landed yet,
+  or the script type is wrong. Confirm via Esplora.
+- **Sign request times out**: the network is overloaded or the
+  presign was consumed elsewhere. Retry; the SDK does not auto-retry.
+- **Mempool rejects the broadcast**: the fee was too low. Recompute
+  with a higher rate; this recipe used a hardcoded 300 sat fee, which
+  is fine for testnet but not for mainnet.

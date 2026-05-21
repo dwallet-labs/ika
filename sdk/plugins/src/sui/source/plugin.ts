@@ -657,6 +657,7 @@ export function suiSource(
 			chain: 'sui',
 			signMessage: apiSignMessage,
 			getDWallet: apiGetDWallet,
+			createDWallet: (input) => apiCreateDWallet(input as CreateDWalletInput),
 		};
 
 		const apiReady = async (): Promise<CoreIkaClient> => {

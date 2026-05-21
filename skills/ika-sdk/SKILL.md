@@ -85,10 +85,11 @@ const ika = await new IkaClient()
 	.use(btc())
 	.use(bitcoinPublisher({ apiBaseUrl: defaultEsploraUrl('testnet') }));
 
-const dWallet = await ika.sui.createDWallet({
-	kind: 'shared',
-	curve: Curve.SECP256K1,
-});
+// Chain-led sugar (recommended for most flows):
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
+
+// Equivalent source-level call when you need full DKG-input control:
+//   await ika.sui.createDWallet({ kind: 'shared', curve: Curve.SECP256K1 })
 
 const address = await dWallet.bitcoin.getAddress({
 	mode: 'p2wpkh',

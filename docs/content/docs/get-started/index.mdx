@@ -59,14 +59,17 @@ you broadcast through Esplora.
 ## Create a shared dWallet
 
 ```ts
-const dWallet = await ika.sui.createDWallet({
-	kind: 'shared',
-	curve: Curve.SECP256K1,
-});
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
 
 console.log('dWallet id:', dWallet.id);
 console.log('cap id:', dWallet.dWalletCapId);
 ```
+
+`ika.bitcoin.createDWallet` is sugar that picks SECP256K1 for you. The
+underlying source-level call is `ika.sui.createDWallet({ kind, curve:
+Curve.SECP256K1 })` if you need full control over the curve, network
+encryption key, or other DKG inputs. The resulting key can also sign
+for Ethereum since both chains use SECP256K1.
 
 For a shared dWallet the network DKG runs, the user share is
 published on chain, and the dWallet becomes signable in around 30

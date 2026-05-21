@@ -35,7 +35,7 @@ const ika = await new IkaClient()
 	.use(btc())
 	.use(bitcoinPublisher({ network: 'testnet' }));
 
-const dWallet = await ika.sui.createDWallet({ kind: 'shared', curve: 'SECP256K1' });
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
 const signed = await dWallet.bitcoin.sign({
 	kind: 'psbt',
 	psbt,

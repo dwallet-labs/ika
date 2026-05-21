@@ -1,0 +1,23 @@
+---
+title: Recipes
+description: End-to-end patterns for common dWallet flows.
+---
+
+These pages are full walkthroughs that pull from every other section.
+Each recipe builds something complete enough to learn from but small
+enough to read in one sitting.
+
+- [Shared dWallet to Bitcoin](./shared-bitcoin): the canonical
+  "create-sign-broadcast" flow.
+- [Zero-trust dWallet to Ethereum](./zero-trust-ethereum): the same
+  flow with an encrypted user share, so the network cannot sign
+  without the user.
+- [Imported-key migration](./imported-key-migration): bring an
+  existing private key into Ika.
+- [Future-sign with a Move multisig](./future-sign-multisig): commit
+  to a signature now, release it later under contract gating.
+- [Backend funds DKG, user signs](./backend-funds-user-signs): split
+  who pays for DKG from who controls the dWallet.
+
+The shorter [Get Started](../../get-started) tutorial is also worth
+keeping open while you read through these.

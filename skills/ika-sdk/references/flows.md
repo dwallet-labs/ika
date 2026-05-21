@@ -461,10 +461,11 @@ const ika = await new IkaClient()
 ### Shared dWallet to Bitcoin (one-shot)
 
 ```typescript
-const dWallet = await ika.sui.createDWallet({
-    kind: 'shared',
-    curve: Curve.SECP256K1,
-});
+// Chain-led sugar (recommended):
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
+
+// Equivalent source-level call when you need full DKG-input control:
+//   await ika.sui.createDWallet({ kind: 'shared', curve: Curve.SECP256K1 })
 
 const address = await dWallet.bitcoin.getAddress({ mode: 'p2wpkh', network: 'testnet' });
 

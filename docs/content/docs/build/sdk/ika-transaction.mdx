@@ -1,0 +1,136 @@
+---
+title: IkaTransaction
+description: The Sui transaction builder that emits coordinator Move calls.
+---
+
+`IkaTransaction` is a thin layer over `@mysten/sui`'s `Transaction`.
+You construct one per Sui PTB and call into it to emit the right
+coordinator Move calls for each operation.
+
+## Construction
+
+```ts
+import { IkaTransaction } from '@ika.xyz/sdk';
+import { Transaction } from '@mysten/sui/transactions';
+
+const tx = new Transaction();
+const ikaTx = new IkaTransaction({
+	ikaClient,
+	transaction: tx,
+	userShareEncryptionKeys: keys, // required for zero-trust / imported-key flows
+});
+```
+
+You typically build one PTB per logical operation (one DKG, one
+presign request, one sign). Multiple coordinator calls can also be
+composed into a single PTB; the trade-off is that any failure rolls
+the entire bundle back.
+
+## DKG
+
+```ts
+import { Curve, createRandomSessionIdentifier, prepareDKGAsync } from '@ika.xyz/sdk';
+
+const sessionIdBytes = createRandomSessionIdentifier();
+const dkgData = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	keys,
+	sessionIdBytes,
+	senderAddress,
+);
+
+const sessionId = ikaTx.registerSessionIdentifier(sessionIdBytes);
+const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
+
+const [dWalletCap, signId] = await ikaTx.requestDWalletDKG({
+	dkgRequestInput: dkgData,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+	sessionIdentifier: sessionId,
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
+});
+```
+
+After execution, poll the dWallet to `Active` and then call
+`acceptEncryptedUserShare` (or the imported-key equivalent) to bind
+the user's intent to the resulting DKG output.
+
+## Presign
+
+```ts
+ikaTx.requestGlobalPresign({
+	dwalletNetworkEncryptionKeyId: networkKey.id,
+	curve: Curve.SECP256K1,
+	signatureAlgorithm: SignatureAlgorithm.Taproot,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+});
+```
+
+For imported-key ECDSA dWallets, use `requestPresign` instead. The
+distinction is enforced by the coordinator.
+
+## Sign
+
+```ts
+const signRef = await ikaTx.requestSign({
+	dWallet,
+	messageApproval: ikaTx.approveMessage({
+		dWalletCap,
+		curve: Curve.SECP256K1,
+		signatureAlgorithm: SignatureAlgorithm.Taproot,
+		hashScheme: Hash.SHA256,
+		message,
+	}),
+	hashScheme: Hash.SHA256,
+	verifiedPresignCap: ikaTx.verifyPresignCap({ presign }),
+	presign,
+	message,
+	signatureScheme: SignatureAlgorithm.Taproot,
+	ikaCoin: tx.splitCoins(tx.object(ikaCoinId), [1_000_000]),
+	suiCoin: tx.splitCoins(tx.gas, [1_000_000]),
+});
+```
+
+The `message` you pass here is the raw preimage. The MPC applies the
+hash scheme internally before signing.
+
+## Future-sign
+
+Two phases. Phase one issues a `PartialUserSignatureCap`:
+
+```ts
+const partial = await ikaTx.requestFutureSign({
+	dWallet,
+	message,
+	hashScheme: Hash.SHA256,
+	signatureScheme: SignatureAlgorithm.Taproot,
+	verifiedPresignCap,
+	presign,
+	ikaCoin,
+	suiCoin,
+});
+```
+
+Phase two redeems it. The redemption must present a fresh message
+approval whose `dWallet`, `message`, `signatureAlgorithm`, and
+`hashScheme` exactly match the values captured at phase-one time. The
+coordinator rejects the redemption otherwise.
+
+## Other building blocks
+
+- `acceptEncryptedUserShare`, `requestMakeDWalletUserSecretKeySharesPublic`
+- `requestImportedKeyDWalletVerification`, `revealUserSecretShare`
+- `registerEncryptionKey` (run once per user per curve, before the
+  first zero-trust DKG)
+
+## Composition with the plugin layer
+
+If you are already using the [Plugins](../plugins) layer, you do not
+need to call `IkaTransaction` directly for the common cases. The plugin
+source emits the right Move calls and threads everything through
+`IkaTransaction` internally. Use this page when you need to compose
+multiple coordinator calls into one PTB or when you want to drop down
+to coordinator-level control.

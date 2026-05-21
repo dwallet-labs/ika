@@ -1,0 +1,5 @@
+{
+	"title": "Build",
+	"root": true,
+	"pages": ["index", "architecture", "sdk", "plugins", "move-integration", "recipes"]
+}

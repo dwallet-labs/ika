@@ -18,6 +18,24 @@ import type {
 } from './types.js';
 
 /**
+ * Chain-led convenience over the source's `createDWallet`. The Bitcoin
+ * destination binds the curve to SECP256K1 since that's the only curve
+ * Bitcoin supports.
+ *
+ * The resulting key can also sign for Ethereum (same curve). This is a
+ * feature of the underlying protocol, not a bug — both chains use
+ * SECP256K1, so one MPC key serves both.
+ */
+export interface BitcoinCreateDWalletInput {
+	readonly kind: 'zero-trust' | 'shared' | 'imported-key' | 'imported-key-shared';
+	readonly importedKey?: Uint8Array;
+	readonly sessionIdentifier?: Uint8Array;
+	readonly networkEncryptionKeyId?: string;
+	readonly capRecipient?: string;
+	readonly acknowledge?: 'i-understand-this-is-irreversible';
+}
+
+/**
  * Client-extension shape on `ika.bitcoin.*` after `.use(btc())`. The `mode`
  * is required at sign and getAddress time — a dWallet can spend from any of
  * the four mode addresses (`p2pkh`, `p2wpkh`, `p2sh-p2wpkh`, `p2tr-script`),
@@ -29,6 +47,16 @@ import type {
  */
 export interface BitcoinDestinationClientExtend {
 	readonly bitcoin: {
+		/**
+		 * Chain-led `createDWallet` sugar. Equivalent to calling the active
+		 * source's `createDWallet({ curve: SECP256K1, ...input })`. Returns
+		 * a `DWallet` already decorated with the bitcoin namespace, so
+		 * `dWallet.bitcoin.getAddress(...)` works on the return value.
+		 *
+		 * Important: the resulting MPC key also signs for Ethereum and any
+		 * other SECP256K1 chain. One key, many destinations.
+		 */
+		createDWallet(input: BitcoinCreateDWalletInput): Promise<DWallet<BitcoinSupportedCurve>>;
 		sign(args: BitcoinSignArgs): Promise<BitcoinSignedTx>;
 		getAddress(
 			dWallet: DWallet<BitcoinSupportedCurve>,
@@ -80,6 +108,18 @@ export function btc(): DestinationPlugin<
 
 	const extend: BitcoinDestinationClientExtend = {
 		bitcoin: {
+			createDWallet: async (input) => {
+				const c = requireCtx(ctx);
+				const src = c.source;
+				if (!src || !src.createDWallet) {
+					throw new Error(
+						'bitcoin.createDWallet: no source plugin with createDWallet is registered. ' +
+							'Register a source (e.g. `suiSource(...)`) before calling this.',
+					);
+				}
+				const dWallet = await src.createDWallet({ curve: Curve.SECP256K1, ...input });
+				return c.client.decorate(dWallet) as Promise<DWallet<BitcoinSupportedCurve>>;
+			},
 			sign: async ({ dWallet, ...input }) =>
 				signCore(requireCtx(ctx), dWallet, input as BitcoinSignInput, cache),
 			getAddress: async (dWallet, opts) =>

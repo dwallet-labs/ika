@@ -1,0 +1,14 @@
+{
+	"title": "Plugins",
+	"pages": [
+		"index",
+		"prepare-and-assemble",
+		"future-sign",
+		"bitcoin",
+		"ethereum",
+		"solana-destination",
+		"sui-destination",
+		"publishers",
+		"writing-your-own"
+	]
+}

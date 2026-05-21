@@ -1,0 +1,131 @@
+---
+title: Zero-trust dWallet to Ethereum
+description: Encrypted user share. The network cannot sign without the user.
+---
+
+A zero-trust dWallet keeps the user's secret share encrypted on chain
+under the user's own class-groups encryption key. At sign time the
+user decrypts the share locally, computes the centralized sign-message,
+and submits it. The network on its own cannot produce a signature.
+
+This page walks through the full flow for an Ethereum dWallet.
+
+## Setup
+
+```ts
+import { Curve, SignatureAlgorithm, Hash, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { eth } from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { sepolia } from 'viem/chains';
+```
+
+## Derive a USEK
+
+```ts
+const seed = /* 32 random bytes, stored securely on the user's device */ new Uint8Array(32);
+crypto.getRandomValues(seed);
+
+const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
+```
+
+Store the seed where the user can recover it (passphrase, secure
+enclave, recovery phrase). Without it, the user cannot decrypt their
+share and the dWallet becomes unusable.
+
+## Build the plugin client with the USEK
+
+```ts
+const ika = await new IkaClient()
+	.use(
+		suiSource({
+			network: 'testnet',
+			signer,
+			suiClient,
+			userShareEncryptionKeys: keys,
+		}),
+	)
+	.use(eth())
+	.use(ethPublisher({ chain: sepolia, url: process.env.SEPOLIA_RPC! }));
+```
+
+Threading `userShareEncryptionKeys` into the source lets the SDK
+encrypt the user share at DKG time and decrypt it at sign time
+automatically.
+
+## Register the USEK on chain
+
+```ts
+const tx = new Transaction();
+const ikaTx = new IkaTransaction({ ikaClient: ika.sui.client, transaction: tx, userShareEncryptionKeys: keys });
+await ikaTx.registerEncryptionKey({ curve: Curve.SECP256K1 });
+await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer });
+```
+
+This is a one-time step per user per curve.
+
+## Create the zero-trust dWallet
+
+```ts
+const dWallet = await ika.ethereum.createDWallet({ kind: 'zero-trust' });
+```
+
+`ika.ethereum.createDWallet` picks SECP256K1 for you. For full control
+of DKG inputs (network encryption key, cap recipient, pre-computed
+payload) use the source-level `ika.sui.createDWallet({ kind, curve:
+Curve.SECP256K1 })`.
+
+The plugin runs the centralized DKG, encrypts the user share under
+the USEK's class-groups key, submits the on-chain DKG request, polls
+for completion, and signs the resulting public output with the USEK's
+Ed25519 acceptance key.
+
+## Build and sign an Ethereum transaction
+
+```ts
+const address = await dWallet.ethereum.getAddress();
+
+const tx = {
+	type: 'eip1559' as const,
+	chainId: sepolia.id,
+	nonce: await client.getTransactionCount({ address: address as `0x${string}` }),
+	to: address as `0x${string}`,
+	value: 0n,
+	maxFeePerGas: 30_000_000_000n,
+	maxPriorityFeePerGas: 1_000_000_000n,
+	gas: 21_000n,
+};
+
+const signed = await dWallet.ethereum.sign({ kind: 'transaction', tx });
+const hash = await ika.publish({ chain: 'ethereum', payload: signed.payload });
+```
+
+## What is different from shared
+
+The user share never leaves the user's device in plaintext. At sign
+time the SDK fetches the encrypted share from chain, decrypts it
+locally with the USEK's class-groups decryption key, runs the
+centralized sign math, and only then submits the signed-by-user
+material to chain.
+
+If the user loses the USEK seed, they lose the ability to sign. The
+share is recoverable only if the seed is recoverable.
+
+## What is the same
+
+The validator network's role is identical in both flows. Forgery
+still requires either the validator threshold plus the user share, or
+the user share plus the dWallet capability. The trust model in
+[Trust model](../../learn/trust-model) covers every case.
+
+## Common mistakes
+
+- **Forgetting to register the encryption key first**. DKG will fail
+  because the network has no record of the user's class-groups key.
+- **Using a different USEK to sign than to do DKG**. The encrypted
+  share is bound to the specific class-groups key registered. A
+  different key cannot decrypt it.
+- **Persisting the decrypted share to disk**. The point of zero-trust
+  is that the plaintext share only exists in memory during sign. The
+  SDK does not persist it; do not persist it yourself.

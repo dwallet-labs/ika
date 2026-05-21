@@ -1,0 +1,24 @@
+---
+title: Build
+description: SDK, plugin layer, Move integration, and end-to-end recipes for shipping with Ika.
+---
+
+This section is for developers writing applications against Ika. It is
+organized into five subsections:
+
+- **[Architecture](./architecture)**: the three layers (SDK, plugins,
+  on-chain coordinator) and how they fit together.
+- **[SDK](./sdk)**: `@ika.xyz/sdk`. The protocol client and the Sui
+  transaction builder. Use this directly when you need control over
+  every Move call.
+- **[Plugins](./plugins)**: `@ika.xyz/plugins`. Chain-aware wrappers
+  over the SDK that handle address derivation, preimage construction,
+  signature assembly, and broadcasting. Use these for the typical
+  application case.
+- **[Move integration](./move-integration)**: writing Move contracts
+  on Sui that consume dWallet capabilities.
+- **[Recipes](./recipes)**: end-to-end runnable patterns.
+
+Most applications should start with the [Plugins](./plugins) layer and
+drop down into the [SDK](./sdk) only where they need full control. The
+plugin layer is a thin wrapper; nothing in it is hidden from you.

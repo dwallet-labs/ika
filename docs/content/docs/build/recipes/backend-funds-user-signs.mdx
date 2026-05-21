@@ -1,0 +1,110 @@
+---
+title: Backend funds DKG, user signs
+description: Split who pays for the DKG transaction from who controls the resulting dWallet.
+---
+
+A common deployment pattern: a backend service has the SUI and IKA
+to pay for coordinator operations and wants to onboard users without
+asking them to fund a Sui wallet first. The end user holds the
+USEK seed and is the only party who can sign.
+
+Two pieces of plugin API enable this:
+
+- `capRecipient` on `createDWallet` (and on the low-level DKG
+  primitives). Routes the resulting dWallet capability to a given
+  address, separate from the address that pays for and submits the
+  DKG transaction.
+- `ika.sui.withSigner(otherSigner)` rebinds the source to a different
+  signer without rebuilding the SDK or the caches. Used to switch
+  from "backend submits" to "user submits" for subsequent operations.
+
+## The flow
+
+```ts
+// Backend side, holding the funding signer. The chain-led sugar
+// accepts `capRecipient` and threads it through to the underlying
+// source-level call.
+const dWallet = await ika.ethereum.createDWallet({
+	kind: 'zero-trust',
+	capRecipient: userSuiAddress,
+});
+// Equivalent to: ika.sui.createDWallet({
+//   kind: 'zero-trust', curve: Curve.SECP256K1, capRecipient: userSuiAddress
+// })
+
+// The dWallet capability now lives at userSuiAddress.
+// The backend has paid for DKG. The user share is encrypted under
+// the user's USEK, which the backend supplied at suiSource() time
+// (see below).
+```
+
+If the backend's source is built with the user's USEK threaded in
+(`userShareEncryptionKeys: keys` on `suiSource`), the encrypted share
+on chain is already encrypted to the user. The user holds the
+USEK seed, the backend does not.
+
+## Switching the signer for later operations
+
+When the user comes online and wants to sign:
+
+```ts
+// Same IkaClient. Just rebind the source to the user's signer.
+const userView = ika.sui.withSigner(userSigner);
+
+const signed = await dWallet.ethereum.sign({
+	kind: 'transaction',
+	tx,
+});
+// userView.publish is `ika.publish` from before; publishers are shared.
+```
+
+`withSigner` returns a new source surface. Calls through that surface
+sign and submit Sui transactions as the user, not the backend. The
+caches and protocol public parameters are shared across both surfaces.
+
+## USEK and signer separation
+
+Be careful with multi-tenant backends. By default `withSigner`
+inherits the outer source's `userShareEncryptionKeys`. That is fine
+for the canonical case (one backend, one USEK per dWallet at a time).
+For multi-tenant backends that handle USEKs for many users, override
+the USEK explicitly on each `withSigner` to avoid using the wrong
+USEK at sign time:
+
+```ts
+const userView = ika.sui.withSigner(userSigner, {
+	userShareEncryptionKeys: userKeys,
+});
+```
+
+The plugin documents this footgun on the `withSigner` jsdoc as well.
+
+## What is on chain after step one
+
+- The dWallet object, owned by `userSuiAddress` via the cap. Address
+  derivations from its public output return the same address as if
+  the user had created the dWallet themselves.
+- The encrypted user share, decryptable only by the USEK the user
+  holds.
+- The acceptance signature, produced by the USEK's Ed25519 acceptance
+  key. Binds the user's intent to this specific DKG output.
+
+## What the user must hold
+
+- The 32-byte USEK seed. Without it, the user cannot decrypt their
+  share and cannot sign.
+- A Sui keypair (or wallet) to submit sign transactions. The
+  capability sits at that keypair's address.
+
+The backend is no longer required for signing. It is required only
+for paying gas on DKG and on any subsequent operations the backend
+chooses to subsidize.
+
+## What this does not give you
+
+- It does not let the backend forge user signatures. The encrypted
+  share is to the user's USEK, not the backend's. Without the USEK
+  seed the backend cannot decrypt.
+- It does not let the user transfer the dWallet to another address
+  without the cap. The capability routes the dWallet; the user
+  receives that cap at step one.

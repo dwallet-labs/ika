@@ -1,0 +1,98 @@
+---
+title: Publishers
+description: Broadcast assembled signed payloads to the target chain.
+---
+
+A publisher takes the output of `assembleSign` and submits it to the
+target chain's network. One publisher per chain. Compose them onto the
+same `IkaClient`; the client routes `ika.publish({ chain, payload })`
+to the registered publisher for that chain.
+
+## Bitcoin
+
+```ts
+import { bitcoinPublisher, defaultEsploraUrl } from '@ika.xyz/plugins/bitcoin/publisher';
+
+const pub = bitcoinPublisher({
+	apiBaseUrl: defaultEsploraUrl('testnet'),
+});
+```
+
+Defaults to Esplora-style HTTP (`POST /tx`). For Bitcoin Core RPC,
+pass a custom `broadcast` function:
+
+```ts
+const pub = bitcoinPublisher({
+	apiBaseUrl: 'http://test:test@127.0.0.1:18443/',
+	broadcast: async (rawHex) => {
+		const resp = await fetch(/* bitcoind RPC */);
+		return resp.txid;
+	},
+});
+```
+
+## Ethereum
+
+```ts
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { sepolia } from 'viem/chains';
+
+const pub = ethPublisher({
+	chain: sepolia,
+	url: 'https://...',
+	confirm: true,
+	confirmations: 1,
+	confirmTimeoutMs: 30_000,
+});
+```
+
+Uses viem internally. For custom transports (HTTPS options, batched
+RPC, multiple endpoints), supply a pre-built viem `client` instead of
+`url + chain`.
+
+## Solana
+
+```ts
+import { solanaDevnet, solanaMainnet, solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
+
+const pub = solanaDevnet({ confirm: true, confirmTimeoutMs: 60_000 });
+// or:
+const pub = solanaPublisher({ connection });
+```
+
+Confirmation polls `getSignatureStatuses` plus `isBlockhashValid` on
+the transaction's own blockhash. This is more robust against an older
+test-validator than the websocket-based `confirmTransaction` path.
+
+## Sui
+
+```ts
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+
+const pub = suiPublisher({ suiClient });
+```
+
+Calls `suiClient.executeTransaction` with the serialized
+TransactionData and the assembled Sui serialized signature.
+
+## Submitting a signed payload
+
+Once any publisher is registered, the chain-agnostic call is:
+
+```ts
+const result = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+The return type is chain-specific: a txid for Bitcoin, a transaction
+hash for Ethereum, a signature string for Solana, a digest for Sui.
+
+## What a publisher is not
+
+A publisher does not re-verify the signature off chain. The
+destination chain performs the verification. If the assembled payload
+is wrong (wrong signature for the message, wrong address derivation),
+the chain rejects it.
+
+A publisher does not retry. If the broadcast call fails or the
+confirmation deadline fires, the publisher throws and the caller
+decides what to do.

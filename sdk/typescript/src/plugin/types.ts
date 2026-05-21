@@ -80,6 +80,18 @@ export interface BaseSignResult {
 // so each chain's source can carry the customization it needs.
 // =============================================================================
 
+/**
+ * Minimal options shape destination plugins use when forwarding a
+ * chain-led `createDWallet` call (e.g. `ika.bitcoin.createDWallet({ kind })`)
+ * to the active source. The destination supplies the curve; the caller
+ * supplies `kind` and any source-specific extras as a flat record.
+ */
+export interface SourceCreateDWalletInput {
+	readonly curve: Curve;
+	readonly kind: 'zero-trust' | 'shared' | 'imported-key' | 'imported-key-shared';
+	readonly [key: string]: unknown;
+}
+
 export interface SourceSurface<
 	DW extends DWallet = DWallet,
 	In extends SignMessageInput<DW> = SignMessageInput<DW>,
@@ -93,6 +105,15 @@ export interface SourceSurface<
 
 	/** Fetch a dWallet by id. Returned naked — call `client.decorate(...)` if you want namespaces. */
 	getDWallet(id: string): Promise<DW>;
+
+	/**
+	 * Create a fresh dWallet bound to the given curve. Optional because
+	 * legacy / minimal sources may not implement it. Destination plugins
+	 * that expose chain-led sugar (e.g. `ika.bitcoin.createDWallet`)
+	 * forward to this; if it's missing they throw a clear error pointing
+	 * the caller at the source's own `createDWallet`.
+	 */
+	createDWallet?(input: SourceCreateDWalletInput): Promise<DW>;
 }
 
 // =============================================================================
