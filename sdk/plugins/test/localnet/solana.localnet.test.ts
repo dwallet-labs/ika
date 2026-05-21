@@ -60,13 +60,21 @@ describe('solana localnet — destination + publisher', () => {
 		const conn = new Connection(RPC_URL, 'confirmed');
 		const payer = new PublicKey(publicOutput);
 
-		// Airdrop 2 SOL to the dWallet's derived address.
+		// Airdrop 2 SOL to the dWallet's derived address. We poll
+		// getSignatureStatuses instead of `confirmTransaction({ blockhash,
+		// lastValidBlockHeight, ... })` because the older validator (1.17)
+		// + newer web3.js combination is fragile here — the underlying
+		// websocket signature subscription can hang under rosetta.
 		const airdropSig = await conn.requestAirdrop(payer, 2 * LAMPORTS_PER_SOL);
-		const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
-		await conn.confirmTransaction(
-			{ signature: airdropSig, blockhash, lastValidBlockHeight },
-			'confirmed',
-		);
+		const airdropDeadline = Date.now() + 60_000;
+		while (Date.now() < airdropDeadline) {
+			const statuses = await conn.getSignatureStatuses([airdropSig]);
+			const s = statuses.value[0];
+			if (s && (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized'))
+				break;
+			await new Promise((r) => setTimeout(r, 500));
+		}
+		const { blockhash } = await conn.getLatestBlockhash('confirmed');
 		const balance = await conn.getBalance(payer, 'confirmed');
 		expect(balance).toBeGreaterThanOrEqual(LAMPORTS_PER_SOL);
 
@@ -108,5 +116,5 @@ describe('solana localnet — destination + publisher', () => {
 
 		const status = await conn.getSignatureStatuses([sig], { searchTransactionHistory: false });
 		expect(status.value[0]?.err).toBeNull();
-	}, 60_000);
+	}, 180_000);
 });

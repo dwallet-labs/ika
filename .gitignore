@@ -85,8 +85,8 @@ ika_config.json
 *.log
 *.seed
 
-# Localnet bind-mounted Ika state (sdk/typescript/test/localnet/ika-state)
-sdk/typescript/test/localnet/ika-state/
+# Localnet bind-mounted Ika state
+sdk/plugins/test/localnet/ika-state/
 
 # AI
 .cursor

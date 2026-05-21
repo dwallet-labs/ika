@@ -76,21 +76,8 @@ describe('bitcoin localnet — destination + publisher', () => {
 		const utxo = utxos[0];
 
 		// Build a PSBT spending the UTXO back to a wallet-owned address.
-		const sinkAddress = (await (chain as unknown as { rpc: typeof chain.rpc }).rpc(
-			'getnewaddress',
-			[],
-		)) as string; // not actually used — wallet rpcs need /wallet path
-		void sinkAddress;
-		const walletAddress = (await fetch(RPC_URL.replace(/\/?$/, `/wallet/${WALLET}`), {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '1.0',
-				id: 'x',
-				method: 'getnewaddress',
-				params: [],
-			}),
-		}).then(async (r) => ((await r.json()) as { result: string }).result)) as string;
+		// `getnewaddress` is a wallet RPC — must hit the /wallet/<name> path.
+		const walletAddress = (await chain.walletRpc(WALLET, 'getnewaddress', [])) as string;
 
 		const psbt = new bitcoin.Psbt({ network: bitcoin.networks.regtest });
 		const valueSats = BigInt(Math.round(utxo.amount * 1e8));
@@ -186,16 +173,7 @@ describe('bitcoin localnet — destination + publisher', () => {
 				},
 			],
 		});
-		const walletAddress = (await fetch(RPC_URL.replace(/\/?$/, `/wallet/${WALLET}`), {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				jsonrpc: '1.0',
-				id: 'x',
-				method: 'getnewaddress',
-				params: [],
-			}),
-		}).then(async (r) => ((await r.json()) as { result: string }).result)) as string;
+		const walletAddress = (await chain.walletRpc(WALLET, 'getnewaddress', [])) as string;
 		psbt.addOutput({ address: walletAddress, value: valueSats - 300n });
 
 		const signed = await plugin.extend.bitcoin.sign({

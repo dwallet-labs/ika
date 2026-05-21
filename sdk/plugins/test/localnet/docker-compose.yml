@@ -120,15 +120,20 @@ services:
       dockerfile: sdk/plugins/test/localnet/Dockerfile.ika
       args:
         GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    depends_on:
-      sui:
-        condition: service_healthy
+    # The sui dependency is intentionally absent — on arm64 hosts the
+    # mysten/sui-tools:mainnet image is amd64-only and runs under
+    # Rosetta, where genesis can take 30+ minutes. The localnet README
+    # documents running `sui start --with-faucet` on the host (native
+    # arm64) and pointing this container at `host.docker.internal` —
+    # the env defaults below match that pattern, and can be overridden.
     environment:
       # `ika start` reads the Sui URLs from env vars (the CLI flags of
       # the same name are wired in but unused — see ika_commands::start).
-      SUI_FULLNODE_RPC_URL: http://sui:9000
-      SUI_FAUCET_URL: http://sui:9123/gas
+      SUI_FULLNODE_RPC_URL: ${IKA_SUI_RPC_URL:-http://host.docker.internal:9000}
+      SUI_FAUCET_URL: ${IKA_SUI_FAUCET_URL:-http://host.docker.internal:9123/gas}
       RUST_LOG: 'info,ika_core=info,ika_node=warn,sui_node=warn'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     ports:
       - '9100:9100'
     volumes:
