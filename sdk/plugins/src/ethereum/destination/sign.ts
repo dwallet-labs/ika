@@ -6,6 +6,7 @@ import type { DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import {
 	concat,
+	getTransactionType,
 	getTypesForEIP712Domain,
 	hashDomain,
 	hashMessage,
@@ -199,11 +200,11 @@ export async function assembleEthereumPayload(
 		// Legacy transactions: viem's `serializeTransactionLegacy` reads
 		// `signature.v` rather than `yParity`. Build a legacy-shape
 		// signature triple so EIP-155 v-rewriting still works.
-		const txType = (input.tx as { type?: string }).type;
-		const sig =
-			txType === 'legacy'
-				? { r, s, v: BigInt(yParity) + 27n }
-				: { r, s, yParity };
+		// Detect via viem's classifier — it infers legacy from `gasPrice`
+		// presence even when the caller omits `tx.type`, matching what
+		// `serializeTransaction` will do internally.
+		const txType = getTransactionType(input.tx as Parameters<typeof getTransactionType>[0]);
+		const sig = txType === 'legacy' ? { r, s, v: BigInt(yParity) + 27n } : { r, s, yParity };
 		const serialized = serializeTransaction(input.tx, sig);
 		const hash = keccak256(serialized);
 		return { kind: 'transaction', serialized, hash, sender: expectedSender };

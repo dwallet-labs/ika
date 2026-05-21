@@ -4,13 +4,12 @@
 // Convenience aggregator: re-exports everything Sui-related from one path.
 // Consumers may also import from the more specific subpaths.
 //
-// `prepareSign` and `assembleSign` are named identically on the source and
-// destination but do different things (source produces the
-// user-sign-message; destination builds the chain-specific preimage /
-// wraps the signature). They're re-exported under disambiguated aliases
-// here. Reach for the subpath when you need both:
+// The source exposes `prepareSignMessage` (user-side centralized-party
+// sign message) and the destination exposes `prepareSign` + `assembleSign`
+// (chain-specific preimage + signature wrap). The destination pair is
+// re-exported under aliases here to match the convention:
 //
-//   import { prepareSign, assembleSign } from '@ika.xyz/plugins/sui/source';
+//   import { prepareSignMessage } from '@ika.xyz/plugins/sui/source';
 //   import { prepareSign, assembleSign } from '@ika.xyz/plugins/sui/destination';
 export * from './source/index.js';
 export {

@@ -315,8 +315,33 @@ describe('ethereum destination — sign (transaction)', () => {
 		expect(signed.payload.kind).toBe('transaction');
 		if (signed.payload.kind !== 'transaction') throw new Error('unreachable');
 		expect(signed.payload.serialized).toMatch(/^0x[0-9a-f]+$/);
-		// Legacy tx hash recovers to sender via viem's recoverTransactionAddress
-		// (covered transitively — if assembly didn't crash, the path works).
+	});
+
+	it('signs a legacy-shape transaction when type is implicit (gasPrice present)', async () => {
+		// Regression: the assembly path must detect legacy via viem's
+		// classifier, not a string check on `tx.type`. With only gasPrice
+		// + no maxFeePerGas, viem infers legacy and reads `signature.v`.
+		const fx = makeFixture();
+		const plugin = eth();
+		const ctx = buildCtx();
+		await plugin.install?.(ctx);
+
+		const tx = {
+			chainId: 1,
+			nonce: 0,
+			to: '0x000000000000000000000000000000000000dead' as Hex,
+			value: 1n,
+			gasPrice: 1_000_000_000n,
+			gas: 21_000n,
+		};
+		const signed = await plugin.extend.ethereum.sign({
+			dWallet: fakeDWallet(fx.publicOutput),
+			kind: 'transaction',
+			tx,
+		});
+		expect(signed.payload.kind).toBe('transaction');
+		if (signed.payload.kind !== 'transaction') throw new Error('unreachable');
+		expect(signed.payload.serialized).toMatch(/^0x[0-9a-f]+$/);
 	});
 
 	it('normalizes high-S signatures to low-S (EIP-2 conformance)', async () => {
