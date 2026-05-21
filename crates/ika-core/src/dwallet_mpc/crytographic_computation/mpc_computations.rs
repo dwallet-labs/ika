@@ -20,7 +20,7 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::advance_network_reconfiguration_bwd_compat;
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, VssSecretKeySharesVersionedSource,
     build_curve25519_eddsa_vss_sign_private_input,
     build_ristretto_schnorrkel_vss_sign_private_input,
     build_secp256k1_taproot_vss_sign_private_input, compute_dwallet_dkg_and_sign, compute_sign,
@@ -203,23 +203,21 @@ impl ProtocolCryptographicData {
                 };
 
                 if data.signature_algorithm.is_vss() {
-                    // Fast Schnorr (VSS): carry the reconfiguration output (for the
-                    // secret-key-share recovery at compute time) + the persisted
-                    // presign nonce data, instead of the AHE decryption key shares.
-                    let reconfiguration_public_output = decryption_key_shares
-                        .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                        .latest_network_reconfiguration_public_output()
-                        .ok_or_else(|| {
-                            DwalletMPCError::InvalidInput(
-                                "Fast Schnorr (VSS) sign requires a reconfigured network key"
-                                    .to_string(),
-                            )
-                        })?;
+                    // Fast Schnorr (VSS): carry the secret-key-share source (the
+                    // reconfiguration output if the key reconfigured, else the network
+                    // DKG output) for secret-key-share recovery at compute time, plus
+                    // the persisted presign nonce data, instead of the AHE decryption
+                    // key shares.
+                    let secret_key_shares_source = VssSecretKeySharesVersionedSource::select(
+                        decryption_key_shares.get_network_encryption_key_public_data(
+                            dwallet_network_encryption_key_id,
+                        )?,
+                    );
                     ProtocolCryptographicData::SignVSS {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
-                        reconfiguration_public_output,
+                        secret_key_shares_source,
                         presign_private_output,
                     }
                 } else {
@@ -262,20 +260,16 @@ impl ProtocolCryptographicData {
                     // routed to the NOA channel by the request's session type. The
                     // presign (popped from the internal VSS pool) carries the private
                     // nonce output, read by the manager as for external VSS sign.
-                    let reconfiguration_public_output = decryption_key_shares
-                        .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?
-                        .latest_network_reconfiguration_public_output()
-                        .ok_or_else(|| {
-                            DwalletMPCError::InvalidInput(
-                                "Fast Schnorr (VSS) sign requires a reconfigured network key"
-                                    .to_string(),
-                            )
-                        })?;
+                    let secret_key_shares_source = VssSecretKeySharesVersionedSource::select(
+                        decryption_key_shares.get_network_encryption_key_public_data(
+                            dwallet_network_encryption_key_id,
+                        )?,
+                    );
                     ProtocolCryptographicData::SignVSS {
                         data: SignData::from(data),
                         public_input: public_input.clone(),
                         advance_request,
-                        reconfiguration_public_output,
+                        secret_key_shares_source,
                         presign_private_output,
                     }
                 } else {
@@ -1002,7 +996,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::SignVSS {
                 public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
-                reconfiguration_public_output,
+                secret_key_shares_source,
                 presign_private_output,
                 data,
                 ..
@@ -1010,7 +1004,7 @@ impl ProtocolCryptographicData {
                 let private_input = build_secp256k1_taproot_vss_sign_private_input(
                     party_id,
                     &root_seed,
-                    &reconfiguration_public_output,
+                    &secret_key_shares_source,
                     presign_private_output,
                     &public_input,
                 )?;
@@ -1028,7 +1022,7 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::SignVSS {
                 public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
-                reconfiguration_public_output,
+                secret_key_shares_source,
                 presign_private_output,
                 data,
                 ..
@@ -1036,7 +1030,7 @@ impl ProtocolCryptographicData {
                 let private_input = build_curve25519_eddsa_vss_sign_private_input(
                     party_id,
                     &root_seed,
-                    &reconfiguration_public_output,
+                    &secret_key_shares_source,
                     presign_private_output,
                     &public_input,
                 )?;
@@ -1055,7 +1049,7 @@ impl ProtocolCryptographicData {
                 public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
                 advance_request:
                     SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
-                reconfiguration_public_output,
+                secret_key_shares_source,
                 presign_private_output,
                 data,
                 ..
@@ -1063,7 +1057,7 @@ impl ProtocolCryptographicData {
                 let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
                     party_id,
                     &root_seed,
-                    &reconfiguration_public_output,
+                    &secret_key_shares_source,
                     presign_private_output,
                     &public_input,
                 )?;

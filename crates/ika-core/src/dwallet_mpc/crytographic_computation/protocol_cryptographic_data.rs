@@ -9,7 +9,7 @@ use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, VssSecretKeySharesVersionedSource,
 };
 use crate::request_protocol_data::{
     DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData,
@@ -19,9 +19,7 @@ use crate::request_protocol_data::{
 };
 use class_groups::SecretKeyShareSizedInteger;
 use dwallet_classgroups_types::ClassGroupsDecryptionKey;
-use dwallet_mpc_types::dwallet_mpc::{
-    ReconfigurationParty, VersionedDecryptionKeyReconfigurationOutput,
-};
+use dwallet_mpc_types::dwallet_mpc::ReconfigurationParty;
 use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
@@ -81,14 +79,16 @@ pub(crate) enum ProtocolCryptographicData {
     /// routed to its channel by the request's session type. Unlike AHE `Sign`, the
     /// private input is not the class-groups decryption key shares but the validator's
     /// VSS secret-key Shamir shares (recovered at compute time from
-    /// `reconfiguration_public_output` + the validator's PVSS keys via `root_seed`)
-    /// joined with the persisted presign nonce data (`presign_private_output`). The
+    /// `secret_key_shares_source` + the validator's PVSS keys via `root_seed`) joined
+    /// with the persisted presign nonce data (`presign_private_output`). The
     /// non-serializable 8-field VSS `PrivateInput` is assembled in `compute_mpc`.
     SignVSS {
         data: SignData,
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
-        reconfiguration_public_output: VersionedDecryptionKeyReconfigurationOutput,
+        /// The reconfiguration output if the network key has reconfigured, else the
+        /// network DKG output — VSS sign recovers its secret-key shares from either.
+        secret_key_shares_source: VssSecretKeySharesVersionedSource,
         /// `bcs(Vec<PrivatePresignOutput>)` for this presign session; `None` if the
         /// row is missing (disk loss / cross-epoch) → this validator soft-fails.
         presign_private_output: Option<Vec<u8>>,

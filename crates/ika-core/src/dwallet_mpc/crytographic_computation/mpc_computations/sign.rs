@@ -16,8 +16,8 @@ use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
     SerializedWrappedMPCPublicOutput, VersionedDecryptionKeyReconfigurationOutput,
-    VersionedDwalletDKGPublicOutput, VersionedPresignOutput, VersionedUserSignedMessage,
-    public_key_from_decentralized_dkg_output_by_curve_v2,
+    VersionedDwalletDKGPublicOutput, VersionedNetworkDkgOutput, VersionedPresignOutput,
+    VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use dwallet_rng::RootSeed;
 use group::CsRng;
@@ -573,35 +573,213 @@ pub(crate) fn vss_public_presign_session_id(
     decode(&inner)
 }
 
-/// Deserializes the latest network Reconfiguration V3 public output, which holds
-/// the per-curve secret-key polynomial commitments + masked parts + randomizer
-/// dealings the Fast Schnorr (VSS) sign needs. VSS sign requires a reconfigured
-/// network key — the DKG-only output does not expose these accessors.
-fn vss_reconfiguration_public_output(
-    network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-) -> DwalletMPCResult<<twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput>
-{
-    let reconfiguration_output = network_encryption_key_public_data
-        .latest_network_reconfiguration_public_output()
-        .ok_or_else(|| {
-            DwalletMPCError::InvalidInput(
-                "Fast Schnorr (VSS) sign requires a reconfigured network key, but no \
-                 reconfiguration output is present"
-                    .to_string(),
-            )
-        })?;
-    match reconfiguration_output {
-        VersionedDecryptionKeyReconfigurationOutput::V3(bytes) => bcs::from_bytes::<
-            <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
-        >(&bytes)
-        .map_err(|e| {
+/// The network key's current threshold-encryption-to-sharing material, in serialized
+/// form, from which a Fast Schnorr (VSS) sign recovers its secret-key Shamir shares
+/// and reads the secret-key polynomial commitments.
+///
+/// It is the reconfiguration output once the network key has reconfigured, else the
+/// network DKG output (a freshly-DKG'd key that has not reconfigured yet). Both carry
+/// the same `threshold_encryption_to_sharing_output`, so VSS sign works off either —
+/// it does NOT require a prior reconfiguration. Carried (serialized) across the
+/// compute boundary in `ProtocolCryptographicData::SignVSS`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VssSecretKeySharesVersionedSource {
+    Reconfiguration(VersionedDecryptionKeyReconfigurationOutput),
+    NetworkDkg(VersionedNetworkDkgOutput),
+}
+
+impl VssSecretKeySharesVersionedSource {
+    /// Selects the reconfiguration output if the key has reconfigured, else the
+    /// network DKG output.
+    pub(crate) fn select(
+        network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+    ) -> Self {
+        match network_encryption_key_public_data.latest_network_reconfiguration_public_output() {
+            Some(reconfiguration) => Self::Reconfiguration(reconfiguration),
+            None => Self::NetworkDkg(
+                network_encryption_key_public_data
+                    .network_dkg_output()
+                    .clone(),
+            ),
+        }
+    }
+}
+
+/// The deserialized counterpart of [`VssSecretKeySharesVersionedSource`]: the actual
+/// reconfiguration or DKG `PublicOutput`, exposing one uniform per-curve API so the
+/// VSS sign builders never branch on which one is current. The reconfiguration output
+/// exposes `compute_*_shamir_shares_*`, the DKG output the equivalent `derive_*`; both
+/// expose `*_polynomial_commitments`.
+enum VssSecretKeyShareSource {
+    Reconfiguration(
+        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
+    ),
+    NetworkDkg(<twopc_mpc::decentralized_party::dkg::Party as Party>::PublicOutput),
+}
+
+impl VssSecretKeyShareSource {
+    fn from_versioned(source: &VssSecretKeySharesVersionedSource) -> DwalletMPCResult<Self> {
+        let bcs_error = |what: &str, e: bcs::Error| {
             DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "failed to deserialize reconfiguration V3 public output: {e}"
+                "failed to deserialize {what} V3 public output: {e}"
             )))
-        }),
-        _ => Err(DwalletMPCError::InvalidInput(
-            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
-        )),
+        };
+        match source {
+            VssSecretKeySharesVersionedSource::Reconfiguration(
+                VersionedDecryptionKeyReconfigurationOutput::V3(bytes),
+            ) => Ok(Self::Reconfiguration(
+                bcs::from_bytes(bytes).map_err(|e| bcs_error("reconfiguration", e))?,
+            )),
+            VssSecretKeySharesVersionedSource::NetworkDkg(VersionedNetworkDkgOutput::V3(bytes)) => {
+                Ok(Self::NetworkDkg(
+                    bcs::from_bytes(bytes).map_err(|e| bcs_error("network DKG", e))?,
+                ))
+            }
+            // Pre-V3 network keys predate the threshold-encryption-to-sharing output
+            // VSS needs; such a key must reconfigure to a V3 output before it can sign.
+            _ => Err(DwalletMPCError::InvalidInput(
+                "Fast Schnorr (VSS) sign requires a V3 reconfiguration or network DKG output"
+                    .to_string(),
+            )),
+        }
+    }
+
+    fn from_network_key_public_data(
+        network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
+    ) -> DwalletMPCResult<Self> {
+        Self::from_versioned(&VssSecretKeySharesVersionedSource::select(
+            network_encryption_key_public_data,
+        ))
+    }
+
+    fn secp256k1_shamir_shares(
+        &self,
+        party_id: PartyID,
+        pvss_decryption_key: dwallet_classgroups_types::Secp256k1PvssDecryptionKey,
+        pvss_encryption_key: class_groups::CompactIbqf<NON_FUNDAMENTAL_DISCRIMINANT_LIMBS>,
+    ) -> DwalletMPCResult<(
+        group::Value<group::secp256k1::Scalar>,
+        group::Value<group::secp256k1::Scalar>,
+    )> {
+        match self {
+            Self::Reconfiguration(output) => output
+                .compute_secp256k1_shamir_shares_of_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+            Self::NetworkDkg(output) => output
+                .derive_shamir_shares_of_secp256k1_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+        }
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover secp256k1 VSS secret-key Shamir shares: {e:?}"
+            ))
+        })
+    }
+
+    fn curve25519_shamir_shares(
+        &self,
+        party_id: PartyID,
+        pvss_decryption_key: dwallet_classgroups_types::RistrettoPvssDecryptionKey,
+        pvss_encryption_key: class_groups::CompactIbqf<
+            { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+        >,
+    ) -> DwalletMPCResult<(
+        group::Value<group::curve25519::Scalar>,
+        group::Value<group::curve25519::Scalar>,
+    )> {
+        match self {
+            Self::Reconfiguration(output) => output
+                .compute_curve25519_shamir_shares_of_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+            Self::NetworkDkg(output) => output
+                .derive_shamir_shares_of_curve25519_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+        }
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover curve25519 VSS secret-key Shamir shares: {e:?}"
+            ))
+        })
+    }
+
+    fn ristretto_shamir_shares(
+        &self,
+        party_id: PartyID,
+        pvss_decryption_key: dwallet_classgroups_types::RistrettoPvssDecryptionKey,
+        pvss_encryption_key: class_groups::CompactIbqf<
+            { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
+        >,
+    ) -> DwalletMPCResult<(
+        group::Value<group::ristretto::Scalar>,
+        group::Value<group::ristretto::Scalar>,
+    )> {
+        match self {
+            Self::Reconfiguration(output) => output
+                .compute_ristretto_shamir_shares_of_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+            Self::NetworkDkg(output) => output
+                .derive_shamir_shares_of_ristretto_secret_key_share_parts(
+                    party_id,
+                    pvss_decryption_key,
+                    pvss_encryption_key,
+                ),
+        }
+        .map_err(|e| {
+            DwalletMPCError::InvalidInput(format!(
+                "failed to recover ristretto VSS secret-key Shamir shares: {e:?}"
+            ))
+        })
+    }
+
+    fn secp256k1_polynomial_commitments(
+        &self,
+    ) -> (
+        &Vec<group::Value<group::secp256k1::GroupElement>>,
+        &Vec<group::Value<group::secp256k1::GroupElement>>,
+    ) {
+        match self {
+            Self::Reconfiguration(output) => output.secp256k1_polynomial_commitments(),
+            Self::NetworkDkg(output) => output.secp256k1_polynomial_commitments(),
+        }
+    }
+
+    fn curve25519_polynomial_commitments(
+        &self,
+    ) -> (
+        &Vec<group::Value<group::curve25519::GroupElement>>,
+        &Vec<group::Value<group::curve25519::GroupElement>>,
+    ) {
+        match self {
+            Self::Reconfiguration(output) => output.curve25519_polynomial_commitments(),
+            Self::NetworkDkg(output) => output.curve25519_polynomial_commitments(),
+        }
+    }
+
+    fn ristretto_polynomial_commitments(
+        &self,
+    ) -> (
+        &Vec<group::Value<group::ristretto::GroupElement>>,
+        &Vec<group::Value<group::ristretto::GroupElement>>,
+    ) {
+        match self {
+            Self::Reconfiguration(output) => output.ristretto_polynomial_commitments(),
+            Self::NetworkDkg(output) => output.ristretto_polynomial_commitments(),
+        }
     }
 }
 
@@ -636,40 +814,21 @@ where
 pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
     party_id: PartyID,
     root_seed: &RootSeed,
-    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    secret_key_shares_source: &VssSecretKeySharesVersionedSource,
     presign_private_output: Option<Vec<u8>>,
     public_input: &<SignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput,
 ) -> DwalletMPCResult<
     <SignParty<Secp256k1TaprootVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
-        reconfiguration_public_output
-    else {
-        return Err(DwalletMPCError::InvalidInput(
-            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
-        ));
-    };
-    let reconfiguration_public_output = bcs::from_bytes::<
-        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
-    >(reconfig_bytes)
-    .map_err(|e| {
-        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-            "failed to deserialize reconfiguration V3 public output: {e}"
-        )))
-    })?;
-
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
     let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
-    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
-        .compute_secp256k1_shamir_shares_of_secret_key_share_parts(
+    let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
+        .secp256k1_shamir_shares(
             party_id,
             validator_keys.secp256k1_pvss_decryption_key(),
             validator_keys.secp256k1_pvss_encryption_key_and_proof().0,
-        )
-        .map_err(|e| {
-            DwalletMPCError::InvalidInput(format!(
-                "failed to recover secp256k1 VSS secret-key Shamir shares: {e:?}"
-            ))
-        })?;
+        )?;
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
@@ -710,44 +869,24 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
 pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
     party_id: PartyID,
     root_seed: &RootSeed,
-    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    secret_key_shares_source: &VssSecretKeySharesVersionedSource,
     presign_private_output: Option<Vec<u8>>,
     public_input: &<SignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput,
 ) -> DwalletMPCResult<
     <SignParty<Curve25519EdDSAVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
-        reconfiguration_public_output
-    else {
-        return Err(DwalletMPCError::InvalidInput(
-            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
-        ));
-    };
-    let reconfiguration_public_output = bcs::from_bytes::<
-        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
-    >(reconfig_bytes)
-    .map_err(|e| {
-        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-            "failed to deserialize reconfiguration V3 public output: {e}"
-        )))
-    })?;
-
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
     let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
-    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
-        // curve25519's threshold-encryption-to-sharing uses the ristretto PVSS key
-        // (same const-generic discriminant limbs; the validator publishes no
-        // separate curve25519 PVSS key — see `compute_curve25519_shamir_shares_...`
-        // taking `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`).
-        .compute_curve25519_shamir_shares_of_secret_key_share_parts(
+    // curve25519's threshold-encryption-to-sharing uses the ristretto PVSS key (same
+    // const-generic discriminant limbs; the validator publishes no separate curve25519
+    // PVSS key — `curve25519_shamir_shares` takes `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`).
+    let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
+        .curve25519_shamir_shares(
             party_id,
             validator_keys.ristretto_pvss_decryption_key(),
             validator_keys.ristretto_pvss_encryption_key_and_proof().0,
-        )
-        .map_err(|e| {
-            DwalletMPCError::InvalidInput(format!(
-                "failed to recover curve25519 VSS secret-key Shamir shares: {e:?}"
-            ))
-        })?;
+        )?;
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
@@ -788,40 +927,21 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
 pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
     party_id: PartyID,
     root_seed: &RootSeed,
-    reconfiguration_public_output: &VersionedDecryptionKeyReconfigurationOutput,
+    secret_key_shares_source: &VssSecretKeySharesVersionedSource,
     presign_private_output: Option<Vec<u8>>,
     public_input: &<SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as Party>::PublicInput,
 ) -> DwalletMPCResult<
     <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let VersionedDecryptionKeyReconfigurationOutput::V3(reconfig_bytes) =
-        reconfiguration_public_output
-    else {
-        return Err(DwalletMPCError::InvalidInput(
-            "Fast Schnorr (VSS) sign requires a V3 reconfiguration output".to_string(),
-        ));
-    };
-    let reconfiguration_public_output = bcs::from_bytes::<
-        <twopc_mpc::decentralized_party::reconfiguration::Party as Party>::PublicOutput,
-    >(reconfig_bytes)
-    .map_err(|e| {
-        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-            "failed to deserialize reconfiguration V3 public output: {e}"
-        )))
-    })?;
-
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
     let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
-    let (secret_key_share_first_part, secret_key_share_second_part) = reconfiguration_public_output
-        .compute_ristretto_shamir_shares_of_secret_key_share_parts(
+    let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
+        .ristretto_shamir_shares(
             party_id,
             validator_keys.ristretto_pvss_decryption_key(),
             validator_keys.ristretto_pvss_encryption_key_and_proof().0,
-        )
-        .map_err(|e| {
-            DwalletMPCError::InvalidInput(format!(
-                "failed to recover ristretto VSS secret-key Shamir shares: {e:?}"
-            ))
-        })?;
+        )?;
 
     let session_id = public_input.presign.session_id;
     let presign_blending_index = public_input.presign.presign_blending_index;
@@ -873,10 +993,10 @@ fn build_secp256k1_taproot_vss_sign_public_input(
     >(dwallet_decentralized_public_output, presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Secp256k1TaprootVSSProtocol>(message_centralized_signature)?;
-    let reconfiguration_output =
-        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_network_key_public_data(network_encryption_key_public_data)?;
     let (first_commitments, second_commitments) =
-        reconfiguration_output.secp256k1_polynomial_commitments();
+        secret_key_shares_source.secp256k1_polynomial_commitments();
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
@@ -908,10 +1028,10 @@ fn build_curve25519_eddsa_vss_sign_public_input(
     >(dwallet_decentralized_public_output, presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Curve25519EdDSAVSSProtocol>(message_centralized_signature)?;
-    let reconfiguration_output =
-        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_network_key_public_data(network_encryption_key_public_data)?;
     let (first_commitments, second_commitments) =
-        reconfiguration_output.curve25519_polynomial_commitments();
+        secret_key_shares_source.curve25519_polynomial_commitments();
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
@@ -944,10 +1064,10 @@ fn build_ristretto_schnorrkel_vss_sign_public_input(
     let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
         message_centralized_signature,
     )?;
-    let reconfiguration_output =
-        vss_reconfiguration_public_output(network_encryption_key_public_data)?;
+    let secret_key_shares_source =
+        VssSecretKeyShareSource::from_network_key_public_data(network_encryption_key_public_data)?;
     let (first_commitments, second_commitments) =
-        reconfiguration_output.ristretto_polynomial_commitments();
+        secret_key_shares_source.ristretto_polynomial_commitments();
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
