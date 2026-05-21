@@ -5,7 +5,7 @@ use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
 use group::HashScheme;
-use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
     DWalletImportedKeyVerificationRequestEvent, DWalletNetworkDKGEncryptionKeyRequestEvent,
@@ -323,16 +323,6 @@ pub fn dwallet_dkg_and_sign_protocol_data(
         request_event_data.curve,
         sign_during_dkg_request.signature_algorithm,
     )?;
-    // Fast Schnorr (VSS) does not support the combined DKG-and-sign fast path:
-    // it is deferred by decision in this activation (the upstream combined VSS
-    // party exists but is intentionally not wired here). VSS dWallets must follow
-    // the separate DKG → presign → sign path.
-    if signature_algorithm.is_vss() {
-        return Err(DwalletMPCError::InvalidInput(format!(
-            "Fast Schnorr (VSS) algorithm {signature_algorithm} is not supported \
-             for the combined DKG-and-sign fast path"
-        )));
-    }
     Ok(ProtocolData::DWalletDKGAndSign {
         data: DWalletDKGAndSignData {
             curve: try_into_curve(request_event_data.curve)?,
