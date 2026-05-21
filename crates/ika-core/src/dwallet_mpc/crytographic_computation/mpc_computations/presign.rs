@@ -14,8 +14,6 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGPublicOutput,
 };
-use group::GroupElement as _;
-use group::curve25519;
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -26,13 +24,12 @@ use ika_types::messages_dwallet_mpc::{
     Secp256r1ECDSAProtocol,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
-use mpc::hybrid_public_key_encryption::verify_uc_proofs_of_knowledge_of_encryption_secret_keys;
+use mpc::hybrid_public_key_encryption::parse_and_uc_verify_encryption_keys;
 use mpc::{
     AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery,
     WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
-use std::collections::HashSet;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
 use twopc_mpc::presign::Protocol;
 use twopc_mpc::{dkg, presign};
@@ -230,54 +227,6 @@ impl PresignAdvanceRequestByProtocol {
     }
 }
 
-/// Builds the Fast Schnorr (VSS) presign `party_encryption_keys` (curve25519 HPKE
-/// public keys) and `parties_with_uc_verified_public_keys` from the validator-
-/// published per-party keys + UC proofs.
-///
-/// The UC proofs are verified here, at presign-input build time, and only parties
-/// whose proof verifies appear in the returned verified set (the upstream VSS
-/// presign rejects any dealer not in it). The same curve25519 keys serve every
-/// VSS signing curve.
-///
-/// NOTE: this verification runs on every VSS presign-input build. Once the
-/// publication path verifies these proofs *at submission* — rejecting on-chain
-/// keys whose proof fails so an unverifiable key can never be accepted — this
-/// per-build verification can be dropped and every published party trusted.
-fn vss_party_encryption_keys(
-    validator_mpc_keys_by_party_id: &ValidatorMpcKeysByPartyId,
-) -> DwalletMPCResult<(HashMap<PartyID, curve25519::GroupElement>, HashSet<PartyID>)> {
-    let public_parameters = curve25519::PublicParameters::default();
-    let keys_and_proofs = validator_mpc_keys_by_party_id
-        .vss_hpke
-        .iter()
-        .map(|(party_id, (encryption_key_value, proof))| {
-            let encryption_key =
-                curve25519::GroupElement::new(*encryption_key_value, &public_parameters).map_err(
-                    |e| {
-                        DwalletMPCError::InvalidInput(format!(
-                            "invalid VSS HPKE encryption key for party {party_id}: {e:?}"
-                        ))
-                    },
-                )?;
-            Ok((*party_id, (encryption_key, proof.clone())))
-        })
-        .collect::<DwalletMPCResult<HashMap<PartyID, _>>>()?;
-
-    let parties_with_uc_verified_public_keys =
-        verify_uc_proofs_of_knowledge_of_encryption_secret_keys(&keys_and_proofs).map_err(|e| {
-            DwalletMPCError::InvalidInput(format!(
-                "failed to verify VSS HPKE encryption key UC proofs: {e:?}"
-            ))
-        })?;
-
-    let party_encryption_keys = keys_and_proofs
-        .into_iter()
-        .map(|(party_id, (encryption_key, _proof))| (party_id, encryption_key))
-        .collect();
-
-    Ok((party_encryption_keys, parties_with_uc_verified_public_keys))
-}
-
 impl PresignPublicInputByProtocol {
     pub(crate) fn try_new(
         protocol: DWalletSignatureAlgorithm,
@@ -418,14 +367,23 @@ impl PresignPublicInputByProtocol {
             // HPKE encryption keys + the UC-verified party set, in addition to the
             // protocol public parameters. These are the single `vss_hpke`
             // curve25519 keys (one per validator, curve-independent) — NOT the three
-            // per-curve class-groups `*_pvss` keys; their UC proofs are verified here
-            // at input-build time (see `vss_party_encryption_keys`).
+            // per-curve class-groups `*_pvss` keys. `parse_and_uc_verify_encryption_keys`
+            // parses the published values and verifies their UC proofs, returning only
+            // the parties that pass both — so the verified set is just its keys, and a
+            // single malformed/unprovable submission excludes only that party.
             DWalletSignatureAlgorithm::TaprootVSS => {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.secp256k1_protocol_public_parameters();
-                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
-                    vss_party_encryption_keys(validator_mpc_keys_by_party_id)?;
+                let party_encryption_keys =
+                    parse_and_uc_verify_encryption_keys(&validator_mpc_keys_by_party_id.vss_hpke)
+                        .map_err(|e| {
+                        DwalletMPCError::InvalidInput(format!(
+                            "failed to parse/verify VSS HPKE encryption keys: {e:?}"
+                        ))
+                    })?;
+                let parties_with_uc_verified_public_keys =
+                    party_encryption_keys.keys().copied().collect();
                 let pub_input: <PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput =
                     twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
@@ -438,8 +396,15 @@ impl PresignPublicInputByProtocol {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.curve25519_protocol_public_parameters();
-                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
-                    vss_party_encryption_keys(validator_mpc_keys_by_party_id)?;
+                let party_encryption_keys =
+                    parse_and_uc_verify_encryption_keys(&validator_mpc_keys_by_party_id.vss_hpke)
+                        .map_err(|e| {
+                        DwalletMPCError::InvalidInput(format!(
+                            "failed to parse/verify VSS HPKE encryption keys: {e:?}"
+                        ))
+                    })?;
+                let parties_with_uc_verified_public_keys =
+                    party_encryption_keys.keys().copied().collect();
                 let pub_input: <PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput =
                     twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
@@ -452,8 +417,15 @@ impl PresignPublicInputByProtocol {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.ristretto_protocol_public_parameters();
-                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
-                    vss_party_encryption_keys(validator_mpc_keys_by_party_id)?;
+                let party_encryption_keys =
+                    parse_and_uc_verify_encryption_keys(&validator_mpc_keys_by_party_id.vss_hpke)
+                        .map_err(|e| {
+                        DwalletMPCError::InvalidInput(format!(
+                            "failed to parse/verify VSS HPKE encryption keys: {e:?}"
+                        ))
+                    })?;
+                let parties_with_uc_verified_public_keys =
+                    party_encryption_keys.keys().copied().collect();
                 let pub_input: <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput =
                     twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,

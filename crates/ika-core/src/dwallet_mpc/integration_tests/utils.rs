@@ -572,9 +572,9 @@ pub fn build_committee_with_random_seeds(
             class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
         );
         // Fast Schnorr (VSS) curve25519 HPKE public key + UC proof. Required by the
-        // VSS presign PublicInput (`vss_party_encryption_keys` verifies these proofs
-        // and admits only proven dealers); without it a VSS presign has no verified
-        // dealers and never completes.
+        // VSS presign PublicInput (`parse_and_uc_verify_encryption_keys` verifies these
+        // proofs and admits only proven dealers); without it a VSS presign has no
+        // verified dealers and never completes.
         committee.vss_hpke_public_keys_and_proofs.insert(
             *authority_name,
             class_groups_key_pair.vss_hpke_public_key_and_proof(),
