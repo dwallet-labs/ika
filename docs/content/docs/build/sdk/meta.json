@@ -1,6 +1,5 @@
 {
 	"title": "SDK",
-	"root": true,
 	"pages": [
 		"index",
 		"setup",

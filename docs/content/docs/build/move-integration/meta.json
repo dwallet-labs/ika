@@ -1,6 +1,5 @@
 {
 	"title": "Move Integration",
-	"root": true,
 	"pages": [
 		"index",
 		"getting-started",

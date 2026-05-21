@@ -1,5 +1,9 @@
 {
 	"title": "CLI",
-	"root": true,
-	"pages": ["index", "dwallet-commands", "validator-commands", "config-commands"]
+	"pages": [
+		"index",
+		"dwallet-commands",
+		"validator-commands",
+		"config-commands"
+	]
 }
