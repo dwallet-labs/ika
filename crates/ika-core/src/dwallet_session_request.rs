@@ -377,6 +377,14 @@ impl From<&ProtocolCryptographicData> for DWalletSessionRequestMetricData {
                 hash_scheme: Some(data.hash_scheme),
                 signature_algorithm: Some(data.signature_algorithm),
             },
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS { data, .. } => {
+                DWalletSessionRequestMetricData {
+                    name: data.to_string(),
+                    curve: Some(data.curve),
+                    hash_scheme: Some(data.hash_scheme),
+                    signature_algorithm: Some(data.signature_algorithm),
+                }
+            }
             ProtocolCryptographicData::DWalletDKGAndSign { data, .. } => {
                 DWalletSessionRequestMetricData {
                     name: data.to_string(),

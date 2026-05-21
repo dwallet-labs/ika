@@ -73,15 +73,13 @@ pub(crate) enum ProtocolCryptographicData {
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
-    /// Fast Schnorr (VSS) sign. Serves both external (`ProtocolData::Sign`) and NOA
-    /// (`ProtocolData::NetworkOwnedAddressSign`) VSS signs: VSS has no AHE decrypters,
-    /// so the AHE NOA-vs-external compute split is unnecessary — NOA output is still
-    /// routed to its channel by the request's session type. Unlike AHE `Sign`, the
-    /// private input is not the class-groups decryption key shares but the validator's
-    /// VSS secret-key Shamir shares (recovered at compute time from
-    /// `secret_key_shares_source` + the validator's PVSS keys via `root_seed`) joined
-    /// with the persisted presign nonce data (`presign_private_output`). The
-    /// non-serializable 8-field VSS `PrivateInput` is assembled in `compute_mpc`.
+    /// Fast Schnorr (VSS) sign for the EXTERNAL (`ProtocolData::Sign`) path only.
+    /// VSS has no AHE decrypters, so unlike AHE `Sign`, the private input is not the
+    /// class-groups decryption key shares but the validator's VSS secret-key Shamir
+    /// shares (recovered at compute time from `secret_key_shares_source` + the
+    /// validator's PVSS keys via `root_seed`) joined with the persisted presign nonce
+    /// data (`presign_private_output`). The non-serializable 8-field VSS `PrivateInput`
+    /// is assembled in `compute_mpc`.
     SignVSS {
         data: SignData,
         public_input: SignPublicInputByProtocol,
@@ -89,8 +87,28 @@ pub(crate) enum ProtocolCryptographicData {
         /// The reconfiguration output if the network key has reconfigured, else the
         /// network DKG output — VSS sign recovers its secret-key shares from either.
         secret_key_shares_source: VssSecretKeySharesVersionedSource,
-        /// `bcs(Vec<PrivatePresignOutput>)` for this presign session; `None` if the
-        /// row is missing (disk loss / cross-epoch) → this validator soft-fails.
+        /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
+        /// `None` if the row is missing (disk loss / cross-epoch) → this validator
+        /// soft-fails.
+        presign_private_output: Option<Vec<u8>>,
+    },
+
+    /// Fast Schnorr (VSS) sign for the NOA (`ProtocolData::NetworkOwnedAddressSign`)
+    /// path. Compute is identical to `SignVSS` (VSS has no AHE decrypters, so the
+    /// AHE NOA-vs-external compute split collapses), but kept a separate variant for
+    /// symmetry with the AHE `Sign`/`NetworkOwnedAddressSign` split. Its `data` stays
+    /// the native `NetworkOwnedAddressSignData` and is coerced to `SignData` only at
+    /// the compute site (mirroring the AHE `NetworkOwnedAddressSign` compute arms).
+    NetworkOwnedAddressSignVSS {
+        data: NetworkOwnedAddressSignData,
+        public_input: SignPublicInputByProtocol,
+        advance_request: SignAdvanceRequestByProtocol,
+        /// The reconfiguration output if the network key has reconfigured, else the
+        /// network DKG output — VSS sign recovers its secret-key shares from either.
+        secret_key_shares_source: VssSecretKeySharesVersionedSource,
+        /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
+        /// `None` if the row is missing (disk loss / cross-epoch) → this validator
+        /// soft-fails.
         presign_private_output: Option<Vec<u8>>,
     },
 
@@ -271,6 +289,22 @@ impl ProtocolCryptographicData {
             // `SignAdvanceRequestByProtocol::try_new` for a VSS algorithm), so the
             // AHE advance variants are structurally unreachable here.
             ProtocolCryptographicData::SignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request:
+                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
                 unreachable!("VSS sign session carries a non-VSS advance request")
             }
             ProtocolCryptographicData::DWalletDKGAndSign {
@@ -524,6 +558,22 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::SignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request:
+                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
                 unreachable!("VSS sign session carries a non-VSS advance request")
             }
             ProtocolCryptographicData::DWalletDKGAndSign {

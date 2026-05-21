@@ -265,8 +265,8 @@ impl ProtocolCryptographicData {
                             dwallet_network_encryption_key_id,
                         )?,
                     );
-                    ProtocolCryptographicData::SignVSS {
-                        data: SignData::from(data),
+                    ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                        data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
                         secret_key_shares_source,
@@ -1073,6 +1073,96 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::SignVSS {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            // NOA Fast Schnorr (VSS) sign: identical compute to `SignVSS`, but `data`
+            // is the native `NetworkOwnedAddressSignData`, coerced to `SignData` only
+            // here (mirroring the AHE `NetworkOwnedAddressSign` compute arms).
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                secret_key_shares_source,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_secp256k1_taproot_vss_sign_private_input(
+                    party_id,
+                    &root_seed,
+                    &secret_key_shares_source,
+                    presign_private_output,
+                    &public_input,
+                )?;
+                compute_sign::<Secp256k1TaprootVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                secret_key_shares_source,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_curve25519_eddsa_vss_sign_private_input(
+                    party_id,
+                    &root_seed,
+                    &secret_key_shares_source,
+                    presign_private_output,
+                    &public_input,
+                )?;
+                compute_sign::<Curve25519EdDSAVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                secret_key_shares_source,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
+                    party_id,
+                    &root_seed,
+                    &secret_key_shares_source,
+                    presign_private_output,
+                    &public_input,
+                )?;
+                compute_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
                 public_input,
                 advance_request,
                 ..
