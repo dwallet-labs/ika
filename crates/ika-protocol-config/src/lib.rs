@@ -21,7 +21,15 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
-// Version 1: Original version.
+// Version 1: Original baseline.
+// Version 2: network_encryption_key_version = 2.
+// Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
+// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions off;
+//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
+//            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
+//            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
+// Version 5: noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -365,6 +373,26 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
+    /// True iff this protocol_version uses the post-PR-#1707 network DKG /
+    /// validator-key-publication shape — `ValidatorEncryptionKeysAndProofs`
+    /// (class-groups + per-curve PVSS HPKE) and
+    /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
+    /// <= 3 (mainnet-v1.1.8), where the publication is bare
+    /// `ClassGroupsEncryptionKeyAndProof` and DKG runs against
+    /// `twopc_mpc::decentralized_party_backward_compatible::dkg::Party`.
+    pub fn is_network_encryption_key_version_v3(&self) -> bool {
+        self.network_encryption_key_version.is_some_and(|v| v == 3)
+    }
+
+    /// True iff this protocol_version uses the post-PR-#1707 reconfiguration
+    /// shape — `twopc_mpc::decentralized_party::reconfiguration::Party` with
+    /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
+    /// <= 3, where reconfiguration runs against
+    /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
+    pub fn is_reconfiguration_message_version_v3(&self) -> bool {
+        self.reconfiguration_message_version.is_some_and(|v| v == 3)
+    }
+
     pub fn bls_checkpoints(&self) -> bool {
         self.feature_flags.bls_checkpoints
     }
@@ -532,16 +560,6 @@ impl ProtocolConfig {
     }
 
     fn get_for_version_impl(version: ProtocolVersion, _chain: Chain) -> Self {
-        #[cfg(msim)]
-        {
-            // populate the fake simulator version # with a different base tx cost.
-            if version == ProtocolVersion::MAX_ALLOWED {
-                let mut config = Self::get_for_version_impl(version - 1, Chain::Unknown);
-                config.base_tx_cost_fixed = Some(config.base_tx_cost_fixed() + 1000);
-                return config;
-            }
-        }
-
         // IMPORTANT: Never modify the value of any constant for a pre-existing protocol version.
         // To change the values here you must create a new protocol version with the new values!
         let mut cfg = Self {
@@ -664,15 +682,17 @@ impl ProtocolConfig {
                     cfg.reconfiguration_message_version = Some(2);
                 }
                 4 => {
-                    cfg.feature_flags.internal_presign_sessions = true;
+                    cfg.feature_flags.internal_presign_sessions = false;
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.off_chain_validator_metadata = true;
+                    cfg.network_encryption_key_version = Some(3);
+                    cfg.reconfiguration_message_version = Some(3);
                 }
-                5 => {
-                    cfg.feature_flags.noa_checkpoints = true;
-                }
+                // 5 => {
+                //     cfg.feature_flags.noa_checkpoints = true;
+                // }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.

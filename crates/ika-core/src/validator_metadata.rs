@@ -368,17 +368,39 @@ pub fn build_network_key_dkg_ready_signal_transaction(
 /// load-bearing-broken because reconfig MPC reads
 /// `Committee.class_groups_public_keys_and_proofs` directly and an
 /// empty/partial entry silently drops that validator's share.
+/// Assembled validator-key bundles needed to build a `Committee`
+/// off-chain. `class_groups` is required for every committee
+/// authority (the strict gate). The three PVSS halves are
+/// opportunistic per-validator: present only when the validator
+/// published under the post-PR-#1707 shape
+/// (`network_encryption_key_version == 3`). At protocol_version
+/// `<= 4`, validators publish the bare class-groups shape and the
+/// three PVSS maps come back empty — matching the chain-fallback's
+/// `filter_map` semantics in `sui_syncer::new_committee`.
+#[derive(Debug)]
+pub struct OffChainCommitteeBundles {
+    pub class_groups: std::collections::HashMap<
+        AuthorityName,
+        ika_types::committee::ClassGroupsEncryptionKeyAndProof,
+    >,
+    pub secp256k1_pvss: std::collections::HashMap<
+        AuthorityName,
+        ika_types::committee::Secp256k1PvssEncryptionKeyAndProof,
+    >,
+    pub secp256r1_pvss: std::collections::HashMap<
+        AuthorityName,
+        ika_types::committee::Secp256r1PvssEncryptionKeyAndProof,
+    >,
+    pub ristretto_pvss: std::collections::HashMap<
+        AuthorityName,
+        ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
+    >,
+}
+
 #[derive(Debug)]
 pub enum OffChainClassGroupsAssembly {
-    Complete(
-        std::collections::HashMap<
-            AuthorityName,
-            ika_types::committee::ClassGroupsEncryptionKeyAndProof,
-        >,
-    ),
-    Incomplete {
-        missing: Vec<AuthorityName>,
-    },
+    Complete(OffChainCommitteeBundles),
+    Incomplete { missing: Vec<AuthorityName> },
 }
 
 /// Tries to assemble a committee's class-groups public-keys-and-
@@ -404,9 +426,12 @@ where
     F: Fn(&[u8; 32]) -> Option<Vec<u8>>,
 {
     use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-    use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
+    use ika_types::committee::decode_validator_encryption_keys;
 
-    let mut map = std::collections::HashMap::new();
+    let mut class_groups = std::collections::HashMap::new();
+    let mut secp256k1_pvss = std::collections::HashMap::new();
+    let mut secp256r1_pvss = std::collections::HashMap::new();
+    let mut ristretto_pvss = std::collections::HashMap::new();
     let mut missing = Vec::new();
     for (authority, digest) in announcements {
         let Some(blob) = blob_lookup(&digest) else {
@@ -418,15 +443,28 @@ where
             continue;
         };
         let inner_bytes = versioned.class_groups_public_key_and_proof();
-        let Ok(key_and_proof) = bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&inner_bytes)
-        else {
+        let Some(decoded) = decode_validator_encryption_keys(&inner_bytes) else {
             missing.push(authority);
             continue;
         };
-        map.insert(authority, key_and_proof);
+        class_groups.insert(authority, decoded.class_groups);
+        if let Some(k) = decoded.secp256k1_pvss {
+            secp256k1_pvss.insert(authority, k);
+        }
+        if let Some(k) = decoded.secp256r1_pvss {
+            secp256r1_pvss.insert(authority, k);
+        }
+        if let Some(k) = decoded.ristretto_pvss {
+            ristretto_pvss.insert(authority, k);
+        }
     }
     if missing.is_empty() {
-        OffChainClassGroupsAssembly::Complete(map)
+        OffChainClassGroupsAssembly::Complete(OffChainCommitteeBundles {
+            class_groups,
+            secp256k1_pvss,
+            secp256r1_pvss,
+            ristretto_pvss,
+        })
     } else {
         OffChainClassGroupsAssembly::Incomplete { missing }
     }
@@ -1036,6 +1074,9 @@ mod tests {
             5, // epoch
             voting_rights,
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             1,
             1,
         );
@@ -1310,6 +1351,9 @@ mod tests {
             5,
             voting_rights,
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             q,
             v,
         ));
@@ -1358,6 +1402,9 @@ mod tests {
         let committee = Arc::new(Committee::new(
             5,
             voting_rights,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             3,
             2,
@@ -1515,10 +1562,10 @@ mod tests {
             |d| store.get(d).cloned(),
         );
         match outcome {
-            OffChainClassGroupsAssembly::Complete(map) => {
-                assert_eq!(map.len(), 2);
-                assert!(map.contains_key(&name_a));
-                assert!(map.contains_key(&name_b));
+            OffChainClassGroupsAssembly::Complete(bundles) => {
+                assert_eq!(bundles.class_groups.len(), 2);
+                assert!(bundles.class_groups.contains_key(&name_a));
+                assert!(bundles.class_groups.contains_key(&name_b));
             }
             other => panic!("expected Complete, got {other:?}"),
         }

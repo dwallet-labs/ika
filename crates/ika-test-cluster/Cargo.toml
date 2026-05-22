@@ -1,0 +1,41 @@
+[package]
+name = "ika-test-cluster"
+version.workspace = true
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "BSD-3-Clause-Clear"
+publish = false
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cargo_metadata = "0.19"
+futures.workspace = true
+rand = "0.8"
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+
+ika-config.workspace = true
+ika-node = { path = "../ika-node", default-features = false }
+ika-protocol-config.workspace = true
+ika-swarm.workspace = true
+ika-swarm-config.workspace = true
+ika-types.workspace = true
+
+sui-config.workspace = true
+sui-sdk.workspace = true
+sui-test-transaction-builder.workspace = true
+sui-types.workspace = true
+test-cluster.workspace = true
+
+[target.'cfg(msim)'.dependencies]
+sui-simulator.workspace = true
+
+[dev-dependencies]
+prometheus.workspace = true
+sui-macros.workspace = true
+sui-protocol-config.workspace = true
+telemetry-subscribers.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }

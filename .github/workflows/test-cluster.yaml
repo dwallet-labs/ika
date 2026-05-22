@@ -1,0 +1,76 @@
+name: Test Cluster
+
+# Manually triggered. Runs the in-process Sui + ika swarm integration tests
+# from `crates/ika-test-cluster/`. This is the `#[tokio::test]` path: real
+# parallel crypto, fast wall time, no msim determinism. The slower `#[sim_test]`
+# variant lives in `.github/workflows/simtest.yaml`.
+#
+# See the "## Testing" section in CLAUDE.md for the strategy split between
+# tokio and sim_test.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Cargo package to test"
+        type: string
+        required: false
+        default: "ika-test-cluster"
+      test_filter:
+        description: "Test name filter passed to cargo test"
+        type: string
+        required: false
+        default: "cluster_boots_with_four_validators"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: 1
+  RUST_LOG: error
+  rust_stable: "1.94"
+
+jobs:
+  test-cluster:
+    name: cargo test --release
+    runs-on: ubuntu-latest
+    # The full bootstrap (Sui chain → publish 4 ika packages → initialize →
+    # swarm launch) runs in ~80 s locally with parallel crypto on. CI runners
+    # are slower; 60 min is generous.
+    timeout-minutes: 60
+    steps:
+      - name: Clean runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Keyed separately from the simtest workflow — that one uses the
+          # `simulator` cargo profile and `--cfg msim`, this one uses the
+          # default release profile.
+          prefix-key: "test-cluster"
+
+      - name: Run test cluster
+        run: |
+          cargo test --release -p ${{ inputs.package }} ${{ inputs.test_filter }} -- --nocapture

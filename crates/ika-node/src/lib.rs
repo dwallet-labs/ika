@@ -122,17 +122,17 @@ mod simulator {
 
     use super::*;
     pub(super) struct SimState {
-        pub sim_node: ika_simulator::runtime::NodeHandle,
+        pub sim_node: sui_simulator::runtime::NodeHandle,
         pub sim_safe_mode_expected: AtomicBool,
-        _leak_detector: ika_simulator::NodeLeakDetector,
+        _leak_detector: sui_simulator::NodeLeakDetector,
     }
 
     impl Default for SimState {
         fn default() -> Self {
             Self {
-                sim_node: ika_simulator::runtime::NodeHandle::current(),
+                sim_node: sui_simulator::runtime::NodeHandle::current(),
                 sim_safe_mode_expected: AtomicBool::new(false),
-                _leak_detector: ika_simulator::NodeLeakDetector::new(),
+                _leak_detector: sui_simulator::NodeLeakDetector::new(),
             }
         }
     }
@@ -166,8 +166,6 @@ use ika_core::system_checkpoints::{
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
-#[cfg(msim)]
-pub use simulator::set_jwk_injector;
 #[cfg(msim)]
 use simulator::*;
 
@@ -1626,22 +1624,6 @@ impl IkaNode {
                 Some(())
             });
 
-            // // Safe to call because we are in the middle of reconfiguration.
-            // let latest_system_state = self
-            //     .state
-            //     .get_object_cache_reader()
-            //     .get_ika_system_state_object_unsafe()
-            //     .expect("Read Ika System State object cannot fail");
-
-            #[cfg(msim)]
-            if !self
-                .sim_state
-                .sim_safe_mode_expected
-                .load(Ordering::Relaxed)
-            {
-                debug_assert!(!latest_system_state.safe_mode());
-            }
-
             if let Err(err) = self.end_of_epoch_channel.send(*latest_system_state)
                 && self.state.is_fullnode(&cur_epoch_store)
             {
@@ -1867,7 +1849,7 @@ impl IkaNode {
 
 #[cfg(msim)]
 impl IkaNode {
-    pub fn get_sim_node_id(&self) -> ika_simulator::task::NodeId {
+    pub fn get_sim_node_id(&self) -> sui_simulator::task::NodeId {
         self.sim_state.sim_node.id()
     }
 
@@ -1876,14 +1858,6 @@ impl IkaNode {
         self.sim_state
             .sim_safe_mode_expected
             .store(new_value, Ordering::Relaxed);
-    }
-
-    #[allow(unused_variables)]
-    async fn fetch_jwks(
-        authority: AuthorityName,
-        provider: &OIDCProvider,
-    ) -> IkaResult<Vec<(JwkId, JWK)>> {
-        get_jwk_injector()(authority, provider)
     }
 }
 

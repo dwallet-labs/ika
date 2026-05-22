@@ -463,20 +463,22 @@ async fn test_epoch_store_presign_pool_operations() {
         "pop from empty pool should return None"
     );
 
-    // Verify mark_presign_as_used / is_presign_used tracks consumed presigns.
+    // Verify mark_presign_as_used / is_presign_used tracks consumed presigns,
+    // keyed by (session_identifier, blending_index).
     let used_session_id = SessionIdentifier::new(SessionType::InternalPresign, [99u8; 32]);
+    let used_blending_index = 0u16;
     assert!(
         !test_epoch_store
-            .is_presign_used(used_session_id)
+            .is_presign_used(used_session_id, used_blending_index)
             .expect("is_presign_used should not error"),
         "is_presign_used should return false before marking"
     );
     test_epoch_store
-        .mark_presign_as_used(used_session_id)
+        .mark_presign_as_used(used_session_id, used_blending_index)
         .expect("mark_presign_as_used should not error");
     assert!(
         test_epoch_store
-            .is_presign_used(used_session_id)
+            .is_presign_used(used_session_id, used_blending_index)
             .expect("is_presign_used should not error"),
         "is_presign_used should return true after marking"
     );
@@ -498,7 +500,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .expect("failed to insert presign for assign roundtrip");
 
     // assign_presign pops one presign from the internal pool and places it in the assigned pool
-    let assigned_session_id = test_epoch_store
+    let (assigned_session_id, assigned_blending_index) = test_epoch_store
         .assign_presign(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             assign_key_id,
@@ -523,6 +525,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .get_assigned_presign(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             assigned_session_id,
+            assigned_blending_index,
         )
         .expect("get_assigned_presign should not error")
         .expect("assigned presign should exist after assign");
@@ -541,6 +544,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .get_assigned_presign(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             assigned_session_id,
+            assigned_blending_index,
         )
         .expect("second get_assigned_presign should not error");
     assert!(
@@ -553,6 +557,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .pop_assigned_presign(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             assigned_session_id,
+            assigned_blending_index,
         )
         .expect("pop_assigned_presign should not error")
         .expect("pop should return the assigned presign");
@@ -567,6 +572,7 @@ async fn test_epoch_store_presign_pool_operations() {
         .get_assigned_presign(
             DWalletSignatureAlgorithm::ECDSASecp256k1,
             assigned_session_id,
+            assigned_blending_index,
         )
         .expect("get after pop should not error");
     assert!(

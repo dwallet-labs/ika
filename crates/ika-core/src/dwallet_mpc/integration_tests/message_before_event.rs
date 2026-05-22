@@ -99,9 +99,13 @@ async fn some_parties_receive_mpc_message_before_session_start_event() {
         )
         .await
         {
+            // `consensus_round` starts at 1; +1 round added for delayed parties; completion
+            // lands at `EXPECTED_NETWORK_DKG_ROUND_COUNT + 2` (DKG rounds + finalize + delay).
             assert_eq!(
-                consensus_round, 6,
-                "Network DKG should complete after 4 rounds, and one round was added for the delayed parties"
+                consensus_round,
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT + 2,
+                "Network DKG should complete after {} rounds, and one round was added for the delayed parties",
+                utils::EXPECTED_NETWORK_DKG_ROUND_COUNT
             );
             info!(?pending_checkpoint, "MPC flow completed successfully");
             break;

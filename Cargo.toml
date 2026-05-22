@@ -24,6 +24,7 @@ members = [
     "crates/ika-move-contracts",
     "crates/ika-network",
     "crates/ika-archival",
+    "crates/ika-test-cluster",
 ]
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
@@ -57,11 +58,13 @@ opt-level = 2
 
 [profile.simulator]
 inherits = "test"
-debug = true
-debug-assertions = true
-overflow-checks = true
-# opt-level 1 gives >5x speedup for simulator tests without slowing down build times very much.
-opt-level = 1
+# Match `--release` for the simulator profile: class-groups crypto is
+# unusable under debug-assertions / overflow-checks even at opt-level 3.
+# Keep line-table debuginfo for backtraces.
+debug = 1
+debug-assertions = false
+overflow-checks = false
+opt-level = 3
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
@@ -73,13 +76,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "babbb483"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "babbb483"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "84fa8dac"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "84fa8dac"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -225,6 +228,7 @@ tempfile = "3.20.0"
 test-fuzz = "7.2.0"
 thiserror = "2.0.12"
 tokio = "1.44.2"
+toml_edit = "0.22"
 tokio-retry = "0.3"
 tokio-stream = { version = "0.1.14", features = ["sync", "net"] }
 tonic = { version = "0.14.2", features = [
@@ -338,6 +342,7 @@ ika-types = { path = "crates/ika-types" }
 ika-move-contracts = { path = "crates/ika-move-contracts" }
 ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
+ika-test-cluster = { path = "crates/ika-test-cluster" }
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee553b25f9f619722391de33edbe2f7412c" }

@@ -1,610 +1,27 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! NetworkOwnedAddressSign DKG Module
+//! Network-owned-address (NOA) sign DKG support.
 //!
-//! This module provides functionality to compute the decentralized party DKG output
-//! for network-owned-address signing. It emulates the centralized party (user) using
-//! a deterministic zero-returning RNG (`ZeroRng`), enabling the network to perform
-//! network-owned-address signing operations without requiring an actual user.
-//!
-//! # Security Model
-//!
-//! The "user" (centralized party) key share is effectively zero/deterministic, meaning
-//! there is no user secret to protect. Security for network-owned-address signing comes entirely
-//! from the network's threshold signature scheme, not from user randomness.
-//!
-//! # Usage
-//!
-//! This module is used when creating a network key to also prepare the internal
-//! network-owned-address sign DKG output. The output can then be used for network-owned-address signing
-//! without requiring user participation.
+//! Holds two ika-side helpers for the NOA-DKG path that have no upstream equivalent:
+//! - [`network_owned_address_sign_dkg_session_identifier`] derives a curve-specific
+//!   (sig-algo-independent) session id from `network_key_id + curve`.
+//! - [`compute_noa_dkg`] runs upstream's native
+//!   `<D as twopc_mpc::dkg::Protocol>::threshold_dkg_output(pp, session_id)`
+//!   for a single curve, extracts the public key, and wraps the output in
+//!   `VersionedDwalletDKGPublicOutput::V2` so downstream sign-input construction
+//!   can round-trip it through the standard user-driven sign path.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::PerCurveNetworkOwnedAddressDkgData;
 use commitment::CommitmentSizedNumber;
-use crypto_bigint::Uint;
-use dwallet_mpc_centralized_party::{
-    CentralizedDKGWasmResult, advance_sign_by_protocol_with_rng, centralized_dkg_output_v2_with_rng,
-};
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletSignatureAlgorithm, VersionedCentralizedDKGPublicOutput,
-    VersionedDwalletUserSecretShare, VersionedPublicKeyShareAndProof,
+    DWalletCurve, VersionedDwalletDKGPublicOutput,
+    public_key_from_decentralized_dkg_output_by_curve_v2,
 };
-use dwallet_rng::ZeroRng;
-use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
-use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, RistrettoAsyncDKGProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256r1AsyncDKGProtocol, SessionIdentifier, SessionType,
-};
+use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use merlin::Transcript;
-use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
-use twopc_mpc::dkg::Protocol;
-use twopc_mpc::dkg::centralized_party::SecretKeyShare;
 
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::dwallet_dkg::{
-    BytesCentralizedPartyKeyShareVerification, compute_dwallet_dkg, try_ready_to_advance,
-};
-
-/// The result of emulating the centralized party DKG using ZeroRng.
-///
-/// # Security Note
-///
-/// The secret key share is zero (derived from ZeroRng) and is not stored here.
-/// When needed for signing, a zero scalar is used directly.
-/// This is intentional for network-owned-address signing where there is no user secret to protect.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EmulatedCentralizedDKGResult {
-    /// The public key share and proof from the emulated centralized party.
-    /// This is used as input to the decentralized party DKG.
-    pub public_key_share_and_proof: Vec<u8>,
-
-    /// The public output of the emulated centralized party DKG.
-    pub public_output: Vec<u8>,
-}
-
-/// The complete network-owned-address sign DKG output containing both centralized and
-/// decentralized party DKG results.
-///
-/// This is computed at network key instantiation time and stored in the network
-/// key public data. It allows NetworkOwnedAddressSign to use the Sign protocol directly
-/// instead of DKGAndSign, avoiding redundant DKG computation at sign time.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NetworkOwnedAddressSignDKGOutput {
-    /// The emulated centralized party DKG result.
-    pub centralized_dkg_result: EmulatedCentralizedDKGResult,
-
-    /// The decentralized party DKG public output.
-    /// This is the output that would normally be produced by running the DKG protocol.
-    pub decentralized_dkg_public_output: Vec<u8>,
-}
-
-/// Emulates the centralized party DKG for a given curve using ZeroRng.
-///
-/// This function creates a deterministic "user" DKG output that can be used
-/// for network-owned-address signing. All validators calling this function with
-/// the same inputs will produce identical outputs.
-///
-/// # Arguments
-///
-/// * `curve` - The curve to use for the DKG (e.g., Curve25519)
-/// * `protocol_public_parameters` - The serialized protocol public parameters
-/// * `session_id` - The session identifier (used for domain separation)
-///
-/// # Returns
-///
-/// Returns the emulated centralized party DKG result, including:
-/// - The public key share and proof (to be used as decentralized party input)
-/// - The public output
-/// - The "secret" key share (which is deterministic, not actually secret)
-///
-/// # Security Warning
-///
-/// This function uses ZeroRng which provides NO randomness. The output is
-/// deterministic and the "secret" key share is not secret at all.
-/// This is intentional for network-owned-address signing operations.
-pub fn emulate_centralized_dkg_for_network_owned_address_sign(
-    curve: DWalletCurve,
-    protocol_public_parameters: &[u8],
-    session_id: &[u8],
-) -> DwalletMPCResult<EmulatedCentralizedDKGResult> {
-    match curve {
-        DWalletCurve::Secp256k1 => emulate_centralized_dkg_v2::<
-            twopc_mpc::secp256k1::class_groups::DKGProtocol,
-            { twopc_mpc::secp256k1::SCALAR_LIMBS },
-            twopc_mpc::secp256k1::Scalar,
-        >(protocol_public_parameters, session_id),
-        DWalletCurve::Secp256r1 => emulate_centralized_dkg_v2::<
-            twopc_mpc::secp256r1::class_groups::DKGProtocol,
-            { twopc_mpc::secp256r1::SCALAR_LIMBS },
-            twopc_mpc::secp256r1::Scalar,
-        >(protocol_public_parameters, session_id),
-        DWalletCurve::Curve25519 => emulate_centralized_dkg_v2::<
-            twopc_mpc::curve25519::class_groups::DKGProtocol,
-            { twopc_mpc::curve25519::SCALAR_LIMBS },
-            twopc_mpc::curve25519::Scalar,
-        >(protocol_public_parameters, session_id),
-        DWalletCurve::Ristretto => emulate_centralized_dkg_v2::<
-            twopc_mpc::ristretto::class_groups::DKGProtocol,
-            { twopc_mpc::ristretto::SCALAR_LIMBS },
-            twopc_mpc::ristretto::Scalar,
-        >(protocol_public_parameters, session_id),
-    }
-}
-
-/// Internal implementation of emulated centralized DKG for a specific protocol.
-///
-/// Uses the shared `centralized_dkg_output_v2_with_rng` from `dwallet_mpc_centralized_party`
-/// with `ZeroRng` to produce deterministic output.
-///
-/// # Type Parameters
-///
-/// * `P` - The DKG protocol type
-/// * `SCALAR_LIMBS` - The number of limbs for the scalar type (curve-specific)
-/// * `ScalarValue` - The scalar type used by the protocol
-///
-/// # Security Warning
-///
-/// This function uses ZeroRng - a deterministic RNG that always returns zeros.
-/// The output is intentionally deterministic for network-owned-address signing operations.
-fn emulate_centralized_dkg_v2<P, const SCALAR_LIMBS: usize, ScalarValue>(
-    protocol_pp_bytes: &[u8],
-    session_id_bytes: &[u8],
-) -> DwalletMPCResult<EmulatedCentralizedDKGResult>
-where
-    P: twopc_mpc::dkg::Protocol<CentralizedPartySecretKeyShare = SecretKeyShare<ScalarValue>>,
-    ScalarValue:
-        From<Uint<SCALAR_LIMBS>> + PartialEq + serde::Serialize + for<'a> serde::Deserialize<'a>,
-{
-    // CRITICAL: Using ZeroRng for deterministic output.
-    // This is intentional - all validators must produce identical outputs,
-    // so we use a deterministic RNG that always returns zero.
-    let mut rng = ZeroRng::new();
-
-    // Use the shared centralized party DKG function with ZeroRng
-    let CentralizedDKGWasmResult {
-        public_key_share_and_proof,
-        public_output,
-        centralized_secret_output,
-    } = centralized_dkg_output_v2_with_rng::<P, _>(
-        protocol_pp_bytes.to_vec(),
-        session_id_bytes.to_vec(),
-        &mut rng,
-    )
-    .map_err(|e| DwalletMPCError::InternalError(format!("Emulated centralized DKG failed: {e}")))?;
-
-    // Verify that the private_output (centralized party secret key share) is zero.
-    // Since we use ZeroRng, the scalar must be zero. If it's not, something is wrong.
-    let zero_scalar: ScalarValue = Uint::<SCALAR_LIMBS>::ZERO.into();
-    let zero_secret_key_share = SecretKeyShare::from(zero_scalar);
-    let expected_zero_secret = bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(bcs::to_bytes(
-        &zero_secret_key_share,
-    )?))
-    .map_err(DwalletMPCError::BcsError)?;
-
-    if centralized_secret_output != expected_zero_secret {
-        return Err(DwalletMPCError::InternalError(
-            "Emulated centralized DKG private_output is not zero despite using ZeroRng. This indicates a bug in the DKG implementation."
-                .to_string(),
-        ));
-    }
-
-    Ok(EmulatedCentralizedDKGResult {
-        public_key_share_and_proof,
-        public_output,
-    })
-}
-
-/// Returns the serialized zero centralized party "secret" key share for network-owned-address signing.
-///
-/// This function returns a zero scalar without performing any DKG computation.
-/// The emulated centralized DKG uses ZeroRng which always produces zero bytes,
-/// resulting in a deterministic zero scalar for the centralized party's secret.
-///
-/// # Type Parameters
-///
-/// * `SCALAR_LIMBS` - The number of limbs for the scalar type (curve-specific)
-/// * `ScalarValue` - The scalar type used by the curve
-///
-/// # Security Note
-///
-/// The returned "secret" is NOT actually secret - it's explicitly zero.
-/// This is intentional for network-owned-address signing where there is no user secret to protect.
-/// The security comes from the network's threshold signature, not from this value.
-///
-/// # Returns
-///
-/// The serialized zero scalar (wrapped in `VersionedDwalletUserSecretShare`).
-pub fn get_zero_centralized_secret(curve: DWalletCurve) -> DwalletMPCResult<Vec<u8>> {
-    match curve {
-        DWalletCurve::Secp256k1 => get_zero_centralized_secret_internal::<
-            { twopc_mpc::secp256k1::SCALAR_LIMBS },
-            twopc_mpc::secp256k1::Scalar,
-        >(),
-        DWalletCurve::Secp256r1 => get_zero_centralized_secret_internal::<
-            { twopc_mpc::secp256r1::SCALAR_LIMBS },
-            twopc_mpc::secp256r1::Scalar,
-        >(),
-        DWalletCurve::Curve25519 => get_zero_centralized_secret_internal::<
-            { twopc_mpc::curve25519::SCALAR_LIMBS },
-            twopc_mpc::curve25519::Scalar,
-        >(),
-        DWalletCurve::Ristretto => get_zero_centralized_secret_internal::<
-            { twopc_mpc::ristretto::SCALAR_LIMBS },
-            twopc_mpc::ristretto::Scalar,
-        >(),
-    }
-}
-
-fn get_zero_centralized_secret_internal<const SCALAR_LIMBS: usize, ScalarValue>()
--> DwalletMPCResult<Vec<u8>>
-where
-    ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,
-{
-    // Return Uint::ZERO converted to ScalarValue and serialized as the centralized party's secret key share.
-    // The emulated centralized DKG (emulate_centralized_dkg_v2) verifies that
-    // ZeroRng produces a zero secret key share, so we can use Uint::ZERO directly.
-    let zero_scalar: ScalarValue = Uint::<SCALAR_LIMBS>::ZERO.into();
-    let zero_secret_key_share = SecretKeyShare::from(zero_scalar);
-    let zero_scalar_bytes =
-        bcs::to_bytes(&zero_secret_key_share).map_err(DwalletMPCError::BcsError)?;
-    let centralized_secret_output =
-        bcs::to_bytes(&VersionedDwalletUserSecretShare::V1(zero_scalar_bytes))
-            .map_err(DwalletMPCError::BcsError)?;
-    Ok(centralized_secret_output)
-}
-
-/// Emulates the centralized party's partial signature for network-owned-address signing.
-///
-/// This function creates a deterministic partial signature using ZeroRng to emulate
-/// the centralized party. All validators calling this function with the same inputs
-/// will produce identical outputs.
-///
-/// # Arguments
-///
-/// * `signature_algorithm` - The signature algorithm (e.g., EdDSA)
-/// * `emulated_dkg_result` - The emulated DKG result from `emulate_centralized_dkg_for_network_owned_address_sign`
-/// * `message` - The message to sign
-/// * `hash_scheme` - The hash scheme to use
-/// * `presign` - The presign data (from internal presign pool)
-/// * `protocol_public_parameters` - The protocol public parameters
-///
-/// # Returns
-///
-/// The serialized partial signature from the emulated centralized party.
-///
-/// # Security Warning
-///
-/// This function uses ZeroRng which provides NO randomness. The output is
-/// deterministic. This is intentional for network-owned-address signing operations.
-pub fn emulate_centralized_party_partial_signature(
-    signature_algorithm: DWalletSignatureAlgorithm,
-    emulated_dkg_result: &EmulatedCentralizedDKGResult,
-    message: Vec<u8>,
-    hash_scheme: group::HashScheme,
-    presign: &[u8],
-    protocol_public_parameters: &[u8],
-) -> DwalletMPCResult<Vec<u8>> {
-    match signature_algorithm {
-        DWalletSignatureAlgorithm::ECDSASecp256k1 => emulate_sign_centralized::<
-            twopc_mpc::secp256k1::class_groups::ECDSAProtocol,
-            { twopc_mpc::secp256k1::SCALAR_LIMBS },
-            twopc_mpc::secp256k1::Scalar,
-        >(
-            emulated_dkg_result,
-            message,
-            hash_scheme,
-            presign,
-            protocol_public_parameters,
-        ),
-        DWalletSignatureAlgorithm::ECDSASecp256r1 => emulate_sign_centralized::<
-            twopc_mpc::secp256r1::class_groups::ECDSAProtocol,
-            { twopc_mpc::secp256r1::SCALAR_LIMBS },
-            twopc_mpc::secp256r1::Scalar,
-        >(
-            emulated_dkg_result,
-            message,
-            hash_scheme,
-            presign,
-            protocol_public_parameters,
-        ),
-        DWalletSignatureAlgorithm::EdDSA => emulate_sign_centralized::<
-            twopc_mpc::curve25519::class_groups::EdDSAProtocol,
-            { twopc_mpc::curve25519::SCALAR_LIMBS },
-            twopc_mpc::curve25519::Scalar,
-        >(
-            emulated_dkg_result,
-            message,
-            hash_scheme,
-            presign,
-            protocol_public_parameters,
-        ),
-        DWalletSignatureAlgorithm::Taproot => emulate_sign_centralized::<
-            twopc_mpc::secp256k1::class_groups::TaprootProtocol,
-            { twopc_mpc::secp256k1::SCALAR_LIMBS },
-            twopc_mpc::secp256k1::Scalar,
-        >(
-            emulated_dkg_result,
-            message,
-            hash_scheme,
-            presign,
-            protocol_public_parameters,
-        ),
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate => emulate_sign_centralized::<
-            twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol,
-            { twopc_mpc::ristretto::SCALAR_LIMBS },
-            twopc_mpc::ristretto::Scalar,
-        >(
-            emulated_dkg_result,
-            message,
-            hash_scheme,
-            presign,
-            protocol_public_parameters,
-        ),
-    }
-}
-
-/// Internal implementation of emulated centralized party signing for a specific protocol.
-///
-/// Uses the shared `advance_sign_by_protocol_with_rng` from `dwallet_mpc_centralized_party`
-/// with `ZeroRng` to produce deterministic output.
-///
-/// Type parameters:
-/// - `P`: The signing protocol
-/// - `SCALAR_LIMBS`: The number of limbs for the scalar type (curve-specific)
-/// - `ScalarValue`: The scalar type used by the protocol
-fn emulate_sign_centralized<P: twopc_mpc::sign::Protocol, const SCALAR_LIMBS: usize, ScalarValue>(
-    emulated_dkg_result: &EmulatedCentralizedDKGResult,
-    message: Vec<u8>,
-    hash_scheme: group::HashScheme,
-    presign_bytes: &[u8],
-    protocol_pp_bytes: &[u8],
-) -> DwalletMPCResult<Vec<u8>>
-where
-    ScalarValue: From<Uint<SCALAR_LIMBS>> + serde::Serialize,
-{
-    // Get the zero secret key share (the centralized party's secret is always zero for network-owned-address signing)
-    let zero_secret_key_share =
-        get_zero_centralized_secret_internal::<SCALAR_LIMBS, ScalarValue>()?;
-
-    // Deserialize the centralized party DKG public output, unwrapping the versioned envelope.
-    // Network-owned-address signing always produces V2 via `centralized_dkg_output_v2_with_rng`.
-    let versioned_dkg_output =
-        bcs::from_bytes::<VersionedCentralizedDKGPublicOutput>(&emulated_dkg_result.public_output)
-            .map_err(DwalletMPCError::BcsError)?;
-    let centralized_party_dkg_public_output: P::CentralizedPartyDKGOutput =
-        match versioned_dkg_output {
-            VersionedCentralizedDKGPublicOutput::V2(output) => {
-                bcs::from_bytes::<P::CentralizedPartyDKGOutput>(output.as_slice())
-                    .map_err(DwalletMPCError::BcsError)?
-            }
-            VersionedCentralizedDKGPublicOutput::V1(_) => {
-                return Err(DwalletMPCError::InternalError(
-                    "Network-owned-address sign DKG output should always be V2, got V1".to_string(),
-                ));
-            }
-        };
-
-    // CRITICAL: Using ZeroRng for deterministic output.
-    // This is intentional - all validators must produce identical outputs,
-    // so we use a deterministic RNG that always returns zero.
-    let mut rng = ZeroRng::new();
-
-    // Use the shared centralized party sign function with ZeroRng
-    advance_sign_by_protocol_with_rng::<P, _>(
-        &zero_secret_key_share,
-        presign_bytes,
-        message,
-        hash_scheme,
-        centralized_party_dkg_public_output,
-        protocol_pp_bytes,
-        &mut rng,
-    )
-    .map_err(|e| DwalletMPCError::InternalError(format!("Emulated centralized sign failed: {e}")))
-}
-
-/// Helper to execute DKG using existing `try_ready_to_advance` and `compute_dwallet_dkg`.
-///
-/// Takes raw bytes and performs deserialization internally, reducing code duplication
-/// in the curve dispatch. The `consensus_round` value doesn't matter for single-round
-/// DKG with no message exchange.
-fn advance_and_finalize_decentralized_party_dkg<
-    P,
-    CentralizedPublicKeyShare,
-    KeyShareVerification,
->(
-    curve: DWalletCurve,
-    session_id: CommitmentSizedNumber,
-    protocol_pp_bytes: &[u8],
-    centralized_public_key_share_bytes: &[u8],
-    key_share_verification: BytesCentralizedPartyKeyShareVerification,
-    access_structure: &WeightedThresholdAccessStructure,
-    party_id: group::PartyID,
-    rng: &mut impl group::CsRng,
-) -> DwalletMPCResult<Vec<u8>>
-where
-    P: Protocol,
-    P::ProtocolPublicParameters: serde::de::DeserializeOwned,
-    CentralizedPublicKeyShare: serde::de::DeserializeOwned,
-    KeyShareVerification: TryFrom<BytesCentralizedPartyKeyShareVerification, Error = bcs::Error>,
-    <P::DKGDecentralizedParty as mpc::Party>::PublicInput: From<(
-        Arc<P::ProtocolPublicParameters>,
-        CentralizedPublicKeyShare,
-        KeyShareVerification,
-    )>,
-{
-    // Deserialize protocol public parameters
-    let protocol_pp: P::ProtocolPublicParameters =
-        bcs::from_bytes(protocol_pp_bytes).map_err(DwalletMPCError::BcsError)?;
-
-    // Deserialize centralized public key share
-    let centralized_public_key_share: CentralizedPublicKeyShare =
-        bcs::from_bytes(centralized_public_key_share_bytes).map_err(DwalletMPCError::BcsError)?;
-
-    // Convert key share verification to the protocol-specific type
-    let key_share_verification: KeyShareVerification = key_share_verification
-        .try_into()
-        .map_err(DwalletMPCError::BcsError)?;
-
-    // Create public input
-    let public_input = (
-        Arc::new(protocol_pp),
-        centralized_public_key_share,
-        key_share_verification,
-    )
-        .into();
-
-    // Empty message maps - single-round DKG needs no messages
-    let empty_messages: HashMap<u64, HashMap<group::PartyID, Vec<u8>>> = HashMap::new();
-
-    // consensus_round value doesn't matter for single-round DKG with no message exchange
-    let advance_request = try_ready_to_advance::<P>(party_id, access_structure, 0, &empty_messages)?
-        .ok_or_else(|| DwalletMPCError::InternalError(
-            "Network-owned-address sign DKG not ready to advance (should be ready immediately for single-round DKG)".to_string(),
-        ))?;
-
-    let result = compute_dwallet_dkg::<P>(
-        curve,
-        party_id,
-        access_structure,
-        session_id,
-        advance_request,
-        public_input,
-        rng,
-    )?;
-
-    match result {
-        GuaranteedOutputDeliveryRoundResult::Finalize {
-            public_output_value,
-            ..
-        } => Ok(public_output_value),
-        GuaranteedOutputDeliveryRoundResult::Advance { .. } => Err(DwalletMPCError::InternalError(
-            "Network-owned-address sign DKG did not finalize in single round as expected"
-                .to_string(),
-        )),
-    }
-}
-
-/// Computes the decentralized party DKG output for network-owned-address signing.
-///
-/// This function runs the decentralized party DKG protocol locally. Since the DKG
-/// is a single-round protocol, each validator can compute their contribution
-/// independently without message exchange.
-///
-/// # Arguments
-///
-/// * `curve` - The curve to use
-/// * `session_id` - The session identifier
-/// * `protocol_pp` - The serialized protocol public parameters
-/// * `centralized_result` - The emulated centralized party DKG result
-/// * `access_structure` - The weighted threshold access structure
-/// * `party_id` - The party identifier for this validator
-///
-/// # Returns
-///
-/// The serialized decentralized party DKG public output.
-pub fn compute_decentralized_dkg_output(
-    curve: DWalletCurve,
-    session_id: CommitmentSizedNumber,
-    protocol_pp: &[u8],
-    centralized_result: &EmulatedCentralizedDKGResult,
-    access_structure: &WeightedThresholdAccessStructure,
-    party_id: group::PartyID,
-) -> DwalletMPCResult<Vec<u8>> {
-    // Get the zero centralized secret for verification
-    let centralized_secret = get_zero_centralized_secret(curve)?;
-
-    // Deserialize the centralized party public key share and proof
-    let centralized_party_public_key_share: VersionedPublicKeyShareAndProof =
-        bcs::from_bytes(&centralized_result.public_key_share_and_proof)
-            .map_err(DwalletMPCError::BcsError)?;
-
-    let VersionedPublicKeyShareAndProof::V1(centralized_party_public_key_share_bytes) =
-        centralized_party_public_key_share;
-
-    // Create the key share verification from the zero centralized secret
-    let key_share_verification = BytesCentralizedPartyKeyShareVerification::Public {
-        centralized_party_secret_key_share: centralized_secret,
-    };
-
-    // Use OsCsRng for cryptographic randomness
-    let mut rng = OsCsRng;
-
-    // Dispatch to the appropriate protocol based on curve.
-    // The execute_dkg helper handles deserialization and public input construction.
-    match curve {
-        DWalletCurve::Secp256k1 => {
-            advance_and_finalize_decentralized_party_dkg::<Secp256k1AsyncDKGProtocol, _, _>(
-                curve,
-                session_id,
-                protocol_pp,
-                &centralized_party_public_key_share_bytes,
-                key_share_verification,
-                access_structure,
-                party_id,
-                &mut rng,
-            )
-        }
-        DWalletCurve::Secp256r1 => {
-            advance_and_finalize_decentralized_party_dkg::<Secp256r1AsyncDKGProtocol, _, _>(
-                curve,
-                session_id,
-                protocol_pp,
-                &centralized_party_public_key_share_bytes,
-                key_share_verification,
-                access_structure,
-                party_id,
-                &mut rng,
-            )
-        }
-        DWalletCurve::Curve25519 => {
-            advance_and_finalize_decentralized_party_dkg::<Curve25519AsyncDKGProtocol, _, _>(
-                curve,
-                session_id,
-                protocol_pp,
-                &centralized_party_public_key_share_bytes,
-                key_share_verification,
-                access_structure,
-                party_id,
-                &mut rng,
-            )
-        }
-        DWalletCurve::Ristretto => {
-            advance_and_finalize_decentralized_party_dkg::<RistrettoAsyncDKGProtocol, _, _>(
-                curve,
-                session_id,
-                protocol_pp,
-                &centralized_party_public_key_share_bytes,
-                key_share_verification,
-                access_structure,
-                party_id,
-                &mut rng,
-            )
-        }
-    }
-}
-
-/// Gets the session identifier for network-owned-address sign DKG.
-///
-/// This creates a deterministic session ID based on the network key ID,
-/// curve, and signature algorithm, ensuring all validators agree on the same
-/// session identifier.
-///
-/// The function computes a preimage using Merlin transcript and creates a
-/// `SessionIdentifier` from it, consistent with how session IDs are created
-/// elsewhere in the codebase.
-///
-/// # Arguments
-///
-/// * `network_key_id` - The object ID of the network encryption key
-/// * `curve` - The curve being used
-/// * `signature_algorithm` - The signature algorithm being used
-///
-/// # Returns
-///
-/// A `SessionIdentifier` for the network-owned-address sign DKG.
 /// DKG session identifier for network-owned-address signing.
 ///
 /// DKG is curve-specific but signature-algorithm-independent: a single DKG on a curve
@@ -620,8 +37,6 @@ pub fn network_owned_address_sign_dkg_session_identifier(
     transcript.append_message(b"network_key_id", network_key_id);
     transcript.append_u64(b"curve", curve as u64);
 
-    // Generate a session identifier preimage in a deterministic way
-    // (internally, it uses a hash function to pseudo-randomly generate it).
     let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
         [0; SessionIdentifier::LENGTH];
     transcript.challenge_bytes(
@@ -632,103 +47,46 @@ pub fn network_owned_address_sign_dkg_session_identifier(
     SessionIdentifier::new(SessionType::System, session_identifier_preimage)
 }
 
-/// Computes the full network-owned-address sign DKG output for network-owned-address signing.
+/// Runs the threshold-only DKG for a single curve, extracts the public key and
+/// wraps the output in `VersionedDwalletDKGPublicOutput::V2` for downstream
+/// sign-input construction.
 ///
-/// This function computes both the centralized party DKG (emulated with ZeroRng)
-/// and the decentralized party DKG outputs. The decentralized DKG is a single-round
-/// protocol that can be computed independently by each validator.
-///
-/// The output is stored in the network key public data and used for NetworkOwnedAddressSign
-/// operations, allowing the Sign protocol to be used directly instead of DKGAndSign.
-///
-/// # Arguments
-///
-/// * `network_key_id` - The 32-byte network key identifier
-/// * `curve` - The curve to use for the DKG
-/// * `algorithm` - The signature algorithm
-/// * `protocol_pp` - The serialized protocol public parameters for the curve
-/// * `access_structure` - The weighted threshold access structure
-///
-/// # Returns
-///
-/// The serialized DKG output if successful, or an error if the computation fails.
-pub fn compute_network_owned_address_sign_dkg_output(
+/// ika's NOA emulator was removed; this calls upstream's native
+/// `<D as twopc_mpc::dkg::Protocol>::threshold_dkg_output(pp, session_id)` directly
+/// to produce the decentralized-party DKG output for threshold (no centralized
+/// party) mode. The session id is derived from `network_key_id + curve`
+/// (curve-specific, sig-algo independent) per
+/// [`network_owned_address_sign_dkg_session_identifier`].
+pub(crate) fn compute_noa_dkg<D>(
     network_key_id: &[u8; 32],
     curve: DWalletCurve,
-    protocol_pp: &[u8],
-    access_structure: &WeightedThresholdAccessStructure,
-    party_id: group::PartyID,
-) -> DwalletMPCResult<Vec<u8>> {
-    // Compute the session ID for deterministic DKG
-    let session_id = network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
+    protocol_public_parameters: &D::ProtocolPublicParameters,
+) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData>
+where
+    D: twopc_mpc::dkg::Protocol,
+{
+    let session_identifier =
+        network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
+    let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
 
-    // Emulate the centralized party DKG
-    let centralized_result = emulate_centralized_dkg_for_network_owned_address_sign(
-        curve,
-        protocol_pp,
-        session_id.as_ref(),
-    )?;
-
-    // Convert session_id to CommitmentSizedNumber for the decentralized DKG
-    let session_id = CommitmentSizedNumber::from_le_slice(session_id.as_ref());
-
-    // Compute the decentralized party DKG output
-    let decentralized_dkg_public_output = compute_decentralized_dkg_output(
-        curve,
-        session_id,
-        protocol_pp,
-        &centralized_result,
-        access_structure,
-        party_id,
-    )?;
-
-    // Create the full network-owned-address sign DKG output
-    let output = NetworkOwnedAddressSignDKGOutput {
-        centralized_dkg_result: centralized_result,
-        decentralized_dkg_public_output,
-    };
-
-    // Serialize the full output
-    let serialized_output = bcs::to_bytes(&output).map_err(DwalletMPCError::BcsError)?;
-
-    Ok(serialized_output)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_network_owned_address_sign_dkg_session_identifier_is_deterministic() {
-        let network_key_id = [1u8; 32];
-        let curve = DWalletCurve::Curve25519;
-
-        let first_call = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
-        let second_call = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
-
-        assert_eq!(first_call, second_call);
-    }
-
-    #[test]
-    fn test_network_owned_address_sign_dkg_session_identifier_varies_with_inputs() {
-        let network_key_id = [1u8; 32];
-        let curve = DWalletCurve::Curve25519;
-
-        let original = network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
-
-        // Different network key
-        let different_key = [2u8; 32];
-        let with_different_key =
-            network_owned_address_sign_dkg_session_identifier(&different_key, curve);
-
-        // Different curve
-        let with_different_curve = network_owned_address_sign_dkg_session_identifier(
-            &network_key_id,
-            DWalletCurve::Secp256k1,
-        );
-
-        assert_ne!(original, with_different_key);
-        assert_ne!(original, with_different_curve);
-        assert_ne!(with_different_key, with_different_curve);
-    }
+    let dkg_output =
+        D::threshold_dkg_output(protocol_public_parameters, session_id).map_err(|e| {
+            DwalletMPCError::InternalError(format!("threshold_dkg_output {curve:?}: {e}"))
+        })?;
+    let dkg_output = bcs::to_bytes(&dkg_output)?;
+    let public_key = public_key_from_decentralized_dkg_output_by_curve_v2(curve, &dkg_output)
+        .map_err(|e| {
+            DwalletMPCError::InternalError(format!("public_key extract {curve:?}: {e}"))
+        })?;
+    // Wrap in VersionedDwalletDKGPublicOutput::V2 so downstream sign-input
+    // construction (which decodes via VersionedDwalletDKGPublicOutput) can
+    // round-trip through the standard user-driven sign path.
+    let dkg_output = bcs::to_bytes(&VersionedDwalletDKGPublicOutput::V2 {
+        public_key_bytes: public_key.clone(),
+        dkg_output,
+    })?;
+    Ok(PerCurveNetworkOwnedAddressDkgData {
+        dkg_output,
+        public_key,
+    })
 }

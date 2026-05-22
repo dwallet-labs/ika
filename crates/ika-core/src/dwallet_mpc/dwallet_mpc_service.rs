@@ -26,7 +26,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -1249,7 +1249,7 @@ impl DWalletMPCService {
                         request.signature_algorithm,
                         request.dwallet_network_encryption_key_id,
                     ) {
-                        Ok(Some((_presign_session_id, presign))) => {
+                        Ok(Some((_presign_session_id, _presign_blending_index, presign))) => {
                             match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
                                 Ok(presign) => {
                                     info!(
@@ -2006,11 +2006,11 @@ impl DWalletMPCService {
                         &output,
                     ) {
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V1(_)) => {
-                            // V1 only supports Secp256k1
-                            vec![DWalletCurve::Secp256k1 as u32]
+                            unreachable!("V1 network DKG outputs are no longer produced")
                         }
-                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_)) => {
-                            // V2 supports all curves
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_))
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V3(_)) => {
+                            // V2 (bwd-compat) and V3 (post-PR-#1707 main) both support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2074,11 +2074,11 @@ impl DWalletMPCService {
                 } else {
                     match bcs::from_bytes::<dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput>(&output) {
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V1(_)) => {
-                            // V1 only supports Secp256k1
-                            vec![DWalletCurve::Secp256k1 as u32]
+                            unreachable!("V1 reconfiguration outputs are no longer produced")
                         }
-                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_)) => {
-                            // V2 supports all curves
+                        Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_))
+                        | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
+                            // V2 (bwd-compat) and V3 (post-PR-#1707 main) both support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2226,17 +2226,22 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
 
         // Verify that the validators local class-groups key is the
         // same as stored in the system state object onchain.
         // This makes sure the seed we are using is the same seed we used at setup
         // to create the encryption key, and thus it assures we will generate the same decryption key too.
+        //
+        // Post-bump: the on-chain bytes are now `ValidatorEncryptionKeysAndProofs` (class
+        // groups + 3 PVSS keys); compare against the same combined struct re-derived from
+        // the local key material. See the wire-incompat warning on
+        // `ValidatorEncryptionKeysAndProofs`.
         if onchain_validator
             .get_mpc_data()
             .unwrap()
             .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.encryption_key_and_proof())?
+            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),

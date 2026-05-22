@@ -5,12 +5,22 @@ version.workspace = true
 
 [dependencies]
 dwallet-rng.workspace = true
-class_groups = { workspace = true, features = ["parallel"] }
+class_groups = { workspace = true }
 group.workspace = true
 crypto-bigint.workspace = true
 serde.workspace = true
 ika-types.workspace = true
 twopc_mpc.workspace = true
+
+# Production builds run crypto with rayon-backed parallelism. Under
+# `cargo simtest` (cfg msim), rayon worker threads have no msim node
+# context and panic at the first tracing/tokio call, so we drop the
+# `parallel` feature in that profile to force sequential iteration.
+[target.'cfg(not(msim))'.dependencies]
+class_groups = { workspace = true, features = ["parallel"] }
+
+[dev-dependencies]
+bcs.workspace = true
 
 [lints]
 workspace = true

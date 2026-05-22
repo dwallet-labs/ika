@@ -14,8 +14,9 @@ use crate::dwallet_mpc::mpc_session::{
 use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
-    authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
-    get_validators_class_groups_public_keys_and_proofs, party_id_to_authority_name,
+    ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
+    generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
+    party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
@@ -28,7 +29,6 @@ use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use hex;
 use ika_protocol_config::ProtocolConfig;
-use ika_types::committee::ClassGroupsEncryptionKeyAndProof;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
@@ -101,8 +101,12 @@ pub(crate) struct DWalletMPCManager {
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
-    pub(crate) validators_class_groups_public_keys_and_proofs:
-        HashMap<PartyID, ClassGroupsEncryptionKeyAndProof>,
+    /// All four per-validator on-chain public-key payloads (class groups + 3
+    /// PVSS HPKE) keyed by party id. Built once at MPC manager init from the
+    /// committee's 4 sibling HashMaps; passed to `session_input_from_request`
+    /// per session-input construction. See `ValidatorMpcKeysByPartyId`
+    /// for the bundle's contents.
+    pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
 
     /// The set of malicious actors that were agreed upon by a quorum of validators.
@@ -284,8 +288,7 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            validators_class_groups_public_keys_and_proofs:
-                get_validators_class_groups_public_keys_and_proofs(&committee)?,
+            validator_mpc_keys_by_party_id: get_validator_mpc_keys_by_party_id(&committee)?,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
             last_session_to_complete_in_current_epoch: 0,
@@ -660,7 +663,7 @@ impl DWalletMPCManager {
             .weighted_majority_vote(&self.access_structure)
         {
             Ok((_, majority_vote)) => majority_vote,
-            Err(mpc::Error::ThresholdNotReached) => false,
+            Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => false,
             Err(e) => {
                 error!(
                     error = %e,
@@ -767,7 +770,8 @@ impl DWalletMPCManager {
             &self.committee,
             &self.network_keys,
             self.next_active_committee.clone(),
-            self.validators_class_groups_public_keys_and_proofs.clone(),
+            self.validator_mpc_keys_by_party_id.clone(),
+            &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => SessionStatus::Active {
                 public_input,
@@ -998,11 +1002,11 @@ impl DWalletMPCManager {
         };
 
         // Try to get a presign from the internal presign pool
-        let (presign_session_id, presign) = match self
+        let (presign_session_id, presign_blending_index, presign) = match self
             .epoch_store
             .pop_presign(signature_algorithm, dwallet_network_encryption_key_id)
         {
-            Ok(Some(pair)) => pair,
+            Ok(Some(triple)) => triple,
             Ok(None) => {
                 error!(
                     ?signature_algorithm,
@@ -1026,11 +1030,12 @@ impl DWalletMPCManager {
         // Check if this presign has already been used (safety check)
         if self
             .epoch_store
-            .is_presign_used(presign_session_id)
+            .is_presign_used(presign_session_id, presign_blending_index)
             .unwrap_or(false)
         {
             error!(
                 ?presign_session_id,
+                ?presign_blending_index,
                 should_never_happen = true,
                 "Presign has already been used — this should not happen"
             );
@@ -1038,9 +1043,13 @@ impl DWalletMPCManager {
         }
 
         // Mark the presign as used to prevent double-spending
-        if let Err(e) = self.epoch_store.mark_presign_as_used(presign_session_id) {
+        if let Err(e) = self
+            .epoch_store
+            .mark_presign_as_used(presign_session_id, presign_blending_index)
+        {
             error!(
                 ?presign_session_id,
+                ?presign_blending_index,
                 error = ?e,
                 should_never_happen = true,
                 "Failed to mark presign as used"
@@ -1365,7 +1374,6 @@ impl DWalletMPCManager {
                     key_data.current_epoch,
                     self.access_structure.clone(),
                     key_data,
-                    self.party_id,
                 )
                 .await;
 
@@ -1721,7 +1729,7 @@ impl DWalletMPCManager {
 
                 Some((malicious_authorities, output))
             }
-            Err(mpc::Error::ThresholdNotReached) => None,
+            Err(e) if matches!(e.kind, mpc::ErrorKind::ThresholdNotReached) => None,
             Err(e) => {
                 error!(
                     ?session_identifier,

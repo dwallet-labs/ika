@@ -116,12 +116,16 @@ async fn network_owned_address_sign_flow(
         pool_size_before > 0,
         "pool should have at least one presign"
     );
-    let presign_session_identifiers_before: HashSet<SessionIdentifier> = test_state.epoch_stores[0]
+    let presigns_before: HashSet<(SessionIdentifier, u16)> = test_state.epoch_stores[0]
         .presign_pools
         .lock()
         .unwrap()
         .get(&(signature_algorithm, network_key_id))
-        .map(|pool| pool.iter().map(|(id, _)| *id).collect())
+        .map(|pool| {
+            pool.iter()
+                .map(|(id, blending_index, _)| (*id, *blending_index))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Send a NetworkOwnedAddressSignRequest to all validators via the channel.
@@ -181,13 +185,9 @@ async fn network_owned_address_sign_flow(
         .lock()
         .unwrap()
         .clone();
-    let consumed_from_snapshot: HashSet<_> = presign_session_identifiers_before
+    let consumed_from_snapshot: HashSet<_> = presigns_before
         .iter()
-        .filter(|id| {
-            used_presigns
-                .get(id)
-                .is_some_and(|(used_count, _)| *used_count > 0)
-        })
+        .filter(|presign_key| used_presigns.contains_key(presign_key))
         .collect();
     info!(
         used_presigns_count = used_presigns.len(),
@@ -247,26 +247,8 @@ async fn wait_for_network_owned_address_sign_output(
 
 // === Per-algorithm E2E tests ===
 
-/// ECDSA centralized party emulation with ZeroRng currently fails with
-/// `Commitment(InvalidPublicParameters)` in `SignCentralizedPartyV2`.
-///
-/// The Schnorr-based protocols (EdDSA, SchnorrkelSubstrate, Taproot) work because their
-/// commitment scheme tolerates a zero secret key share, while ECDSA's does not.
-///
-/// The centralized party partial signature emulation (`emulate_centralized_party_partial_signature`
-/// in `input.rs`) runs synchronously on the main thread outside any Rayon context.
-/// For Schnorr this is fine (cheap), but for ECDSA it would also be expensive even if
-/// the commitment issue were resolved. Two possible fixes:
-/// 1. Move the emulation into the Rayon cryptographic computation pipeline so it runs
-///    on the Rayon thread pool alongside the decentralized party sign computation.
-/// 2. Adapt the Sign protocol to accept a flag that makes it compute the centralized
-///    party partial signature internally (within its own Rayon task), eliminating the
-///    need to pre-compute it in `session_input_from_request`.
-///
-/// Unignore once the ECDSA `Commitment(InvalidPublicParameters)` issue is resolved.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
 async fn test_network_owned_address_sign_ecdsa_secp256k1() {
     network_owned_address_sign_flow(
         DWalletCurve::Secp256k1,
@@ -276,10 +258,8 @@ async fn test_network_owned_address_sign_ecdsa_secp256k1() {
     .await;
 }
 
-/// See [`test_network_owned_address_sign_ecdsa_secp256k1`] for details on why this is ignored.
 #[tokio::test]
 #[cfg(test)]
-#[ignore = "ECDSA centralized party emulation with ZeroRng fails: Commitment(InvalidPublicParameters)"]
 async fn test_network_owned_address_sign_ecdsa_secp256r1() {
     network_owned_address_sign_flow(
         DWalletCurve::Secp256r1,

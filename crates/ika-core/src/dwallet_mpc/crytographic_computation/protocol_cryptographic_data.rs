@@ -25,6 +25,8 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use std::collections::HashMap;
+use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
+use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_compat_reconfig;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum ProtocolCryptographicData {
@@ -77,12 +79,38 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
+    /// Backward-compatible network DKG — runs the mainnet-v1.1.8-shape Party
+    /// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`).
+    /// Selected when `ProtocolConfig::is_network_encryption_key_version_v3()`
+    /// is `false`.
+    NetworkEncryptionKeyDkgBwdCompat {
+        public_input: <bwd_compat_dkg::Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<bwd_compat_dkg::Party as mpc::Party>::Message>,
+        class_groups_decryption_key: ClassGroupsDecryptionKey,
+    },
+    /// Network DKG running the post-PR-#1707 main Party
+    /// (`twopc_mpc::decentralized_party::dkg::Party`). Selected when
+    /// `ProtocolConfig::is_network_encryption_key_version_v3()` is `true`.
     NetworkEncryptionKeyDkg {
         public_input: <twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::PublicInput,
         advance_request:
             AdvanceRequest<<twopc_mpc::decentralized_party::dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
+    /// Backward-compatible network Reconfiguration — runs the
+    /// mainnet-v1.1.8-shape Party
+    /// (`twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`).
+    /// Selected when `ProtocolConfig::is_reconfiguration_message_version_v3()`
+    /// is `false`.
+    NetworkEncryptionKeyReconfigurationBwdCompat {
+        data: NetworkEncryptionKeyReconfigurationData,
+        public_input: <bwd_compat_reconfig::Party as mpc::Party>::PublicInput,
+        advance_request: AdvanceRequest<<bwd_compat_reconfig::Party as mpc::Party>::Message>,
+        decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+    },
+    /// Network Reconfiguration running the main Party (`ReconfigurationParty`).
+    /// Selected when `ProtocolConfig::is_reconfiguration_message_version_v3()`
+    /// is `true`.
     NetworkEncryptionKeyReconfiguration {
         data: NetworkEncryptionKeyReconfigurationData,
         public_input: <ReconfigurationParty as mpc::Party>::PublicInput,
@@ -230,6 +258,10 @@ impl ProtocolCryptographicData {
                     req.attempt_number
                 }
             },
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
+                advance_request,
+                ..
+            } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
@@ -253,6 +285,9 @@ impl ProtocolCryptographicData {
                 advance_request:
                     DWalletDKGAdvanceRequestByCurve::RistrettoDWalletDKG(advance_request),
                 ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgBwdCompat {
+                advance_request, ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..
@@ -408,9 +443,16 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::EncryptedShareVerification { .. }
             | ProtocolCryptographicData::PartialSignatureVerification { .. }
             | ProtocolCryptographicData::MakeDWalletUserSecretKeySharesPublic { .. } => None,
+            ProtocolCryptographicData::NetworkEncryptionKeyReconfigurationBwdCompat {
+                advance_request,
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyReconfiguration {
                 advance_request,
                 ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkEncryptionKeyDkgBwdCompat {
+                advance_request, ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkEncryptionKeyDkg {
                 advance_request, ..

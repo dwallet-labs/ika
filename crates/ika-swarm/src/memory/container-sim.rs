@@ -3,10 +3,10 @@
 
 use ika_config::NodeConfig;
 use ika_node::{IkaNode, IkaNodeHandle};
-use ika_types::base_types::ConciseableName;
 use prometheus::Registry;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Weak};
+use sui_types::base_types::ConciseableName;
 use tokio::sync::watch;
 use tracing::{info, trace};
 
@@ -21,7 +21,7 @@ pub(crate) struct Container {
 
 #[derive(Debug)]
 struct ContainerHandle {
-    node_id: ika_simulator::task::NodeId,
+    node_id: sui_simulator::task::NodeId,
 }
 
 /// When dropped, stop and wait for the node running in this Container to completely shutdown.
@@ -29,7 +29,7 @@ impl Drop for Container {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             tracing::info!("shutting down {}", handle.node_id);
-            ika_simulator::runtime::Handle::try_current().map(|h| h.delete_node(handle.node_id));
+            sui_simulator::runtime::Handle::try_current().map(|h| h.delete_node(handle.node_id));
         }
     }
 }
@@ -40,7 +40,7 @@ impl Container {
         let (startup_sender, mut startup_receiver) = tokio::sync::watch::channel(Weak::new());
         let (cancel_sender, cancel_receiver) = tokio::sync::watch::channel(false);
 
-        let handle = ika_simulator::runtime::Handle::current();
+        let handle = sui_simulator::runtime::Handle::current();
         let builder = handle.create_node();
 
         let socket_addr = config.network_address.to_socket_addr().unwrap();
