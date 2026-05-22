@@ -23,8 +23,11 @@ import {
 	fromNumberToCurve,
 	validateCurveSignatureAlgorithm,
 	validateHashSignatureCombination,
+	validateImportedKeySignatureAlgorithm,
 } from './hash-signature-validation.js';
 import type {
+	ImportedKeyValidSignatureAlgorithm,
+	ImportedKeyValidSignatureAlgorithmForCurve,
 	ValidHashForSignature,
 	ValidSignatureAlgorithmForCurve,
 } from './hash-signature-validation.js';
@@ -522,8 +525,9 @@ export class IkaTransaction {
 	 * Request a presign operation for a DWallet.
 	 * Presigning allows for faster signature generation by pre-computing part of the signature.
 	 *
-	 * If you are using ecdsa(k1,r1) and imported key dwallet, you must call this function always
-	 * If you are using schnor, schnorrkell, eddsa, taproot, call requestGlobalPresign instead
+	 * If you are using ECDSA (secp256k1 / secp256r1) and an imported-key dWallet, you must call this function always.
+	 * If you are using Schnorr, Schnorrkel, EdDSA, Taproot, or any Fast Schnorr (VSS) variant, call requestGlobalPresign instead.
+	 * VSS variants are forbidden on imported-key dWallets — use the non-VSS sibling instead.
 	 *
 	 * @param params.dWallet - The DWallet to create the presign for
 	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
@@ -545,6 +549,9 @@ export class IkaTransaction {
 		this.#assertDWalletPublicOutputSet(dWallet);
 		this.#assertCanRunNormalPresign(dWallet, signatureAlgorithm);
 		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureAlgorithm);
+		if (dWallet.is_imported_key_dwallet) {
+			validateImportedKeySignatureAlgorithm(signatureAlgorithm);
+		}
 
 		const unverifiedPresignCap = this.#requestPresign({
 			dWallet,
@@ -558,8 +565,8 @@ export class IkaTransaction {
 
 	/**
 	 * Request a global presign operation.
-	 * If you are using ecdsa(k1,r1) and imported key dwallet, instead call requestPresign
-	 * If you are using schnor, schnorrkell, eddsa, taproot, call this function always
+	 * If you are using ECDSA (secp256k1 / secp256r1) and an imported-key dWallet, call requestPresign instead.
+	 * If you are using Schnorr, Schnorrkel, EdDSA, Taproot, or any Fast Schnorr (VSS) variant, call this function always.
 	 *
 	 * @param params.dwalletNetworkEncryptionKeyId - The network encryption key ID to use for the presign
 	 * @param params.curve - The curve to use for the presign
@@ -693,14 +700,21 @@ export class IkaTransaction {
 	 * Approve a message for signing with an imported key DWallet.
 	 * This is similar to approveMessage but specifically for DWallets created with imported keys.
 	 *
+	 * Fast Schnorr (VSS) variants are forbidden — they require DKG-created keys
+	 * so the network can Shamir-share the secret. Use the non-VSS sibling on the
+	 * same curve instead.
+	 *
 	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.curve - The curve to use for the approval
-	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve)
+	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve, non-VSS)
 	 * @param params.hashScheme - The hash scheme to apply to the message (must be valid for the signature algorithm)
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Imported key message approval
 	 */
-	approveImportedKeyMessage<C extends Curve, S extends ValidSignatureAlgorithmForCurve<C>>({
+	approveImportedKeyMessage<
+		C extends Curve,
+		S extends ImportedKeyValidSignatureAlgorithmForCurve<C>,
+	>({
 		dWalletCap,
 		curve,
 		signatureAlgorithm,
@@ -715,6 +729,7 @@ export class IkaTransaction {
 	}): TransactionObjectArgument {
 		validateCurveSignatureAlgorithm(curve, signatureAlgorithm);
 		validateHashSignatureCombination(hashScheme, signatureAlgorithm);
+		validateImportedKeySignatureAlgorithm(signatureAlgorithm);
 
 		const { signatureAlgorithmNumber, hashNumber } = fromCurveAndSignatureAlgorithmAndHashToNumbers(
 			curve,
@@ -932,7 +947,7 @@ export class IkaTransaction {
 	 * });
 	 */
 	async requestSignWithImportedKey<
-		S extends SignatureAlgorithm = typeof SignatureAlgorithm.ECDSASecp256k1,
+		S extends ImportedKeyValidSignatureAlgorithm = typeof SignatureAlgorithm.ECDSASecp256k1,
 	>({
 		dWallet,
 		importedKeyMessageApproval,
@@ -970,6 +985,7 @@ export class IkaTransaction {
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, actualSignatureScheme);
 		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), actualSignatureScheme);
+		validateImportedKeySignatureAlgorithm(actualSignatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
@@ -1316,7 +1332,7 @@ export class IkaTransaction {
 		encryptedUserSecretKeyShare: EncryptedUserSecretKeyShare;
 		message: Uint8Array;
 		hashScheme: Hash;
-		signatureScheme: SignatureAlgorithm;
+		signatureScheme: ImportedKeyValidSignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument>;
@@ -1358,7 +1374,7 @@ export class IkaTransaction {
 		publicOutput: Uint8Array;
 		message: Uint8Array;
 		hashScheme: Hash;
-		signatureScheme: SignatureAlgorithm;
+		signatureScheme: ImportedKeyValidSignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument>;
@@ -1392,7 +1408,7 @@ export class IkaTransaction {
 		presign: Presign;
 		message: Uint8Array;
 		hashScheme: Hash;
-		signatureScheme: SignatureAlgorithm;
+		signatureScheme: ImportedKeyValidSignatureAlgorithm;
 		ikaCoin: TransactionObjectArgument;
 		suiCoin: TransactionObjectArgument;
 	}): Promise<TransactionObjectArgument>;
@@ -1437,7 +1453,7 @@ export class IkaTransaction {
 	 *   // ... other params (no secretShare/publicOutput needed)
 	 * });
 	 */
-	async requestFutureSignWithImportedKey<S extends SignatureAlgorithm>({
+	async requestFutureSignWithImportedKey<S extends ImportedKeyValidSignatureAlgorithm>({
 		dWallet,
 		verifiedPresignCap,
 		presign,
@@ -1465,6 +1481,7 @@ export class IkaTransaction {
 		// Validate hash and signature algorithm combination
 		validateHashSignatureCombination(hashScheme, signatureScheme);
 		validateCurveSignatureAlgorithm(fromNumberToCurve(dWallet.curve), signatureScheme);
+		validateImportedKeySignatureAlgorithm(signatureScheme);
 
 		// Auto-detect share availability
 		const hasPublicShares = !!dWallet.public_user_secret_key_share;
