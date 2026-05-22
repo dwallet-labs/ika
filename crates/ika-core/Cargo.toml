@@ -16,7 +16,7 @@ group.workspace = true
 mpc.workspace = true
 twopc_mpc.workspace = true
 homomorphic_encryption.workspace = true
-class_groups = { workspace = true, features = ["threshold", "parallel"]}
+class_groups = { workspace = true, features = ["threshold"]}
 merlin.workspace = true
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
@@ -84,7 +84,7 @@ dwallet-mpc-centralized-party = { path = "../dwallet-mpc-centralized-party" }
 
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}
-class_groups = { workspace = true, features = ["threshold", "parallel", "test_helpers"]}
+class_groups = { workspace = true, features = ["threshold", "test_helpers"]}
 tracing-subscriber = "0.3.19"
 base64 = "0.22.1"
 
@@ -103,6 +103,11 @@ moka = { workspace = true, default-features = false, features = [
 ] }
 [target.'cfg(not(msim))'.dependencies]
 moka = { workspace = true, features = ["sync"] }
+# Production builds run crypto with rayon-backed parallelism. Under
+# `cargo simtest` (cfg msim), rayon worker threads have no msim node
+# context and panic at the first tracing/tokio call, so we drop the
+# `parallel` feature in that profile to force sequential iteration.
+class_groups = { workspace = true, features = ["threshold", "parallel"] }
 
 [features]
 test-utils = []

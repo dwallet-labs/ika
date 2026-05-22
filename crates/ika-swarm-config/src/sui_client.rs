@@ -12,8 +12,8 @@ use ika_config::Config;
 use ika_config::initiation::{InitiationParameters, MIN_VALIDATOR_JOINING_STAKE_INKU};
 use ika_config::validator_info::ValidatorInfo;
 use ika_move_contracts::{
-    save_contracts_to_temp_dir, save_mainnet_contracts_to_temp_dir,
-    save_testnet_contracts_to_temp_dir,
+    save_contracts_to_temp_dir, save_contracts_to_temp_dir_for_simtest,
+    save_mainnet_contracts_to_temp_dir, save_testnet_contracts_to_temp_dir,
 };
 use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
@@ -114,6 +114,28 @@ pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error
         Chain::Devnet => save_contracts_to_temp_dir()?,
         Chain::Unknown => panic!("Unknown chain"),
     };
+    contract_paths_from_dir(current_working_dir, contracts_dir)
+}
+
+/// Variant of [`setup_contract_paths`] for `cargo simtest`. Unpacks the devnet
+/// contracts to a temp dir and rewrites each `Move.toml` to use the provided
+/// local paths for Sui framework and Move stdlib, so the Move build does not
+/// trigger msim-incompatible git fetches. See
+/// [`ika_move_contracts::save_contracts_to_temp_dir_for_simtest`].
+pub fn setup_contract_paths_for_simtest(
+    sui_framework_path: &std::path::Path,
+    move_stdlib_path: &std::path::Path,
+) -> Result<ContractPaths, anyhow::Error> {
+    let current_working_dir = std::env::current_dir()?;
+    let contracts_dir =
+        save_contracts_to_temp_dir_for_simtest(sui_framework_path, move_stdlib_path)?;
+    contract_paths_from_dir(current_working_dir, contracts_dir)
+}
+
+fn contract_paths_from_dir(
+    current_working_dir: PathBuf,
+    contracts_dir: TempDir,
+) -> Result<ContractPaths, anyhow::Error> {
     let contracts_path = contracts_dir.path();
     let ika_contract_path = contracts_path.join("ika");
     let ika_common_contract_path = contracts_path.join("ika_common");

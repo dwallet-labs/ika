@@ -1,0 +1,20 @@
+# Minimal self-contained Move package consumed by `sui_macros::sim_test`'s
+# static-init: it just calls `BuildConfig::build_async` to warm up
+# move-package-alt lazy statics before tests run. We disable implicit
+# system deps so the build does not fetch sui-framework via git
+# (move-package-alt's git fetcher uses tokio::process, which msim does
+# not emulate, so any git fetch panics under cargo simtest).
+
+[package]
+name = "stub"
+edition = "2024"
+implicit-dependencies = false
+
+[addresses]
+stub = "0x0"
+
+[dependencies]
+
+[dev-dependencies]
+
+[dev-addresses]

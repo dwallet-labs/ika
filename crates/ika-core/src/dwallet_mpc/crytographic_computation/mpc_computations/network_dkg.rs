@@ -72,7 +72,15 @@ async fn get_decryption_key_shares_from_public_output(
 ) -> DwalletMPCResult<HashMap<PartyID, SecretKeyShareSizedInteger>> {
     let (key_shares_sender, key_shares_receiver) = oneshot::channel();
 
+    // See orchestrator.rs for the rationale: msim panics when tokio APIs or
+    // tracing fire on a rayon worker thread that has no node context.
+    #[cfg(msim)]
+    let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
     rayon::spawn_fifo(move || {
+        #[cfg(msim)]
+        let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+
         let res = match shares.state() {
             NetworkDecryptionKeyPublicOutputType::NetworkDkg => {
                 match &shares.network_dkg_output() {
@@ -429,7 +437,15 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
+    // See orchestrator.rs: enter the originating node before any tracing or
+    // tokio call inside the rayon worker.
+    #[cfg(msim)]
+    let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
     rayon::spawn_fifo(move || {
+        #[cfg(msim)]
+        let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+
         let res = if key_data.current_reconfiguration_public_output.is_empty() {
             if key_data.state == DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG {
                 Err(DwalletMPCError::WaitingForNetworkKey(key_data.id))

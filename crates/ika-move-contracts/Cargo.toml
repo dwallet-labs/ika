@@ -18,6 +18,7 @@ move-binary-format.workspace = true
 anyhow.workspace = true
 tempfile.workspace = true
 include_directory = "0.1.1"
+toml_edit.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true

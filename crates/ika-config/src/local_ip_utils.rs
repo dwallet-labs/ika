@@ -29,7 +29,12 @@ impl SimAddressManager {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // If offset ever goes beyond 255, we could use more bytes in the IP.
         assert!(offset <= 255);
-        format!("10.10.0.{}", offset)
+        // Ika nodes live on 10.11.0.x to stay disjoint from sui-config's
+        // 10.10.0.x: when an ika swarm runs alongside a Sui test_cluster (PR #3
+        // simtest), the two crates have separate thread-local
+        // SimAddressManagers, both starting at offset 1, so a shared 10.10.0/24
+        // subnet caused IP collisions in msim's virtual network.
+        format!("10.11.0.{}", offset)
     }
 
     pub fn get_next_available_port(&self) -> u16 {
