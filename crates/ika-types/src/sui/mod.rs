@@ -20,12 +20,6 @@ pub use epoch_start_system::*;
 pub use staking::*;
 pub use system_inner_v1::*;
 
-#[cfg(msim)]
-use self::simtest_ika_system_state_inner::{
-    SimTestIkaSystemStateInnerDeepV2, SimTestIkaSystemStateInnerShallowV2,
-    SimTestIkaSystemStateInnerV1, SimTestValidatorDeepV2, SimTestValidatorV1,
-};
-
 /// Default computation price of 1000 NIka
 pub const DEFAULT_VALIDATOR_COMPUTATION_PRICE: u64 = 1000;
 /// Default commission rate of 10%

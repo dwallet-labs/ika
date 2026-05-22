@@ -262,7 +262,19 @@ impl CryptographicComputationsOrchestrator {
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
 
+        // Under msim, tokio APIs and tracing instrumentation require running
+        // inside a simulated node context; rayon worker threads have none and
+        // panic at `NodeHandle::current().unwrap()`. Capture this task's node
+        // handle and enter it for the lifetime of the rayon closure so both
+        // the crypto compute (which logs via tracing) and the completion
+        // spawn see a node. The cfg(not(msim)) branch is a no-op binding.
+        #[cfg(msim)]
+        let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
         rayon::spawn_fifo(move || {
+            #[cfg(msim)]
+            let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+
             let advance_start_time = Instant::now();
 
             let computation_result =
