@@ -2,10 +2,12 @@
 	"title": "Operate",
 	"pages": [
 		"index",
+		"---Tools---",
 		"cli",
+		"networks",
+		"---Validators---",
 		"validator-setup",
-		"validator-operations",
-		"networks"
+		"validator-operations"
 	],
 	"icon": "Server",
 	"root": true

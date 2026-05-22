@@ -3,12 +3,14 @@
 	"pages": [
 		"index",
 		"quickstart",
+		"---Concepts---",
 		"what-is-ika",
 		"dwallets",
 		"trust-model",
+		"multi-chain-vs-cross-chain",
+		"---Cryptography---",
 		"2pc-mpc",
 		"cryptography",
-		"multi-chain-vs-cross-chain",
 		"whitepaper"
 	],
 	"icon": "BookOpen",

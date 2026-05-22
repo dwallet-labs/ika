@@ -3,9 +3,11 @@
 	"pages": [
 		"index",
 		"architecture",
-		"sdk",
+		"---Layers---",
 		"plugins",
+		"sdk",
 		"move-integration",
+		"---Patterns---",
 		"recipes"
 	],
 	"icon": "Code2",
