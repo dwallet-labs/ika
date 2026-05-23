@@ -1256,7 +1256,7 @@ pub async fn init_initialize(
     ))
 }
 
-async fn request_add_validator(
+pub async fn request_add_validator(
     validator_address: SuiAddress,
     context: &mut WalletContext,
     client: SuiClient,
@@ -1294,7 +1294,7 @@ async fn request_add_validator(
     Ok(())
 }
 
-async fn stake_ika(
+pub async fn stake_ika(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
     ika_system_package_id: ObjectID,
@@ -1376,7 +1376,7 @@ pub async fn minted_ika(
     Ok(*ika_supply_id)
 }
 
-async fn request_add_validator_candidate(
+pub async fn request_add_validator_candidate(
     validator_address: SuiAddress,
     context: &mut WalletContext,
     validator_initialization_metadata: &ValidatorInfo,
