@@ -766,6 +766,16 @@ async fn external_vss_sign_flow(
     );
 }
 
+// External (user-driven) VSS sign is not externally accessible for now —
+// Fast Schnorr is internal-NOA-only. VSS variants were removed from
+// `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES` and the SDK's
+// `SignatureAlgorithm` enum, so on-chain `validate_curve_and_signature_algorithm`
+// aborts external `request_sign` / `request_presign` for VSS. These tests
+// exercise that now-unreachable path; they are kept in-tree (the underlying
+// `external_vss_sign_flow` Rust path is preserved) and will be re-enabled when
+// VSS is opened up externally.
+
+#[ignore = "external VSS sign is gated off; VSS is internal-NOA-only for now"]
 #[tokio::test]
 #[cfg(test)]
 async fn test_external_vss_sign_eddsa() {
@@ -778,6 +788,7 @@ async fn test_external_vss_sign_eddsa() {
     .await;
 }
 
+#[ignore = "external VSS sign is gated off; VSS is internal-NOA-only for now"]
 #[tokio::test]
 #[cfg(test)]
 async fn test_external_vss_sign_taproot() {

@@ -526,8 +526,7 @@ export class IkaTransaction {
 	 * Presigning allows for faster signature generation by pre-computing part of the signature.
 	 *
 	 * If you are using ECDSA (secp256k1 / secp256r1) and an imported-key dWallet, you must call this function always.
-	 * If you are using Schnorr, Schnorrkel, EdDSA, Taproot, or any Fast Schnorr (VSS) variant, call requestGlobalPresign instead.
-	 * VSS variants are forbidden on imported-key dWallets — use the non-VSS sibling instead.
+	 * If you are using Schnorr, Schnorrkel, EdDSA, or Taproot, call requestGlobalPresign instead.
 	 *
 	 * @param params.dWallet - The DWallet to create the presign for
 	 * @param params.signatureAlgorithm - The signature algorithm identifier to use
@@ -566,7 +565,7 @@ export class IkaTransaction {
 	/**
 	 * Request a global presign operation.
 	 * If you are using ECDSA (secp256k1 / secp256r1) and an imported-key dWallet, call requestPresign instead.
-	 * If you are using Schnorr, Schnorrkel, EdDSA, Taproot, or any Fast Schnorr (VSS) variant, call this function always.
+	 * If you are using Schnorr, Schnorrkel, EdDSA, or Taproot, call this function always.
 	 *
 	 * @param params.dwalletNetworkEncryptionKeyId - The network encryption key ID to use for the presign
 	 * @param params.curve - The curve to use for the presign
@@ -700,13 +699,9 @@ export class IkaTransaction {
 	 * Approve a message for signing with an imported key DWallet.
 	 * This is similar to approveMessage but specifically for DWallets created with imported keys.
 	 *
-	 * Fast Schnorr (VSS) variants are forbidden — they require DKG-created keys
-	 * so the network can Shamir-share the secret. Use the non-VSS sibling on the
-	 * same curve instead.
-	 *
 	 * @param params.dWalletCap - The dWalletCap object, that owns the dWallet
 	 * @param params.curve - The curve to use for the approval
-	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve, non-VSS)
+	 * @param params.signatureAlgorithm - The signature algorithm to use (must be valid for the curve)
 	 * @param params.hashScheme - The hash scheme to apply to the message (must be valid for the signature algorithm)
 	 * @param params.message - The message bytes to approve for signing
 	 * @returns Imported key message approval

@@ -61,12 +61,6 @@ lazy_static! {
                             0, // Hash: SHA256
                         ],
                     ),
-                    (
-                        2, // Signature Algorithm: TaprootVSS (Fast Schnorr)
-                        vec![
-                            0, // Hash: SHA256
-                        ],
-                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -91,12 +85,6 @@ lazy_static! {
                             0, // Hash: SHA512
                         ],
                     ),
-                    (
-                        1, // Signature Algorithm: EdDSAVSS (Fast Schnorr)
-                        vec![
-                            0, // Hash: SHA512
-                        ],
-                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -110,12 +98,6 @@ lazy_static! {
                             0, // Hash: Merlin
                         ],
                     ),
-                    (
-                        1, // Signature Algorithm: SchnorrkelSubstrateVSS (Fast Schnorr)
-                        vec![
-                            0, // Hash: Merlin
-                        ],
-                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -125,13 +107,16 @@ lazy_static! {
         .collect()
     };
 
-    /// Global presign supported curves to signature algorithms for DKG
+    /// Global presign supported curves to signature algorithms for DKG.
+    /// VSS (Fast Schnorr) variants are deliberately omitted — they are
+    /// internal-only (NOA sign) and must not be externally requestable.
+    /// See `network_presign_pool_algorithms` for the internal iteration source.
     pub static ref GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG: HashMap<u32, Vec<u32>> = {
         let mut config = HashMap::new();
-        config.insert(0, vec![0, 1, 2]); // Secp256k1: ECDSA, Taproot, TaprootVSS
+        config.insert(0, vec![0, 1]); // Secp256k1: ECDSA, Taproot
         config.insert(1, vec![0]); // Secp256r1: ECDSA
-        config.insert(2, vec![0, 1]); // Curve25519: EdDSA, EdDSAVSS
-        config.insert(3, vec![0, 1]); // Ristretto: SchnorrkelSubstrate, SchnorrkelSubstrateVSS
+        config.insert(2, vec![0]); // Curve25519: EdDSA
+        config.insert(3, vec![0]); // Ristretto: SchnorrkelSubstrate
         config
     };
 
@@ -194,6 +179,55 @@ pub fn supported_curve_to_signature_algorithms()
             Some((curve, algorithms))
         })
         .collect()
+}
+
+/// Algorithms the network pre-generates internal presigns for. Used by the MPC
+/// manager to drive its internal presign pool (which feeds NOA sign).
+///
+/// This is the dedicated source for the internal pool iteration — deliberately
+/// independent of `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`,
+/// which is the externally-requestable list serialized into the on-chain
+/// `support_config`. Fast Schnorr (VSS) variants are included here when the
+/// feature is enabled at this protocol version, but are deliberately NOT in
+/// the externally-supported map — the on-chain `validate_curve_and_signature_algorithm`
+/// rejects external `request_sign` / `request_presign` for them, while the
+/// internal pool still fills so NOA VSS sign has presigns to consume.
+pub fn network_presign_pool_algorithms(
+    fast_schnorr_supported: bool,
+) -> Vec<(DWalletCurve, DWalletSignatureAlgorithm)> {
+    let mut algorithms = vec![
+        (
+            DWalletCurve::Secp256k1,
+            DWalletSignatureAlgorithm::ECDSASecp256k1,
+        ),
+        (DWalletCurve::Secp256k1, DWalletSignatureAlgorithm::Taproot),
+        (
+            DWalletCurve::Secp256r1,
+            DWalletSignatureAlgorithm::ECDSASecp256r1,
+        ),
+        (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA),
+        (
+            DWalletCurve::Ristretto,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        ),
+    ];
+    if fast_schnorr_supported {
+        algorithms.extend([
+            (
+                DWalletCurve::Secp256k1,
+                DWalletSignatureAlgorithm::TaprootVSS,
+            ),
+            (
+                DWalletCurve::Curve25519,
+                DWalletSignatureAlgorithm::EdDSAVSS,
+            ),
+            (
+                DWalletCurve::Ristretto,
+                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS,
+            ),
+        ]);
+    }
+    algorithms
 }
 
 /// Convert curve u32 to DWalletCurve enum
@@ -392,15 +426,12 @@ mod tests {
             "Secp256k1 Taproot should support SHA256"
         );
 
-        // Validate Secp256k1 curve / TaprootVSS (Fast Schnorr) signature algorithm
-        let taproot_vss_entry = secp256k1_entry
-            .get(&2)
-            .expect("TaprootVSS entry should exist for Secp256k1");
-
-        assert_eq!(
-            taproot_vss_entry,
-            &vec![0],
-            "Secp256k1 TaprootVSS should support SHA256"
+        // TaprootVSS (Fast Schnorr) is intentionally NOT in the externally-supported
+        // map — it is internal-only (NOA sign). See `network_presign_pool_algorithms`
+        // for the internal iteration source.
+        assert!(
+            secp256k1_entry.get(&2).is_none(),
+            "TaprootVSS must NOT be in the externally-supported map",
         );
 
         // Validate Secp256k1 curve / no invalid signature algorithm
@@ -408,8 +439,8 @@ mod tests {
         all_signature_algorithm_keys.sort();
         assert_eq!(
             all_signature_algorithm_keys,
-            vec![0, 1, 2],
-            "Secp256k1 have only ECDSA, Taproot and TaprootVSS signature algorithms"
+            vec![0, 1],
+            "Secp256k1 have only ECDSA and Taproot signature algorithms externally"
         );
 
         // Validate Secp256r1 curve
@@ -453,15 +484,11 @@ mod tests {
             "Curve25519 EdDSA should support SHA512"
         );
 
-        // Validate Curve25519 curve / EdDSAVSS (Fast Schnorr) signature algorithm
-        let eddsa_vss_entry = curve25519_entry
-            .get(&1)
-            .expect("EdDSAVSS entry should exist for Curve25519");
-
-        assert_eq!(
-            eddsa_vss_entry,
-            &vec![0],
-            "Curve25519 EdDSAVSS should support SHA512"
+        // EdDSAVSS (Fast Schnorr) is intentionally NOT in the externally-supported
+        // map — it is internal-only (NOA sign).
+        assert!(
+            curve25519_entry.get(&1).is_none(),
+            "EdDSAVSS must NOT be in the externally-supported map",
         );
 
         // Validate Curve25519 curve / no invalid signature algorithm
@@ -470,8 +497,8 @@ mod tests {
         all_curve25519_signature_algorithm_keys.sort();
         assert_eq!(
             all_curve25519_signature_algorithm_keys,
-            vec![0, 1],
-            "Curve25519 have only EdDSA and EdDSAVSS signature algorithms"
+            vec![0],
+            "Curve25519 has only EdDSA signature algorithm externally"
         );
 
         // Validate Ristretto curve
@@ -490,15 +517,11 @@ mod tests {
             "Ristretto SchnorrkelSubstrate should support Merlin"
         );
 
-        // Validate Ristretto curve / SchnorrkelSubstrateVSS (Fast Schnorr) signature algorithm
-        let schnorrkel_vss_entry = ristretto_entry
-            .get(&1)
-            .expect("SchnorrkelSubstrateVSS entry should exist for Ristretto");
-
-        assert_eq!(
-            schnorrkel_vss_entry,
-            &vec![0],
-            "Ristretto SchnorrkelSubstrateVSS should support Merlin"
+        // SchnorrkelSubstrateVSS (Fast Schnorr) is intentionally NOT in the
+        // externally-supported map — it is internal-only (NOA sign).
+        assert!(
+            ristretto_entry.get(&1).is_none(),
+            "SchnorrkelSubstrateVSS must NOT be in the externally-supported map",
         );
 
         // Validate Ristretto curve / no invalid signature algorithm
@@ -507,53 +530,48 @@ mod tests {
         all_ristretto_signature_algorithm_keys.sort();
         assert_eq!(
             all_ristretto_signature_algorithm_keys,
-            vec![0, 1],
-            "Ristretto have only SchnorrkelSubstrate and SchnorrkelSubstrateVSS signature algorithms"
+            vec![0],
+            "Ristretto has only SchnorrkelSubstrate signature algorithm externally"
         );
     }
 
     #[test]
-    fn validate_vss_signature_algorithm_round_trip_and_membership() {
-        use super::DWalletSignatureAlgorithm;
-        use group::HashScheme;
-
-        // (curve, id) -> VSS variant decoding.
-        assert_eq!(
-            super::try_into_signature_algorithm(0, 2).unwrap(),
-            DWalletSignatureAlgorithm::TaprootVSS,
-        );
-        assert_eq!(
-            super::try_into_signature_algorithm(2, 1).unwrap(),
-            DWalletSignatureAlgorithm::EdDSAVSS,
-        );
-        assert_eq!(
-            super::try_into_signature_algorithm(3, 1).unwrap(),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS,
-        );
-
-        // Hash scheme decoding for the VSS variants mirrors their AHE sibling.
-        assert_eq!(
-            super::try_into_hash_scheme(0, 2, 0).unwrap(),
-            HashScheme::SHA256,
-        );
-        assert_eq!(
-            super::try_into_hash_scheme(2, 1, 0).unwrap(),
-            HashScheme::SHA512,
-        );
-        assert_eq!(
-            super::try_into_hash_scheme(3, 1, 0).unwrap(),
-            HashScheme::Merlin,
-        );
-
-        // VSS variants are global-presign DKG-supported ...
+    fn validate_vss_is_externally_inaccessible() {
+        // VSS (Fast Schnorr) variants are internal-only (NOA sign) and must not
+        // be externally decodable from on-chain (curve, signature_algorithm)
+        // indices: `try_into_signature_algorithm` is gated by the externally-
+        // supported map, which deliberately omits VSS. The internal NOA path
+        // passes the `DWalletSignatureAlgorithm` enum directly and does not
+        // depend on this decoder.
         assert!(
-            super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&0].contains(&2)
+            super::try_into_signature_algorithm(0, 2).is_err(),
+            "TaprootVSS (Secp256k1, 2) must NOT decode externally",
         );
         assert!(
-            super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&2].contains(&1)
+            super::try_into_signature_algorithm(2, 1).is_err(),
+            "EdDSAVSS (Curve25519, 1) must NOT decode externally",
         );
         assert!(
-            super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&3].contains(&1)
+            super::try_into_signature_algorithm(3, 1).is_err(),
+            "SchnorrkelSubstrateVSS (Ristretto, 1) must NOT decode externally",
+        );
+
+        // Same for hash-scheme decoding.
+        assert!(super::try_into_hash_scheme(0, 2, 0).is_err());
+        assert!(super::try_into_hash_scheme(2, 1, 0).is_err());
+        assert!(super::try_into_hash_scheme(3, 1, 0).is_err());
+
+        // VSS variants are intentionally NOT in the externally-requestable
+        // global-presign DKG map — they are internal-only (NOA sign). See
+        // `network_presign_pool_algorithms` for the internal iteration source.
+        assert!(
+            !super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&0].contains(&2)
+        );
+        assert!(
+            !super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&2].contains(&1)
+        );
+        assert!(
+            !super::GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG[&3].contains(&1)
         );
 
         // ... and NOT supported for imported keys (Shamir-share constraint).

@@ -10,28 +10,7 @@ const VALID_HASH_SIGNATURE_COMBINATIONS: Record<SignatureAlgorithm, readonly Has
 	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256],
 	[SignatureAlgorithm.EdDSA]: [Hash.SHA512],
 	[SignatureAlgorithm.SchnorrkelSubstrate]: [Hash.Merlin],
-	[SignatureAlgorithm.TaprootVSS]: [Hash.SHA256],
-	[SignatureAlgorithm.EdDSAVSS]: [Hash.SHA512],
-	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: [Hash.Merlin],
 } as const;
-
-/**
- * Signature algorithms that can ONLY be used with DKG-created dWallets.
- * Imported-key dWallets cannot use these — the network never holds the full
- * secret needed to Shamir-share it, so VSS (Fast Schnorr) variants are forbidden.
- *
- * At present this client-side gate is the only layer rejecting the combination:
- * the planned Move `approve_imported_key_message` deny check and the matching
- * Rust request filter have not yet landed (see `dwallet-mpc-types`
- * `mpc_protocol_configuration.rs` — the imported-key VecMap omission is only a
- * presign-scope toggle, not an allow/deny gate). Hardcoded by design (single
- * source of truth on the client) rather than read from on-chain `SupportConfig`.
- */
-const DKG_ONLY_SIGNATURE_ALGORITHMS: ReadonlySet<SignatureAlgorithm> = new Set([
-	SignatureAlgorithm.TaprootVSS,
-	SignatureAlgorithm.EdDSAVSS,
-	SignatureAlgorithm.SchnorrkelSubstrateVSS,
-]);
 
 // Maps signature algorithms to their curves (for validation)
 const SIGNATURE_ALGORITHM_TO_CURVE: Record<SignatureAlgorithm, Curve> = {
@@ -40,9 +19,6 @@ const SIGNATURE_ALGORITHM_TO_CURVE: Record<SignatureAlgorithm, Curve> = {
 	[SignatureAlgorithm.ECDSASecp256r1]: Curve.SECP256R1,
 	[SignatureAlgorithm.EdDSA]: Curve.ED25519,
 	[SignatureAlgorithm.SchnorrkelSubstrate]: Curve.RISTRETTO,
-	[SignatureAlgorithm.TaprootVSS]: Curve.SECP256K1,
-	[SignatureAlgorithm.EdDSAVSS]: Curve.ED25519,
-	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: Curve.RISTRETTO,
 } as const;
 
 // Absolute numbering for signature algorithms (global, not relative to curve)
@@ -52,9 +28,6 @@ const SIGNATURE_ALGORITHM_ABSOLUTE_NUMBERS: Record<SignatureAlgorithm, number> =
 	[SignatureAlgorithm.ECDSASecp256r1]: 2,
 	[SignatureAlgorithm.EdDSA]: 3,
 	[SignatureAlgorithm.SchnorrkelSubstrate]: 4,
-	[SignatureAlgorithm.TaprootVSS]: 5,
-	[SignatureAlgorithm.EdDSAVSS]: 6,
-	[SignatureAlgorithm.SchnorrkelSubstrateVSS]: 7,
 } as const;
 
 // Absolute numbering for hashes (global, not relative to curve/signature)
@@ -86,12 +59,6 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 					[Hash.SHA256]: 0,
 				},
 			},
-			[SignatureAlgorithm.TaprootVSS]: {
-				signatureAlgorithmNumber: 2,
-				hashes: {
-					[Hash.SHA256]: 0,
-				},
-			},
 		},
 	},
 	[Curve.SECP256R1]: {
@@ -114,12 +81,6 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 					[Hash.SHA512]: 0,
 				},
 			},
-			[SignatureAlgorithm.EdDSAVSS]: {
-				signatureAlgorithmNumber: 1,
-				hashes: {
-					[Hash.SHA512]: 0,
-				},
-			},
 		},
 	},
 	[Curve.RISTRETTO]: {
@@ -127,12 +88,6 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 		signatureAlgorithms: {
 			[SignatureAlgorithm.SchnorrkelSubstrate]: {
 				signatureAlgorithmNumber: 0,
-				hashes: {
-					[Hash.Merlin]: 0,
-				},
-			},
-			[SignatureAlgorithm.SchnorrkelSubstrateVSS]: {
-				signatureAlgorithmNumber: 1,
 				hashes: {
 					[Hash.Merlin]: 0,
 				},
@@ -177,12 +132,6 @@ export function getSignatureAlgorithmName(signatureAlgorithm: SignatureAlgorithm
 			return 'EdDSA';
 		case SignatureAlgorithm.SchnorrkelSubstrate:
 			return 'SchnorrkelSubstrate (Ristretto)';
-		case SignatureAlgorithm.TaprootVSS:
-			return 'TaprootVSS (Fast Schnorr)';
-		case SignatureAlgorithm.EdDSAVSS:
-			return 'EdDSAVSS (Fast Schnorr)';
-		case SignatureAlgorithm.SchnorrkelSubstrateVSS:
-			return 'SchnorrkelSubstrateVSS (Fast Schnorr, Ristretto)';
 		default:
 			return `Unknown SignatureAlgorithm (${signatureAlgorithm})`;
 	}
@@ -245,36 +194,27 @@ export function validateCurveSignatureAlgorithm(
 
 /** Compile-time type for valid signature algorithms per curve */
 export type ValidSignatureAlgorithmForCurve<C extends Curve> = C extends typeof Curve.SECP256K1
-	?
-			| typeof SignatureAlgorithm.ECDSASecp256k1
-			| typeof SignatureAlgorithm.Taproot
-			| typeof SignatureAlgorithm.TaprootVSS
+	? typeof SignatureAlgorithm.ECDSASecp256k1 | typeof SignatureAlgorithm.Taproot
 	: C extends typeof Curve.SECP256R1
 		? typeof SignatureAlgorithm.ECDSASecp256r1
 		: C extends typeof Curve.ED25519
-			? typeof SignatureAlgorithm.EdDSA | typeof SignatureAlgorithm.EdDSAVSS
+			? typeof SignatureAlgorithm.EdDSA
 			: C extends typeof Curve.RISTRETTO
-				?
-						| typeof SignatureAlgorithm.SchnorrkelSubstrate
-						| typeof SignatureAlgorithm.SchnorrkelSubstrateVSS
+				? typeof SignatureAlgorithm.SchnorrkelSubstrate
 				: never;
 
 /**
  * Compile-time type for signature algorithms valid on imported-key dWallets
- * (curve-agnostic). Excludes Fast Schnorr (VSS) variants — those require
- * DKG-created dWallets so the network can Shamir-share the secret. Mirrored at
- * runtime by `validateImportedKeySignatureAlgorithm`.
+ * (curve-agnostic). Fast Schnorr (VSS) is internal-NOA-only and not exposed
+ * on the public `SignatureAlgorithm` enum, so this type is equivalent to
+ * `SignatureAlgorithm` itself today; kept as a distinct alias so the
+ * imported-key call sites keep their semantic name.
  */
-export type ImportedKeyValidSignatureAlgorithm = Exclude<
-	SignatureAlgorithm,
-	| typeof SignatureAlgorithm.TaprootVSS
-	| typeof SignatureAlgorithm.EdDSAVSS
-	| typeof SignatureAlgorithm.SchnorrkelSubstrateVSS
->;
+export type ImportedKeyValidSignatureAlgorithm = SignatureAlgorithm;
 
 /**
  * Compile-time type for signature algorithms valid on imported-key dWallets
- * per curve. Excludes Fast Schnorr (VSS) variants.
+ * per curve.
  */
 export type ImportedKeyValidSignatureAlgorithmForCurve<C extends Curve> =
 	C extends typeof Curve.SECP256K1
@@ -289,20 +229,14 @@ export type ImportedKeyValidSignatureAlgorithmForCurve<C extends Curve> =
 
 /**
  * Validates that a signature algorithm is permitted on imported-key dWallets.
- * VSS (Fast Schnorr) variants are forbidden — they require DKG-created keys
- * so the network can Shamir-share the secret.
- * @throws {Error} if the algorithm is DKG-only
+ * Fast Schnorr (VSS) variants are no longer exposed on the public
+ * `SignatureAlgorithm` enum, so this is a no-op today; kept for callers that
+ * already use it as a defense-in-depth check.
  */
 export function validateImportedKeySignatureAlgorithm(
-	signatureAlgorithm: SignatureAlgorithm,
+	_signatureAlgorithm: SignatureAlgorithm,
 ): void {
-	if (DKG_ONLY_SIGNATURE_ALGORITHMS.has(signatureAlgorithm)) {
-		throw new Error(
-			`${getSignatureAlgorithmName(signatureAlgorithm)} cannot be used with imported-key dWallets. ` +
-				`Fast Schnorr (VSS) variants require DKG-created keys so the network can Shamir-share the secret. ` +
-				`Use the non-VSS sibling on the same curve instead.`,
-		);
-	}
+	// No-op: VSS variants are not in the public enum.
 }
 
 /** Compile-time type for valid hash/signature combinations */
@@ -317,13 +251,7 @@ export type ValidHashForSignature<S extends SignatureAlgorithm> =
 					? typeof Hash.SHA512
 					: S extends typeof SignatureAlgorithm.SchnorrkelSubstrate
 						? typeof Hash.Merlin
-						: S extends typeof SignatureAlgorithm.TaprootVSS
-							? typeof Hash.SHA256
-							: S extends typeof SignatureAlgorithm.EdDSAVSS
-								? typeof Hash.SHA512
-								: S extends typeof SignatureAlgorithm.SchnorrkelSubstrateVSS
-									? typeof Hash.Merlin
-									: never;
+						: never;
 
 /** Type guard: checks if hash is valid for signature algorithm */
 export function isValidHashForSignature<S extends SignatureAlgorithm>(

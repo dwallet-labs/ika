@@ -23,7 +23,7 @@ use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
 };
-use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
+use dwallet_mpc_types::mpc_protocol_configuration::network_presign_pool_algorithms;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -806,102 +806,95 @@ impl DWalletMPCManager {
                 None => return,
             };
 
+        // Iterate the dedicated internal-pool driver — `network_presign_pool_algorithms`
+        // is decoupled from `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`
+        // (the externally-requestable list serialized into the on-chain
+        // `support_config`). VSS variants live ONLY here, gated on the feature
+        // flag: they feed NOA (network-owned-address) VSS sign but are not
+        // externally requestable on-chain.
+        let pool_algorithms =
+            network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
         for key_id in agreed_key_ids {
-            for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
-                for signature_algorithm in signature_algorithms {
-                    // Fast Schnorr (VSS) is in the supported-algorithm map, but only
-                    // instantiate internal VSS presigns once the feature is enabled at
-                    // this protocol version. These feed NOA (network-owned-address) VSS
-                    // signs, which run the same `SignVSS` compute path as external VSS
-                    // sign (VSS has no AHE decrypters, so NOA and external don't split).
-                    if signature_algorithm.is_vss()
-                        && !self.protocol_config.fast_schnorr_supported()
-                    {
-                        continue;
-                    }
-                    let is_network_owned_address_signing_presign =
-                        agreed_network_owned_address_signing_key_id == key_id;
+            for (curve, signature_algorithm) in pool_algorithms.iter().copied() {
+                let is_network_owned_address_signing_presign =
+                    agreed_network_owned_address_signing_key_id == key_id;
 
-                    let (
-                        minimal_pool_size,
-                        maximum_pool_size,
-                        consensus_round_delay,
-                        sessions_to_instantiate,
-                    ) = if is_network_owned_address_signing_presign {
-                        (
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_minimum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_maximum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_consensus_round_delay(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_sessions_to_instantiate(
-                                    signature_algorithm,
-                                ),
-                        )
-                    } else {
-                        (
-                            self.protocol_config
-                                .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_consensus_round_delay(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_internal_presign_sessions_to_instantiate(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                        )
-                    };
-
-                    // Skip instantiation if previous sessions for this (curve, algorithm)
-                    // haven't completed yet. Each session produces a variable number of
-                    // presigns (1 to n-t), so overlapping batches cause pool overshoot.
-                    let instantiated = self
-                        .instantiated_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    let completed = self
-                        .completed_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    if instantiated != completed {
-                        continue;
-                    }
-
-                    let current_pool_size =
-                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
-
-                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
-                        && current_pool_size < minimal_pool_size)
-                        || (network_is_idle && current_pool_size < maximum_pool_size)
-                    {
-                        for _ in 1..=sessions_to_instantiate {
-                            self.instantiate_internal_presign_session(
-                                consensus_round,
-                                key_id,
+                let (
+                    minimal_pool_size,
+                    maximum_pool_size,
+                    consensus_round_delay,
+                    sessions_to_instantiate,
+                ) = if is_network_owned_address_signing_presign {
+                    (
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_minimum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_maximum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_consensus_round_delay(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_sessions_to_instantiate(
+                                signature_algorithm,
+                            ),
+                    )
+                } else {
+                    (
+                        self.protocol_config
+                            .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_consensus_round_delay(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_sessions_to_instantiate(
                                 curve,
                                 signature_algorithm,
-                            );
-                            *self
-                                .instantiated_internal_presign_sessions
-                                .entry((curve, signature_algorithm))
-                                .or_insert(0) += 1;
-                        }
+                            ),
+                    )
+                };
+
+                // Skip instantiation if previous sessions for this (curve, algorithm)
+                // haven't completed yet. Each session produces a variable number of
+                // presigns (1 to n-t), so overlapping batches cause pool overshoot.
+                let instantiated = self
+                    .instantiated_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let completed = self
+                    .completed_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                if instantiated != completed {
+                    continue;
+                }
+
+                let current_pool_size =
+                    self.internal_presign_pool_size(key_id, curve, signature_algorithm);
+
+                if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
+                    && current_pool_size < minimal_pool_size)
+                    || (network_is_idle && current_pool_size < maximum_pool_size)
+                {
+                    for _ in 1..=sessions_to_instantiate {
+                        self.instantiate_internal_presign_session(
+                            consensus_round,
+                            key_id,
+                            curve,
+                            signature_algorithm,
+                        );
+                        *self
+                            .instantiated_internal_presign_sessions
+                            .entry((curve, signature_algorithm))
+                            .or_insert(0) += 1;
                     }
                 }
             }
