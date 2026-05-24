@@ -7,17 +7,22 @@
 
 use anyhow::Result;
 use ika_config::initiation::InitiationParameters;
+use ika_node::IkaNodeHandle;
 use ika_swarm::memory::{Swarm, SwarmBuilder};
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
-use ika_swarm_config::sui_client::{ContractPaths, initialize_ika_system, publish_ika_packages};
+use ika_swarm_config::sui_client::{
+    ContractPaths, InitializedIkaSystem, PublishedIkaPackages, initialize_ika_system,
+    publish_ika_packages, request_add_validator, request_add_validator_candidate, stake_ika,
+};
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
+use ika_types::crypto::{AuthorityPublicKeyBytes, KeypairTraits as _};
 use rand::rngs::OsRng;
 use sui_keys::keystore::AccountKeystore;
 use sui_sdk::SuiClientBuilder;
-use sui_types::base_types::SuiAddress;
+use sui_types::base_types::{ObjectID, SuiAddress};
 use test_cluster::{TestCluster, TestClusterBuilder};
 
 #[cfg(not(msim))]
@@ -37,6 +42,30 @@ const VALIDATOR_FUNDING_MIST: u64 = 100_000_000_000;
 pub struct IkaTestCluster {
     pub test_cluster: TestCluster,
     pub swarm: Swarm,
+    /// State captured from the bootstrap so post-build helpers (joiner /
+    /// remove flows) can compose new on-chain transactions without
+    /// re-publishing or re-initializing.
+    pub packages: PublishedIkaPackages,
+    pub system: InitializedIkaSystem,
+    pub sui_rpc_url: String,
+    pub publisher_address: SuiAddress,
+}
+
+/// Handle to a validator that joined the network after the initial
+/// bootstrap via [`IkaTestCluster::add_joiner_validator`].
+pub struct JoinerHandle {
+    pub address: SuiAddress,
+    pub validator_id: ObjectID,
+    pub validator_cap_id: ObjectID,
+    pub node_handle: IkaNodeHandle,
+    pub init_config: ValidatorInitializationConfig,
+}
+
+impl JoinerHandle {
+    /// BLS authority name (committee identity) for this joiner.
+    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
+        self.init_config.key_pair.public().into()
+    }
 }
 
 impl IkaTestCluster {
@@ -53,14 +82,119 @@ impl IkaTestCluster {
             .into_iter()
             .next()
             .expect("swarm must have at least one validator node");
-        loop {
-            let current = handle.with(|node| node.current_epoch_for_testing());
-            if current >= target_epoch {
-                tracing::info!(current, target_epoch, "wait_for_epoch reached target");
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        wait_for_node_epoch(&handle, target_epoch).await;
+    }
+
+    /// Generate a fresh validator config, run the full candidate →
+    /// staked → active flow on-chain, then spawn the joiner's in-memory
+    /// `IkaNode` and attach it to the swarm. The returned [`JoinerHandle`]
+    /// exposes the validator's identity + node handle so callers can
+    /// wait for it to reach the next epoch or inspect committee state.
+    ///
+    /// The joiner becomes part of the active set at the next epoch
+    /// boundary (the same lifecycle the bootstrap path drives for the
+    /// initial set). Caller is responsible for `wait_for_epoch` after.
+    pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
+        let mut rng = OsRng;
+        let mut joiner_init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
+        joiner_init.name = Some(format!(
+            "joiner-{}",
+            self.swarm.validator_node_handles().len()
+        ));
+        let joiner_address: SuiAddress = (&joiner_init.account_key_pair.public()).into();
+
+        // Add the joiner's account key to the wallet so the publisher's
+        // `WalletContext` can sign transactions sent from the joiner.
+        self.test_cluster
+            .wallet_mut()
+            .add_account(
+                joiner_init.name.clone(),
+                joiner_init.account_key_pair.copy(),
+            )
+            .await;
+
+        // Fund the joiner address from the publisher — joiner needs SUI
+        // gas to pay for its own candidate-registration tx.
+        let tx_data = self
+            .test_cluster
+            .test_transaction_builder_with_sender(self.publisher_address)
+            .await
+            .transfer_sui(Some(VALIDATOR_FUNDING_MIST), joiner_address)
+            .build();
+        self.test_cluster
+            .sign_and_execute_transaction(&tx_data)
+            .await;
+
+        let metadata = joiner_init.to_validator_info();
+        let (validator_id, validator_cap_id) = request_add_validator_candidate(
+            joiner_address,
+            self.test_cluster.wallet_mut(),
+            &metadata,
+            self.packages.ika_system_package_id,
+            self.packages.ika_common_package_id,
+            self.system.ika_system_object_id,
+            self.system.init_system_shared_version,
+        )
+        .await?;
+
+        // Publisher stakes `MIN_VALIDATOR_JOINING_STAKE_INKU` into the
+        // joiner's pool so `request_add_validator` doesn't abort with
+        // insufficient-stake.
+        stake_ika(
+            self.publisher_address,
+            self.test_cluster.wallet_mut(),
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.init_system_shared_version,
+            self.packages.ika_supply_id,
+            vec![validator_id],
+        )
+        .await?;
+
+        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        request_add_validator(
+            joiner_address,
+            self.test_cluster.wallet_mut(),
+            client,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.init_system_shared_version,
+            validator_cap_id,
+        )
+        .await?;
+
+        let validator_config = ValidatorConfigBuilder::new().build(
+            &joiner_init,
+            self.sui_rpc_url.clone(),
+            self.packages.ika_package_id,
+            self.packages.ika_common_package_id,
+            self.packages.ika_dwallet_2pc_mpc_package_id,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.ika_dwallet_coordinator_object_id,
+        );
+        let node_handle = self.swarm.spawn_new_node(validator_config).await;
+
+        Ok(JoinerHandle {
+            address: joiner_address,
+            validator_id,
+            validator_cap_id,
+            node_handle,
+            init_config: joiner_init,
+        })
+    }
+}
+
+/// Block until `node_handle`'s in-memory epoch reaches `target_epoch`.
+/// Polls every 250ms — same cadence as `IkaTestCluster::wait_for_epoch`.
+pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64) {
+    loop {
+        let current = node_handle.with(|node| node.current_epoch_for_testing());
+        if current >= target_epoch {
+            tracing::info!(current, target_epoch, "wait_for_node_epoch reached target");
+            return;
         }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
 
@@ -232,6 +366,10 @@ impl IkaTestClusterBuilder {
         Ok(IkaTestCluster {
             test_cluster,
             swarm,
+            packages,
+            system,
+            sui_rpc_url,
+            publisher_address,
         })
     }
 }
