@@ -9,12 +9,13 @@ use anyhow::Result;
 use ika_config::initiation::InitiationParameters;
 use ika_swarm::memory::{Swarm, SwarmBuilder};
 use ika_swarm_config::network_config::NetworkConfig;
-use ika_swarm_config::node_config_builder::ValidatorConfigBuilder;
+use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{ContractPaths, initialize_ika_system, publish_ika_packages};
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
 use rand::rngs::OsRng;
+use sui_keys::keystore::AccountKeystore;
 use sui_sdk::SuiClientBuilder;
 use sui_types::base_types::SuiAddress;
 use test_cluster::{TestCluster, TestClusterBuilder};
@@ -184,9 +185,35 @@ impl IkaTestClusterBuilder {
                 )
             })
             .collect();
+        // The ika epoch only advances when a Notifier node submits the
+        // `process_mid_epoch` / `request_advance_epoch` transactions to Sui (the
+        // validators never do — `run_epoch_switch` is gated on a notifier key).
+        // Without one the network is frozen at its genesis epoch, so any test that
+        // calls `wait_for_epoch` hangs. Run one notifier (a fullnode carrying the
+        // publisher's Sui key) so reconfiguration actually progresses.
+        let publisher_keypair = test_cluster
+            .wallet()
+            .config
+            .keystore
+            .export(&publisher_address)?
+            .copy();
+        let mut notifier_rng = OsRng;
+        let notifier_config = FullnodeConfigBuilder::new().build(
+            &mut notifier_rng,
+            &validator_initialization_configs,
+            sui_rpc_url.clone(),
+            packages.ika_package_id,
+            packages.ika_common_package_id,
+            packages.ika_dwallet_2pc_mpc_package_id,
+            packages.ika_system_package_id,
+            system.ika_system_object_id,
+            system.ika_dwallet_coordinator_object_id,
+            Some(publisher_keypair),
+        );
+
         let network_config = NetworkConfig {
             validator_configs,
-            fullnode_configs: vec![],
+            fullnode_configs: vec![notifier_config],
             validator_initialization_configs,
             ika_package_id: packages.ika_package_id,
             ika_common_package_id: packages.ika_common_package_id,

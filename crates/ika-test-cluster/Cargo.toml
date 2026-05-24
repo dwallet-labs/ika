@@ -25,6 +25,7 @@ ika-swarm-config.workspace = true
 ika-types.workspace = true
 
 sui-config.workspace = true
+sui-keys.workspace = true
 sui-sdk.workspace = true
 sui-test-transaction-builder.workspace = true
 sui-types.workspace = true
