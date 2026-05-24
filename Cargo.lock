@@ -7049,6 +7049,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "sui-config",
+ "sui-keys",
  "sui-macros",
  "sui-protocol-config",
  "sui-sdk",
