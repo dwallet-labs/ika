@@ -15,6 +15,7 @@ use fastcrypto::hash::{HashFunction, Keccak256};
 use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
 use ika_node::IkaNodeHandle;
+use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::ika_dwallet_transactions::{
     PaymentCoinArgs, register_encryption_key, request_dwallet_dkg,
@@ -33,6 +34,7 @@ use ika_swarm_config::validator_initialization_config::{
 };
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
+use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_keys::keystore::AccountKeystore;
@@ -64,6 +66,13 @@ pub struct IkaTestCluster {
     pub system: InitializedIkaSystem,
     pub sui_rpc_url: String,
     pub publisher_address: SuiAddress,
+    /// Validator protocol public keys in the configured order. The i-th name
+    /// is the authority name of the validator built from
+    /// `validator_initialization_configs[i]`. Used by index-based test helpers
+    /// (e.g. `upgrade_validator_supported_protocol_versions`) because the
+    /// swarm stores nodes in a HashMap and `validator_nodes()` order is
+    /// otherwise unspecified.
+    pub validator_names: Vec<ika_types::crypto::AuthorityName>,
 }
 
 /// Handle to a validator that joined the network after the initial
@@ -583,6 +592,49 @@ impl IkaTestCluster {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
+
+    /// Current ika protocol version, read from the first validator's in-memory
+    /// epoch store. Updated when the network reconfigures into a new epoch.
+    pub fn current_protocol_version(&self) -> ProtocolVersion {
+        let handle = self
+            .swarm
+            .validator_node_handles()
+            .into_iter()
+            .next()
+            .expect("swarm must have at least one validator node");
+        handle.with(|node| node.current_protocol_version_for_testing())
+    }
+
+    /// Simulate an in-place validator upgrade: stop the validator, mutate its
+    /// `NodeConfig.supported_protocol_versions`, and restart it. The next
+    /// `AuthorityCapabilitiesV1` notification (sent at the start of the next
+    /// epoch the validator observes) carries the new range, which the
+    /// end-of-epoch quorum vote uses to pick the next protocol version.
+    ///
+    /// Index is into `validator_names` (insertion order at build time).
+    pub async fn upgrade_validator_supported_protocol_versions(
+        &self,
+        validator_index: usize,
+        new_versions: SupportedProtocolVersions,
+    ) -> Result<()> {
+        let name = *self
+            .validator_names
+            .get(validator_index)
+            .expect("validator_index out of range");
+        let node = self
+            .swarm
+            .node(&name)
+            .expect("validator node exists for the configured name");
+        tracing::info!(
+            ?validator_index,
+            ?new_versions,
+            "upgrading validator: stop -> mutate config -> start",
+        );
+        node.stop();
+        node.config().supported_protocol_versions = Some(new_versions);
+        node.start().await?;
+        Ok(())
+    }
 }
 
 /// User-side material produced by `register_user_encryption_key`. The
@@ -668,7 +720,11 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
-    protocol_version: Option<u64>,
+    protocol_version: Option<ProtocolVersion>,
+    /// Per-validator `SupportedProtocolVersions` overrides (indexed). When
+    /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
+    /// `Some(v)` must have length `num_validators`.
+    per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
 }
 
 impl IkaTestClusterBuilder {
@@ -677,6 +733,7 @@ impl IkaTestClusterBuilder {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
             protocol_version: None,
+            per_validator_supported_protocol_versions: None,
         }
     }
 
@@ -690,13 +747,24 @@ impl IkaTestClusterBuilder {
         self
     }
 
-    /// Pin the chain's protocol version. Defaults to the workspace
-    /// `MAX_PROTOCOL_VERSION` when not set — explicit pinning is
-    /// useful when a test is targeting behavior at a specific
-    /// version and we don't want a future MAX bump to silently
-    /// change what's exercised.
-    pub fn with_protocol_version(mut self, protocol_version: u64) -> Self {
+    /// Genesis protocol version. Defaults to `ProtocolVersion::MAX`. Use this
+    /// to boot the cluster at an older version (e.g. v3) so an epoch
+    /// transition will exercise the capability vote and advance to a newer
+    /// version (e.g. v4) supported by `SupportedProtocolVersions::SYSTEM_DEFAULT`.
+    pub fn with_protocol_version(mut self, protocol_version: ProtocolVersion) -> Self {
         self.protocol_version = Some(protocol_version);
+        self
+    }
+
+    /// Per-validator `SupportedProtocolVersions` overrides — vector length must
+    /// equal `num_validators`. Use this to model a gradual upgrade scenario
+    /// where some validators support a newer max than others. When unset,
+    /// every validator gets `SupportedProtocolVersions::SYSTEM_DEFAULT`.
+    pub fn with_per_validator_supported_protocol_versions(
+        mut self,
+        per_validator_versions: Vec<SupportedProtocolVersions>,
+    ) -> Self {
+        self.per_validator_supported_protocol_versions = Some(per_validator_versions);
         self
     }
 
@@ -768,7 +836,7 @@ impl IkaTestClusterBuilder {
             initiation_parameters.epoch_duration_ms = epoch_duration_ms;
         }
         if let Some(protocol_version) = self.protocol_version {
-            initiation_parameters.protocol_version = protocol_version;
+            initiation_parameters.protocol_version = protocol_version.as_u64();
         }
 
         let system = initialize_ika_system(
@@ -786,20 +854,49 @@ impl IkaTestClusterBuilder {
         // dir; restore cwd so the caller's process state isn't mutated.
         std::env::set_current_dir(&cwd)?;
 
-        let validator_configs = validator_initialization_configs
+        // Validators must declare which protocol versions they support so they
+        // send `AuthorityCapabilitiesV1` notifications — that's what the
+        // end-of-epoch quorum vote reads to pick the next protocol version.
+        // Without an override every validator gets `SYSTEM_DEFAULT`
+        // (`ProtocolVersion::MIN..=MAX`); the per-validator override lets
+        // tests model heterogeneous / gradual upgrade scenarios.
+        if let Some(per_validator) = self.per_validator_supported_protocol_versions.as_ref() {
+            anyhow::ensure!(
+                per_validator.len() == validator_initialization_configs.len(),
+                "per_validator_supported_protocol_versions has {} entries but cluster has {} validators",
+                per_validator.len(),
+                validator_initialization_configs.len(),
+            );
+        }
+        let validator_configs: Vec<_> = validator_initialization_configs
             .iter()
-            .map(|v| {
-                ValidatorConfigBuilder::new().build(
-                    v,
-                    sui_rpc_url.clone(),
-                    packages.ika_package_id,
-                    packages.ika_common_package_id,
-                    packages.ika_dwallet_2pc_mpc_package_id,
-                    packages.ika_system_package_id,
-                    system.ika_system_object_id,
-                    system.ika_dwallet_coordinator_object_id,
-                )
+            .enumerate()
+            .map(|(i, v)| {
+                let supported_versions = self
+                    .per_validator_supported_protocol_versions
+                    .as_ref()
+                    .map(|per_validator| per_validator[i])
+                    .unwrap_or(SupportedProtocolVersions::SYSTEM_DEFAULT);
+                ValidatorConfigBuilder::new()
+                    .with_supported_protocol_versions(supported_versions)
+                    .build(
+                        v,
+                        sui_rpc_url.clone(),
+                        packages.ika_package_id,
+                        packages.ika_common_package_id,
+                        packages.ika_dwallet_2pc_mpc_package_id,
+                        packages.ika_system_package_id,
+                        system.ika_system_object_id,
+                        system.ika_dwallet_coordinator_object_id,
+                    )
             })
+            .collect();
+        // Record the validators' protocol public keys in their configured
+        // order so test helpers (e.g. `upgrade_validator_supported_protocol_versions`)
+        // can address a specific validator by index.
+        let validator_names: Vec<_> = validator_configs
+            .iter()
+            .map(|c| c.protocol_public_key())
             .collect();
         // The ika epoch only advances when a Notifier node submits the
         // `process_mid_epoch` / `request_advance_epoch` transactions to Sui (the
@@ -852,6 +949,7 @@ impl IkaTestClusterBuilder {
             system,
             sui_rpc_url,
             publisher_address,
+            validator_names,
         })
     }
 }

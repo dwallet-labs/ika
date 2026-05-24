@@ -692,6 +692,12 @@ impl IkaNode {
         self.state.current_epoch_for_testing()
     }
 
+    /// Protocol version of the validator's current epoch store. Useful for
+    /// asserting on protocol-version transitions across reconfigurations.
+    pub fn current_protocol_version_for_testing(&self) -> ika_protocol_config::ProtocolVersion {
+        self.state.epoch_store_for_testing().protocol_version()
+    }
+
     pub fn db_checkpoint_path(&self) -> PathBuf {
         self.config.db_checkpoint_path()
     }
