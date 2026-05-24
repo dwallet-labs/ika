@@ -131,10 +131,16 @@ pub(crate) fn session_input_from_request(
                 &data.centralized_public_key_share_and_proof,
                 BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
             let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)
-                .cloned()
-                .unwrap_or_default();
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -340,10 +346,16 @@ pub(crate) fn session_input_from_request(
             message_centralized_signature,
             ..
         } => {
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
             let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)
-                .cloned()
-                .unwrap_or_default();
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -379,10 +391,16 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
             let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
             let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)
-                .cloned()
-                .unwrap_or_default();
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
