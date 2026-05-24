@@ -744,10 +744,7 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
 ) -> DwalletMPCResult<
     <SignParty<Secp256k1TaprootVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let curve_cache = vss_shamir_cache
-        .secp256k1
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("secp256k1"))?;
+    let curve_cache = &vss_shamir_cache.secp256k1;
 
     let entry = vss_presign_private_output::<
         <<<Secp256k1TaprootVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
@@ -777,10 +774,7 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
 ) -> DwalletMPCResult<
     <SignParty<Curve25519EdDSAVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let curve_cache = vss_shamir_cache
-        .curve25519
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("curve25519"))?;
+    let curve_cache = &vss_shamir_cache.curve25519;
 
     let entry = vss_presign_private_output::<
         <<<Curve25519EdDSAVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
@@ -810,14 +804,7 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
 ) -> DwalletMPCResult<
     <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
-    let curve_cache = vss_shamir_cache
-        .ristretto
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("ristretto"))?;
-    let (secret_key_share_first_part, secret_key_share_second_part) = (
-        curve_cache.secret_key_share_first_part,
-        curve_cache.secret_key_share_second_part,
-    );
+    let curve_cache = &vss_shamir_cache.ristretto;
 
     let entry = vss_presign_private_output::<
         <<<RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
@@ -825,8 +812,8 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PrivateInput {
-            secret_key_share_first_part,
-            secret_key_share_second_part,
+            secret_key_share_first_part: curve_cache.secret_key_share_first_part,
+            secret_key_share_second_part: curve_cache.secret_key_share_second_part,
             session_id: entry.session_id,
             presign_blending_index: entry.presign_blending_index,
             nonce_share_first_part: entry.nonce_share_first_part,
@@ -837,14 +824,6 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
                 .nonce_share_second_part_coefficient_commitments,
         },
     )
-}
-
-fn vss_cache_missing(curve: &str) -> DwalletMPCError {
-    DwalletMPCError::InvalidInput(format!(
-        "Fast Schnorr (VSS) {curve} Shamir cache not available — the network key has \
-         no V3 reconfiguration / DKG output yet, or this validator is not configured \
-         for VSS. Derivation happens once at network-key ingestion."
-    ))
 }
 
 fn build_secp256k1_taproot_vss_sign_public_input(
@@ -864,10 +843,7 @@ fn build_secp256k1_taproot_vss_sign_public_input(
     >(dwallet_decentralized_public_output, presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Secp256k1TaprootVSSProtocol>(message_centralized_signature)?;
-    let curve_cache = vss_shamir_cache
-        .secp256k1
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("secp256k1"))?;
+    let curve_cache = &vss_shamir_cache.secp256k1;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
@@ -904,10 +880,7 @@ fn build_curve25519_eddsa_vss_sign_public_input(
     >(dwallet_decentralized_public_output, presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Curve25519EdDSAVSSProtocol>(message_centralized_signature)?;
-    let curve_cache = vss_shamir_cache
-        .curve25519
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("curve25519"))?;
+    let curve_cache = &vss_shamir_cache.curve25519;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
@@ -945,10 +918,7 @@ fn build_ristretto_schnorrkel_vss_sign_public_input(
     let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
         message_centralized_signature,
     )?;
-    let curve_cache = vss_shamir_cache
-        .ristretto
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("ristretto"))?;
+    let curve_cache = &vss_shamir_cache.ristretto;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
@@ -1656,10 +1626,7 @@ fn build_secp256k1_taproot_vss_dkg_and_sign_public_input(
     let presign_value = decode_presign_v2::<Secp256k1TaprootVSSProtocol>(presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Secp256k1TaprootVSSProtocol>(message_centralized_signature)?;
-    let curve_cache = vss_shamir_cache
-        .secp256k1
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("secp256k1"))?;
+    let curve_cache = &vss_shamir_cache.secp256k1;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::DKGSignPublicInput {
@@ -1695,10 +1662,7 @@ fn build_curve25519_eddsa_vss_dkg_and_sign_public_input(
     let presign_value = decode_presign_v2::<Curve25519EdDSAVSSProtocol>(presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Curve25519EdDSAVSSProtocol>(message_centralized_signature)?;
-    let curve_cache = vss_shamir_cache
-        .curve25519
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("curve25519"))?;
+    let curve_cache = &vss_shamir_cache.curve25519;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::DKGSignPublicInput {
@@ -1737,10 +1701,7 @@ fn build_ristretto_schnorrkel_vss_dkg_and_sign_public_input(
     let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
         message_centralized_signature,
     )?;
-    let curve_cache = vss_shamir_cache
-        .ristretto
-        .as_ref()
-        .ok_or_else(|| vss_cache_missing("ristretto"))?;
+    let curve_cache = &vss_shamir_cache.ristretto;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::DKGSignPublicInput {

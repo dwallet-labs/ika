@@ -269,14 +269,20 @@ impl DWalletMPCManager {
         // class-groups secret (AHE) + per-curve PVSS decryption keys (used by
         // VSS Shamir-share pre-derivation at network-key ingestion). The
         // matching public encryption keys come from the same derivation and
-        // feed `ValidatorPvssMaterialForVss` so VSS shamir pre-derivation has
-        // both halves without re-running `from_seed` per network key.
+        // feed the publics struct so VSS shamir pre-derivation has both
+        // halves without re-running `from_seed` per network key. Secrets and
+        // publics are deliberately split into separate structs so the secret
+        // type never shares a struct with public material.
         let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
-        let validator_pvss_for_vss = Some(
-            crate::dwallet_mpc::network_dkg::ValidatorPvssMaterialForVss {
+        let validator_pvss_secrets_for_vss = Some(
+            crate::dwallet_mpc::network_dkg::ValidatorPvssSecretsForVss {
                 secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,
-                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
                 ristretto_decryption_key: validator_mpc_secrets.ristretto_pvss_decryption_key,
+            },
+        );
+        let validator_pvss_publics_for_vss = Some(
+            crate::dwallet_mpc::network_dkg::ValidatorPvssEncryptionKeysForVss {
+                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
                 ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
             },
         );
@@ -284,7 +290,8 @@ impl DWalletMPCManager {
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
             class_groups_decryption_key: validator_mpc_secrets.class_groups.decryption_key,
-            validator_pvss_for_vss,
+            validator_pvss_secrets_for_vss,
+            validator_pvss_publics_for_vss,
             validator_decryption_key_shares: HashMap::new(),
             validator_vss_shamir_cache: HashMap::new(),
         };

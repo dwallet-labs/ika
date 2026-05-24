@@ -47,23 +47,29 @@ pub struct DwalletMPCNetworkKeys {
     pub(crate) validator_private_dec_key_data: ValidatorPrivateDecryptionKeyData,
 }
 
-/// Validator-private PVSS HPKE material needed to compute the Fast Schnorr (VSS)
-/// Shamir shares of the network secret-key share at network-key ingestion time
-/// (so the per-sign hot path doesn't redo it). Holds both the decryption keys
-/// (secrets) and the matching encryption-key VALUE — the upstream
-/// `compute_*_shamir_shares_of_secret_key_share_parts` API needs both.
+/// SECRET. Validator's own PVSS HPKE decryption keys (secp256k1 + ristretto)
+/// used by `compute_*_shamir_shares_of_secret_key_share_parts` at network-key
+/// ingestion. secp256r1 PVSS isn't used by VSS at all; the Curve25519 `EdDSA`
+/// VSS curve also decrypts off the *ristretto* PVSS key (same
+/// `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`).
 ///
-/// Only secp256k1 and ristretto PVSS keys appear: VSS sign for the Curve25519
-/// `EdDSA` curve also runs off the *ristretto* PVSS key (same
-/// `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`), and secp256r1 PVSS material
-/// isn't used by VSS at all.
+/// Holds only secret material — the matching public encryption keys live
+/// alongside in [`ValidatorPvssEncryptionKeysForVss`].
 #[derive(Clone, Debug)]
-pub struct ValidatorPvssMaterialForVss {
+pub struct ValidatorPvssSecretsForVss {
     pub secp256k1_decryption_key: Secp256k1PvssDecryptionKey,
+    pub ristretto_decryption_key: RistrettoPvssDecryptionKey,
+}
+
+/// Validator's own PVSS HPKE encryption keys (public). Co-input to the
+/// `compute_*_shamir_shares_of_secret_key_share_parts` derivation alongside
+/// [`ValidatorPvssSecretsForVss`]; kept separate from the secrets so this
+/// struct (public) doesn't share a type with the secret one.
+#[derive(Clone, Debug)]
+pub struct ValidatorPvssEncryptionKeysForVss {
     pub secp256k1_encryption_key: class_groups::CompactIbqf<
         { twopc_mpc::secp256k1::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
     >,
-    pub ristretto_decryption_key: RistrettoPvssDecryptionKey,
     pub ristretto_encryption_key: class_groups::CompactIbqf<
         { twopc_mpc::ristretto::class_groups::NON_FUNDAMENTAL_DISCRIMINANT_LIMBS },
     >,
@@ -105,15 +111,16 @@ pub struct VssRistrettoShamirCache {
 /// VSS sign reads from here at compute time without re-deserializing the DKG /
 /// reconfiguration output and without redoing the Shamir derivation.
 ///
-/// `None` per-curve when the network key has no V3
-/// reconfiguration / DKG output yet (the pre-V3 shape predates the
-/// threshold-encryption-to-sharing output VSS needs); such a key must
-/// reconfigure to a V3 output before it can sign with VSS.
-#[derive(Clone, Debug, Default)]
+/// All three curves are populated atomically — they all derive from the same
+/// (V3) DKG / reconfiguration output. If that output is unavailable or any
+/// per-curve derivation fails, no `VssShamirCachePerKey` is inserted into the
+/// per-key map for that network key (and VSS sign sites then `?`-propagate
+/// `WaitingForNetworkKey`, same as the AHE wait path).
+#[derive(Clone, Debug)]
 pub struct VssShamirCachePerKey {
-    pub secp256k1: Option<VssSecp256k1ShamirCache>,
-    pub curve25519: Option<VssCurve25519ShamirCache>,
-    pub ristretto: Option<VssRistrettoShamirCache>,
+    pub secp256k1: VssSecp256k1ShamirCache,
+    pub curve25519: VssCurve25519ShamirCache,
+    pub ristretto: VssRistrettoShamirCache,
 }
 
 /// Holds the private decryption key data for a validator node.
@@ -124,14 +131,21 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// The validator's class groups decryption key.
     pub class_groups_decryption_key: ClassGroupsDecryptionKey,
 
-    /// Validator-private PVSS HPKE material (secp256k1 + ristretto dec/enc) used
-    /// at network-key ingestion to pre-derive the Fast Schnorr (VSS) Shamir
-    /// shares. `None` if Fast Schnorr is not configured on this node (e.g.
-    /// integration tests that don't exercise VSS). The VSS HPKE curve25519
-    /// **secret** key isn't here — it's needed only at the presign hot path and
-    /// is cached on `CryptographicComputationsOrchestrator` so we don't carry
-    /// it through this struct or the per-session crypto-data plumbing.
-    pub validator_pvss_for_vss: Option<ValidatorPvssMaterialForVss>,
+    /// Validator-private PVSS HPKE secret decryption keys (secp256k1 +
+    /// ristretto). Used at network-key ingestion to pre-derive the Fast
+    /// Schnorr (VSS) Shamir shares; paired with `validator_pvss_publics_for_vss`
+    /// (the matching public encryption keys). `None` if Fast Schnorr is not
+    /// configured on this node (e.g. integration tests that don't exercise
+    /// VSS). The VSS HPKE curve25519 **secret** key isn't here — it's needed
+    /// only at the presign hot path and is cached on
+    /// `CryptographicComputationsOrchestrator`.
+    pub validator_pvss_secrets_for_vss: Option<ValidatorPvssSecretsForVss>,
+
+    /// Public counterpart of [`Self::validator_pvss_secrets_for_vss`]: this
+    /// validator's own PVSS encryption keys (per curve). Kept separate from
+    /// the secrets struct so the secret type never shares a struct with
+    /// public material. `None` exactly when the secrets are also `None`.
+    pub validator_pvss_publics_for_vss: Option<ValidatorPvssEncryptionKeysForVss>,
 
     /// A map of the validator's decryption key shares.
     ///
@@ -282,17 +296,21 @@ impl ValidatorPrivateDecryptionKeyData {
         self.validator_decryption_key_shares
             .insert(key_id, decryption_key_shares);
 
-        // Pre-derive VSS Shamir shares + commitments at ingestion.
-        // If this validator isn't configured for VSS (no PVSS material), or the
-        // network key is pre-V3 (no threshold-encryption-to-sharing output), the
-        // per-curve cache stays `None` and VSS sign for this key will fail at
-        // lookup time with a clear "no VSS shamir data" error.
-        let vss_cache = if let Some(pvss) = self.validator_pvss_for_vss.as_ref() {
-            derive_vss_shamir_cache_for_key(&key, self.party_id, pvss)
-        } else {
-            VssShamirCachePerKey::default()
-        };
-        self.validator_vss_shamir_cache.insert(key_id, vss_cache);
+        // Pre-derive VSS Shamir shares + commitments at ingestion. All-or-
+        // nothing: if this validator isn't configured for VSS, or the network
+        // key is pre-V3, OR any per-curve derivation fails, we insert nothing
+        // into the cache. VSS sign sites then `?`-propagate
+        // `WaitingForNetworkKey` exactly like the AHE wait path.
+        if let (Some(secrets), Some(publics)) = (
+            self.validator_pvss_secrets_for_vss.as_ref(),
+            self.validator_pvss_publics_for_vss.as_ref(),
+        ) {
+            if let Some(vss_cache) =
+                derive_vss_shamir_cache_for_key(&key, self.party_id, secrets, publics)
+            {
+                self.validator_vss_shamir_cache.insert(key_id, vss_cache);
+            }
+        }
 
         Ok(())
     }
@@ -300,13 +318,15 @@ impl ValidatorPrivateDecryptionKeyData {
 
 /// Pre-derive the Fast Schnorr (VSS) Shamir shares + secret-key polynomial
 /// commitments for all three VSS curves from a single network DKG /
-/// reconfiguration output. The output is deserialized at most once; per-curve
-/// failures yield `None` for that curve (e.g. pre-V3 output → all three `None`).
+/// reconfiguration output. The output is deserialized at most once. Returns
+/// `None` if the network key has no V3 output (pre-V3) or any per-curve
+/// derivation fails — the three curves are always populated together.
 fn derive_vss_shamir_cache_for_key(
     key: &NetworkEncryptionKeyPublicData,
     party_id: PartyID,
-    pvss: &ValidatorPvssMaterialForVss,
-) -> VssShamirCachePerKey {
+    secrets: &ValidatorPvssSecretsForVss,
+    publics: &ValidatorPvssEncryptionKeysForVss,
+) -> Option<VssShamirCachePerKey> {
     use twopc_mpc::decentralized_party::{dkg as dec_dkg, reconfiguration as dec_reconf};
 
     enum DeserializedSource {
@@ -314,22 +334,17 @@ fn derive_vss_shamir_cache_for_key(
         NetworkDkg(<dec_dkg::Party as mpc::Party>::PublicOutput),
     }
 
-    let deserialized: Option<DeserializedSource> =
-        match key.latest_network_reconfiguration_public_output() {
-            Some(VersionedDecryptionKeyReconfigurationOutput::V3(bytes)) => bcs::from_bytes(&bytes)
-                .ok()
-                .map(DeserializedSource::Reconfiguration),
-            // Pre-V3 reconfiguration (or none yet) → fall through to network DKG output.
-            _ => match key.network_dkg_output() {
-                VersionedNetworkDkgOutput::V3(bytes) => bcs::from_bytes(bytes)
-                    .ok()
-                    .map(DeserializedSource::NetworkDkg),
-                _ => None,
-            },
-        };
-
-    let Some(source) = deserialized else {
-        return VssShamirCachePerKey::default();
+    let source: DeserializedSource = match key.latest_network_reconfiguration_public_output() {
+        Some(VersionedDecryptionKeyReconfigurationOutput::V3(bytes)) => {
+            DeserializedSource::Reconfiguration(bcs::from_bytes(&bytes).ok()?)
+        }
+        // Pre-V3 reconfiguration (or none yet) → fall through to network DKG output.
+        _ => match key.network_dkg_output() {
+            VersionedNetworkDkgOutput::V3(bytes) => {
+                DeserializedSource::NetworkDkg(bcs::from_bytes(bytes).ok()?)
+            }
+            _ => return None,
+        },
     };
 
     let (secp256k1_shares, secp256k1_first_commitments, secp256k1_second_commitments) =
@@ -337,8 +352,8 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::Reconfiguration(o) => (
                 o.compute_secp256k1_shamir_shares_of_secret_key_share_parts(
                     party_id,
-                    pvss.secp256k1_decryption_key,
-                    pvss.secp256k1_encryption_key.clone(),
+                    secrets.secp256k1_decryption_key,
+                    publics.secp256k1_encryption_key.clone(),
                 ),
                 o.secp256k1_polynomial_commitments().0.clone(),
                 o.secp256k1_polynomial_commitments().1.clone(),
@@ -346,8 +361,8 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::NetworkDkg(o) => (
                 o.derive_shamir_shares_of_secp256k1_secret_key_share_parts(
                     party_id,
-                    pvss.secp256k1_decryption_key,
-                    pvss.secp256k1_encryption_key.clone(),
+                    secrets.secp256k1_decryption_key,
+                    publics.secp256k1_encryption_key.clone(),
                 ),
                 o.secp256k1_polynomial_commitments().0.clone(),
                 o.secp256k1_polynomial_commitments().1.clone(),
@@ -358,8 +373,8 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::Reconfiguration(o) => (
                 o.compute_curve25519_shamir_shares_of_secret_key_share_parts(
                     party_id,
-                    pvss.ristretto_decryption_key,
-                    pvss.ristretto_encryption_key.clone(),
+                    secrets.ristretto_decryption_key,
+                    publics.ristretto_encryption_key.clone(),
                 ),
                 o.curve25519_polynomial_commitments().0.clone(),
                 o.curve25519_polynomial_commitments().1.clone(),
@@ -367,8 +382,8 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::NetworkDkg(o) => (
                 o.derive_shamir_shares_of_curve25519_secret_key_share_parts(
                     party_id,
-                    pvss.ristretto_decryption_key,
-                    pvss.ristretto_encryption_key.clone(),
+                    secrets.ristretto_decryption_key,
+                    publics.ristretto_encryption_key.clone(),
                 ),
                 o.curve25519_polynomial_commitments().0.clone(),
                 o.curve25519_polynomial_commitments().1.clone(),
@@ -379,8 +394,8 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::Reconfiguration(o) => (
                 o.compute_ristretto_shamir_shares_of_secret_key_share_parts(
                     party_id,
-                    pvss.ristretto_decryption_key,
-                    pvss.ristretto_encryption_key.clone(),
+                    secrets.ristretto_decryption_key,
+                    publics.ristretto_encryption_key.clone(),
                 ),
                 o.ristretto_polynomial_commitments().0.clone(),
                 o.ristretto_polynomial_commitments().1.clone(),
@@ -388,40 +403,38 @@ fn derive_vss_shamir_cache_for_key(
             DeserializedSource::NetworkDkg(o) => (
                 o.derive_shamir_shares_of_ristretto_secret_key_share_parts(
                     party_id,
-                    pvss.ristretto_decryption_key,
-                    pvss.ristretto_encryption_key.clone(),
+                    secrets.ristretto_decryption_key,
+                    publics.ristretto_encryption_key.clone(),
                 ),
                 o.ristretto_polynomial_commitments().0.clone(),
                 o.ristretto_polynomial_commitments().1.clone(),
             ),
         };
 
-    VssShamirCachePerKey {
-        secp256k1: secp256k1_shares
-            .ok()
-            .map(|(first, second)| VssSecp256k1ShamirCache {
-                secret_key_share_first_part: first,
-                secret_key_share_second_part: second,
-                first_secret_key_polynomial_commitments: secp256k1_first_commitments,
-                second_secret_key_polynomial_commitments: secp256k1_second_commitments,
-            }),
-        curve25519: curve25519_shares
-            .ok()
-            .map(|(first, second)| VssCurve25519ShamirCache {
-                secret_key_share_first_part: first,
-                secret_key_share_second_part: second,
-                first_secret_key_polynomial_commitments: curve25519_first_commitments,
-                second_secret_key_polynomial_commitments: curve25519_second_commitments,
-            }),
-        ristretto: ristretto_shares
-            .ok()
-            .map(|(first, second)| VssRistrettoShamirCache {
-                secret_key_share_first_part: first,
-                secret_key_share_second_part: second,
-                first_secret_key_polynomial_commitments: ristretto_first_commitments,
-                second_secret_key_polynomial_commitments: ristretto_second_commitments,
-            }),
-    }
+    let (secp256k1_first, secp256k1_second) = secp256k1_shares.ok()?;
+    let (curve25519_first, curve25519_second) = curve25519_shares.ok()?;
+    let (ristretto_first, ristretto_second) = ristretto_shares.ok()?;
+
+    Some(VssShamirCachePerKey {
+        secp256k1: VssSecp256k1ShamirCache {
+            secret_key_share_first_part: secp256k1_first,
+            secret_key_share_second_part: secp256k1_second,
+            first_secret_key_polynomial_commitments: secp256k1_first_commitments,
+            second_secret_key_polynomial_commitments: secp256k1_second_commitments,
+        },
+        curve25519: VssCurve25519ShamirCache {
+            secret_key_share_first_part: curve25519_first,
+            secret_key_share_second_part: curve25519_second,
+            first_secret_key_polynomial_commitments: curve25519_first_commitments,
+            second_secret_key_polynomial_commitments: curve25519_second_commitments,
+        },
+        ristretto: VssRistrettoShamirCache {
+            secret_key_share_first_part: ristretto_first,
+            secret_key_share_second_part: ristretto_second,
+            first_secret_key_polynomial_commitments: ristretto_first_commitments,
+            second_secret_key_polynomial_commitments: ristretto_second_commitments,
+        },
+    })
 }
 
 impl DwalletMPCNetworkKeys {
