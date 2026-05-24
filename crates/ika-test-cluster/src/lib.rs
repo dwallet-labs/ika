@@ -340,18 +340,53 @@ impl IkaTestCluster {
         let encryption_key_signature = sig.as_ref().to_vec();
         let signer_public_key = signing_keypair.public().as_bytes().to_vec();
 
-        let response = register_encryption_key(
-            self.test_cluster.wallet_mut(),
-            self.packages.ika_dwallet_2pc_mpc_package_id,
-            self.system.ika_dwallet_coordinator_object_id,
-            curve,
-            encryption_key.clone(),
-            encryption_key_signature,
-            signer_public_key.clone(),
-            DEFAULT_DWALLET_TX_GAS_BUDGET,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("register_encryption_key tx failed: {e}"))?;
+        // Retry on Sui object-contention errors. Background presign
+        // tasks + parallel txs can lock the publisher's gas SUI
+        // coin or other owned objects between our resolve and
+        // submit; same retriable conditions as
+        // `request_user_dwallet_dkg`.
+        let mut register_last_err: Option<anyhow::Error> = None;
+        let mut response = None;
+        for attempt in 0..10 {
+            match register_encryption_key(
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                curve,
+                encryption_key.clone(),
+                encryption_key_signature.clone(),
+                signer_public_key.clone(),
+                DEFAULT_DWALLET_TX_GAS_BUDGET,
+            )
+            .await
+            {
+                Ok(resp) => {
+                    response = Some(resp);
+                    break;
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let is_retriable_contention = msg.contains("unavailable for consumption")
+                        || msg.contains("Transaction needs to be rebuilt")
+                        || msg.contains("already locked by a different transaction");
+                    tracing::warn!(
+                        attempt,
+                        is_retriable_contention,
+                        "register_encryption_key tx failed: {e}"
+                    );
+                    register_last_err =
+                        Some(anyhow::anyhow!("register_encryption_key tx failed: {e}"));
+                    if !is_retriable_contention {
+                        return Err(register_last_err.unwrap());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+        let response = response.ok_or_else(|| {
+            register_last_err
+                .unwrap_or_else(|| anyhow::anyhow!("register_encryption_key: out of retries"))
+        })?;
 
         let digest = *response
             .effects
@@ -445,16 +480,21 @@ impl IkaTestCluster {
         )
         .map_err(|e| anyhow::anyhow!("encrypt_secret_key_share_and_prove_v2: {e}"))?;
 
-        // Retry on Sui object-version contention. The IKA payment
-        // coin is shared with other infra (staking splits etc.) and
-        // can move between our `get_object_ref` resolve and tx
-        // submission, surfacing as
-        // `"object ... version N is unavailable for consumption,
-        // current version: N+1"`. Each retry re-resolves through
-        // `PaymentCoinArgs`.
+        // Retry on Sui object-contention errors. Two patterns
+        // surface in this setup:
+        // 1. `"object ... version N is unavailable for consumption,
+        //    current version: N+1"` — the IKA payment coin moved
+        //    between our `get_object_ref` resolve and tx
+        //    submission (e.g., a parallel staking split). Each
+        //    retry re-resolves through `PaymentCoinArgs`.
+        // 2. `"already locked by a different transaction:
+        //    TransactionDigest(...)"` — Sui's shared-object /
+        //    owned-object lock conflict; the prior tx will commit
+        //    or fail soon, releasing the lock. Re-attempt clears
+        //    once that resolves.
         let mut last_err: Option<anyhow::Error> = None;
         let mut response = None;
-        for attempt in 0..5 {
+        for attempt in 0..10 {
             match request_dwallet_dkg(
                 self.test_cluster.wallet_mut(),
                 self.packages.ika_dwallet_2pc_mpc_package_id,
@@ -482,18 +522,23 @@ impl IkaTestCluster {
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    let is_version_race = msg.contains("unavailable for consumption")
-                        || msg.contains("Transaction needs to be rebuilt");
+                    let is_retriable_contention = msg.contains("unavailable for consumption")
+                        || msg.contains("Transaction needs to be rebuilt")
+                        || msg.contains("already locked by a different transaction");
                     tracing::warn!(
                         attempt,
-                        is_version_race,
+                        is_retriable_contention,
                         "request_dwallet_dkg tx failed: {e}"
                     );
                     last_err = Some(anyhow::anyhow!("request_dwallet_dkg tx failed: {e}"));
-                    if !is_version_race {
+                    if !is_retriable_contention {
                         return Err(last_err.unwrap());
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    // Backoff long enough for the contending tx to
+                    // either commit or fail (Sui's tx finalization
+                    // is typically sub-second on the in-process
+                    // chain, but checkpoint settle adds ~1s).
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             }
         }

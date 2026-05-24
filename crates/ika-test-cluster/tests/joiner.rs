@@ -301,3 +301,119 @@ async fn test_joiner_added_while_user_dkg_in_flight() {
     dkg_result.expect("dWallet DKG never completed alongside joiner add");
     wait_for_node_epoch(&joiner.node_handle, 2).await;
 }
+
+/// Multi-epoch stress: across six epoch cycles, submit three user
+/// DKGs per cycle — "early" right after the new epoch starts, "mid"
+/// in the middle of the epoch, and "late" deliberately close to the
+/// next epoch boundary so it queues across reconfiguration. All
+/// eighteen DKGs must complete, and every epoch transition must
+/// finish within a bounded time (no blocking on in-flight sessions).
+///
+/// This is the broadest single-test verification that:
+/// 1. Repeated user sessions don't accumulate state that breaks
+///    later sessions.
+/// 2. Sessions submitted at any point in the epoch cycle complete.
+/// 3. Epoch advancement isn't blocked by session queues.
+/// 4. The pipeline survives sustained load over multiple
+///    reconfigurations (not just one).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_sessions_across_multiple_epochs() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(15_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    // Reach epoch 1 + capture the network DKG output once; it stays
+    // valid for the rest of the test (protocol public parameters are
+    // derived per-curve from this blob).
+    cluster.wait_for_epoch(1).await;
+    let (network_key_id, network_dkg_public_output) = cluster
+        .wait_for_network_key()
+        .await
+        .expect("wait_for_network_key failed");
+
+    let mut all_handles = Vec::new();
+
+    // Six cycles, each starting in epoch N and ending at epoch
+    // N+1. Within each cycle: register + submit three DKGs (early,
+    // mid, late), then assert the epoch transition lands in bounded
+    // time. The 120s per-epoch ceiling is the same bound used by
+    // the other bug-repro tests; if a session queue blocks epoch
+    // advancement, this fires.
+    const CYCLES: u32 = 6;
+    const DKGS_PER_CYCLE: u32 = 3;
+    // With epoch_duration_ms = 15_000, ~5s sleep between
+    // submissions spreads them across the epoch window: roughly t=0,
+    // t=5s (mid), t=10s (late, close to the timer firing).
+    const SLEEP_BETWEEN_SUBMISSIONS: std::time::Duration = std::time::Duration::from_secs(5);
+
+    for cycle in 1u32..=CYCLES {
+        for batch in 0u32..DKGS_PER_CYCLE {
+            // Unique seed per registration so each user encryption
+            // key lives at a distinct on-chain address. Two bytes:
+            // cycle and batch — keeps the 32-byte seed buffer
+            // structured + reproducible.
+            let seed_byte = (cycle as u8 * 10) + batch as u8;
+            let user_key = cluster
+                .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [seed_byte; 32])
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("register_user_encryption_key (cycle={cycle}, batch={batch}): {e}")
+                });
+
+            let ika_coin_id = cluster.packages.ika_supply_id;
+            let dkg_handle = cluster
+                .request_user_dwallet_dkg(
+                    DWALLET_CURVE_SECP256K1,
+                    network_key_id,
+                    network_dkg_public_output.clone(),
+                    &user_key,
+                    ika_coin_id,
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("request_user_dwallet_dkg (cycle={cycle}, batch={batch}): {e}")
+                });
+            all_handles.push((cycle, batch, dkg_handle));
+
+            // Spread submissions across the epoch window — the
+            // first lands at epoch start, subsequent ones drift
+            // toward the boundary so at least one consistently
+            // queues across reconfiguration.
+            if batch + 1 < DKGS_PER_CYCLE {
+                tokio::time::sleep(SLEEP_BETWEEN_SUBMISSIONS).await;
+            }
+        }
+
+        // Epoch must advance within a bounded window regardless of
+        // whether the in-flight DKGs have completed. With
+        // `internal_presign_sessions = true` (v4 default) +
+        // multiple in-flight user DKGs, each transition takes
+        // longer; 240s is the empirical ceiling we observe with
+        // 3 concurrent DKGs.
+        let next_epoch = cycle as u64 + 1;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(240),
+            cluster.wait_for_epoch(next_epoch),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!("epoch {next_epoch} was blocked — sessions held up reconfiguration")
+        });
+    }
+
+    // All DKGs must complete. Wait one at a time to bound the
+    // overall wait; in practice they finish quickly once their
+    // session-output checkpoints land on chain.
+    for (cycle, batch, handle) in &all_handles {
+        cluster
+            .wait_for_dwallet_dkg_complete(handle.dwallet_id, std::time::Duration::from_secs(300))
+            .await
+            .unwrap_or_else(|e| panic!("dkg (cycle={cycle}, batch={batch}): {e}"));
+    }
+}
