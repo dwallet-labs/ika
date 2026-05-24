@@ -13,7 +13,8 @@ use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
     ContractPaths, InitializedIkaSystem, PublishedIkaPackages, initialize_ika_system,
-    publish_ika_packages, request_add_validator, request_add_validator_candidate, stake_ika,
+    publish_ika_packages, request_add_validator, request_add_validator_candidate,
+    request_remove_validator, stake_ika,
 };
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
@@ -182,6 +183,36 @@ impl IkaTestCluster {
             node_handle,
             init_config: joiner_init,
         })
+    }
+
+    /// Submit `system::request_remove_validator` as the validator at
+    /// `validator_idx` in the initial bootstrap order. The validator
+    /// stays in the active set until the next epoch boundary; the
+    /// on-chain logic moves it out at the next reconfiguration.
+    /// Caller drives `wait_for_epoch(next_epoch)` to observe the
+    /// committee change.
+    ///
+    /// Indexes into the bootstrap's validator set (0..num_validators).
+    /// The corresponding `ValidatorCap` ObjectID is read from
+    /// `system.validator_cap_ids`.
+    pub async fn remove_validator(&mut self, validator_idx: usize) -> Result<()> {
+        let validator_cap_id = self.system.validator_cap_ids[validator_idx];
+        let validator_address = SuiAddress::from(
+            &self.swarm.config().validator_initialization_configs[validator_idx]
+                .account_key_pair
+                .public(),
+        );
+        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        request_remove_validator(
+            validator_address,
+            self.test_cluster.wallet_mut(),
+            client,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.init_system_shared_version,
+            validator_cap_id,
+        )
+        .await
     }
 }
 

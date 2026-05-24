@@ -25,9 +25,10 @@ use ika_types::sui::{
     PROTOCOL_CAP_MODULE_NAME, PROTOCOL_CAP_STRUCT_NAME, PUSH_BACK_TO_TABLE_VEC_FUNCTION_NAME,
     REQUEST_ADD_STAKE_FUNCTION_NAME, REQUEST_ADD_VALIDATOR_CANDIDATE_FUNCTION_NAME,
     REQUEST_ADD_VALIDATOR_FUNCTION_NAME,
-    REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME, SYSTEM_MODULE_NAME, System,
-    TABLE_VEC_MODULE_NAME, VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME,
-    VALIDATOR_METADATA_MODULE_NAME, VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME, VEC_MAP_MODULE_NAME,
+    REQUEST_DWALLET_NETWORK_DECRYPTION_KEY_DKG_BY_CAP_FUNCTION_NAME,
+    REQUEST_REMOVE_VALIDATOR_FUNCTION_NAME, SYSTEM_MODULE_NAME, System, TABLE_VEC_MODULE_NAME,
+    VALIDATOR_CAP_MODULE_NAME, VALIDATOR_CAP_STRUCT_NAME, VALIDATOR_METADATA_MODULE_NAME,
+    VEC_MAP_FROM_KEYS_VALUES_FUNCTION_NAME, VEC_MAP_MODULE_NAME,
 };
 use move_core_types::ident_str;
 use move_core_types::language_storage::{StructTag, TypeTag};
@@ -103,6 +104,13 @@ pub struct InitializedIkaSystem {
     pub ika_dwallet_coordinator_object_id: ObjectID,
     pub dwallet_2pc_mpc_coordinator_initial_shared_version: SequenceNumber,
     pub validator_ids: Vec<ObjectID>,
+    /// `ValidatorCap` ObjectIDs returned from each validator's
+    /// `request_add_validator_candidate` call, in the same order as
+    /// `validator_ids`. The cap is the authority capability needed
+    /// to call `request_remove_validator` later — keep it around so
+    /// post-init flows (test cluster's `remove_validator`) can drive
+    /// validator removal without re-querying chain.
+    pub validator_cap_ids: Vec<ObjectID>,
 }
 
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
@@ -457,7 +465,9 @@ pub async fn initialize_ika_system(
 
     println!("Staking for all validators done.");
 
-    for (validator_address, validator_cap_id) in validator_addresses.iter().zip(validator_cap_ids) {
+    for (validator_address, validator_cap_id) in
+        validator_addresses.iter().zip(validator_cap_ids.iter())
+    {
         request_add_validator(
             *validator_address,
             context,
@@ -465,7 +475,7 @@ pub async fn initialize_ika_system(
             packages.ika_system_package_id,
             ika_system_object_id,
             init_system_shared_version,
-            validator_cap_id,
+            *validator_cap_id,
         )
         .await?;
         println!("Running `system::request_add_validator` done for validator {validator_address}");
@@ -524,6 +534,7 @@ pub async fn initialize_ika_system(
         ika_dwallet_coordinator_object_id,
         dwallet_2pc_mpc_coordinator_initial_shared_version,
         validator_ids,
+        validator_cap_ids,
     })
 }
 
@@ -1276,6 +1287,49 @@ pub async fn request_add_validator(
         ika_system_package_id,
         SYSTEM_MODULE_NAME.into(),
         REQUEST_ADD_VALIDATOR_FUNCTION_NAME.into(),
+        vec![],
+        vec![
+            CallArg::Object(ObjectArg::SharedObject {
+                id: ika_system_object_id,
+                initial_shared_version: init_system_shared_version,
+                mutability: sui_types::transaction::SharedObjectMutability::Mutable,
+            }),
+            CallArg::Object(ObjectArg::ImmOrOwnedObject(validator_cap_ref)),
+        ],
+    )?;
+
+    let tx_kind = TransactionKind::ProgrammableTransaction(ptb.finish());
+
+    let _ = execute_sui_transaction(validator_address, tx_kind, context, vec![]).await?;
+
+    Ok(())
+}
+
+/// Sign and submit `system::request_remove_validator` as `validator_address`.
+/// Mirrors [`request_add_validator`] — explicit sender + explicit shared-version
+/// + explicit cap so callers can drive removal without touching the active
+/// wallet address. The validator stays in the active set until the next epoch
+/// boundary; the on-chain logic moves it out at the next reconfiguration.
+pub async fn request_remove_validator(
+    validator_address: SuiAddress,
+    context: &mut WalletContext,
+    client: SuiClient,
+    ika_system_package_id: ObjectID,
+    ika_system_object_id: ObjectID,
+    init_system_shared_version: SequenceNumber,
+    validator_cap_id: ObjectID,
+) -> Result<(), anyhow::Error> {
+    let mut ptb = ProgrammableTransactionBuilder::new();
+
+    let validator_cap_ref = client
+        .transaction_builder()
+        .get_object_ref(validator_cap_id)
+        .await?;
+
+    ptb.move_call(
+        ika_system_package_id,
+        SYSTEM_MODULE_NAME.into(),
+        REQUEST_REMOVE_VALIDATOR_FUNCTION_NAME.into(),
         vec![],
         vec![
             CallArg::Object(ObjectArg::SharedObject {
