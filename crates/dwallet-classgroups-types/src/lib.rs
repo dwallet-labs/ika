@@ -25,7 +25,6 @@ use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, ValidatorEncryptionKeysAndProofs,
 };
 use mpc::secret_sharing::shamir::known_order::generate_and_uc_prove_encryption_keypair;
-use serde::{Deserialize, Serialize};
 
 pub type ClassGroupsDecryptionKey = [Uint<{ CRT_FUNDAMENTAL_DISCRIMINANT_LIMBS }>; MAX_PRIMES];
 type AsyncProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
@@ -51,28 +50,26 @@ pub type Secp256k1PvssDecryptionKey = Uint<{ SECP256K1_FUNDAMENTAL_DISCRIMINANT_
 pub type Secp256r1PvssDecryptionKey = Uint<{ SECP256R1_FUNDAMENTAL_DISCRIMINANT_LIMBS }>;
 pub type RistrettoPvssDecryptionKey = Uint<{ RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS }>;
 
-/// Validator's class-groups CRT decryption-key + matching encryption-key + UC-secure
-/// proof bundle.
+/// SECRET. Validator's own class-groups CRT decryption key. Holds only secret
+/// material — the matching public encryption key + UC-secure proof is returned
+/// alongside as [`ClassGroupsEncryptionKeyAndProof`] by [`Self::from_seed`].
 ///
-/// Wire-format unchanged since pre-bump: callers that serialize or store this
-/// struct continue to interoperate with existing keys.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClassGroupsKeyPairAndProof {
-    #[serde(with = "group::helpers::const_generic_array_serialization")]
-    decryption_key_per_crt_prime: ClassGroupsDecryptionKey,
-    #[serde(with = "group::helpers::const_generic_array_serialization")]
-    encryption_key_and_proof: ClassGroupsEncryptionKeyAndProof,
+/// Deliberately **NOT** `Serialize` / `Deserialize`: the decryption key must
+/// never be written out, persisted, or transmitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClassGroupsSecret {
+    /// Class-groups CRT decryption key.
+    pub decryption_key: ClassGroupsDecryptionKey,
 }
 
-impl ClassGroupsKeyPairAndProof {
-    /// Generates a [`ClassGroupsKeyPairAndProof`] from a root seed.
+impl ClassGroupsSecret {
+    /// Deterministically generate the class-groups CRT decryption key and the
+    /// matching encryption-key-and-proof from a root seed. Uses
+    /// `class_groups_decryption_key_rng` so the same seed always reproduces
+    /// the same pair.
     ///
-    /// Deterministically generates class-groups keys using ChaCha20Rng
-    /// seeded with the dedicated `class_groups_decryption_key_rng` child of the
-    /// provided root seed. The same seed will always produce the same key pair.
-    ///
-    /// The seed should be cryptographically secure and kept confidential.
-    pub fn from_seed(root_seed: &RootSeed) -> Self {
+    /// The seed must be cryptographically secure and kept confidential.
+    pub fn from_seed(root_seed: &RootSeed) -> (Self, ClassGroupsEncryptionKeyAndProof) {
         let setup_parameters_per_crt_prime =
             construct_setup_parameters_per_crt_prime(DEFAULT_COMPUTATIONAL_SECURITY_PARAMETER)
                 .unwrap();
@@ -94,18 +91,10 @@ impl ClassGroupsKeyPairAndProof {
         )
         .unwrap();
 
-        ClassGroupsKeyPairAndProof {
-            decryption_key_per_crt_prime: decryption_key,
+        (
+            ClassGroupsSecret { decryption_key },
             encryption_key_and_proof,
-        }
-    }
-
-    pub fn encryption_key_and_proof(&self) -> ClassGroupsEncryptionKeyAndProof {
-        self.encryption_key_and_proof.clone()
-    }
-
-    pub fn decryption_key(&self) -> ClassGroupsDecryptionKey {
-        self.decryption_key_per_crt_prime
+        )
     }
 }
 
@@ -128,8 +117,9 @@ impl ClassGroupsKeyPairAndProof {
 /// be cryptographically secure and kept confidential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatorMPCSecrets {
-    /// Pre-existing class-groups CRT keypair + proof. Wire-stable.
-    pub class_groups: ClassGroupsKeyPairAndProof,
+    /// Class-groups CRT decryption key. Secret-only — the matching encryption
+    /// key + UC-secure proof lives in the returned [`ValidatorEncryptionKeysAndProofs`].
+    pub class_groups: ClassGroupsSecret,
 
     /// Per-curve PVSS HPKE secret decryption keys. Never publish or transmit;
     /// used at sign time when this validator decrypts its share of the
@@ -167,7 +157,8 @@ impl ValidatorMPCSecrets {
     /// randomness during keypair generation, so the public payload must be
     /// captured here — it can't be recomputed from the secrets alone.
     pub fn from_seed(root_seed: &RootSeed) -> (Self, ValidatorEncryptionKeysAndProofs) {
-        let class_groups = ClassGroupsKeyPairAndProof::from_seed(root_seed);
+        let (class_groups, class_groups_encryption_key_and_proof) =
+            ClassGroupsSecret::from_seed(root_seed);
 
         let secp256k1_setup =
             Secp256k1SetupParameters::derive_from_plaintext_parameters::<group::secp256k1::Scalar>(
@@ -235,7 +226,7 @@ impl ValidatorMPCSecrets {
                 .unwrap();
 
         let publics = ValidatorEncryptionKeysAndProofs {
-            class_groups: class_groups.encryption_key_and_proof(),
+            class_groups: class_groups_encryption_key_and_proof,
             secp256k1_pvss: (secp256k1_enc, secp256k1_proof),
             secp256r1_pvss: (secp256r1_enc, secp256r1_proof),
             ristretto_pvss: (ristretto_enc, ristretto_proof),

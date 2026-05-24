@@ -81,6 +81,11 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
 
+    /// Fast Schnorr (VSS) HPKE curve25519 secret key, derived once at startup
+    /// from `root_seed` and reused for every VSS presign — avoids re-running
+    /// the HPKE keypair generation per presign.
+    vss_hpke_secret_key: group::curve25519::Scalar,
+
     /// Under msim, the simulated node this orchestrator belongs to, captured at
     /// construction (which runs inside the validator's node context). The rayon
     /// worker that runs a cryptographic computation has no node context, so it uses
@@ -116,6 +121,11 @@ impl CryptographicComputationsOrchestrator {
         #[cfg(msim)]
         let sim_node = sui_simulator::runtime::NodeHandle::try_current();
 
+        let vss_hpke_secret_key =
+            dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(
+                &root_seed,
+            );
+
         Ok(CryptographicComputationsOrchestrator {
             available_cores_for_cryptographic_computations: available_cores_for_computations,
             completed_computation_sender: report_computation_completed_sender,
@@ -123,6 +133,7 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
+            vss_hpke_secret_key,
             #[cfg(msim)]
             sim_node,
         })
@@ -278,6 +289,7 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
+        let vss_hpke_secret_key = self.vss_hpke_secret_key;
 
         // Under msim, tokio APIs and tracing instrumentation require a simulated
         // node context; rayon worker threads have none and abort at
@@ -295,8 +307,12 @@ impl CryptographicComputationsOrchestrator {
 
             let advance_start_time = Instant::now();
 
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                vss_hpke_secret_key,
+                dwallet_mpc_metrics.clone(),
+            );
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();

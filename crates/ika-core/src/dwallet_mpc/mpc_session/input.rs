@@ -131,6 +131,10 @@ pub(crate) fn session_input_from_request(
                 &data.centralized_public_key_share_and_proof,
                 BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)
+                .cloned()
+                .unwrap_or_default();
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -141,6 +145,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,
+                    &vss_shamir_cache,
                     data.signature_algorithm,
                 )?),
                 None,
@@ -334,21 +339,29 @@ pub(crate) fn session_input_from_request(
             presign,
             message_centralized_signature,
             ..
-        } => Ok((
-            PublicInput::Sign(SignPublicInputByProtocol::try_new(
-                request.session_identifier,
-                dwallet_decentralized_public_output,
-                message.clone(),
-                presign,
-                message_centralized_signature,
-                data.hash_scheme,
-                access_structure,
-                network_keys
-                    .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,
-                data.signature_algorithm,
-            )?),
-            None,
-        )),
+        } => {
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)
+                .cloned()
+                .unwrap_or_default();
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_decentralized_public_output,
+                    message.clone(),
+                    presign,
+                    message_centralized_signature,
+                    data.hash_scheme,
+                    access_structure,
+                    network_keys.get_network_encryption_key_public_data(
+                        dwallet_network_encryption_key_id,
+                    )?,
+                    &vss_shamir_cache,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::NetworkOwnedAddressSign {
             data,
             dwallet_network_encryption_key_id,
@@ -366,6 +379,10 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
             let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)
+                .cloned()
+                .unwrap_or_default();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -376,6 +393,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,
+                    &vss_shamir_cache,
                     data.signature_algorithm,
                 )?),
                 None,

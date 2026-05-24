@@ -6,10 +6,11 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
+use crate::dwallet_mpc::network_dkg::VssShamirCachePerKey;
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, VssSecretKeySharesVersionedSource,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
 };
 use crate::request_protocol_data::{
     DWalletDKGAndSignData, DWalletDKGData, EncryptedShareVerificationData,
@@ -74,19 +75,19 @@ pub(crate) enum ProtocolCryptographicData {
     },
 
     /// Fast Schnorr (VSS) sign for the EXTERNAL (`ProtocolData::Sign`) path only.
-    /// VSS has no AHE decrypters, so unlike AHE `Sign`, the private input is not the
-    /// class-groups decryption key shares but the validator's VSS secret-key Shamir
-    /// shares (recovered at compute time from `secret_key_shares_source` + the
-    /// validator's PVSS keys via `root_seed`) joined with the persisted presign nonce
-    /// data (`presign_private_output`). The non-serializable 8-field VSS `PrivateInput`
-    /// is assembled in `compute_mpc`.
+    /// VSS has no AHE decrypters, so unlike AHE `Sign`, the private input is the
+    /// validator's pre-derived VSS secret-key Shamir shares (looked up by
+    /// network key id at the build site — derivation happens once at
+    /// network-key ingestion, NOT per sign) joined with the persisted presign
+    /// nonce data (`presign_private_output`).
     SignVSS {
         data: SignData,
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
-        /// The reconfiguration output if the network key has reconfigured, else the
-        /// network DKG output — VSS sign recovers its secret-key shares from either.
-        secret_key_shares_source: VssSecretKeySharesVersionedSource,
+        /// Pre-derived (at network-key ingestion) per-curve VSS Shamir-share +
+        /// polynomial-commitments cache for this network key. The sign compute
+        /// site picks the curve matching `data.signature_algorithm`.
+        vss_shamir_cache: VssShamirCachePerKey,
         /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
         /// `None` if the row is missing (disk loss / cross-epoch) → this validator
         /// soft-fails.
@@ -103,12 +104,7 @@ pub(crate) enum ProtocolCryptographicData {
         data: NetworkOwnedAddressSignData,
         public_input: SignPublicInputByProtocol,
         advance_request: SignAdvanceRequestByProtocol,
-        /// The reconfiguration output if the network key has reconfigured, else the
-        /// network DKG output — VSS sign recovers its secret-key shares from either.
-        secret_key_shares_source: VssSecretKeySharesVersionedSource,
-        /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
-        /// `None` if the row is missing (disk loss / cross-epoch) → this validator
-        /// soft-fails.
+        vss_shamir_cache: VssShamirCachePerKey,
         presign_private_output: Option<Vec<u8>>,
     },
 
@@ -119,22 +115,13 @@ pub(crate) enum ProtocolCryptographicData {
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
-    /// Fast Schnorr (VSS) combined DKG-and-sign fast path. Mirrors `DWalletDKGAndSign`
-    /// but, like `SignVSS`, VSS has no AHE decryption-key shares: the private input is
-    /// the validator's VSS secret-key Shamir shares (recovered at compute time from
-    /// `secret_key_shares_source` + the validator's PVSS keys via `root_seed`) joined
-    /// with the persisted presign nonce data (`presign_private_output`). The
-    /// non-serializable VSS `PrivateInput` is assembled in `compute_mpc`.
+    /// Fast Schnorr (VSS) combined DKG-and-sign fast path. Same pre-derived
+    /// shamir-cache plumbing as `SignVSS`.
     DWalletDKGAndSignVSS {
         data: DWalletDKGAndSignData,
         public_input: DKGAndSignPublicInputByProtocol,
         advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
-        /// The reconfiguration output if the network key has reconfigured, else the
-        /// network DKG output — VSS sign recovers its secret-key shares from either.
-        secret_key_shares_source: VssSecretKeySharesVersionedSource,
-        /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
-        /// `None` if the row is missing (disk loss / cross-epoch) → this validator
-        /// soft-fails.
+        vss_shamir_cache: VssShamirCachePerKey,
         presign_private_output: Option<Vec<u8>>,
     },
     /// Backward-compatible network DKG — runs the mainnet-v1.1.8-shape Party

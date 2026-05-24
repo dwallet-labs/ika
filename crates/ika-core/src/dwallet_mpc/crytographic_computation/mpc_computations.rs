@@ -20,7 +20,7 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::advance_network_reconfiguration_bwd_compat;
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, VssSecretKeySharesVersionedSource,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
     build_curve25519_eddsa_vss_sign_private_input,
     build_ristretto_schnorrkel_vss_sign_private_input,
     build_secp256k1_taproot_vss_sign_private_input, compute_dwallet_dkg_and_sign, compute_sign,
@@ -208,16 +208,14 @@ impl ProtocolCryptographicData {
                     // DKG output) for secret-key-share recovery at compute time, plus
                     // the persisted presign nonce data, instead of the AHE decryption
                     // key shares.
-                    let secret_key_shares_source = VssSecretKeySharesVersionedSource::select(
-                        decryption_key_shares.get_network_encryption_key_public_data(
-                            dwallet_network_encryption_key_id,
-                        )?,
-                    );
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
                     ProtocolCryptographicData::SignVSS {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
-                        secret_key_shares_source,
+                        vss_shamir_cache,
                         presign_private_output,
                     }
                 } else {
@@ -260,16 +258,14 @@ impl ProtocolCryptographicData {
                     // routed to the NOA channel by the request's session type. The
                     // presign (popped from the internal VSS pool) carries the private
                     // nonce output, read by the manager as for external VSS sign.
-                    let secret_key_shares_source = VssSecretKeySharesVersionedSource::select(
-                        decryption_key_shares.get_network_encryption_key_public_data(
-                            dwallet_network_encryption_key_id,
-                        )?,
-                    );
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
                     ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
-                        secret_key_shares_source,
+                        vss_shamir_cache,
                         presign_private_output,
                     }
                 } else {
@@ -311,16 +307,14 @@ impl ProtocolCryptographicData {
                     // reconfigured, else the network DKG output) for secret-key-share
                     // recovery at compute time, plus the persisted presign nonce data,
                     // instead of the AHE decryption key shares.
-                    let secret_key_shares_source = VssSecretKeySharesVersionedSource::select(
-                        decryption_key_shares.get_network_encryption_key_public_data(
-                            dwallet_network_encryption_key_id,
-                        )?,
-                    );
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
                     ProtocolCryptographicData::DWalletDKGAndSignVSS {
                         data: data.clone(),
                         public_input: public_input.clone(),
                         advance_request,
-                        secret_key_shares_source,
+                        vss_shamir_cache,
                         presign_private_output,
                     }
                 } else {
@@ -472,6 +466,7 @@ impl ProtocolCryptographicData {
         consensus_round: u64,
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
+        vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
@@ -785,7 +780,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 false,
                 &mut rng,
             )?),
@@ -799,7 +794,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 false,
                 &mut rng,
             )?),
@@ -814,7 +809,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 false,
                 &mut rng,
             )?),
@@ -828,7 +823,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 true,
                 &mut rng,
             )?),
@@ -842,7 +837,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 true,
                 &mut rng,
             )?),
@@ -857,7 +852,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
-                Some(vss_presign_private_input(&root_seed)),
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 true,
                 &mut rng,
             )?),
@@ -1016,15 +1011,13 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::SignVSS {
                 public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_secp256k1_taproot_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1043,15 +1036,13 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::SignVSS {
                 public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_curve25519_eddsa_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1071,15 +1062,13 @@ impl ProtocolCryptographicData {
                 public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
                 advance_request:
                     SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1109,15 +1098,13 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
                 public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_secp256k1_taproot_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1136,15 +1123,13 @@ impl ProtocolCryptographicData {
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
                 public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
                 advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_curve25519_eddsa_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1164,15 +1149,13 @@ impl ProtocolCryptographicData {
                 public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
                 advance_request:
                     SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1364,15 +1347,13 @@ impl ProtocolCryptographicData {
                 public_input: DKGAndSignPublicInputByProtocol::TaprootVSS(public_input),
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::TaprootVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_secp256k1_taproot_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1393,15 +1374,13 @@ impl ProtocolCryptographicData {
                 public_input: DKGAndSignPublicInputByProtocol::EdDSAVSS(public_input),
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_curve25519_eddsa_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1422,15 +1401,13 @@ impl ProtocolCryptographicData {
                 public_input: DKGAndSignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
-                secret_key_shares_source,
+                vss_shamir_cache,
                 presign_private_output,
                 data,
                 ..
             } => {
                 let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
-                    party_id,
-                    &root_seed,
-                    &secret_key_shares_source,
+                    &vss_shamir_cache,
                     presign_private_output,
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
@@ -1701,11 +1678,9 @@ impl ProtocolCryptographicData {
 /// presign protocol. The secret is non-serializable and so is built here at the
 /// compute layer rather than threaded through the serialized `MPCPrivateInput`.
 fn vss_presign_private_input(
-    root_seed: &RootSeed,
+    vss_hpke_secret_key: group::curve25519::Scalar,
 ) -> twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput {
-    twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput::new(
-        dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(root_seed),
-    )
+    twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput::new(vss_hpke_secret_key)
 }
 
 fn parse_signature_from_sign_output(

@@ -19,7 +19,7 @@ use crate::dwallet_mpc::{
     party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
 };
@@ -265,12 +265,28 @@ impl DWalletMPCManager {
             CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
-        let class_groups_key_pair_and_proof = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        // Derive ALL of this validator's MPC key material once from the seed:
+        // class-groups secret (AHE) + per-curve PVSS decryption keys (used by
+        // VSS Shamir-share pre-derivation at network-key ingestion). The
+        // matching public encryption keys come from the same derivation and
+        // feed `ValidatorPvssMaterialForVss` so VSS shamir pre-derivation has
+        // both halves without re-running `from_seed` per network key.
+        let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
+        let validator_pvss_for_vss = Some(
+            crate::dwallet_mpc::network_dkg::ValidatorPvssMaterialForVss {
+                secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,
+                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
+                ristretto_decryption_key: validator_mpc_secrets.ristretto_pvss_decryption_key,
+                ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
+            },
+        );
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
-            class_groups_decryption_key: class_groups_key_pair_and_proof.decryption_key(),
+            class_groups_decryption_key: validator_mpc_secrets.class_groups.decryption_key,
+            validator_pvss_for_vss,
             validator_decryption_key_shares: HashMap::new(),
+            validator_vss_shamir_cache: HashMap::new(),
         };
         let dwallet_network_keys = DwalletMPCNetworkKeys::new(validator_private_data);
 

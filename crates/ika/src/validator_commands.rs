@@ -462,12 +462,12 @@ impl IkaValidatorCommand {
                 // during the v3→v4 protocol upgrade window so mainnet-v1.1.8 peers
                 // can decode this validator's bytes. Reading is shape-tolerant
                 // on either side via `decode_validator_encryption_keys`.
+                // `validator_mpc_secrets` is held locally; `validator_encryption_keys_and_proofs`
+                // is the public payload — the v3-shape only publishes the
+                // class-groups slice of it.
+                let _ = validator_mpc_secrets;
                 let mpc_data_bytes = if legacy_class_groups_only {
-                    bcs::to_bytes(
-                        &validator_mpc_secrets
-                            .class_groups
-                            .encryption_key_and_proof(),
-                    )?
+                    bcs::to_bytes(&validator_encryption_keys_and_proofs.class_groups)?
                 } else {
                     bcs::to_bytes(&validator_encryption_keys_and_proofs)?
                 };
@@ -999,12 +999,9 @@ impl IkaValidatorCommand {
                 let (new_validator_secrets, new_validator_publics) =
                     ValidatorMPCSecrets::from_seed(&mpc_root_seed);
 
+                let _ = new_validator_secrets;
                 let mpc_data_bytes = if legacy_class_groups_only {
-                    bcs::to_bytes(
-                        &new_validator_secrets
-                            .class_groups
-                            .encryption_key_and_proof(),
-                    )?
+                    bcs::to_bytes(&new_validator_publics.class_groups)?
                 } else {
                     bcs::to_bytes(&new_validator_publics)?
                 };
