@@ -682,7 +682,7 @@ impl ProtocolConfig {
                     cfg.reconfiguration_message_version = Some(2);
                 }
                 4 => {
-                    cfg.feature_flags.internal_presign_sessions = false;
+                    cfg.feature_flags.internal_presign_sessions = true;
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;

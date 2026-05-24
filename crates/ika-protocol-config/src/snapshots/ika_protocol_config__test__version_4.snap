@@ -10,6 +10,7 @@ feature_flags:
   consensus_batched_block_sync: true
   consensus_skip_gced_blocks_in_direct_finalization: true
   enforce_checkpoint_timestamp_monotonicity: true
+  internal_presign_sessions: true
   bls_checkpoints: true
   off_chain_validator_metadata: true
 max_messages_per_dwallet_checkpoint: 500
