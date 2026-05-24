@@ -557,41 +557,40 @@ pub fn build_committee_with_random_seeds(
 ) -> (Committee, HashMap<AuthorityName, RootSeed>) {
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
+    // Collect raw VSS HPKE inputs first; verification (`parse_and_uc_verify_encryption_keys`)
+    // is a Committee-construction step and must see the full set at once.
+    let mut vss_hpke_raw: HashMap<
+        AuthorityName,
+        ika_types::committee::VssHpkeEncryptionKeyAndProof,
+    > = Default::default();
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
-        let class_groups_key_pair = ValidatorMPCSecrets::from_seed(&seed);
-        committee.class_groups_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair
-                .class_groups
-                .encryption_key_and_proof(),
-        );
+        let (_validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&seed);
+        committee
+            .class_groups_public_keys_and_proofs
+            .insert(*authority_name, validator_publics.class_groups.clone());
         // PVSS HPKE per-curve public keys + proofs (added at the cryptography-private @
         // 9d35fa76 bump). The integration-test committee mirrors what `Committee::new`
         // expects post-bump so `network_dkg_v2_public_input` and the reconfiguration
         // PublicInput constructors get real per-curve maps instead of empty placeholders.
-        committee.secp256k1_pvss_public_keys_and_proofs.insert(
+        committee
+            .secp256k1_pvss_public_keys_and_proofs
+            .insert(*authority_name, validator_publics.secp256k1_pvss.clone());
+        committee
+            .secp256r1_pvss_public_keys_and_proofs
+            .insert(*authority_name, validator_publics.secp256r1_pvss.clone());
+        committee
+            .ristretto_pvss_public_keys_and_proofs
+            .insert(*authority_name, validator_publics.ristretto_pvss.clone());
+        // Fast Schnorr (VSS) curve25519 HPKE public key + UC proof.
+        vss_hpke_raw.insert(
             *authority_name,
-            class_groups_key_pair.secp256k1_pvss_encryption_key_and_proof(),
-        );
-        committee.secp256r1_pvss_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.secp256r1_pvss_encryption_key_and_proof(),
-        );
-        committee.ristretto_pvss_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
-        );
-        // Fast Schnorr (VSS) curve25519 HPKE public key + UC proof. Required by the
-        // VSS presign PublicInput (`parse_and_uc_verify_encryption_keys` verifies these
-        // proofs and admits only proven dealers); without it a VSS presign has no
-        // verified dealers and never completes.
-        committee.vss_hpke_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.vss_hpke_public_key_and_proof(),
+            validator_publics.vss_hpke_public_key_and_proof.clone(),
         );
     }
+    // Run the same verify-once that `Committee::new` would run in production.
+    committee.set_vss_hpke_verified_for_testing(vss_hpke_raw);
     (committee, seeds)
 }
 

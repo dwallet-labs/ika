@@ -17,13 +17,11 @@ use tracing::{info, warn};
 
 /// The minimum and maximum protocol versions supported by this build.
 const MIN_PROTOCOL_VERSION: u64 = 3;
-const MAX_PROTOCOL_VERSION: u64 = 5;
+const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
 // Version 1: Original version.
-// Version 5: Fast Schnorr (VSS) signature algorithms enabled (TaprootVSS,
-//            EdDSAVSS, SchnorrkelSubstrateVSS); DKG-created keys only.
 // Version 4: Internal presign sessions, BLS checkpoints, NOA checkpoints, +
 //            validator-key publication switch from `ClassGroupsEncryptionKeyAndProof`
 //            (mainnet-v1.1.8 shape, v3) to `ValidatorEncryptionKeysAndProofs`
@@ -694,9 +692,6 @@ impl ProtocolConfig {
                     cfg.feature_flags.noa_checkpoints = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
-                }
-                5 => {
-                    cfg.feature_flags.fast_schnorr_supported = true;
                 }
                 // Use this template when making changes:
                 //

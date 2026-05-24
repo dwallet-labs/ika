@@ -108,9 +108,15 @@ lazy_static! {
     };
 
     /// Global presign supported curves to signature algorithms for DKG.
-    /// VSS (Fast Schnorr) variants are deliberately omitted — they are
-    /// internal-only (NOA sign) and must not be externally requestable.
-    /// See `network_presign_pool_algorithms` for the internal iteration source.
+    ///
+    /// VSS (Fast Schnorr) variants are deliberately absent: a VSS presign is
+    /// bound to the network DKG/reconfiguration output that produced it and
+    /// therefore lives for a single epoch only — it cannot be guaranteed to
+    /// remain usable across reconfiguration, which contradicts the current
+    /// Move presign-object lifetime contract. dWallets will be allowed to use
+    /// Fast Schnorr later, once users talk to the network directly. Until
+    /// then, the network still pre-generates VSS presigns internally for
+    /// NOA sign — see `network_presign_pool_algorithms`.
     pub static ref GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG: HashMap<u32, Vec<u32>> = {
         let mut config = HashMap::new();
         config.insert(0, vec![0, 1]); // Secp256k1: ECDSA, Taproot
@@ -120,15 +126,13 @@ lazy_static! {
         config
     };
 
-    /// Global presign supported curves to signature algorithms for imported keys
+    /// Global presign supported curves to signature algorithms for imported keys.
     ///
-    /// VSS (Fast Schnorr) variants are intentionally absent: the decentralized
-    /// party's secret key share must be Shamir-shared by the network, which is
-    /// impossible for a user-imported secret. NOTE: omission from this map alone
-    /// does NOT enforce DKG-only — this map is only a global-vs-targeted presign
-    /// toggle, not an allow/deny gate. The real DKG-only guards are the Move
-    /// `approve_imported_key_message` deny check and the Rust request filter
-    /// (protocol-version gate).
+    /// Same single-epoch reason as the DKG map above: VSS (Fast Schnorr)
+    /// presigns are bound to the network key output that produced them and
+    /// cannot satisfy the current Move presign-object lifetime contract, so
+    /// they are absent here. (Will be revisited once users talk to the
+    /// network directly.)
     pub static ref GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY: HashMap<u32, Vec<u32>> = {
         let mut config = HashMap::new();
         config.insert(0, vec![1]); // Secp256k1: Taproot (ECDSA not supported for imported keys)

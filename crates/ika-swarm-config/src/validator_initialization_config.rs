@@ -69,8 +69,7 @@ impl ValidatorInitializationConfig {
         // bump's local-network scope. See `ValidatorEncryptionKeysAndProofs`'s docstring.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
             class_groups_public_key_and_proof: bcs::to_bytes(
-                &ValidatorMPCSecrets::from_seed(&self.root_seed)
-                    .validator_encryption_keys_and_proofs(),
+                &ValidatorMPCSecrets::from_seed(&self.root_seed).1,
             )
             .unwrap(),
         });

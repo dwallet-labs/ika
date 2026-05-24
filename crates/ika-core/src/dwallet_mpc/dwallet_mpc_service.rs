@@ -2237,7 +2237,8 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ValidatorMPCSecrets::from_seed(&root_seed);
+        let (_validator_mpc_secrets, validator_encryption_keys_and_proofs) =
+            ValidatorMPCSecrets::from_seed(&root_seed);
 
         // Verify that the validators local class-groups key is the
         // same as stored in the system state object onchain.
@@ -2252,7 +2253,7 @@ impl DWalletMPCService {
             .get_mpc_data()
             .unwrap()
             .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
+            != bcs::to_bytes(&validator_encryption_keys_and_proofs)?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),

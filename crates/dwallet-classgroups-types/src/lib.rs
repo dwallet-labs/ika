@@ -22,9 +22,7 @@ use crypto_bigint::Uint;
 use dwallet_rng::RootSeed;
 use group::GroupElement as _;
 use ika_types::committee::{
-    ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, RistrettoPvssEncryptionKeyAndProof,
-    Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
-    ValidatorEncryptionKeysAndProofs, VssHpkeEncryptionKeyAndProof,
+    ClassGroupsEncryptionKeyAndProof, ClassGroupsProof, ValidatorEncryptionKeysAndProofs,
 };
 use mpc::secret_sharing::shamir::known_order::generate_and_uc_prove_encryption_keypair;
 use serde::{Deserialize, Serialize};
@@ -112,44 +110,38 @@ impl ClassGroupsKeyPairAndProof {
 }
 
 /// SECRET. This validator's own private MPC key material — the class-groups CRT
-/// decryption key plus the three per-curve PVSS HPKE decryption keys. The matching
-/// public encryption keys and UC-secure proofs are cached alongside them only so the
-/// published payload can be re-derived cheaply; this struct as a whole is secret and
-/// belongs to this validator alone (never another validator's keys).
+/// decryption key, the three per-curve PVSS HPKE decryption keys, and the
+/// Fast Schnorr (VSS) HPKE curve25519 secret key. Belongs to this validator
+/// alone (never another validator's keys).
 ///
-/// Because it holds secrets it is deliberately **NOT** `Serialize`/`Deserialize`: the
-/// private keys must never be written out, persisted, or transmitted. To publish the
-/// validator's record, extract the public-only payload via
-/// [`Self::validator_encryption_keys_and_proofs`] and serialize *that*.
+/// Holds only secrets. The matching public encryption keys + UC-secure proofs
+/// — which depend on fresh randomness consumed during keypair generation and
+/// therefore can't be re-derived from the secrets alone — live in the separate
+/// [`ValidatorEncryptionKeysAndProofs`] type and are returned alongside this
+/// struct by [`Self::from_seed`]; callers that need to publish the public
+/// payload use the second tuple element directly.
 ///
-/// Composition: the existing [`ClassGroupsKeyPairAndProof`] as a member PLUS the three
-/// per-curve PVSS HPKE keypairs (private decryption key + public encryption key +
-/// UC-secure proof), introduced at the `cryptography-private @ 9d35fa76` bump for
-/// upstream's threshold-encryption-to-sharing sub-protocol.
+/// Deliberately **NOT** `Serialize` / `Deserialize`: the private keys must
+/// never be written out, persisted, or transmitted.
 ///
-/// Generated deterministically from the validator's [`RootSeed`]; the seed must be
-/// cryptographically secure and kept confidential.
+/// Generated deterministically from the validator's [`RootSeed`]; the seed must
+/// be cryptographically secure and kept confidential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatorMPCSecrets {
+    /// Pre-existing class-groups CRT keypair + proof. Wire-stable.
     pub class_groups: ClassGroupsKeyPairAndProof,
 
-    secp256k1_pvss_decryption_key: Secp256k1PvssDecryptionKey,
-    secp256k1_pvss_encryption_key_and_proof: Secp256k1PvssEncryptionKeyAndProof,
+    /// Per-curve PVSS HPKE secret decryption keys. Never publish or transmit;
+    /// used at sign time when this validator decrypts its share of the
+    /// threshold-encryption-to-sharing dealing.
+    pub secp256k1_pvss_decryption_key: Secp256k1PvssDecryptionKey,
+    pub secp256r1_pvss_decryption_key: Secp256r1PvssDecryptionKey,
+    pub ristretto_pvss_decryption_key: RistrettoPvssDecryptionKey,
 
-    secp256r1_pvss_decryption_key: Secp256r1PvssDecryptionKey,
-    secp256r1_pvss_encryption_key_and_proof: Secp256r1PvssEncryptionKeyAndProof,
-
-    ristretto_pvss_decryption_key: RistrettoPvssDecryptionKey,
-    ristretto_pvss_encryption_key_and_proof: RistrettoPvssEncryptionKeyAndProof,
-
-    /// VSS HPKE encryption public key (curve25519) + UC proof. The matching
-    /// secret key is re-derived on demand from the same `RootSeed` via
-    /// [`Self::vss_hpke_secret_key_from_seed`] rather than carried as a
-    /// field: it is needed only at the compute layer, where deriving the single
-    /// curve25519 keypair is far cheaper than building this whole struct (which
-    /// generates the expensive class-groups material). One curve25519 keypair
-    /// serves all VSS signing curves.
-    vss_hpke_public_key_and_proof: VssHpkeEncryptionKeyAndProof,
+    /// Fast Schnorr (VSS) HPKE secret key — a single curve25519 scalar
+    /// (one keypair serves all VSS signing curves) used as the VSS presign
+    /// `PrivateInput` for threshold-encryption-to-sharing.
+    pub vss_hpke_secret_key: group::curve25519::Scalar,
 }
 
 impl ValidatorMPCSecrets {
@@ -169,7 +161,12 @@ impl ValidatorMPCSecrets {
     /// deterministic derivation from `RootSeed` is sound.
     ///
     /// The seed must be cryptographically secure and kept confidential.
-    pub fn from_seed(root_seed: &RootSeed) -> Self {
+    ///
+    /// Returns the secrets alongside the matching public
+    /// [`ValidatorEncryptionKeysAndProofs`] payload. The UC proofs use fresh
+    /// randomness during keypair generation, so the public payload must be
+    /// captured here — it can't be recomputed from the secrets alone.
+    pub fn from_seed(root_seed: &RootSeed) -> (Self, ValidatorEncryptionKeysAndProofs) {
         let class_groups = ClassGroupsKeyPairAndProof::from_seed(root_seed);
 
         let secp256k1_setup =
@@ -229,86 +226,43 @@ impl ValidatorMPCSecrets {
             >(&ristretto_setup, &mut ristretto_rng)
             .unwrap();
 
-        // Fast Schnorr (VSS) HPKE keypair: a single curve25519 keypair (not class
-        // groups, not per-curve) used as the known-order threshold-encryption-to-
-        // sharing transport for the VSS Schnorr presign. The secret is discarded
-        // here and re-derived from the same `RootSeed` where it's needed.
-        let (_vss_hpke_secret, vss_hpke_public, vss_hpke_proof) =
+        // Fast Schnorr (VSS) HPKE keypair: a single curve25519 keypair (not
+        // class groups, not per-curve) used as the known-order
+        // threshold-encryption-to-sharing transport for the VSS Schnorr
+        // presign. One curve25519 keypair serves all VSS signing curves.
+        let (vss_hpke_secret, vss_hpke_public, vss_hpke_proof) =
             generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
                 .unwrap();
 
-        ValidatorMPCSecrets {
+        let publics = ValidatorEncryptionKeysAndProofs {
+            class_groups: class_groups.encryption_key_and_proof(),
+            secp256k1_pvss: (secp256k1_enc, secp256k1_proof),
+            secp256r1_pvss: (secp256r1_enc, secp256r1_proof),
+            ristretto_pvss: (ristretto_enc, ristretto_proof),
+            vss_hpke_public_key_and_proof: (vss_hpke_public.value(), vss_hpke_proof),
+        };
+        let secrets = ValidatorMPCSecrets {
             class_groups,
             secp256k1_pvss_decryption_key: secp256k1_dec,
-            secp256k1_pvss_encryption_key_and_proof: (secp256k1_enc, secp256k1_proof),
             secp256r1_pvss_decryption_key: secp256r1_dec,
-            secp256r1_pvss_encryption_key_and_proof: (secp256r1_enc, secp256r1_proof),
             ristretto_pvss_decryption_key: ristretto_dec,
-            ristretto_pvss_encryption_key_and_proof: (ristretto_enc, ristretto_proof),
-            vss_hpke_public_key_and_proof: (vss_hpke_public.value(), vss_hpke_proof),
-        }
+            vss_hpke_secret_key: vss_hpke_secret,
+        };
+        (secrets, publics)
     }
 
-    /// Re-derives this validator's VSS HPKE *secret* key from its `RootSeed`,
-    /// deterministically matching the public key published in
-    /// [`Self::vss_hpke_public_key_and_proof`]. Derived standalone (rather
-    /// than read off a built struct) because the secret is needed only locally as
-    /// the VSS presign `PrivateInput`, and deriving the single curve25519 keypair
-    /// is far cheaper than building the full struct's class-groups material.
+    /// Thin helper: re-derive only the validator's VSS HPKE secret key from
+    /// its `RootSeed`, deterministically matching the public key returned by
+    /// [`Self::from_seed`]. Provided for the VSS presign hot path where
+    /// rebuilding the full secrets struct would needlessly regenerate the
+    /// expensive class-groups material; for everything else, hold onto the
+    /// `vss_hpke_secret_key` field on a `ValidatorMPCSecrets` from
+    /// [`Self::from_seed`].
     pub fn vss_hpke_secret_key_from_seed(root_seed: &RootSeed) -> group::curve25519::Scalar {
         let (secret, _public, _proof) =
             generate_and_uc_prove_encryption_keypair(&mut root_seed.vss_hpke_secret_key_rng())
                 .unwrap();
         secret
-    }
-
-    pub fn secp256k1_pvss_encryption_key_and_proof(&self) -> Secp256k1PvssEncryptionKeyAndProof {
-        self.secp256k1_pvss_encryption_key_and_proof.clone()
-    }
-
-    pub fn secp256r1_pvss_encryption_key_and_proof(&self) -> Secp256r1PvssEncryptionKeyAndProof {
-        self.secp256r1_pvss_encryption_key_and_proof.clone()
-    }
-
-    pub fn ristretto_pvss_encryption_key_and_proof(&self) -> RistrettoPvssEncryptionKeyAndProof {
-        self.ristretto_pvss_encryption_key_and_proof.clone()
-    }
-
-    /// Validator-private PVSS HPKE secret decryption key, secp256k1 plaintext space.
-    /// NEVER publish or transmit; required at sign time when the validator decrypts
-    /// its share of the threshold-encryption-to-sharing dealing.
-    pub fn secp256k1_pvss_decryption_key(&self) -> Secp256k1PvssDecryptionKey {
-        self.secp256k1_pvss_decryption_key
-    }
-
-    pub fn secp256r1_pvss_decryption_key(&self) -> Secp256r1PvssDecryptionKey {
-        self.secp256r1_pvss_decryption_key
-    }
-
-    pub fn ristretto_pvss_decryption_key(&self) -> RistrettoPvssDecryptionKey {
-        self.ristretto_pvss_decryption_key
-    }
-
-    /// Combined public payload to publish in the validator's on-chain record.
-    ///
-    /// Bundles the existing class-groups encryption-key + proof plus the three
-    /// per-curve PVSS encryption-keys-and-proofs into the
-    /// [`ValidatorEncryptionKeysAndProofs`] struct that's BCS-serialized into the
-    /// Move-side `class_groups_public_key_and_proof` field. See the doc on
-    /// [`ValidatorEncryptionKeysAndProofs`] for the mainnet wire-incompat warning.
-    /// Fast Schnorr (VSS) HPKE encryption public key (curve25519) + UC proof.
-    pub fn vss_hpke_public_key_and_proof(&self) -> VssHpkeEncryptionKeyAndProof {
-        self.vss_hpke_public_key_and_proof.clone()
-    }
-
-    pub fn validator_encryption_keys_and_proofs(&self) -> ValidatorEncryptionKeysAndProofs {
-        ValidatorEncryptionKeysAndProofs {
-            class_groups: self.class_groups.encryption_key_and_proof(),
-            secp256k1_pvss: self.secp256k1_pvss_encryption_key_and_proof.clone(),
-            secp256r1_pvss: self.secp256r1_pvss_encryption_key_and_proof.clone(),
-            ristretto_pvss: self.ristretto_pvss_encryption_key_and_proof.clone(),
-            vss_hpke_public_key_and_proof: self.vss_hpke_public_key_and_proof.clone(),
-        }
     }
 }
 
@@ -319,15 +273,16 @@ mod tests {
     #[test]
     fn class_groups_and_pvss_key_pair_from_seed_is_deterministic() {
         let seed = RootSeed::new([0xA5u8; 32]);
-        let first = ValidatorMPCSecrets::from_seed(&seed);
-        let second = ValidatorMPCSecrets::from_seed(&seed);
-        assert_eq!(first, second);
+        let (first_secrets, first_publics) = ValidatorMPCSecrets::from_seed(&seed);
+        let (second_secrets, second_publics) = ValidatorMPCSecrets::from_seed(&seed);
+        assert_eq!(first_secrets, second_secrets);
+        assert_eq!(first_publics, second_publics);
     }
 
     #[test]
     fn validator_encryption_keys_and_proofs_round_trips_through_bcs() {
         let seed = RootSeed::new([0xA5u8; 32]);
-        let original = ValidatorMPCSecrets::from_seed(&seed).validator_encryption_keys_and_proofs();
+        let (_secrets, original) = ValidatorMPCSecrets::from_seed(&seed);
         let bytes = bcs::to_bytes(&original).expect("BCS serialize");
         let decoded: ValidatorEncryptionKeysAndProofs =
             bcs::from_bytes(&bytes).expect("BCS deserialize");
@@ -344,7 +299,7 @@ mod tests {
 
         fn sample_bundle() -> ValidatorEncryptionKeysAndProofs {
             let seed = RootSeed::new([0xA5u8; 32]);
-            ValidatorMPCSecrets::from_seed(&seed).validator_encryption_keys_and_proofs()
+            ValidatorMPCSecrets::from_seed(&seed).1
         }
 
         #[test]

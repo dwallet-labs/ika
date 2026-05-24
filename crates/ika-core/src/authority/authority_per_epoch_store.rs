@@ -1483,7 +1483,12 @@ impl AuthorityPerEpochStore {
             self.committee.secp256k1_pvss_public_keys_and_proofs.clone(),
             self.committee.secp256r1_pvss_public_keys_and_proofs.clone(),
             self.committee.ristretto_pvss_public_keys_and_proofs.clone(),
-            self.committee.vss_hpke_public_keys_and_proofs.clone(),
+            // Test-only helper: the prior committee retains only the verified
+            // public-key values, not the raw VSS HPKE proofs, so the next-epoch
+            // committee starts with an empty raw input. Tests that need a
+            // populated VSS-verified map should call
+            // `Committee::set_vss_hpke_verified_for_testing` on the result.
+            std::collections::HashMap::new(),
             self.committee.quorum_threshold,
             self.committee.validity_threshold,
         );

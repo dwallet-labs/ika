@@ -1052,9 +1052,15 @@ impl DWalletMPCManager {
             return false;
         }
 
-        // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
-        // with the sign session input path, which expects this wrapping.
-        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+        // Wrap the raw presign bytes for consistency with the sign session
+        // input path, which expects a versioned wrapper. AHE presigns use V2;
+        // Fast Schnorr (VSS) presigns are a different shape and use V3.
+        let versioned = if signature_algorithm.is_vss() {
+            VersionedPresignOutput::V3(presign)
+        } else {
+            VersionedPresignOutput::V2(presign)
+        };
+        let wrapped_presign = match bcs::to_bytes(&versioned) {
             Ok(bytes) => bytes,
             Err(e) => {
                 error!(

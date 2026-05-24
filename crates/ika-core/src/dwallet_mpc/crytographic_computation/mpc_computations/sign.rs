@@ -604,9 +604,9 @@ pub(crate) fn vss_public_presign_identity(
             "failed to deserialize VSS presign output: {e}"
         )))
     })?;
-    let VersionedPresignOutput::V2(inner) = versioned else {
+    let VersionedPresignOutput::V3(inner) = versioned else {
         return Err(DwalletMPCError::InvalidInput(
-            "Fast Schnorr (VSS) presign must be V2".to_string(),
+            "Fast Schnorr (VSS) presign must be V3".to_string(),
         ));
     };
     match signature_algorithm {
@@ -954,12 +954,12 @@ pub(crate) fn build_secp256k1_taproot_vss_sign_private_input(
 > {
     let secret_key_shares_source =
         VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
-    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
+    let (validator_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(root_seed);
     let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
         .secp256k1_shamir_shares(
             party_id,
-            validator_keys.secp256k1_pvss_decryption_key(),
-            validator_keys.secp256k1_pvss_encryption_key_and_proof().0,
+            validator_secrets.secp256k1_pvss_decryption_key,
+            validator_publics.secp256k1_pvss.0,
         )?;
 
     let entry = vss_presign_private_output::<
@@ -994,15 +994,15 @@ pub(crate) fn build_curve25519_eddsa_vss_sign_private_input(
 > {
     let secret_key_shares_source =
         VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
-    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
+    let (validator_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(root_seed);
     // curve25519's threshold-encryption-to-sharing uses the ristretto PVSS key (same
     // const-generic discriminant limbs; the validator publishes no separate curve25519
     // PVSS key — `curve25519_shamir_shares` takes `RISTRETTO_FUNDAMENTAL_DISCRIMINANT_LIMBS`).
     let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
         .curve25519_shamir_shares(
             party_id,
-            validator_keys.ristretto_pvss_decryption_key(),
-            validator_keys.ristretto_pvss_encryption_key_and_proof().0,
+            validator_secrets.ristretto_pvss_decryption_key,
+            validator_publics.ristretto_pvss.0,
         )?;
 
     let entry = vss_presign_private_output::<
@@ -1037,12 +1037,12 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
 > {
     let secret_key_shares_source =
         VssSecretKeyShareSource::from_versioned(secret_key_shares_source)?;
-    let validator_keys = ValidatorMPCSecrets::from_seed(root_seed);
+    let (validator_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(root_seed);
     let (secret_key_share_first_part, secret_key_share_second_part) = secret_key_shares_source
         .ristretto_shamir_shares(
             party_id,
-            validator_keys.ristretto_pvss_decryption_key(),
-            validator_keys.ristretto_pvss_encryption_key_and_proof().0,
+            validator_secrets.ristretto_pvss_decryption_key,
+            validator_publics.ristretto_pvss.0,
         )?;
 
     let entry = vss_presign_private_output::<
@@ -1213,6 +1213,11 @@ fn build_secp256k1_ecdsa_sign_public_input(
             Secp256k1AsyncDKGProtocol,
             Secp256k1ECDSAProtocol,
         >(dwallet_decentralized_public_output, presign)?,
+        VersionedPresignOutput::V3(_) => {
+            return Err(DwalletMPCError::InvalidInput(
+                "ECDSA sign cannot consume a Fast Schnorr (VSS) presign (V3)".to_string(),
+            ));
+        }
     };
 
     let sign_data =
@@ -1424,6 +1429,11 @@ where
             unreachable!("Presign V1 only valid for Secp256k1ECDSA — handled inline there")
         }
         VersionedPresignOutput::V2(p) => p,
+        VersionedPresignOutput::V3(_) => {
+            return Err(DwalletMPCError::InvalidInput(
+                "AHE sign cannot consume a Fast Schnorr (VSS) presign (V3)".to_string(),
+            ));
+        }
     };
     let presign_value: <P as twopc_mpc::presign::Protocol>::Presign =
         bcs::from_bytes(&presign_bytes).map_err(|e| {
@@ -1948,6 +1958,11 @@ where
             unreachable!("Presign V1 should have been handled separately")
         }
         VersionedPresignOutput::V2(p) => p,
+        VersionedPresignOutput::V3(_) => {
+            return Err(DwalletMPCError::InvalidInput(
+                "decode_presign_v2 cannot consume a Fast Schnorr (VSS) presign (V3)".to_string(),
+            ));
+        }
     };
     bcs::from_bytes(&presign_bytes).map_err(|e| {
         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
@@ -2006,6 +2021,12 @@ where
             unreachable!("Presign V1 should have been handled separately")
         }
         VersionedPresignOutput::V2(presign) => presign,
+        VersionedPresignOutput::V3(_) => {
+            return Err(DwalletMPCError::InvalidInput(
+                "verify_partial_signature cannot consume a Fast Schnorr (VSS) presign (V3)"
+                    .to_string(),
+            ));
+        }
     };
     let dkg_output: VersionedDwalletDKGPublicOutput =
         bcs::from_bytes(dwallet_decentralized_output)?;

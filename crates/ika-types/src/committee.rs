@@ -15,7 +15,10 @@ use fastcrypto::traits::KeyPair;
 use group::PartyID;
 use group::curve25519;
 pub use ika_protocol_config::ProtocolVersion;
-use mpc::hybrid_public_key_encryption::KnowledgeOfDecryptionKeyUCProof as VssHpkeKnowledgeOfDecryptionKeyUCProof;
+use mpc::hybrid_public_key_encryption::{
+    KnowledgeOfDecryptionKeyUCProof as VssHpkeKnowledgeOfDecryptionKeyUCProof,
+    parse_and_uc_verify_encryption_keys,
+};
 use rand::rngs::{StdRng, ThreadRng};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -59,13 +62,18 @@ pub struct Committee {
     /// Per-validator PVSS HPKE encryption key + proof, ristretto plaintext space.
     pub ristretto_pvss_public_keys_and_proofs:
         HashMap<AuthorityName, RistrettoPvssEncryptionKeyAndProof>,
-    /// Per-validator Fast Schnorr (VSS) HPKE encryption public key (curve25519) +
-    /// UC proof. Single curve-independent key per validator; populated only for
-    /// validators that published the protocol_version-5 bundle. Empty for v4 /
-    /// mainnet-v1.1.8 validators, in which case Fast Schnorr presigns can't run
-    /// for them. Proofs are verified (and unverified holders dropped) at VSS
-    /// presign-input build time.
-    pub vss_hpke_public_keys_and_proofs: HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
+    /// Per-party Fast Schnorr (VSS) HPKE encryption public key values
+    /// (curve25519, serializable form), filtered to **only** the parties whose
+    /// published UC proof of knowledge of the matching decryption key verified.
+    ///
+    /// Computed once at [`Self::new`] from the raw
+    /// `vss_hpke_public_keys_and_proofs` input by
+    /// `mpc::hybrid_public_key_encryption::parse_and_uc_verify_encryption_keys`.
+    /// The raw proofs are NOT retained — we keep only the verified result so the
+    /// per-presign session cost is a cheap curve-point parse, not a UC proof
+    /// re-verification. Parties whose key didn't parse or whose proof didn't
+    /// verify are simply absent.
+    pub vss_hpke_verified_party_encryption_key_values: HashMap<PartyID, curve25519::Value>,
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
@@ -102,6 +110,20 @@ impl Committee {
 
         let (expanded_keys, index_map) = Self::load_inner(&voting_rights);
 
+        // Verify the Fast Schnorr (VSS) HPKE UC proofs once, here at committee
+        // construction — not per presign session. We keep only the *verified*
+        // public key values; the raw proofs are dropped. Any party whose key
+        // failed to parse or whose proof didn't verify is simply absent from
+        // the resulting map (per upstream's per-party filter; a single
+        // malformed submission excludes only that party). On a systemic
+        // failure (the function itself errs), we store an empty map — no VSS
+        // presign can run, but the committee is still otherwise usable.
+        let vss_hpke_verified_party_encryption_key_values =
+            verify_vss_hpke_keys_at_committee_construction(
+                &vss_hpke_public_keys_and_proofs,
+                &index_map,
+            );
+
         Committee {
             epoch,
             voting_rights,
@@ -109,7 +131,7 @@ impl Committee {
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
-            vss_hpke_public_keys_and_proofs,
+            vss_hpke_verified_party_encryption_key_values,
             expanded_keys,
             index_map,
             quorum_threshold,
@@ -339,6 +361,45 @@ impl Committee {
     /// Generate a simple committee with 4 validators each with equal voting stake of 1.
     pub fn new_simple_test_committee() -> (Self, Vec<AuthorityKeyPair>) {
         Self::new_simple_test_committee_of_size(4)
+    }
+
+    /// Test-only: re-runs the VSS HPKE UC-proof verification on a raw input map
+    /// and replaces this committee's verified-key cache with the result. Used
+    /// by integration-test helpers that build the committee first and inject
+    /// per-validator VSS HPKE keys afterwards. Production code lets
+    /// [`Self::new`] do the verification once at construction.
+    pub fn set_vss_hpke_verified_for_testing(
+        &mut self,
+        raw: HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
+    ) {
+        self.vss_hpke_verified_party_encryption_key_values =
+            verify_vss_hpke_keys_at_committee_construction(&raw, &self.index_map);
+    }
+}
+
+/// Verify per-validator VSS HPKE UC proofs once and return only the verified
+/// public key values, keyed by [`PartyID`] (1-based index into voting_rights).
+fn verify_vss_hpke_keys_at_committee_construction(
+    raw: &HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
+    index_map: &HashMap<AuthorityName, usize>,
+) -> HashMap<PartyID, curve25519::Value> {
+    let by_party_id: HashMap<PartyID, VssHpkeEncryptionKeyAndProof> = raw
+        .iter()
+        .filter_map(|(name, kp)| {
+            let index = index_map.get(name)?;
+            let party_id = u16::try_from(index.checked_add(1)?).ok()?;
+            Some((party_id, kp.clone()))
+        })
+        .collect();
+    match parse_and_uc_verify_encryption_keys(&by_party_id) {
+        Ok(verified) => verified
+            .into_iter()
+            .map(|(pid, ek)| {
+                use group::GroupElement as _;
+                (pid, ek.value())
+            })
+            .collect(),
+        Err(_) => HashMap::new(),
     }
 }
 
@@ -593,28 +654,11 @@ pub struct ValidatorEncryptionKeysAndProofs {
     /// class-groups `*_pvss` keys above, which share the class-groups decryption
     /// key over the integers); one key serves all VSS signing curves.
     ///
-    /// The proof is verified at VSS-presign-input build time via
-    /// `verify_uc_proofs_of_knowledge_of_encryption_secret_keys`, and only
-    /// validators whose proof verifies are admitted to the presign.
-    ///
-    /// New at protocol_version 5 (`fast_schnorr_supported`); appended last so the
-    /// layered decode in [`decode_validator_encryption_keys`] stays
-    /// backward-compatible with the v4 (4-field) bundle.
+    /// The proof is verified once at [`Committee`] construction by
+    /// `mpc::hybrid_public_key_encryption::parse_and_uc_verify_encryption_keys`;
+    /// only validators whose proof verifies are admitted to subsequent VSS
+    /// presign / sign sessions.
     pub vss_hpke_public_key_and_proof: VssHpkeEncryptionKeyAndProof,
-}
-
-/// Legacy v4 (pre-Fast-Schnorr) shape of [`ValidatorEncryptionKeysAndProofs`] —
-/// the four-field bundle without `vss_hpke_public_key`. Used only by the
-/// layered decoder so a validator that published under protocol_version 4 still
-/// decodes after the v5 field was appended.
-///
-/// TEMPORARY: delete once every validator publishes the 5-field v5 bundle.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct LegacyValidatorEncryptionKeysAndProofsV4 {
-    class_groups: ClassGroupsEncryptionKeyAndProof,
-    secp256k1_pvss: Secp256k1PvssEncryptionKeyAndProof,
-    secp256r1_pvss: Secp256r1PvssEncryptionKeyAndProof,
-    ristretto_pvss: RistrettoPvssEncryptionKeyAndProof,
 }
 
 /// Result of shape-tolerant decoding of the Move-side validator encryption-key
@@ -665,10 +709,6 @@ pub struct DecodedValidatorEncryptionKeys {
 /// [`ValidatorEncryptionKeysAndProofs`]; decode sites can then call
 /// `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` directly.
 pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidatorEncryptionKeys> {
-    // v5 bundle (5 fields, incl. the curve25519 VSS HPKE key). Tried first: a v4
-    // (4-field) payload errors here on missing trailing bytes for the 5th field,
-    // and a v5 payload parsed as v4 below would leave trailing bytes (BCS rejects
-    // both), so the layered order is unambiguous.
     if let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(bytes) {
         return Some(DecodedValidatorEncryptionKeys {
             class_groups: bundle.class_groups,
@@ -678,17 +718,6 @@ pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidator
             vss_hpke_public_key_and_proof: Some(bundle.vss_hpke_public_key_and_proof),
         });
     }
-    // v4 bundle (4 fields, no VSS HPKE key).
-    if let Ok(bundle) = bcs::from_bytes::<LegacyValidatorEncryptionKeysAndProofsV4>(bytes) {
-        return Some(DecodedValidatorEncryptionKeys {
-            class_groups: bundle.class_groups,
-            secp256k1_pvss: Some(bundle.secp256k1_pvss),
-            secp256r1_pvss: Some(bundle.secp256r1_pvss),
-            ristretto_pvss: Some(bundle.ristretto_pvss),
-            vss_hpke_public_key_and_proof: None,
-        });
-    }
-    // mainnet-v1.1.8 bare class-groups shape.
     bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(bytes)
         .ok()
         .map(|class_groups| DecodedValidatorEncryptionKeys {

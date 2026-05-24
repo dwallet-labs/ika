@@ -3,10 +3,10 @@
 
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
+use group::curve25519;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, RistrettoPvssEncryptionKeyAndProof,
     Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
-    VssHpkeEncryptionKeyAndProof,
 };
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -99,10 +99,12 @@ pub(crate) struct ValidatorMpcKeysByPartyId {
     pub secp256k1_pvss: HashMap<PartyID, Secp256k1PvssEncryptionKeyAndProof>,
     pub secp256r1_pvss: HashMap<PartyID, Secp256r1PvssEncryptionKeyAndProof>,
     pub ristretto_pvss: HashMap<PartyID, RistrettoPvssEncryptionKeyAndProof>,
-    /// Fast Schnorr (VSS) HPKE encryption public key (curve25519) + UC proof per
-    /// party. Single curve-independent key per validator; the proof is verified
-    /// (and unverified parties dropped) when building the VSS presign input.
-    pub vss_hpke: HashMap<PartyID, VssHpkeEncryptionKeyAndProof>,
+    /// Fast Schnorr (VSS) HPKE encryption public **key values** (curve25519,
+    /// serializable form), already filtered to the parties whose UC proof of
+    /// knowledge verified at [`Committee::new`]. Read sites rebuild
+    /// `EncryptionPublicKey` via `EncryptionPublicKey::new(value, &pp)` — a
+    /// cheap curve-point parse — without re-running the UC proof verification.
+    pub vss_hpke_verified_party_encryption_key_values: HashMap<PartyID, curve25519::Value>,
 }
 
 pub(crate) fn get_validator_mpc_keys_by_party_id(
@@ -112,7 +114,6 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
     let mut secp256k1_pvss = HashMap::new();
     let mut secp256r1_pvss = HashMap::new();
     let mut ristretto_pvss = HashMap::new();
-    let mut vss_hpke = HashMap::new();
     for (name, _) in committee.voting_rights.iter() {
         let party_id = authority_name_to_party_id_from_committee(committee, name)?;
         if let Some(k) = committee
@@ -143,16 +144,16 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
         {
             ristretto_pvss.insert(party_id, k);
         }
-        if let Some(k) = committee.vss_hpke_public_keys_and_proofs.get(name).cloned() {
-            vss_hpke.insert(party_id, k);
-        }
     }
     Ok(ValidatorMpcKeysByPartyId {
         class_groups,
         secp256k1_pvss,
         secp256r1_pvss,
         ristretto_pvss,
-        vss_hpke,
+        // Verified-once at Committee::new — copy the cached values directly.
+        vss_hpke_verified_party_encryption_key_values: committee
+            .vss_hpke_verified_party_encryption_key_values
+            .clone(),
     })
 }
 

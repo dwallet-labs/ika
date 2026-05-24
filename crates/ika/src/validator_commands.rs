@@ -456,7 +456,7 @@ impl IkaValidatorCommand {
                     read_network_keypair_from_file(network_key_file_name)?;
                 let pop = generate_proof_of_possession(&keypair, sender_sui_address);
 
-                let class_groups_public_key_and_proof =
+                let (validator_mpc_secrets, validator_encryption_keys_and_proofs) =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
                 // Publication shape is version-gated: set `legacy_class_groups_only`
                 // during the v3→v4 protocol upgrade window so mainnet-v1.1.8 peers
@@ -464,14 +464,12 @@ impl IkaValidatorCommand {
                 // on either side via `decode_validator_encryption_keys`.
                 let mpc_data_bytes = if legacy_class_groups_only {
                     bcs::to_bytes(
-                        &class_groups_public_key_and_proof
+                        &validator_mpc_secrets
                             .class_groups
                             .encryption_key_and_proof(),
                     )?
                 } else {
-                    bcs::to_bytes(
-                        &class_groups_public_key_and_proof.validator_encryption_keys_and_proofs(),
-                    )?
+                    bcs::to_bytes(&validator_encryption_keys_and_proofs)?
                 };
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
                     class_groups_public_key_and_proof: mpc_data_bytes,
@@ -998,12 +996,17 @@ impl IkaValidatorCommand {
                 // `ValidatorEncryptionKeysAndProofs` bundle. Reading is shape-
                 // tolerant on either side via `decode_validator_encryption_keys`.
                 let mpc_root_seed = RootSeed::random_seed();
-                let new_validator_keys = ValidatorMPCSecrets::from_seed(&mpc_root_seed);
+                let (new_validator_secrets, new_validator_publics) =
+                    ValidatorMPCSecrets::from_seed(&mpc_root_seed);
 
                 let mpc_data_bytes = if legacy_class_groups_only {
-                    bcs::to_bytes(&new_validator_keys.class_groups.encryption_key_and_proof())?
+                    bcs::to_bytes(
+                        &new_validator_secrets
+                            .class_groups
+                            .encryption_key_and_proof(),
+                    )?
                 } else {
-                    bcs::to_bytes(&new_validator_keys.validator_encryption_keys_and_proofs())?
+                    bcs::to_bytes(&new_validator_publics)?
                 };
 
                 let mpc_data = VersionedMPCData::V1(MPCDataV1 {
@@ -1263,9 +1266,16 @@ fn make_key_files(
     Ok(())
 }
 
-/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE)
-/// from a seed file if it exists, otherwise generates and saves the seed.
-fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ValidatorMPCSecrets>> {
+/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE
+/// + VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
+/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
+/// (published in the on-chain validator record).
+fn read_or_generate_root_seed(
+    seed_path: PathBuf,
+) -> Result<(
+    ValidatorMPCSecrets,
+    ika_types::committee::ValidatorEncryptionKeysAndProofs,
+)> {
     let seed = match RootSeed::from_file(seed_path.clone()) {
         Ok(seed) => {
             println!("Use existing seed: {seed_path:?}.",);
@@ -1279,7 +1289,7 @@ fn read_or_generate_root_seed(seed_path: PathBuf) -> Result<Box<ValidatorMPCSecr
         }
     };
 
-    Ok(Box::new(ValidatorMPCSecrets::from_seed(&seed)))
+    Ok(ValidatorMPCSecrets::from_seed(&seed))
 }
 
 pub fn write_transaction_response(

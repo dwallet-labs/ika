@@ -342,6 +342,10 @@ pub enum VersionedDwalletDKGPublicOutput {
 pub enum VersionedPresignOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    /// Fast Schnorr (VSS) presign. Distinct shape from V2 — the inner bytes
+    /// decode to a curve-specific `schnorr::vss::Presign`, not the AHE
+    /// presign decoded by V2 consumers.
+    V3(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

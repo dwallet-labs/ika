@@ -568,6 +568,11 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                 }
             }
         }
+        VersionedPresignOutput::V3(_) => {
+            anyhow::bail!(
+                "Fast Schnorr (VSS) presigns (V3) are not consumable from the centralized party"
+            )
+        }
     }
 }
 
@@ -745,6 +750,11 @@ pub fn advance_centralized_sign_party(
                     )
                 }
             }
+        }
+        VersionedPresignOutput::V3(_) => {
+            anyhow::bail!(
+                "Fast Schnorr (VSS) presigns (V3) are not consumable from the centralized party"
+            )
         }
     }
 }

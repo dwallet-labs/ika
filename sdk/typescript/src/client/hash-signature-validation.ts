@@ -203,42 +203,6 @@ export type ValidSignatureAlgorithmForCurve<C extends Curve> = C extends typeof 
 				? typeof SignatureAlgorithm.SchnorrkelSubstrate
 				: never;
 
-/**
- * Compile-time type for signature algorithms valid on imported-key dWallets
- * (curve-agnostic). Fast Schnorr (VSS) is internal-NOA-only and not exposed
- * on the public `SignatureAlgorithm` enum, so this type is equivalent to
- * `SignatureAlgorithm` itself today; kept as a distinct alias so the
- * imported-key call sites keep their semantic name.
- */
-export type ImportedKeyValidSignatureAlgorithm = SignatureAlgorithm;
-
-/**
- * Compile-time type for signature algorithms valid on imported-key dWallets
- * per curve.
- */
-export type ImportedKeyValidSignatureAlgorithmForCurve<C extends Curve> =
-	C extends typeof Curve.SECP256K1
-		? typeof SignatureAlgorithm.ECDSASecp256k1 | typeof SignatureAlgorithm.Taproot
-		: C extends typeof Curve.SECP256R1
-			? typeof SignatureAlgorithm.ECDSASecp256r1
-			: C extends typeof Curve.ED25519
-				? typeof SignatureAlgorithm.EdDSA
-				: C extends typeof Curve.RISTRETTO
-					? typeof SignatureAlgorithm.SchnorrkelSubstrate
-					: never;
-
-/**
- * Validates that a signature algorithm is permitted on imported-key dWallets.
- * Fast Schnorr (VSS) variants are no longer exposed on the public
- * `SignatureAlgorithm` enum, so this is a no-op today; kept for callers that
- * already use it as a defense-in-depth check.
- */
-export function validateImportedKeySignatureAlgorithm(
-	_signatureAlgorithm: SignatureAlgorithm,
-): void {
-	// No-op: VSS variants are not in the public enum.
-}
-
 /** Compile-time type for valid hash/signature combinations */
 export type ValidHashForSignature<S extends SignatureAlgorithm> =
 	S extends typeof SignatureAlgorithm.ECDSASecp256k1
