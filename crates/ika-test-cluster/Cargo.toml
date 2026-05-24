@@ -11,20 +11,25 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bcs.workspace = true
 cargo_metadata = "0.19"
+fastcrypto.workspace = true
 futures.workspace = true
 rand = "0.8"
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
+dwallet-mpc-centralized-party.workspace = true
 ika-config.workspace = true
 ika-node = { path = "../ika-node", default-features = false }
 ika-protocol-config.workspace = true
+ika-sui-client.workspace = true
 ika-swarm.workspace = true
 ika-swarm-config.workspace = true
 ika-types.workspace = true
 
 sui-config.workspace = true
+sui-json-rpc-types.workspace = true
 sui-keys.workspace = true
 sui-sdk.workspace = true
 sui-test-transaction-builder.workspace = true
