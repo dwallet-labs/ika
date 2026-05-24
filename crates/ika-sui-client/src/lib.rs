@@ -92,6 +92,16 @@ pub struct SuiClient<P> {
     inner: P,
     sui_client_metrics: Arc<SuiClientMetrics>,
     pub ika_network_config: IkaNetworkConfig,
+    /// Cache the chain-fetched `ObjectArg`s for the three shared
+    /// system objects. The values don't change for a given chain
+    /// (shared-object `initial_shared_version` is set at creation
+    /// and is immutable), so one fetch per `SuiClient` instance is
+    /// enough. Scoped to the instance — NOT a process-wide
+    /// `static` — so two test clusters in the same process don't
+    /// alias each other's chain state.
+    system_arg_cache: OnceCell<ObjectArg>,
+    clock_arg_cache: OnceCell<ObjectArg>,
+    dwallet_coordinator_arg_cache: OnceCell<ObjectArg>,
 }
 
 pub type SuiConnectorClient = SuiClient<SuiSdkClient>;
@@ -112,6 +122,9 @@ impl SuiConnectorClient {
             inner,
             sui_client_metrics,
             ika_network_config,
+            system_arg_cache: OnceCell::new(),
+            clock_arg_cache: OnceCell::new(),
+            dwallet_coordinator_arg_cache: OnceCell::new(),
         };
         self_.describe().await?;
         Ok(self_)
@@ -224,6 +237,9 @@ where
             inner,
             sui_client_metrics: SuiClientMetrics::new_for_testing(),
             ika_network_config,
+            system_arg_cache: OnceCell::new(),
+            clock_arg_cache: OnceCell::new(),
+            dwallet_coordinator_arg_cache: OnceCell::new(),
         }
     }
 
@@ -517,52 +533,56 @@ where
     // In general it's safe to call in the beginning of the program.
     // After the first call, the result is cached since the value should never change.
     pub async fn get_mutable_system_arg_must_succeed(&self) -> ObjectArg {
-        static ARG: OnceCell<ObjectArg> = OnceCell::const_new();
-        *ARG.get_or_init(|| async move {
-            let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
-                self.inner
-                    .get_mutable_shared_arg(self.ika_network_config.objects.ika_system_object_id),
-                Duration::from_secs(30)
-            ) else {
-                panic!("Failed to get system object arg after retries");
-            };
-            system_arg
-        })
-        .await
+        *self
+            .system_arg_cache
+            .get_or_init(|| async move {
+                let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
+                    self.inner.get_mutable_shared_arg(
+                        self.ika_network_config.objects.ika_system_object_id
+                    ),
+                    Duration::from_secs(30)
+                ) else {
+                    panic!("Failed to get system object arg after retries");
+                };
+                system_arg
+            })
+            .await
     }
 
     /// Get the clock object arg for the shared system object on the chain.
     pub async fn get_clock_arg_must_succeed(&self) -> ObjectArg {
-        static ARG: OnceCell<ObjectArg> = OnceCell::const_new();
-        *ARG.get_or_init(|| async move {
-            let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
-                self.inner.get_shared_arg(ObjectID::from_single_byte(6)),
-                Duration::from_secs(30)
-            ) else {
-                panic!("failed to get system object arg after retries");
-            };
-            system_arg
-        })
-        .await
+        *self
+            .clock_arg_cache
+            .get_or_init(|| async move {
+                let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
+                    self.inner.get_shared_arg(ObjectID::from_single_byte(6)),
+                    Duration::from_secs(30)
+                ) else {
+                    panic!("failed to get system object arg after retries");
+                };
+                system_arg
+            })
+            .await
     }
 
     /// Retrieves the dwallet_2pc_mpc_coordinator_id object arg from the Sui chain.
     pub async fn get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed(&self) -> ObjectArg {
-        static ARG: OnceCell<ObjectArg> = OnceCell::const_new();
-        *ARG.get_or_init(|| async move {
-            let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
-                self.inner.get_mutable_shared_arg(
-                    self.ika_network_config
-                        .objects
-                        .ika_dwallet_coordinator_object_id
-                ),
-                Duration::from_secs(30)
-            ) else {
-                panic!("Failed to get dwallet_2pc_mpc_coordinator_id object arg after retries");
-            };
-            system_arg
-        })
-        .await
+        *self
+            .dwallet_coordinator_arg_cache
+            .get_or_init(|| async move {
+                let Ok(Ok(system_arg)) = retry_with_max_elapsed_time!(
+                    self.inner.get_mutable_shared_arg(
+                        self.ika_network_config
+                            .objects
+                            .ika_dwallet_coordinator_object_id
+                    ),
+                    Duration::from_secs(30)
+                ) else {
+                    panic!("Failed to get dwallet_2pc_mpc_coordinator_id object arg after retries");
+                };
+                system_arg
+            })
+            .await
     }
 
     pub async fn get_available_move_packages(

@@ -668,6 +668,7 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
+    protocol_version: Option<u64>,
 }
 
 impl IkaTestClusterBuilder {
@@ -675,6 +676,7 @@ impl IkaTestClusterBuilder {
         Self {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
+            protocol_version: None,
         }
     }
 
@@ -685,6 +687,16 @@ impl IkaTestClusterBuilder {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Pin the chain's protocol version. Defaults to the workspace
+    /// `MAX_PROTOCOL_VERSION` when not set — explicit pinning is
+    /// useful when a test is targeting behavior at a specific
+    /// version and we don't want a future MAX bump to silently
+    /// change what's exercised.
+    pub fn with_protocol_version(mut self, protocol_version: u64) -> Self {
+        self.protocol_version = Some(protocol_version);
         self
     }
 
@@ -754,6 +766,9 @@ impl IkaTestClusterBuilder {
         let mut initiation_parameters = InitiationParameters::new();
         if let Some(epoch_duration_ms) = self.epoch_duration_ms {
             initiation_parameters.epoch_duration_ms = epoch_duration_ms;
+        }
+        if let Some(protocol_version) = self.protocol_version {
+            initiation_parameters.protocol_version = protocol_version;
         }
 
         let system = initialize_ika_system(
