@@ -114,6 +114,11 @@ pub struct P2pComponents {
     discovery_handle: discovery::Handle,
     state_sync_handle: state_sync::Handle,
     mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
+    /// In-memory cache backing the local Anemo `GetMpcDataBlob`
+    /// server. Producer caches own blob into it on epoch start;
+    /// `PeerBlobFetcher` mirrors fetched peer blobs into it so we
+    /// can serve them to other peers too.
+    mpc_data_blob_store: Arc<ika_network::mpc_artifacts::InMemoryBlobStore>,
 }
 
 #[cfg(msim)]
@@ -199,6 +204,16 @@ pub struct IkaNode {
     /// epoch so the relay always points at the current epoch
     /// store + consensus adapter.
     mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
+
+    /// In-memory cache shared with the Anemo `GetMpcDataBlob`
+    /// server. Producer and `PeerBlobFetcher` push blobs into it so
+    /// the server can respond to peer fetches without a restart.
+    mpc_data_blob_store: Arc<ika_network::mpc_artifacts::InMemoryBlobStore>,
+
+    /// Anemo network handle, retained so per-epoch
+    /// `PeerBlobFetcher` instances can issue `fetch_blob` against
+    /// committee peers without re-deriving the network.
+    p2p_network: Network,
 
     _state_archive_handle: Option<broadcast::Sender<()>>,
 
@@ -479,6 +494,7 @@ impl IkaNode {
             discovery_handle,
             state_sync_handle,
             mpc_announcement_relay,
+            mpc_data_blob_store,
         } = Self::create_p2p_network(
             &config,
             state_sync_store.clone(),
@@ -654,6 +670,8 @@ impl IkaNode {
 
             sui_connector_service,
             mpc_announcement_relay,
+            mpc_data_blob_store,
+            p2p_network,
             _state_archive_handle: state_archive_handle,
             shutdown_channel_tx: shutdown_channel,
             noa_dwallet_finalized,
@@ -909,6 +927,7 @@ impl IkaNode {
             discovery_handle,
             state_sync_handle,
             mpc_announcement_relay,
+            mpc_data_blob_store,
         })
     }
 
@@ -1497,6 +1516,7 @@ impl IkaNode {
                         cur_epoch_store.name,
                         Arc::new(components.consensus_adapter.clone()),
                         self.state.perpetual_tables(),
+                        self.mpc_data_blob_store.clone(),
                         root_seed_kp.root_seed().clone(),
                         bls_keypair,
                         sui_data_receivers.network_keys_receiver.clone(),
@@ -1504,6 +1524,32 @@ impl IkaNode {
                 let sender = Arc::new(sender);
                 Some(tokio::spawn(async move {
                     sender.run().await;
+                }))
+            } else {
+                None
+            };
+
+            // Consumer-side fetcher: pulls peer validators' mpc_data
+            // blobs from their Anemo `GetMpcDataBlob` endpoint and
+            // caches them locally so the off-chain class-groups
+            // assembler can resolve every committee member without a
+            // chain read.
+            let peer_blob_fetcher_handle = if off_chain_metadata_enabled {
+                let authority_names_to_peer_ids = cur_epoch_store
+                    .epoch_start_state()
+                    .get_authority_names_to_peer_ids();
+                let fetcher = ika_core::epoch_tasks::peer_blob_fetcher::PeerBlobFetcher::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    cur_epoch_store.epoch(),
+                    cur_epoch_store.name,
+                    self.state.perpetual_tables(),
+                    self.mpc_data_blob_store.clone(),
+                    self.p2p_network.clone(),
+                    authority_names_to_peer_ids,
+                );
+                let fetcher = Arc::new(fetcher);
+                Some(tokio::spawn(async move {
+                    fetcher.run().await;
                 }))
             } else {
                 None
@@ -1623,6 +1669,10 @@ impl IkaNode {
                 Some(())
             });
             joiner_pubkey_updater_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            peer_blob_fetcher_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });

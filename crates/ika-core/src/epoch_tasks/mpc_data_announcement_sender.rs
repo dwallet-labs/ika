@@ -28,7 +28,7 @@ use crate::validator_metadata::{
     derive_mpc_data_blob, now_ms, sign_validator_mpc_data_announcement,
 };
 use dwallet_rng::RootSeed;
-use ika_network::mpc_artifacts::mpc_data_blob_hash;
+use ika_network::mpc_artifacts::{InMemoryBlobStore, mpc_data_blob_hash};
 use ika_types::committee::EpochId;
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -51,6 +51,11 @@ pub struct MpcDataAnnouncementSender {
     authority: AuthorityName,
     consensus_adapter: Arc<dyn SubmitToConsensus>,
     perpetual_tables: Arc<AuthorityPerpetualTables>,
+    /// In-memory blob cache backing the local Anemo
+    /// `GetMpcDataBlob` server. We mirror our own blob into it on
+    /// submit so peers asking us for it via P2P get an immediate hit
+    /// without a node restart.
+    in_memory_blob_store: Arc<InMemoryBlobStore>,
     root_seed: RootSeed,
     bls_keypair: Arc<AuthorityKeyPair>,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -63,12 +68,14 @@ pub struct MpcDataAnnouncementSender {
 }
 
 impl MpcDataAnnouncementSender {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         epoch_store: Weak<AuthorityPerEpochStore>,
         epoch_id: EpochId,
         authority: AuthorityName,
         consensus_adapter: Arc<dyn SubmitToConsensus>,
         perpetual_tables: Arc<AuthorityPerpetualTables>,
+        in_memory_blob_store: Arc<InMemoryBlobStore>,
         root_seed: RootSeed,
         bls_keypair: Arc<AuthorityKeyPair>,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -79,6 +86,7 @@ impl MpcDataAnnouncementSender {
             authority,
             consensus_adapter,
             perpetual_tables,
+            in_memory_blob_store,
             root_seed,
             bls_keypair,
             network_keys_receiver,
@@ -146,6 +154,12 @@ impl MpcDataAnnouncementSender {
             // any future DKG/reconfig output we produce).
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
+        // Mirror into the in-memory cache backing the local
+        // `GetMpcDataBlob` Anemo server. The cache is hydrated only
+        // at node startup, so without this insert peers asking for
+        // our blob during this epoch's first run would miss until
+        // the next restart.
+        self.in_memory_blob_store.insert(digest, blob.clone());
         let signed = sign_validator_mpc_data_announcement(
             self.authority,
             self.epoch_id,

@@ -20,19 +20,6 @@ use ika_test_cluster::IkaTestClusterBuilder;
 /// operation. Drives the cluster through an epoch transition to
 /// exercise the sync paths that historically hit chain for these
 /// blob reads, then asserts the counters didn't move.
-///
-/// `#[ignore]` until the announcement-propagation gap is fixed:
-/// today the off-chain `EpochStoreClassGroupsSource` returns
-/// `Incomplete` past bootstrap because peer
-/// `ValidatorMpcDataAnnouncement`s don't reliably land in every
-/// validator's per-epoch table (each local table sees only its
-/// own announcement in repro). With the strict gate disabled,
-/// chain fallback fires (`get_mpc_data_from_validators_pool` is
-/// called ~36 times across one epoch transition), which makes
-/// this assertion fail. Once the consensus-delivery /
-/// announcement-recording gap is closed, drop the `#[ignore]`
-/// and the test should pass.
-#[ignore = "off-chain announcement propagation gap; see test doc"]
 #[tokio::test(flavor = "multi_thread")]
 async fn off_chain_metadata_v4_does_not_read_blobs_from_chain() {
     telemetry_subscribers::init_for_testing();
