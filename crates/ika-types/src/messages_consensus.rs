@@ -107,6 +107,13 @@ pub enum ConsensusTransactionKey {
         sui_types::base_types::ObjectID, /* network_key_id */
         u64,                             /* epoch */
     ),
+    /// V2 of `EndOfPublish` — same identity key as V1
+    /// (`AuthorityName`) so V1 and V2 from the same authority
+    /// dedupe correctly across an upgrade boundary. The bundled
+    /// handoff signature is identified separately by its own
+    /// `HandoffSignature(authority, epoch)` key on the consumer
+    /// side after extraction.
+    EndOfPublishV2(AuthorityName),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -234,6 +241,9 @@ impl Debug for ConsensusTransactionKey {
                     epoch
                 )
             }
+            ConsensusTransactionKey::EndOfPublishV2(authority) => {
+                write!(f, "EndOfPublishV2({:?})", authority.concise())
+            }
         }
     }
 }
@@ -317,6 +327,34 @@ pub enum ConsensusTransactionKind {
     HandoffSignature(Box<HandoffSignatureMessage>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
     NetworkKeyDKGReadySignal(NetworkKeyDKGReadySignal),
+    /// V2 of `EndOfPublish` that bundles the validator's signed
+    /// handoff attestation into the same consensus message.
+    ///
+    /// Why a new variant rather than a field on `EndOfPublish`:
+    /// the existing variant has shipped — older peers won't decode
+    /// the extra field. A new variant is wire-additive (older peers
+    /// reject as unknown rather than mis-decoding existing data) and
+    /// lets producers gate emission on protocol_config
+    /// (`bundled_handoff_in_end_of_publish`).
+    ///
+    /// Routing on the consumer side:
+    /// 1. Treat the `authority` as the EndOfPublish sender — same
+    ///    semantics as `EndOfPublish(authority)` for epoch-advance
+    ///    accounting.
+    /// 2. Extract `handoff_signature` and route through the existing
+    ///    `record_handoff_signature` aggregator. No separate
+    ///    `HandoffSignature` consensus message is sent in V2.
+    ///
+    /// Coupling the two into a single consensus message ensures the
+    /// handoff signature is observed at exactly the consensus point
+    /// where EndOfPublish fires — eliminating the V1 race where the
+    /// separate `HandoffSignature` could arrive out of order relative
+    /// to `EndOfPublish` and lead to inconsistent aggregator state
+    /// across the committee.
+    EndOfPublishV2 {
+        authority: AuthorityName,
+        handoff_signature: Box<HandoffSignatureMessage>,
+    },
 }
 
 impl ConsensusTransaction {
@@ -327,6 +365,29 @@ impl ConsensusTransaction {
         Self {
             tracking_id,
             kind: ConsensusTransactionKind::EndOfPublish(authority),
+        }
+    }
+
+    /// V2 of [`Self::new_end_of_publish`] — bundles the validator's
+    /// signed handoff attestation alongside the EndOfPublish.
+    /// Producers emit this instead of V1 + a separate
+    /// `HandoffSignature` consensus tx when the
+    /// `bundled_handoff_in_end_of_publish` protocol flag is on; the
+    /// consumer side splits the message back into its two parts and
+    /// routes each through the existing v1 processing paths.
+    pub fn new_end_of_publish_v2(
+        authority: AuthorityName,
+        handoff_signature: HandoffSignatureMessage,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        authority.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::EndOfPublishV2 {
+                authority,
+                handoff_signature: Box::new(handoff_signature),
+            },
         }
     }
 
@@ -645,6 +706,9 @@ impl ConsensusTransaction {
                     signal.network_key_id,
                     signal.epoch,
                 )
+            }
+            ConsensusTransactionKind::EndOfPublishV2 { authority, .. } => {
+                ConsensusTransactionKey::EndOfPublishV2(*authority)
             }
         }
     }

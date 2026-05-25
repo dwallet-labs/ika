@@ -2572,6 +2572,11 @@ impl AuthorityPerEpochStore {
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
                 ..
+            })
+            | SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                // V2 sender-authority check: same as V1.
+                kind: ConsensusTransactionKind::EndOfPublishV2 { authority, .. },
+                ..
             }) => {
                 if &transaction.sender_authority() != authority {
                     warn!(
@@ -3256,6 +3261,14 @@ impl AuthorityPerEpochStore {
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
+                ..
+            })
+            | SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                // V2 routes through the same epoch-advance accounting
+                // path as V1 — the bundled handoff signature is split
+                // off and processed separately by the consensus
+                // handler (see consumer-side wiring in this branch).
+                kind: ConsensusTransactionKind::EndOfPublishV2 { authority, .. },
                 ..
             }) => {
                 self.record_end_of_publish_vote(authority)?;

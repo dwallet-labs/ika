@@ -88,7 +88,8 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::HandoffSignature(..)
                 | ConsensusTransactionKind::EpochMpcDataReadySignal(..)
-                | ConsensusTransactionKind::NetworkKeyDKGReadySignal(..) => {}
+                | ConsensusTransactionKind::NetworkKeyDKGReadySignal(..)
+                | ConsensusTransactionKind::EndOfPublishV2 { .. } => {}
                 ConsensusTransactionKind::SystemCheckpointSignature(signature) => {
                     system_checkpoints.push(signature.as_ref());
                     params_batch.push(&signature.checkpoint_message);
