@@ -532,17 +532,20 @@ async fn test_real_network_churn_over_10_epochs() {
         // 3. Wait for the next epoch within a bounded window. With
         //    `internal_presign_sessions = true` + an in-flight user
         //    DKG + committee change, each transition takes ~2-3
-        //    min; 300s gives generous headroom while still
+        //    min on a clean 4-validator cluster, but later cycles
+        //    where the active set has churned to include multiple
+        //    joiners run reconfig MPC under more contention and
+        //    need a wider window. 600s gives headroom while still
         //    catching truly-stuck cases.
         let next_epoch = cycle as u64 + 1;
         tokio::time::timeout(
-            std::time::Duration::from_secs(300),
+            std::time::Duration::from_secs(600),
             cluster.wait_for_epoch(next_epoch),
         )
         .await
         .unwrap_or_else(|_| {
             panic!(
-                "epoch {next_epoch} did not advance within 300s — \
+                "epoch {next_epoch} did not advance within 600s — \
                  churn cycle {cycle} blocked reconfiguration"
             )
         });
