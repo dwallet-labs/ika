@@ -2051,65 +2051,138 @@ impl AuthorityPerEpochStore {
                 .network_reconfiguration_output_digests
                 .insert(&dwallet_network_encryption_key_id, &digest)?,
         }
-        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full()
-            && let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes)
-        {
-            warn!(
-                error = ?e,
-                ?dwallet_network_encryption_key_id,
-                "failed to persist protocol output blob — cached digest may not be servable by P2P"
-            );
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+            if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes) {
+                warn!(
+                    error = ?e,
+                    ?dwallet_network_encryption_key_id,
+                    "failed to persist protocol output blob — cached digest may not be servable by P2P"
+                );
+            }
+            // Mirror the per-epoch `key_id -> digest` into perpetual so
+            // consumers in *later* epochs can still resolve the blob
+            // bytes — the per-epoch table starts empty after each
+            // reconfig. Without this, off_chain mode's overlay
+            // returns `None` for any key whose output was produced in
+            // a prior epoch, which propagates as `BcsError(Eof)` in
+            // `instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output`.
+            let perpetual_insert = match kind {
+                ProtocolOutputKind::Dkg => perpetual
+                    .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest),
+                ProtocolOutputKind::Reconfiguration => perpetual
+                    .insert_network_reconfiguration_output_digest(
+                        dwallet_network_encryption_key_id,
+                        digest,
+                    ),
+            };
+            if let Err(e) = perpetual_insert {
+                warn!(
+                    error = ?e,
+                    ?dwallet_network_encryption_key_id,
+                    "failed to persist per-key digest mirror — cross-epoch lookups may miss"
+                );
+            }
         }
         Ok(())
     }
 
-    /// Returns the per-epoch `key_id -> digest` map of cached
-    /// network DKG outputs.
+    /// Returns the merged `key_id -> digest` map of cached network
+    /// DKG outputs. Per-epoch table takes precedence (latest writes
+    /// in this epoch override prior cached digests); perpetual
+    /// mirror fills in keys whose DKG completed in earlier epochs.
+    /// Without the perpetual fallback the handoff items list would
+    /// drop DKG entries for any key whose output was produced
+    /// before the current epoch, causing the items list to diverge
+    /// across validators that ran DKG at different times.
     pub fn get_network_dkg_output_digests(
         &self,
     ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
         let tables = self.tables()?;
-        tables
-            .network_dkg_output_digests
-            .safe_iter()
-            .map(|res| res.map_err(IkaError::from))
-            .collect()
+        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
+            std::collections::BTreeMap::new();
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+            for entry in perpetual.network_dkg_output_digests_by_key.safe_iter() {
+                let (key_id, digest) = entry.map_err(IkaError::from)?;
+                out.insert(key_id, digest);
+            }
+        }
+        for entry in tables.network_dkg_output_digests.safe_iter() {
+            let (key_id, digest) = entry.map_err(IkaError::from)?;
+            out.insert(key_id, digest);
+        }
+        Ok(out)
     }
 
-    /// Returns the per-epoch `key_id -> digest` map of cached
-    /// network reconfiguration outputs.
+    /// Returns the merged `key_id -> digest` map of cached network
+    /// reconfiguration outputs. Same precedence as
+    /// [`Self::get_network_dkg_output_digests`].
     pub fn get_network_reconfiguration_output_digests(
         &self,
     ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
         let tables = self.tables()?;
-        tables
-            .network_reconfiguration_output_digests
-            .safe_iter()
-            .map(|res| res.map_err(IkaError::from))
-            .collect()
+        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
+            std::collections::BTreeMap::new();
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+            for entry in perpetual
+                .network_reconfiguration_output_digests_by_key
+                .safe_iter()
+            {
+                let (key_id, digest) = entry.map_err(IkaError::from)?;
+                out.insert(key_id, digest);
+            }
+        }
+        for entry in tables.network_reconfiguration_output_digests.safe_iter() {
+            let (key_id, digest) = entry.map_err(IkaError::from)?;
+            out.insert(key_id, digest);
+        }
+        Ok(out)
     }
 
     /// Looks up the cached blob for a given network key + protocol
-    /// output kind. Returns `None` if either (a) we have no digest
-    /// for this key/kind this epoch, or (b) the digest is known but
-    /// the perpetual blob store doesn't hold the bytes. Callers
-    /// fall back to the chain read on `None`.
+    /// output kind. Returns `None` only when no digest exists for
+    /// this key/kind in either the per-epoch table or the perpetual
+    /// mirror, or when the digest is known but the perpetual blob
+    /// store doesn't hold the bytes.
+    ///
+    /// Lookup precedence:
+    /// 1. Per-epoch `network_*_output_digests` (fresh writes in the
+    ///    current epoch land here first).
+    /// 2. Perpetual `network_*_output_digests_by_key` mirror (covers
+    ///    keys whose output was produced in a prior epoch — the
+    ///    per-epoch table starts empty after each reconfig).
+    /// 3. Perpetual `mpc_artifact_blobs` keyed by the resolved
+    ///    digest.
     fn lookup_protocol_output_blob(
         &self,
         kind: ProtocolOutputKind,
         network_key_id: &ObjectID,
     ) -> Option<Vec<u8>> {
+        let perpetual = self.perpetual_tables_for_handoff.load_full()?;
         let tables = self.tables().ok()?;
         let digest = match kind {
-            ProtocolOutputKind::Dkg => {
-                tables.network_dkg_output_digests.get(network_key_id).ok()?
-            }
+            ProtocolOutputKind::Dkg => tables
+                .network_dkg_output_digests
+                .get(network_key_id)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    perpetual
+                        .get_network_dkg_output_digest(network_key_id)
+                        .ok()
+                        .flatten()
+                })?,
             ProtocolOutputKind::Reconfiguration => tables
                 .network_reconfiguration_output_digests
                 .get(network_key_id)
-                .ok()?,
-        }?;
-        let perpetual = self.perpetual_tables_for_handoff.load_full()?;
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    perpetual
+                        .get_network_reconfiguration_output_digest(network_key_id)
+                        .ok()
+                        .flatten()
+                })?,
+        };
         perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 

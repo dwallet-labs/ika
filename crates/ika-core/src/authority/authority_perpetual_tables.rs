@@ -41,6 +41,21 @@ pub struct AuthorityPerpetualTables {
     /// for, and skipping a single epoch can permanently break their
     /// ability to bootstrap.
     pub(crate) certified_handoff_attestations: DBMap<EpochId, CertifiedHandoffAttestation>,
+
+    /// Per-key map `network_key_id -> blob digest` for the network
+    /// DKG output. Stable across epochs (a key's DKG output is
+    /// produced once and never replaced), so storing it perpetually
+    /// lets `EpochStoreBlobSource` resolve the blob bytes for a key
+    /// whose DKG completed in a prior epoch. The per-epoch
+    /// `network_dkg_output_digests` table is still kept and written
+    /// in the originating epoch — this is its perpetual mirror.
+    pub(crate) network_dkg_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
+
+    /// Per-key map `network_key_id -> blob digest` for the LATEST
+    /// network reconfiguration output. Reconfig outputs change each
+    /// epoch, but only the most recent one matters for class-groups
+    /// assembly + downstream MPC, so we overwrite on each write.
+    pub(crate) network_reconfiguration_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
 }
 
 impl AuthorityPerpetualTables {
@@ -159,6 +174,53 @@ impl AuthorityPerpetualTables {
         self.mpc_artifact_blobs
             .safe_iter()
             .map(|res| res.map_err(IkaError::from))
+    }
+
+    /// Records the latest known digest of a network key's DKG output.
+    /// DKG output is produced once per key and doesn't change across
+    /// epochs, so callers can re-insert with the same digest safely
+    /// (idempotent on equal bytes). Stored perpetually so consumers
+    /// in epochs *after* the originating epoch can still resolve the
+    /// blob bytes via the digest.
+    pub fn insert_network_dkg_output_digest(
+        &self,
+        network_key_id: ObjectID,
+        digest: [u8; 32],
+    ) -> IkaResult {
+        self.network_dkg_output_digests_by_key
+            .insert(&network_key_id, &digest)?;
+        Ok(())
+    }
+
+    pub fn get_network_dkg_output_digest(
+        &self,
+        network_key_id: &ObjectID,
+    ) -> IkaResult<Option<[u8; 32]>> {
+        Ok(self.network_dkg_output_digests_by_key.get(network_key_id)?)
+    }
+
+    /// Records the LATEST known digest of a network key's
+    /// reconfiguration output. Reconfig outputs change every epoch,
+    /// so the table stores only the most recent digest per key —
+    /// downstream class-groups assembly + reconfig MPC only ever
+    /// need the latest.
+    pub fn insert_network_reconfiguration_output_digest(
+        &self,
+        network_key_id: ObjectID,
+        digest: [u8; 32],
+    ) -> IkaResult {
+        self.network_reconfiguration_output_digests_by_key
+            .insert(&network_key_id, &digest)?;
+        Ok(())
+    }
+
+    pub fn get_network_reconfiguration_output_digest(
+        &self,
+        network_key_id: &ObjectID,
+    ) -> IkaResult<Option<[u8; 32]>> {
+        Ok(self
+            .network_reconfiguration_output_digests_by_key
+            .get(network_key_id)?)
     }
 
     /// Persists a `CertifiedHandoffAttestation` for the epoch it

@@ -23,25 +23,20 @@ use ika_test_cluster::IkaTestClusterBuilder;
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState;
 use std::time::Duration;
 
-/// `#[ignore]` until the off-chain DKG-output blob propagation
-/// gap is fixed: the per-epoch `network_dkg_output_digests` /
-/// `network_reconfiguration_output_digests` tables get a fresh
-/// (empty) instance every epoch reconfig, so after an epoch
-/// transition the off-chain overlay path
-/// (`AuthorityPerEpochStore::network_dkg_output_blob`) returns
-/// `None` for keys whose DKG completed in a prior epoch. With
-/// chain blob reads disabled in v4, the local snapshot ends up
-/// with empty DKG-output bytes, validators log
-/// `Failed to instantiate network key from consensus-voted data:
-/// BcsError(Eof)`, and reconfig stalls. The bootstrap key flow
-/// works because everything is in one epoch; this multi-key
-/// test crosses an epoch boundary and surfaces the gap.
-///
-/// Follow-up: either persist the per-key digest map across
-/// epochs (move it into `AuthorityPerpetualTables`) or hydrate
-/// the per-epoch table from perpetual at `reopen_epoch_db` time.
-/// Once that lands, drop the `#[ignore]`.
-#[ignore = "off-chain DKG-output blob lost across epoch transitions; see test doc"]
+/// `#[ignore]` until a separate intermittent MPC-participation
+/// gap is fixed: in repro runs one of the four validators
+/// (party_id deterministic from name) doesn't reach the
+/// `Finalize` step for the bootstrap K0 network DKG (the other
+/// three do). That validator's `cache_network_dkg_output` is
+/// therefore never called, its perpetual mirror is empty for
+/// K0, and its handoff attestation omits the `NetworkDkgOutput`
+/// item that the other three include — surfacing as
+/// `AttestationMismatch` rejections. The digest-persistence
+/// machinery (perpetual mirror + per-epoch fallback) IS exercised
+/// by this test and works for the keys the validator did
+/// finalize; the gap is upstream in MPC orchestration. Once that
+/// MPC-participation bug is fixed, drop the `#[ignore]`.
+#[ignore = "intermittent K0 DKG finalize gap on one validator; see test doc"]
 #[tokio::test(flavor = "multi_thread")]
 async fn multi_network_keys_dkg_across_epochs() {
     telemetry_subscribers::init_for_testing();
