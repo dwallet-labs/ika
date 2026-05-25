@@ -8,6 +8,7 @@ use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_event_into_request::sui_event_into_session_request;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
+use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{Committee, EpochId, StakeUnit, decode_validator_encryption_keys};
 use ika_types::crypto::AuthorityName;
@@ -293,6 +294,11 @@ where
 
             let new_next_committee = system_inner.read_bls_committee(&new_next_bls_committee);
 
+            let off_chain_on = ProtocolConfig::get_for_version(
+                ProtocolVersion::new(system_inner.protocol_version()),
+                Chain::Unknown,
+            )
+            .off_chain_validator_metadata_enabled();
             let committee = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
@@ -301,6 +307,7 @@ where
                 new_next_bls_committee.validity_threshold,
                 true,
                 class_groups_source.clone(),
+                off_chain_on,
             )
             .await
             {
@@ -331,12 +338,19 @@ where
                 Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
             >,
         >,
+        off_chain_on: bool,
     ) -> DwalletMPCResult<Committee> {
-        // Step 13 overlay: try the off-chain assembly first. The
-        // strict `Complete`/`Incomplete` gate inside the source
-        // means we only use the off-chain map when *every*
-        // committee member resolved successfully. Otherwise we
-        // fall back to the chain-read path below.
+        // Try the off-chain assembly first. The strict
+        // `Complete`/`Incomplete` gate inside the source means we
+        // only use the off-chain map when *every* committee member
+        // resolved successfully. In off-chain mode, an `Incomplete`
+        // result is logged with elevated severity — the design
+        // intent is for chain to be write-only for validator
+        // mpc_data — but we still fall back to the chain read so
+        // the cluster can bootstrap before consensus has delivered
+        // every announcement. The
+        // `chain_blob_reads`/`CHAIN_BLOB_READ_*` counters surface
+        // whether the fallback actually fired during a test run.
         if let Some(source) = class_groups_source.load_full() {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
@@ -365,11 +379,22 @@ where
                     ));
                 }
                 crate::validator_metadata::OffChainClassGroupsAssembly::Incomplete { missing } => {
-                    debug!(
-                        epoch,
-                        missing = missing.len(),
-                        "off-chain class-groups assembly incomplete; falling back to chain"
-                    );
+                    if off_chain_on {
+                        warn!(
+                            epoch,
+                            missing = missing.len(),
+                            "off_chain mode: off-chain class-groups assembly incomplete; \
+                             falling back to chain mpc_data read (chain is supposed to be \
+                             write-only for these blobs — investigate why announcements \
+                             haven't propagated)"
+                        );
+                    } else {
+                        debug!(
+                            epoch,
+                            missing = missing.len(),
+                            "off-chain class-groups assembly incomplete; falling back to chain"
+                        );
+                    }
                 }
             }
         }
@@ -478,6 +503,16 @@ where
                 continue;
             };
             let current_epoch = system_inner.epoch();
+            let protocol_version = ProtocolVersion::new(system_inner.protocol_version());
+            // Off-chain mode: validator mpc_data, network-key DKG
+            // outputs, and reconfiguration outputs are sourced from
+            // consensus + P2P + the local producer cache. Chain is
+            // write-only for these blob fields. The
+            // off_chain_validator_metadata flag is detected from
+            // chain state so the behavior tracks protocol-version
+            // upgrades automatically.
+            let off_chain_on = ProtocolConfig::get_for_version(protocol_version, Chain::Unknown)
+                .off_chain_validator_metadata_enabled();
 
             let network_encryption_keys = sui_client
                 .get_dwallet_mpc_network_keys(&dwallet_coordinator_inner)
@@ -512,13 +547,33 @@ where
             let mut all_fetched_network_keys_data: HashMap<_, _> =
                 (*network_keys_sender.borrow().clone()).clone();
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
-                match sui_client
-                    .get_network_encryption_key_with_full_data_by_epoch(
-                        &network_dec_key_shares,
-                        current_epoch,
+                // In off-chain mode, synthesize a metadata-only
+                // `DWalletNetworkEncryptionKeyData` from the
+                // lightweight chain object so we skip the heavy
+                // `read_table_vec_as_raw_bytes` chain reads. The
+                // overlay below substitutes the actual blob bytes
+                // from the local producer cache (which all honest
+                // validators populate from their own MPC outputs).
+                let chain_fetched = if off_chain_on {
+                    Ok(
+                        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
+                            id: network_dec_key_shares.id,
+                            current_epoch,
+                            dkg_at_epoch: network_dec_key_shares.dkg_at_epoch,
+                            network_dkg_public_output: vec![],
+                            current_reconfiguration_public_output: vec![],
+                            state: network_dec_key_shares.state.clone(),
+                        },
                     )
-                    .await
-                {
+                } else {
+                    sui_client
+                        .get_network_encryption_key_with_full_data_by_epoch(
+                            &network_dec_key_shares,
+                            current_epoch,
+                        )
+                        .await
+                };
+                match chain_fetched {
                     Ok(key_full_data) => {
                         // Step 12 overlay: prefer locally-cached
                         // protocol-output blobs (populated by

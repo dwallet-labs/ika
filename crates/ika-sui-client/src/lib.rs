@@ -367,6 +367,15 @@ where
         validators: &Vec<StakingPool>,
         read_next_mpc_data: bool,
     ) -> IkaResult<HashMap<ObjectID, VersionedMPCData>> {
+        // Same instrumentation as the network-key full-data fetch:
+        // every chain-side `mpc_data` table read shows up here so
+        // tests can assert the off-chain pipeline doesn't trigger it.
+        self.sui_client_metrics
+            .chain_blob_reads
+            .with_label_values(&["get_mpc_data_from_validators_pool"])
+            .inc();
+        crate::metrics::CHAIN_BLOB_READ_MPC_DATA_FROM_VALIDATORS_POOL
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.inner
             .get_mpc_data_from_validators_pool(validators, read_next_mpc_data)
             .await
@@ -730,6 +739,15 @@ where
         network_decryption_key: &DWalletNetworkEncryptionKey,
         epoch: EpochId,
     ) -> IkaResult<DWalletNetworkEncryptionKeyData> {
+        // Count every chain-side fetch of the heavy blob fields so
+        // off-chain-mode tests can assert this path is not hit when
+        // the off-chain pipeline is active.
+        self.sui_client_metrics
+            .chain_blob_reads
+            .with_label_values(&["get_network_encryption_key_with_full_data_by_epoch"])
+            .inc();
+        crate::metrics::CHAIN_BLOB_READ_NETWORK_KEY_FULL_DATA
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.inner
             .get_network_encryption_key_with_full_data_by_epoch(network_decryption_key, epoch)
             .await
