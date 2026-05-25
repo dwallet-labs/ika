@@ -12,7 +12,7 @@
 //! `timestamp_ms` parameter), so producer-side and any verifier
 //! re-derivation will produce byte-identical blobs.
 
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey, Ed25519Signature};
@@ -135,10 +135,21 @@ pub fn verify_joiner_announcement(
 /// `VersionedMPCData::V1`) from a `RootSeed` — the same encoding the
 /// CLI submits on chain via `set_next_epoch_mpc_data_bytes`. Both
 /// paths hashing this output produce the same digest.
+///
+/// At `network_encryption_key_version == 3` (the v4 protocol shape)
+/// the inner bytes are the post-PR-#1707 `ValidatorEncryptionKeysAndProofs`
+/// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
+/// `decode_validator_encryption_keys` accepts either shape (new or
+/// mainnet-v1.1.8 class-groups-only); using the new shape here is
+/// what lets the off-chain class-groups assembler resolve all four
+/// committee key sets on a v4 cluster and avoid the "0/N PVSS
+/// keys decoded" rejection during network DKG and reconfig.
 pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
-    let key_and_proof = ClassGroupsKeyPairAndProof::from_seed(seed).encryption_key_and_proof();
-    let inner = bcs::to_bytes(&key_and_proof)
-        .map_err(|e| IkaError::Unknown(format!("bcs encode class-groups key+proof: {e}")))?;
+    let bundle =
+        ClassGroupsAndPvssKeyPairAndProof::from_seed(seed).validator_encryption_keys_and_proofs();
+    let inner = bcs::to_bytes(&bundle).map_err(|e| {
+        IkaError::Unknown(format!("bcs encode ValidatorEncryptionKeysAndProofs: {e}"))
+    })?;
     let mpc_data = VersionedMPCData::V1(MPCDataV1 {
         class_groups_public_key_and_proof: inner,
     });

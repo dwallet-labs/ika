@@ -25,7 +25,8 @@ use ika_swarm::memory::{Swarm, SwarmBuilder};
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
-    ContractPaths, InitializedIkaSystem, PublishedIkaPackages, initialize_ika_system,
+    ContractPaths, InitializedIkaSystem, PublishedIkaPackages,
+    ika_system_request_dwallet_network_encryption_key_dkg_by_cap, initialize_ika_system,
     publish_ika_packages, request_add_validator, request_add_validator_candidate,
     request_remove_validator, stake_ika,
 };
@@ -107,6 +108,20 @@ impl IkaTestCluster {
             .next()
             .expect("swarm must have at least one validator node");
         wait_for_node_epoch(&handle, target_epoch).await;
+    }
+
+    /// Current in-memory epoch reported by an arbitrary validator
+    /// node in the swarm. Read from a node-handle's
+    /// `current_epoch_for_testing` rather than chain so tests don't
+    /// have to spin up a fresh `SuiClient` for a single value.
+    pub async fn current_epoch_from_chain(&self) -> anyhow::Result<u64> {
+        let handle = self
+            .swarm
+            .validator_node_handles()
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("swarm has no validator nodes"))?;
+        Ok(handle.with(|node| node.current_epoch_for_testing()))
     }
 
     /// Generate a fresh validator config, run the full candidate →
@@ -265,6 +280,83 @@ impl IkaTestCluster {
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
+    }
+
+    /// Submit an on-chain `request_dwallet_network_encryption_key_dkg_by_cap`
+    /// call so the network spins up a NEW `DWalletNetworkEncryptionKey`
+    /// in addition to the one created at cluster bootstrap. The chain
+    /// transition is synchronous (this returns once the tx executes);
+    /// the actual MPC takes another epoch boundary to settle —
+    /// callers typically pair this with `wait_for_new_network_key`.
+    pub async fn request_network_key_dkg(&mut self) -> Result<()> {
+        let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
+        ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
+            self.publisher_address,
+            self.test_cluster.wallet_mut(),
+            client,
+            self.packages.ika_system_package_id,
+            self.packages.ika_dwallet_2pc_mpc_package_id,
+            self.system.ika_system_object_id,
+            self.system.init_system_shared_version,
+            self.system.ika_dwallet_coordinator_object_id,
+            self.system
+                .dwallet_2pc_mpc_coordinator_initial_shared_version,
+            self.system.protocol_cap_id,
+        )
+        .await
+    }
+
+    /// Poll until a `DWalletNetworkEncryptionKey` whose id is NOT in
+    /// `known_key_ids` has finished its initial network DKG. Returns
+    /// `(new_key_id, dkg_public_output_bytes)`.
+    ///
+    /// Used after `request_network_key_dkg` to observe completion of
+    /// the freshly-requested key without confusing it with the
+    /// bootstrap key (or any earlier keys requested in this test).
+    pub async fn wait_for_new_network_key(
+        &self,
+        known_key_ids: &[ObjectID],
+        timeout: std::time::Duration,
+    ) -> Result<(ObjectID, Vec<u8>)> {
+        let client = self.sui_connector_client().await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timeout waiting for a new DWalletNetworkEncryptionKey \
+                     beyond known_key_ids ({known_key_ids:?})"
+                );
+            }
+            let (_, inner) = client.must_get_dwallet_coordinator_inner().await;
+            let keys = client.get_dwallet_mpc_network_keys(&inner).await?;
+            for (key_id, key) in keys {
+                if known_key_ids.contains(&key_id) {
+                    continue;
+                }
+                if matches!(
+                    key.state,
+                    ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
+                ) {
+                    continue;
+                }
+                let data = client
+                    .get_network_encryption_key_with_full_data_by_epoch(&key, key.dkg_at_epoch)
+                    .await?;
+                if !data.network_dkg_public_output.is_empty() {
+                    return Ok((key_id, data.network_dkg_public_output));
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Snapshot of all `DWalletNetworkEncryptionKey` object ids on
+    /// chain right now, used by `wait_for_new_network_key`.
+    pub async fn current_network_key_ids(&self) -> Result<Vec<ObjectID>> {
+        let client = self.sui_connector_client().await?;
+        let (_, inner) = client.must_get_dwallet_coordinator_inner().await;
+        let keys = client.get_dwallet_mpc_network_keys(&inner).await?;
+        Ok(keys.into_keys().collect())
     }
 
     /// Build an `IkaSuiClient` pointed at this cluster's in-process Sui
