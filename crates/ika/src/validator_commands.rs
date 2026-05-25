@@ -458,10 +458,14 @@ impl IkaValidatorCommand {
 
                 let (validator_mpc_secrets, validator_encryption_keys_and_proofs) =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
-                // Publication shape is version-gated: set `legacy_class_groups_only`
-                // during the v3→v4 protocol upgrade window so mainnet-v1.1.8 peers
-                // can decode this validator's bytes. Reading is shape-tolerant
-                // on either side via `decode_validator_encryption_keys`.
+                // Publication shape is version-gated. Reading-side decoders
+                // are NOT shape-tolerant: chain reads always decode the bare
+                // `ClassGroupsEncryptionKeyAndProof`, and the full
+                // `ValidatorEncryptionKeysAndProofs` bundle is propagated by
+                // the off-chain validator-metadata pipeline (PR #1721) — not
+                // by this Move-side field. The non-bare branch below stays for
+                // operator compatibility during rollout windows but is the
+                // wrong shape to publish under the off-chain design.
                 // `validator_mpc_secrets` is held locally; `validator_encryption_keys_and_proofs`
                 // is the public payload — the v3-shape only publishes the
                 // class-groups slice of it.
@@ -989,12 +993,13 @@ impl IkaValidatorCommand {
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
                 // Build the publication payload. The Move-side `mpc_data_bytes`
-                // field is opaque `vector<u8>`; the contents are version-gated:
-                // pre-upgrade (mainnet-v1.1.8 peers in the committee) we publish
-                // bare `ClassGroupsEncryptionKeyAndProof` so old binaries can
-                // decode; post-upgrade we publish the full
-                // `ValidatorEncryptionKeysAndProofs` bundle. Reading is shape-
-                // tolerant on either side via `decode_validator_encryption_keys`.
+                // field stays the bare `ClassGroupsEncryptionKeyAndProof`
+                // (mainnet-v1.1.8 shape) under the off-chain design: chain
+                // readers decode that shape directly, and the full
+                // `ValidatorEncryptionKeysAndProofs` bundle (PVSS + VSS HPKE)
+                // is propagated by the off-chain validator-metadata pipeline
+                // (PR #1721). The non-bare branch stays for operator-rollout
+                // compatibility but should not be selected on a v4+ network.
                 let mpc_root_seed = RootSeed::random_seed();
                 let (new_validator_secrets, new_validator_publics) =
                     ValidatorMPCSecrets::from_seed(&mpc_root_seed);

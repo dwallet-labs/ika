@@ -5,8 +5,8 @@ use enum_dispatch::enum_dispatch;
 use std::collections::HashMap;
 
 use crate::committee::{
-    Committee, CommitteeWithNetworkMetadata, NetworkMetadata, StakeUnit,
-    decode_validator_encryption_keys,
+    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeWithNetworkMetadata, NetworkMetadata,
+    StakeUnit,
 };
 use crate::crypto::{AuthorityName, AuthorityPublicKey, NetworkPublicKey};
 use anemo::PeerId;
@@ -140,27 +140,21 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .map(|validator| {
-                // Shape-tolerant decode: accepts both the mainnet-v1.1.8
-                // bare-class-groups payload and the post-PR-#1707 bundle. PVSS
-                // halves come back as `None` for validators publishing the old
-                // shape; downstream DKG/Reconfig dispatch picks the bwd-compat
-                // Party in that case.
-                let (
-                    class_groups_public_key_and_proof,
-                    secp256k1_pvss_public_key_and_proof,
-                    secp256r1_pvss_public_key_and_proof,
-                    ristretto_pvss_public_key_and_proof,
-                ) = match validator.mpc_data.as_ref().and_then(|mpc_data| {
-                    decode_validator_encryption_keys(&mpc_data.class_groups_public_key_and_proof())
-                }) {
-                    Some(v) => (
-                        Some(v.class_groups),
-                        v.secp256k1_pvss,
-                        v.secp256r1_pvss,
-                        v.ristretto_pvss,
-                    ),
-                    None => (None, None, None, None),
-                };
+                // Chain reads decode the mainnet-v1.1.8 bare
+                // `ClassGroupsEncryptionKeyAndProof` shape exclusively. PVSS +
+                // VSS HPKE keys arrive via the off-chain validator-metadata
+                // pipeline (PR #1721), not from this chain payload, so they're
+                // `None` here regardless of validator binary version.
+                let class_groups_public_key_and_proof =
+                    validator.mpc_data.as_ref().and_then(|mpc_data| {
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.class_groups_public_key_and_proof(),
+                        )
+                        .ok()
+                    });
+                let secp256k1_pvss_public_key_and_proof = None;
+                let secp256r1_pvss_public_key_and_proof = None;
+                let ristretto_pvss_public_key_and_proof = None;
 
                 (
                     validator.authority_name(),
@@ -191,57 +185,40 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .map(|validator| (validator.authority_name(), validator.voting_power))
             .collect();
 
-        // Shape-tolerant decode per validator. Mainnet-v1.1.8-shape payloads
-        // (bare class-groups) populate only the class-groups HashMap; PVSS
-        // HashMaps gain an entry only when the validator published the
-        // post-PR-#1707 bundle shape.
-        let decoded_per_validator: Vec<_> = self
+        // Chain reads decode the mainnet-v1.1.8 bare
+        // `ClassGroupsEncryptionKeyAndProof` shape exclusively. PVSS + VSS
+        // HPKE maps are populated by the off-chain validator-metadata
+        // pipeline (PR #1721) overlaying onto `Committee` separately — empty
+        // here.
+        let class_groups_public_keys_and_proofs = self
             .active_validators
             .iter()
             .filter_map(|validator| {
                 let mpc_data = validator.mpc_data.as_ref()?;
-                let decoded = decode_validator_encryption_keys(
+                match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
                     &mpc_data.class_groups_public_key_and_proof(),
-                );
-                if decoded.is_none() {
-                    error!(
-                        authority = ?validator.authority_name(),
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
-                    );
+                ) {
+                    Ok(k) => Some((validator.authority_name(), k)),
+                    Err(e) => {
+                        error!(
+                            authority = ?validator.authority_name(),
+                            error = ?e,
+                            "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof from Move-side mpc_data"
+                        );
+                        None
+                    }
                 }
-                decoded.map(|d| (validator.authority_name(), d))
             })
-            .collect();
-
-        let class_groups_public_keys_and_proofs = decoded_per_validator
-            .iter()
-            .map(|(name, v)| (*name, v.class_groups.clone()))
-            .collect();
-        let secp256k1_pvss_public_keys_and_proofs = decoded_per_validator
-            .iter()
-            .filter_map(|(name, v)| v.secp256k1_pvss.clone().map(|k| (*name, k)))
-            .collect();
-        let secp256r1_pvss_public_keys_and_proofs = decoded_per_validator
-            .iter()
-            .filter_map(|(name, v)| v.secp256r1_pvss.clone().map(|k| (*name, k)))
-            .collect();
-        let ristretto_pvss_public_keys_and_proofs = decoded_per_validator
-            .iter()
-            .filter_map(|(name, v)| v.ristretto_pvss.clone().map(|k| (*name, k)))
-            .collect();
-        let vss_hpke_public_keys_and_proofs = decoded_per_validator
-            .iter()
-            .filter_map(|(name, v)| v.vss_hpke_public_key_and_proof.clone().map(|k| (*name, k)))
             .collect();
 
         Committee::new(
             self.epoch,
             voting_rights,
             class_groups_public_keys_and_proofs,
-            secp256k1_pvss_public_keys_and_proofs,
-            secp256r1_pvss_public_keys_and_proofs,
-            ristretto_pvss_public_keys_and_proofs,
-            vss_hpke_public_keys_and_proofs,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
             self.quorum_threshold,
             self.validity_threshold,
         )
