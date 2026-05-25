@@ -13,6 +13,7 @@ feature_flags:
   internal_presign_sessions: true
   bls_checkpoints: true
   off_chain_validator_metadata: true
+  bundled_handoff_in_end_of_publish: true
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
 max_dwallet_checkpoint_size_bytes: 51200
