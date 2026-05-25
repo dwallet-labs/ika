@@ -583,22 +583,53 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
             };
         };
         let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
-        let mut missing: Vec<AuthorityName> = Vec::new();
+        let mut announcement_missing: Vec<AuthorityName> = Vec::new();
         for authority in committee_authorities {
             match store.get_validator_mpc_data_announcement(authority) {
                 Ok(Some(signed)) => {
                     pairs.push((*authority, signed.announcement.blob_hash));
                 }
-                _ => missing.push(*authority),
+                _ => announcement_missing.push(*authority),
             }
         }
-        if !missing.is_empty() {
-            return OffChainClassGroupsAssembly::Incomplete { missing };
+        if !announcement_missing.is_empty() {
+            // Per-epoch table doesn't have an announcement for some
+            // committee member — consensus hasn't delivered it yet
+            // (early bootstrap window).
+            return OffChainClassGroupsAssembly::Incomplete {
+                missing: announcement_missing,
+            };
         }
         let perpetual = self.perpetual.clone();
-        assemble_committee_class_groups_off_chain(pairs, move |digest| {
+        let assembly_pairs: Vec<_> = pairs.clone();
+        let result = assemble_committee_class_groups_off_chain(assembly_pairs, move |digest| {
             perpetual.get_mpc_artifact_blob(digest).ok().flatten()
-        })
+        });
+        if let OffChainClassGroupsAssembly::Incomplete { ref missing } = result {
+            // Distinguish "announcement received but blob not in
+            // local perpetual store" from "announcement not yet
+            // received" — they require different remediations.
+            // Currently the only insert path into the perpetual
+            // blob store is the validator's OWN announcement (via
+            // `mpc_data_announcement_sender::send_announcement`)
+            // and locally-produced MPC outputs; peer blobs need a
+            // P2P fetch that isn't wired up yet — see the
+            // `fetch_blob` helper in `ika_network::mpc_artifacts`.
+            let blob_only_missing: Vec<_> = missing
+                .iter()
+                .filter(|m| pairs.iter().any(|(a, _)| a == *m))
+                .collect();
+            tracing::debug!(
+                store_epoch = store.epoch(),
+                requested = committee_authorities.len(),
+                announcement_present = pairs.len(),
+                blob_missing_in_perpetual = blob_only_missing.len(),
+                ?blob_only_missing,
+                "PROPAGATION_GAP: announcements received but blob bytes not in local \
+                 perpetual store — peer blobs are never P2P-fetched after announcement"
+            );
+        }
+        result
     }
 }
 
