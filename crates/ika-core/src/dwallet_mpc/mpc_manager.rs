@@ -1396,6 +1396,48 @@ impl DWalletMPCManager {
                     {
                         error!(error=?e, key_id=?key_id, "Failed to update network key from consensus-voted data");
                     } else {
+                        // Mirror the consensus-voted output bytes
+                        // into the local digest caches (per-epoch +
+                        // perpetual). Validators that didn't reach
+                        // `Finalize` locally would otherwise skip
+                        // `cache_network_*_output` entirely; their
+                        // handoff items list would then omit the
+                        // `NetworkDkgOutput` / `NetworkReconfigurationOutput`
+                        // entry for this key and diverge from peers
+                        // who did `Finalize` — surfacing as
+                        // `AttestationMismatch` rejections at handoff
+                        // aggregation. The caches are content-addressed
+                        // so re-caching from a different ingestion
+                        // path (consensus-voted vs. local MPC) is a
+                        // no-op when the bytes are identical.
+                        let key_data = self.agreed_network_key_data.get(&key_id).cloned();
+                        if let Some(key_data) = key_data {
+                            if !key_data.network_dkg_public_output.is_empty()
+                                && let Err(e) = self.epoch_store.cache_network_dkg_output(
+                                    key_id,
+                                    &key_data.network_dkg_public_output,
+                                )
+                            {
+                                warn!(
+                                    error = ?e,
+                                    ?key_id,
+                                    "failed to cache DKG output digest from consensus-voted data"
+                                );
+                            }
+                            if !key_data.current_reconfiguration_public_output.is_empty()
+                                && let Err(e) =
+                                    self.epoch_store.cache_network_reconfiguration_output(
+                                        key_id,
+                                        &key_data.current_reconfiguration_public_output,
+                                    )
+                            {
+                                warn!(
+                                    error = ?e,
+                                    ?key_id,
+                                    "failed to cache reconfiguration output digest from consensus-voted data"
+                                );
+                            }
+                        }
                         new_key_ids.push(key_id);
                     }
                 }

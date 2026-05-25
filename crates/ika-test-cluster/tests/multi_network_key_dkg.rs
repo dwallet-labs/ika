@@ -23,20 +23,34 @@ use ika_test_cluster::IkaTestClusterBuilder;
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState;
 use std::time::Duration;
 
-/// `#[ignore]` until a separate intermittent MPC-participation
-/// gap is fixed: in repro runs one of the four validators
-/// (party_id deterministic from name) doesn't reach the
-/// `Finalize` step for the bootstrap K0 network DKG (the other
-/// three do). That validator's `cache_network_dkg_output` is
-/// therefore never called, its perpetual mirror is empty for
-/// K0, and its handoff attestation omits the `NetworkDkgOutput`
-/// item that the other three include — surfacing as
-/// `AttestationMismatch` rejections. The digest-persistence
-/// machinery (perpetual mirror + per-epoch fallback) IS exercised
-/// by this test and works for the keys the validator did
-/// finalize; the gap is upstream in MPC orchestration. Once that
-/// MPC-participation bug is fixed, drop the `#[ignore]`.
-#[ignore = "intermittent K0 DKG finalize gap on one validator; see test doc"]
+/// `#[ignore]` on a new (different) gap surfaced after the DKG
+/// finalize-gap fix landed: in v4 off_chain mode, the
+/// `ConsensusNetworkKeyData` consensus message is sent once per
+/// key (`sent_network_key_ids` tracks IDs sent, not data hashes),
+/// so when a key's `current_reconfiguration_public_output`
+/// updates each epoch the new bytes are NEVER re-broadcast via
+/// consensus. Validators that don't reach the `Finalize` step
+/// for a given reconfig locally have no way to receive the
+/// updated reconfig output (chain reads are disabled in v4).
+/// Their per-key view of the network key stays stuck at the DKG
+/// output, the reconfig MPC for subsequent epochs deadlocks
+/// (only ~half the validators have current data), and the test
+/// stalls at epoch 2→3.
+///
+/// Repro: drop the `#[ignore]` on this test. K0 + K1 DKG settle,
+/// epoch 2 starts, K0 reconfig + K1 reconfig run to ~round 4,
+/// then no further MPC progress.
+///
+/// Follow-up: rework `dwallet_mpc_service`'s
+/// `new_key_data` filter (or the `sent_network_key_ids` tracking
+/// scheme) to re-broadcast `ConsensusNetworkKeyData` when the
+/// chain-side bytes change, AND update `handle_network_key_data_messages`
+/// to UPDATE `agreed_network_key_data` on later votes instead of
+/// skipping once-agreed keys. Once that lands, the DKG-finalize
+/// fix in `instantiate_agreed_keys_from_voted_data` + the
+/// perpetual digest mirrors will cover the reconfig path the
+/// same way they cover the DKG path.
+#[ignore = "consensus-voted reconfig-output propagation gap; see test doc"]
 #[tokio::test(flavor = "multi_thread")]
 async fn multi_network_keys_dkg_across_epochs() {
     telemetry_subscribers::init_for_testing();
