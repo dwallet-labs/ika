@@ -450,8 +450,18 @@ where
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
     ) {
-        // Last fetched network keys (id to epoch) to avoid fetching the same keys repeatedly.
-        let mut last_fetched_network_keys: HashMap<ObjectID, u64> = HashMap::new();
+        // Last fetched network keys (id -> (epoch, state)). The
+        // state is part of the cache key because chain-side state
+        // transitions within an epoch (e.g. NetworkReconfigurationStarted
+        // -> NetworkReconfigurationCompleted) change the protocol-output
+        // blobs we hand to downstream consumers. Caching by epoch
+        // alone would freeze a stale snapshot for the rest of the
+        // epoch, causing the handoff items list to diverge across
+        // validators depending on first-fetch timing.
+        let mut last_fetched_network_keys: HashMap<
+            ObjectID,
+            (u64, DWalletNetworkEncryptionKeyState),
+        > = HashMap::new();
         'sync_network_keys: loop {
             time::sleep(Duration::from_secs(5)).await;
 
@@ -481,11 +491,15 @@ where
                 network_encryption_keys
                     .into_iter()
                     .filter(|(id, key)| {
-                        if let Some(last_fetched_epoch) = last_fetched_network_keys.get(id) {
-                            // If the key is cached, check if it is in the awaiting state.
-                            current_epoch > *last_fetched_epoch
+                        if let Some((last_epoch, last_state)) = last_fetched_network_keys.get(id) {
+                            // Refetch when either the epoch has
+                            // advanced or the chain-side state has
+                            // progressed since the last cached
+                            // snapshot.
+                            current_epoch > *last_epoch || key.state != *last_state
                         } else {
-                            // If the key is not cached, we need to fetch it.
+                            // Not cached yet — fetch if the key has
+                            // moved past initial DKG.
                             key.state != DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
                         }
                     })
@@ -524,8 +538,9 @@ where
                             }
                             None => key_full_data,
                         };
+                        let merged_state = merged.state.clone();
                         all_fetched_network_keys_data.insert(key_id, merged);
-                        last_fetched_network_keys.insert(key_id, current_epoch);
+                        last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));
                     }
                     Err(err) => {
                         error!(

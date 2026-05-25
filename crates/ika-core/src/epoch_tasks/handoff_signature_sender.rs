@@ -106,6 +106,32 @@ impl HandoffSignatureSender {
             .ok_or(DwalletMPCError::EpochEnded(self.epoch_id))
     }
 
+    /// Returns true once the locally-cached `network_keys_receiver`
+    /// snapshot shows every known network encryption key in the
+    /// terminal `NetworkReconfigurationCompleted` state with a
+    /// non-empty reconfiguration output. This is the same
+    /// post-condition the chain-side EndOfPublish gate checks
+    /// (`all_network_encryption_keys_reconfiguration_completed`),
+    /// re-validated against the local snapshot so we don't sign
+    /// off a stale view that some peers have already moved past.
+    ///
+    /// Empty snapshot is treated as not-ready (we should at least
+    /// see the keys before claiming readiness). If there are no
+    /// keys on chain at all this path is unreachable — EndOfPublish
+    /// wouldn't have fired in the first place.
+    fn snapshot_ready_for_signing(&self) -> bool {
+        let snapshot = self.network_keys_receiver.borrow().clone();
+        if snapshot.is_empty() {
+            return false;
+        }
+        snapshot.iter().all(|(_, data)| {
+            matches!(
+                data.state,
+                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
+            ) && !data.current_reconfiguration_public_output.is_empty()
+        })
+    }
+
     /// For each network encryption key that has finished its
     /// initial DKG or current-epoch reconfiguration on chain,
     /// re-cache the canonical output bytes into the per-epoch
@@ -168,54 +194,53 @@ impl HandoffSignatureSender {
             // epoch yet; defer until it has.
             return Ok(());
         }
+        // Defer signing until every known network encryption key
+        // shows the terminal NetworkReconfigurationCompleted state
+        // in the locally-cached chain snapshot. EndOfPublish has
+        // already fired on chain (which is what triggers us getting
+        // here), but the watch-channel snapshot may be one poll
+        // cycle stale — signing off a stale snapshot is exactly the
+        // race that surfaces as `AttestationMismatch` across the
+        // committee. The sui_syncer refreshes its snapshot every
+        // 5s on chain-state change, so this loop converges quickly.
+        if !self.snapshot_ready_for_signing() {
+            return Ok(());
+        }
         let next_committee_pubkeys: Vec<AuthorityName> = next_committee
             .voting_rights
             .iter()
             .map(|(name, _)| *name)
             .collect();
         // Hydrate the local digest cache from the chain-canonical
-        // output bytes BEFORE building the attestation. EndOfPublish
-        // gates on `all_network_encryption_keys_reconfiguration_completed`
-        // on chain, so by the time we get here the chain has the
-        // settled output for every key. Reading from chain (via the
-        // `network_keys_receiver` published by `sui_syncer`) is the
-        // only consensus-deterministic source — the original local
-        // MPC-driven cache writes race with EndOfPublish (a slow
-        // validator can see EndOfPublish before its own MPC
-        // produces output, so the cache is empty at signing time
-        // and the items list diverges from peers => signatures
-        // cross-reject as `AttestationMismatch`).
+        // output bytes BEFORE building the attestation. Reading
+        // from chain (via the `network_keys_receiver` published by
+        // `sui_syncer`) is the only consensus-deterministic source
+        // — the original local MPC-driven cache writes race with
+        // EndOfPublish (a slow validator can see EndOfPublish
+        // before its own MPC produces output, so the cache is
+        // empty at signing time and the items list diverges from
+        // peers => signatures cross-reject as `AttestationMismatch`).
         self.hydrate_protocol_output_digests_from_chain(&epoch_store);
         let attestation = epoch_store
             .build_local_handoff_attestation(next_committee_pubkeys, &self.builders)
             .map_err(DwalletMPCError::IkaError)?;
-        let bundled = epoch_store
-            .protocol_config()
-            .bundled_handoff_in_end_of_publish();
-        let tx = if bundled {
-            // Bundle this validator's signed handoff with its
-            // EndOfPublish vote into a single consensus message —
-            // eliminates the V1 race where the separate
-            // HandoffSignature could arrive at peers out of order
-            // with EndOfPublish and produce divergent aggregator
-            // states across the committee.
-            let signed = epoch_store
-                .build_local_signed_handoff_message(attestation, &self.consensus_keypair)
-                .map_err(DwalletMPCError::IkaError)?;
-            ConsensusTransaction::new_end_of_publish_v2(epoch_store.name, signed)
-        } else {
-            epoch_store
-                .build_local_handoff_signature_transaction(attestation, &self.consensus_keypair)
-                .map_err(DwalletMPCError::IkaError)?
-        };
+        // The off-chain validator-metadata flag also gates
+        // EndOfPublishV2 emission — the bundled flow is the only
+        // shape used while the off-chain pipeline is active. Bundle
+        // this validator's signed handoff with its EndOfPublish
+        // vote into a single consensus message; this eliminates the
+        // pre-V2 race where a separate HandoffSignature could
+        // arrive at peers out of order with EndOfPublish and
+        // produce divergent aggregator states across the committee.
+        let signed = epoch_store
+            .build_local_signed_handoff_message(attestation, &self.consensus_keypair)
+            .map_err(DwalletMPCError::IkaError)?;
+        let tx = ConsensusTransaction::new_end_of_publish_v2(epoch_store.name, signed);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
         self.sent.store(true, Ordering::Release);
-        info!(
-            epoch = self.epoch_id,
-            bundled, "submitted local handoff signature"
-        );
+        info!(epoch = self.epoch_id, "submitted local handoff signature");
         Ok(())
     }
 }

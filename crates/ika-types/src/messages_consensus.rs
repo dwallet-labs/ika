@@ -334,8 +334,9 @@ pub enum ConsensusTransactionKind {
     /// the existing variant has shipped — older peers won't decode
     /// the extra field. A new variant is wire-additive (older peers
     /// reject as unknown rather than mis-decoding existing data) and
-    /// lets producers gate emission on protocol_config
-    /// (`bundled_handoff_in_end_of_publish`).
+    /// lets producers gate emission on the existing
+    /// `off_chain_validator_metadata` protocol flag (which already
+    /// gates the rest of the off-chain pipeline that V2 is part of).
     ///
     /// Routing on the consumer side:
     /// 1. Treat the `authority` as the EndOfPublish sender — same
@@ -372,7 +373,7 @@ impl ConsensusTransaction {
     /// signed handoff attestation alongside the EndOfPublish.
     /// Producers emit this instead of V1 + a separate
     /// `HandoffSignature` consensus tx when the
-    /// `bundled_handoff_in_end_of_publish` protocol flag is on; the
+    /// `off_chain_validator_metadata` protocol flag is on; the
     /// consumer side splits the message back into its two parts and
     /// routes each through the existing v1 processing paths.
     pub fn new_end_of_publish_v2(

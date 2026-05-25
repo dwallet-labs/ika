@@ -178,21 +178,6 @@ struct FeatureFlags {
     // version boundary ensures every validator switches together.
     #[serde(skip_serializing_if = "is_false")]
     off_chain_validator_metadata: bool,
-
-    /// When set, validators emit `EndOfPublishV2` (bundles their
-    /// signed handoff attestation into the same consensus message as
-    /// the EndOfPublish vote) instead of the legacy split-message
-    /// flow (separate `EndOfPublish` + separate `HandoffSignature`).
-    /// V2 ensures the handoff signature is observed at exactly the
-    /// consensus point where EndOfPublish fires, eliminating the
-    /// per-validator aggregator-state divergence the V1 flow
-    /// suffered from under churn.
-    ///
-    /// Producers gate emission on this flag; the consumer side
-    /// accepts both V1 and V2 at all times so an upgrade window
-    /// with mixed V1/V2 producers degrades cleanly.
-    #[serde(skip_serializing_if = "is_false")]
-    bundled_handoff_in_end_of_publish: bool,
 }
 
 #[allow(unused)]
@@ -418,10 +403,6 @@ impl ProtocolConfig {
 
     pub fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.feature_flags.off_chain_validator_metadata
-    }
-
-    pub fn bundled_handoff_in_end_of_publish(&self) -> bool {
-        self.feature_flags.bundled_handoff_in_end_of_publish
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -706,7 +687,6 @@ impl ProtocolConfig {
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.off_chain_validator_metadata = true;
-                    cfg.feature_flags.bundled_handoff_in_end_of_publish = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
