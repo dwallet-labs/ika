@@ -21,6 +21,7 @@ use fastcrypto::ed25519::Ed25519KeyPair;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
@@ -188,14 +189,33 @@ impl HandoffSignatureSender {
         let attestation = epoch_store
             .build_local_handoff_attestation(next_committee_pubkeys, &self.builders)
             .map_err(DwalletMPCError::IkaError)?;
-        let tx = epoch_store
-            .build_local_handoff_signature_transaction(attestation, &self.consensus_keypair)
-            .map_err(DwalletMPCError::IkaError)?;
+        let bundled = epoch_store
+            .protocol_config()
+            .bundled_handoff_in_end_of_publish();
+        let tx = if bundled {
+            // Bundle this validator's signed handoff with its
+            // EndOfPublish vote into a single consensus message —
+            // eliminates the V1 race where the separate
+            // HandoffSignature could arrive at peers out of order
+            // with EndOfPublish and produce divergent aggregator
+            // states across the committee.
+            let signed = epoch_store
+                .build_local_signed_handoff_message(attestation, &self.consensus_keypair)
+                .map_err(DwalletMPCError::IkaError)?;
+            ConsensusTransaction::new_end_of_publish_v2(epoch_store.name, signed)
+        } else {
+            epoch_store
+                .build_local_handoff_signature_transaction(attestation, &self.consensus_keypair)
+                .map_err(DwalletMPCError::IkaError)?
+        };
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
         self.sent.store(true, Ordering::Release);
-        info!(epoch = self.epoch_id, "submitted local handoff signature");
+        info!(
+            epoch = self.epoch_id,
+            bundled, "submitted local handoff signature"
+        );
         Ok(())
     }
 }

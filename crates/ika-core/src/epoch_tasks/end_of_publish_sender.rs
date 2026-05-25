@@ -8,7 +8,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
-use tracing::error;
+use tracing::{error, info};
 
 /// `EndOfPublishSender` submits the `EndOfPublish` consensus
 /// message once the local signal (the `end_of_publish_receiver`)
@@ -40,6 +40,22 @@ impl EndOfPublishSender {
     }
 
     pub async fn run(&self) {
+        // When `bundled_handoff_in_end_of_publish` is active the
+        // handoff sender owns emitting the EndOfPublishV2 message
+        // (which carries the EndOfPublish vote bundled with the
+        // signed handoff attestation). Standalone V1 EndOfPublish is
+        // suppressed to avoid double-voting.
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && epoch_store
+                .protocol_config()
+                .bundled_handoff_in_end_of_publish()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "EndOfPublishV2 active; standalone EndOfPublish sender exiting"
+            );
+            return;
+        }
         loop {
             if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id)
                 && let Err(err) = self.send_end_of_publish().await

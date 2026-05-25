@@ -1330,6 +1330,79 @@ mod tests {
         );
     }
 
+    #[test]
+    fn end_of_publish_v2_round_trip() {
+        // V2 bundles EndOfPublish + signed handoff in a single
+        // consensus message. BCS-round-trip the transaction and
+        // assert each field came back intact (plus the key is V2 and
+        // carries the EOP authority).
+        use ika_types::messages_consensus::{
+            ConsensusTransaction, ConsensusTransactionKey, ConsensusTransactionKind,
+        };
+        let kps = random_committee_key_pairs_of_size(1);
+        let bls = &kps[0];
+        let signer = name_of(bls);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let att = build_handoff_attestation(7, [0xEE; 32], vec![]).expect("build");
+        let handoff_msg = sign_handoff_attestation(att.clone(), signer, consensus_kp);
+
+        let tx = ConsensusTransaction::new_end_of_publish_v2(signer, handoff_msg.clone());
+        match &tx.kind {
+            ConsensusTransactionKind::EndOfPublishV2 {
+                authority,
+                handoff_signature,
+            } => {
+                assert_eq!(*authority, signer);
+                assert_eq!(handoff_signature.attestation, att);
+                assert_eq!(handoff_signature.signer, signer);
+            }
+            other => panic!("expected EndOfPublishV2, got {other:?}"),
+        }
+
+        match tx.key() {
+            ConsensusTransactionKey::EndOfPublishV2(authority) => {
+                assert_eq!(authority, signer);
+            }
+            other => panic!("expected EndOfPublishV2 key, got {other:?}"),
+        }
+
+        let bytes = bcs::to_bytes(&tx).expect("bcs encode");
+        let decoded: ConsensusTransaction = bcs::from_bytes(&bytes).expect("bcs decode");
+        assert_eq!(decoded.tracking_id, tx.tracking_id);
+        match decoded.kind {
+            ConsensusTransactionKind::EndOfPublishV2 {
+                authority,
+                handoff_signature,
+            } => {
+                assert_eq!(authority, signer);
+                assert_eq!(*handoff_signature, handoff_msg);
+            }
+            other => panic!("expected EndOfPublishV2 after decode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn end_of_publish_v1_and_v2_have_distinct_keys() {
+        // Keep V1 and V2 keyed under different variants so the
+        // consensus dedupe layer doesn't conflate the two during a
+        // protocol-flag flip.
+        use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
+        let kps = random_committee_key_pairs_of_size(1);
+        let signer = name_of(&kps[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let att = build_handoff_attestation(9, [0xFF; 32], vec![]).expect("build");
+        let handoff_msg = sign_handoff_attestation(att, signer, consensus_kp);
+
+        let v1 = ConsensusTransaction::new_end_of_publish(signer);
+        let v2 = ConsensusTransaction::new_end_of_publish_v2(signer, handoff_msg);
+        assert!(matches!(v1.key(), ConsensusTransactionKey::EndOfPublish(_)));
+        assert!(matches!(
+            v2.key(),
+            ConsensusTransactionKey::EndOfPublishV2(_)
+        ));
+        assert_ne!(v1.key(), v2.key());
+    }
+
     fn build_quorum_test_fixture(
         size: usize,
     ) -> (

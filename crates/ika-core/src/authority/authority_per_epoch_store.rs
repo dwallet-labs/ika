@@ -2113,18 +2113,36 @@ impl AuthorityPerEpochStore {
         perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 
+    /// Builds the per-validator signed handoff message. Also installs
+    /// the attestation locally so the per-epoch record path will
+    /// accept incoming peer signatures matching it (otherwise they'd
+    /// be rejected with `AttestationMismatch`).
+    ///
+    /// Returns just the signed message — caller decides whether to
+    /// wrap it as a standalone V1 `HandoffSignature` consensus tx or
+    /// bundle it into an `EndOfPublishV2`.
+    pub fn build_local_signed_handoff_message(
+        &self,
+        attestation: ika_types::handoff::HandoffAttestation,
+        consensus_keypair: &fastcrypto::ed25519::Ed25519KeyPair,
+    ) -> IkaResult<ika_types::handoff::HandoffSignatureMessage> {
+        self.install_expected_handoff_attestation(attestation.clone())?;
+        Ok(sign_handoff_attestation(
+            attestation,
+            self.name,
+            consensus_keypair,
+        ))
+    }
+
     /// Builds the per-validator signed handoff message and wraps it
-    /// in a `ConsensusTransaction` ready for submission. Also
-    /// installs the attestation locally so the per-epoch record
-    /// path will accept incoming peer signatures matching it
-    /// (otherwise they'd be rejected with `AttestationMismatch`).
+    /// in a V1 `HandoffSignature` consensus transaction ready for
+    /// submission.
     pub fn build_local_handoff_signature_transaction(
         &self,
         attestation: ika_types::handoff::HandoffAttestation,
         consensus_keypair: &fastcrypto::ed25519::Ed25519KeyPair,
     ) -> IkaResult<ika_types::messages_consensus::ConsensusTransaction> {
-        self.install_expected_handoff_attestation(attestation.clone())?;
-        let msg = sign_handoff_attestation(attestation, self.name, consensus_keypair);
+        let msg = self.build_local_signed_handoff_message(attestation, consensus_keypair)?;
         Ok(crate::validator_metadata::build_handoff_signature_transaction(msg))
     }
 
@@ -2572,16 +2590,38 @@ impl AuthorityPerEpochStore {
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
                 ..
-            })
-            | SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                // V2 sender-authority check: same as V1.
-                kind: ConsensusTransactionKind::EndOfPublishV2 { authority, .. },
-                ..
             }) => {
                 if &transaction.sender_authority() != authority {
                     warn!(
                         "EndOfPublish authority {} does not match its author from consensus {}",
                         authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind:
+                    ConsensusTransactionKind::EndOfPublishV2 {
+                        authority,
+                        handoff_signature,
+                    },
+                ..
+            }) => {
+                if &transaction.sender_authority() != authority {
+                    warn!(
+                        "EndOfPublishV2 authority {} does not match its author from consensus {}",
+                        authority, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+                // The bundled handoff signature must be signed by the
+                // same validator that is sending the EndOfPublish
+                // vote — disallow replaying another validator's
+                // handoff signature alongside one's own EOP.
+                if handoff_signature.signer != *authority {
+                    warn!(
+                        "EndOfPublishV2 bundled handoff signer {} does not match EOP authority {}",
+                        handoff_signature.signer, authority
                     );
                     return None;
                 }
@@ -3262,33 +3302,52 @@ impl AuthorityPerEpochStore {
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EndOfPublish(authority),
                 ..
-            })
-            | SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                // V2 routes through the same epoch-advance accounting
-                // path as V1 — the bundled handoff signature is split
-                // off and processed separately by the consensus
-                // handler (see consumer-side wiring in this branch).
-                kind: ConsensusTransactionKind::EndOfPublishV2 { authority, .. },
+            }) => self.process_end_of_publish_vote(authority),
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind:
+                    ConsensusTransactionKind::EndOfPublishV2 {
+                        authority,
+                        handoff_signature,
+                    },
                 ..
             }) => {
-                self.record_end_of_publish_vote(authority)?;
-                let mut end_of_publish = self.end_of_publish.lock();
-                // Note that we don't check here that the sender didn't already vote,
-                // but that would be OK for two reasons:
-                // The first, its transaction would be denied because its key is the same
-                // (so the second wouldn't reach this flow).
-                // The second, the stake aggregator is implemented by a HashMap,
-                // and duplicate votes cannot be registered.
-                if !end_of_publish.has_quorum()
-                    && end_of_publish
-                        .insert_generic(*authority, ())
-                        .is_quorum_reached()
-                {
-                    return Ok(ConsensusCertificateResult::EndOfPublish);
-                }
-                Ok(ConsensusCertificateResult::ConsensusMessage)
+                // V2 bundles the signed handoff attestation with the
+                // EndOfPublish vote. Process the bundled handoff
+                // through the V1 aggregator path first, then fall
+                // into the shared EOP epoch-advance accounting. The
+                // cert (if quorum just crossed) is intentionally
+                // dropped here — the perpetual-persist drain is
+                // driven by `record_handoff_signature`'s outcome
+                // elsewhere.
+                let _ = self.record_handoff_signature(handoff_signature)?;
+                self.process_end_of_publish_vote(authority)
             }
         }
+    }
+
+    /// Shared EndOfPublish vote-recording + quorum-check logic. Used
+    /// by both V1 (`EndOfPublish`) and V2 (`EndOfPublishV2`) consumer
+    /// arms.
+    fn process_end_of_publish_vote(
+        &self,
+        authority: &AuthorityName,
+    ) -> IkaResult<ConsensusCertificateResult> {
+        self.record_end_of_publish_vote(authority)?;
+        let mut end_of_publish = self.end_of_publish.lock();
+        // Note that we don't check here that the sender didn't already vote,
+        // but that would be OK for two reasons:
+        // The first, its transaction would be denied because its key is the same
+        // (so the second wouldn't reach this flow).
+        // The second, the stake aggregator is implemented by a HashMap,
+        // and duplicate votes cannot be registered.
+        if !end_of_publish.has_quorum()
+            && end_of_publish
+                .insert_generic(*authority, ())
+                .is_quorum_reached()
+        {
+            return Ok(ConsensusCertificateResult::EndOfPublish);
+        }
+        Ok(ConsensusCertificateResult::ConsensusMessage)
     }
 
     pub fn get_pending_dwallet_checkpoints(
