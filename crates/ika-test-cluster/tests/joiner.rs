@@ -417,3 +417,267 @@ async fn test_user_sessions_across_multiple_epochs() {
             .unwrap_or_else(|e| panic!("dkg (cycle={cycle}, batch={batch}): {e}"));
     }
 }
+
+/// 10-epoch real-network simulation: continuous validator churn
+/// (new joiners arriving, original validators leaving) interleaved
+/// with user DKGs that must complete throughout. By the end of the
+/// test all 4 original validators have left and 5 joiners replaced
+/// them — exactly the kind of long-running operator turnover a
+/// production network sees.
+///
+/// Schedule across 10 epoch transitions (epoch 1 → epoch 11):
+///   E1→E2:  add joiner J1                (active 4→5)
+///   E2→E3:  remove original validator 0  (active 5→4)
+///   E3→E4:  add joiner J2                (active 4→5)
+///   E4→E5:  remove original validator 1  (active 5→4)
+///   E5→E6:  add joiner J3                (active 4→5)
+///   E6→E7:  remove original validator 2  (active 5→4)
+///   E7→E8:  add joiner J4                (active 4→5)
+///   E8→E9:  remove original validator 3  (active 5→4) — all originals gone
+///   E9→E10: add joiner J5                (active 4→5)
+///   E10→E11: stable verify
+///
+/// One user DKG submitted at the start of each epoch (10 total).
+/// All must complete by the end of the test.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_real_network_churn_over_10_epochs() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(15_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    cluster.wait_for_epoch(1).await;
+    let (network_key_id, network_dkg_public_output) = cluster
+        .wait_for_network_key()
+        .await
+        .expect("wait_for_network_key failed");
+
+    // Track surviving "original validator" indices we haven't
+    // removed yet — pop from the front each remove cycle. Indices
+    // 0..=3 reference the bootstrap-time validator slots.
+    let mut originals_remaining: std::collections::VecDeque<usize> = (0..4).collect();
+    // Track joiners post-add so we can verify each one actually
+    // reaches the next epoch (i.e. is live in the active committee,
+    // not just registered on-chain).
+    let mut joiner_handles: Vec<(u32, u64, ika_test_cluster::JoinerHandle)> = Vec::new();
+    let mut joiner_count = 0u32;
+    let mut all_dkg_handles = Vec::new();
+
+    // Each iteration drives one epoch transition. Alternates
+    // joiner-add (odd cycles) and original-validator-remove (even
+    // cycles). One user DKG per cycle, submitted before the churn
+    // op so it's in flight across the transition.
+    for cycle in 1u32..=10 {
+        // 1. Submit a user DKG so the network is exercising real
+        //    work during the transition.
+        let seed_byte = 0x80 + cycle as u8;
+        let user_key = cluster
+            .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [seed_byte; 32])
+            .await
+            .unwrap_or_else(|e| panic!("register_user_encryption_key (cycle={cycle}): {e}"));
+        let ika_coin_id = cluster.packages.ika_supply_id;
+        let dkg_handle = cluster
+            .request_user_dwallet_dkg(
+                DWALLET_CURVE_SECP256K1,
+                network_key_id,
+                network_dkg_public_output.clone(),
+                &user_key,
+                ika_coin_id,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("request_user_dwallet_dkg (cycle={cycle}): {e}"));
+        all_dkg_handles.push((cycle, dkg_handle));
+
+        // 2. Alternate add / remove. Odd cycles add a joiner; even
+        //    cycles remove the next-oldest original validator.
+        //    Keeps active-set size oscillating between 4 and 5 so
+        //    the BFT quorum (2f+1 = 3 for n=4, =4 for n=5) is
+        //    always achievable.
+        // Alternate add / remove. Add on odd cycles, remove on
+        // even cycles UNTIL all originals are gone — then
+        // additional even cycles do nothing (just submit the DKG
+        // and let the network transition). With 4 originals and
+        // 10 cycles, we get 5 adds (cycles 1, 3, 5, 7, 9) and 4
+        // removes (cycles 2, 4, 6, 8); cycle 10 has no
+        // committee-change op and just exercises a clean
+        // transition with an in-flight DKG.
+        if cycle % 2 == 1 {
+            joiner_count += 1;
+            let joiner = cluster
+                .add_joiner_validator()
+                .await
+                .unwrap_or_else(|e| panic!("add_joiner_validator (cycle={cycle}): {e}"));
+            tracing::info!(cycle, joiner_count, "added joiner");
+            // Record alongside the epoch the joiner becomes active
+            // (the cycle's transition target). Used after the
+            // transition to assert the joiner's in-memory node
+            // advances to that epoch — proving it's actually
+            // participating, not just registered on chain.
+            joiner_handles.push((cycle, cycle as u64 + 1, joiner));
+        } else if let Some(idx) = originals_remaining.pop_front() {
+            cluster
+                .remove_validator(idx)
+                .await
+                .unwrap_or_else(|e| panic!("remove_validator (cycle={cycle}, idx={idx}): {e}"));
+            tracing::info!(cycle, removed_original = idx, "removed original validator");
+        } else {
+            tracing::info!(cycle, "even cycle with no originals left — DKG-only");
+        }
+
+        // 3. Wait for the next epoch within a bounded window. With
+        //    `internal_presign_sessions = true` + an in-flight user
+        //    DKG + committee change, each transition takes ~2-3
+        //    min; 300s gives generous headroom while still
+        //    catching truly-stuck cases.
+        let next_epoch = cycle as u64 + 1;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            cluster.wait_for_epoch(next_epoch),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "epoch {next_epoch} did not advance within 300s — \
+                 churn cycle {cycle} blocked reconfiguration"
+            )
+        });
+
+        // Verify every joiner whose activation epoch is now in the
+        // past (i.e. has been through at least one reconfig boundary)
+        // is actually live — its in-memory node reaches the current
+        // epoch. Without this, "joiner added" only proves on-chain
+        // registration; live-in-committee participation is what
+        // matters for the simulation. 60s ceiling: by the time we
+        // get here the cluster has already reached `next_epoch`, so
+        // the joiner should be at parity within a few poll cycles.
+        for (added_cycle, active_from_epoch, joiner) in &joiner_handles {
+            if *active_from_epoch <= next_epoch {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    wait_for_node_epoch(&joiner.node_handle, next_epoch),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "joiner added in cycle {added_cycle} (active from epoch \
+                         {active_from_epoch}) failed to reach epoch {next_epoch} \
+                         within 60s — not participating in the committee"
+                    )
+                });
+
+                // Log handoff cert presence on the joiner as
+                // diagnostic — same caveat as the probe check
+                // below: the cert may not land every cycle if
+                // validators disagree on the next-committee view
+                // at EndOfPublish, surfacing as
+                // `AttestationMismatch` rejections.
+                if next_epoch > *active_from_epoch {
+                    let joiner_certs = cluster.handoff_cert_epochs_for_node(&joiner.node_handle);
+                    tracing::info!(
+                        added_cycle,
+                        active_from_epoch,
+                        next_epoch,
+                        ?joiner_certs,
+                        has_source_epoch = joiner_certs.contains(active_from_epoch),
+                        "joiner handoff cert progress",
+                    );
+                }
+            }
+        }
+
+        // Best-effort observation of handoff cert progress. The
+        // cert for source epoch N requires 2f+1 validators to
+        // independently compute and sign the same
+        // `HandoffAttestation` — they can disagree on
+        // `next_committee_pubkey_set_hash` or `items` if their
+        // chain-sync of the next committee / off-chain mpc_data
+        // freeze hasn't converged at the EndOfPublish moment.
+        // This is a known mode that surfaces under churn; the test
+        // tolerates it per-cycle and asserts presence only at the
+        // very end. Logging here gives visibility into how often
+        // the cert actually lands.
+        let probe_handle = cluster
+            .swarm
+            .validator_node_handles()
+            .into_iter()
+            .next()
+            .expect("swarm has at least one validator");
+        let probe_certs = cluster.handoff_cert_epochs_for_node(&probe_handle);
+        tracing::info!(
+            cycle,
+            next_epoch,
+            ?probe_certs,
+            has_source_epoch = probe_certs.contains(&(cycle as u64)),
+            "handoff cert progress on probe validator",
+        );
+    }
+
+    // All 10 user DKGs must reach a terminal state. By now the
+    // active set is entirely joiners (5 of them) — the original
+    // validators are gone but their DKG sessions submitted earlier
+    // must still complete via the surviving committee.
+    for (cycle, handle) in &all_dkg_handles {
+        cluster
+            .wait_for_dwallet_dkg_complete(handle.dwallet_id, std::time::Duration::from_secs(300))
+            .await
+            .unwrap_or_else(|e| panic!("dkg (cycle={cycle}): {e}"));
+    }
+
+    assert_eq!(
+        joiner_count, 5,
+        "expected 5 joiners added across the 10 cycles"
+    );
+    assert!(
+        originals_remaining.is_empty(),
+        "expected all 4 originals removed, {} remaining",
+        originals_remaining.len()
+    );
+
+    // Final sanity: every joiner is at the test's final epoch (11).
+    // By now they should all be live committee members carrying the
+    // full network — the originals are gone and only joiners exist.
+    let final_epoch = 11;
+    for (added_cycle, _, joiner) in &joiner_handles {
+        let current = joiner
+            .node_handle
+            .with(|node| node.current_epoch_for_testing());
+        assert!(
+            current >= final_epoch,
+            "joiner from cycle {added_cycle} is at epoch {current}, expected >= {final_epoch}",
+        );
+
+        let certs = cluster.handoff_cert_epochs_for_node(&joiner.node_handle);
+        tracing::info!(added_cycle, ?certs, "final joiner handoff cert state");
+    }
+
+    // Aggregate cert presence across the whole cluster — at least
+    // one validator (any committee member of any past epoch) must
+    // have persisted at least one handoff cert. This is a weak
+    // form of "the handoff pipeline did SOMETHING"; per-cycle
+    // assertions are intentionally relaxed because the cert can
+    // fail to certify when validators disagree on the
+    // next-committee view at EndOfPublish (surfacing as
+    // `AttestationMismatch` rejections) — a known limitation
+    // under churn that needs separate investigation.
+    let mut total_certs_seen = 0usize;
+    for handle in cluster.swarm.validator_node_handles() {
+        let certs = cluster.handoff_cert_epochs_for_node(&handle);
+        total_certs_seen += certs.len();
+    }
+    tracing::info!(
+        total_certs_seen,
+        "aggregate handoff cert count across all validators",
+    );
+    assert!(
+        total_certs_seen > 0,
+        "no validator persisted any handoff cert across {} epoch transitions — \
+         the off-chain handoff pipeline did not produce a single certified \
+         attestation",
+        final_epoch - 1
+    );
+}

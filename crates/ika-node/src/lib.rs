@@ -1465,6 +1465,7 @@ impl IkaNode {
                             sui_data_receivers.end_of_publish_receiver.clone(),
                             consensus_keypair,
                             sui_data_receivers.next_epoch_committee_receiver.clone(),
+                            sui_data_receivers.network_keys_receiver.clone(),
                             builders,
                         );
                     Some(tokio::spawn(async move {

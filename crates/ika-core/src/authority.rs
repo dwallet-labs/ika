@@ -1056,6 +1056,17 @@ impl AuthorityState {
             epoch_start_configuration,
             cur_epoch_store.get_chain_identifier(),
         )?;
+        // The new epoch store starts with `perpetual_tables_for_handoff`
+        // empty. Install ours so the per-epoch handoff record path
+        // persists freshly certified attestations into perpetual
+        // storage from this epoch onward (mirrors what
+        // `IkaNode::new` does for the genesis epoch store). Without
+        // this, every reconfig after the first drops handoff certs
+        // silently — the cert insert site logs "perpetual tables
+        // not installed; handoff cert not persisted" and joiners
+        // never see the cert that authenticated their place in the
+        // committee.
+        new_epoch_store.install_perpetual_tables_for_handoff(self.perpetual_tables.clone());
         self.epoch_store.store(new_epoch_store.clone());
         Ok(new_epoch_store)
     }

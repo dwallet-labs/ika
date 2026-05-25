@@ -2211,7 +2211,26 @@ impl AuthorityPerEpochStore {
                 Ok(Some(cert))
             }
             HandoffSignatureRecordOutcome::Rejected(verdict) => {
-                warn!(?verdict, signer = ?msg.signer, "handoff signature rejected");
+                if matches!(
+                    verdict,
+                    crate::validator_metadata::HandoffSignatureVerdict::AttestationMismatch
+                ) {
+                    warn!(
+                        ?verdict,
+                        signer = ?msg.signer,
+                        local_epoch = expected.epoch,
+                        local_committee_hash = ?expected.next_committee_pubkey_set_hash,
+                        local_items_len = expected.items.len(),
+                        local_items_keys = ?expected.items.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                        signer_epoch = msg.attestation.epoch,
+                        signer_committee_hash = ?msg.attestation.next_committee_pubkey_set_hash,
+                        signer_items_len = msg.attestation.items.len(),
+                        signer_items_keys = ?msg.attestation.items.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                        "handoff signature rejected: attestation mismatch"
+                    );
+                } else {
+                    warn!(?verdict, signer = ?msg.signer, "handoff signature rejected");
+                }
                 Ok(None)
             }
         }

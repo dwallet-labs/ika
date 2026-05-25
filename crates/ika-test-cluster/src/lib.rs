@@ -579,6 +579,25 @@ impl IkaTestCluster {
     /// Events-based detection (`DWalletSessionResultEvent` emitted
     /// by `sessions_manager`) doesn't surface reliably through the
     /// Sui SDK's `MoveEventModule` / `MoveModule` filters in this
+    /// Return the set of epochs for which the given node has a
+    /// persisted `CertifiedHandoffAttestation` in its perpetual
+    /// tables. Use this to verify the off-chain handoff pipeline
+    /// is actually generating + storing certs (and, indirectly,
+    /// that the joiner-announcement broadcast / signature
+    /// aggregation through consensus all worked).
+    pub fn handoff_cert_epochs_for_node(
+        &self,
+        node_handle: &IkaNodeHandle,
+    ) -> Vec<ika_types::committee::EpochId> {
+        node_handle.with(|node| {
+            let perpetual = node.state().perpetual_tables();
+            perpetual
+                .iter_certified_handoff_attestations()
+                .filter_map(|res| res.ok().map(|(epoch, _)| epoch))
+                .collect()
+        })
+    }
+
     /// in-process setup, so we query the on-chain object state
     /// instead. The `DWalletCoordinator` stores each dWallet as a
     /// dynamic object field of its `dwallets: ObjectTable<ID,
