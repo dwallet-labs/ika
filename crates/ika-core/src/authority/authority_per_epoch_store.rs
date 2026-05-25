@@ -2233,6 +2233,24 @@ impl AuthorityPerEpochStore {
                     verdict,
                     crate::validator_metadata::HandoffSignatureVerdict::AttestationMismatch
                 ) {
+                    // Surface per-item digest diffs when keys agree —
+                    // a same-keys/different-values mismatch points at
+                    // a content-addressed source race (cache populated
+                    // before vs. after chain finalization), which the
+                    // key-only log can't distinguish from a structural
+                    // disagreement.
+                    let key_diffs: Vec<_> = expected
+                        .items
+                        .iter()
+                        .zip(msg.attestation.items.iter())
+                        .filter_map(|((lk, lv), (sk, sv))| {
+                            if lk == sk && lv != sv {
+                                Some((lk.clone(), *lv, *sv))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                     warn!(
                         ?verdict,
                         signer = ?msg.signer,
@@ -2244,6 +2262,7 @@ impl AuthorityPerEpochStore {
                         signer_committee_hash = ?msg.attestation.next_committee_pubkey_set_hash,
                         signer_items_len = msg.attestation.items.len(),
                         signer_items_keys = ?msg.attestation.items.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                        same_key_value_diffs = ?key_diffs,
                         "handoff signature rejected: attestation mismatch"
                     );
                 } else {
