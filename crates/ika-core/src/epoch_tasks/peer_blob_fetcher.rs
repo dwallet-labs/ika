@@ -38,7 +38,7 @@
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use anemo::{Network, PeerId};
-use ika_network::mpc_artifacts::{InMemoryBlobStore, fetch_blob, mpc_data_blob_hash};
+use ika_network::mpc_artifacts::{InMemoryBlobStore, fetch_blob};
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
 use rand::seq::SliceRandom;
@@ -189,18 +189,45 @@ impl PeerBlobFetcher {
             for (candidate_authority, peer_id) in candidates {
                 match fetch_blob(&self.p2p_network, peer_id, digest).await {
                     Ok(Some(bytes)) => {
-                        let observed = mpc_data_blob_hash(&bytes);
-                        if observed != digest {
-                            warn!(
-                                ?announcer,
-                                ?candidate_authority,
-                                ?peer_id,
-                                expected = ?digest,
-                                observed = ?observed,
-                                "peer blob fetcher: candidate served bytes that don't match \
-                                 the announcement digest; trying next peer"
-                            );
-                            continue;
+                        match crate::validator_metadata::verify_peer_blob_for_relay(&bytes, &digest)
+                        {
+                            crate::validator_metadata::PeerBlobVerdict::Accept => {}
+                            crate::validator_metadata::PeerBlobVerdict::HashMismatch => {
+                                warn!(
+                                    ?announcer,
+                                    ?candidate_authority,
+                                    ?peer_id,
+                                    expected = ?digest,
+                                    "peer blob fetcher: candidate served bytes that don't \
+                                     match the announcement digest; trying next peer"
+                                );
+                                continue;
+                            }
+                            crate::validator_metadata::PeerBlobVerdict::DecodeFailed => {
+                                // Hash matched (so the announcer
+                                // committed to exactly these bytes)
+                                // but the bytes don't decode to
+                                // valid mpc_data. Refuse to insert:
+                                // the in-memory store backs the
+                                // local Anemo serve endpoint, so
+                                // anything we accept here we'd
+                                // relay onward — poisoning every
+                                // honest receiver's relay cache.
+                                // The byzantine announcer is the
+                                // only party who could produce
+                                // hash-matching bad bytes (no one
+                                // else has the signed digest's
+                                // preimage), so dropping costs
+                                // nothing useful.
+                                warn!(
+                                    ?announcer,
+                                    ?candidate_authority,
+                                    ?peer_id,
+                                    "peer blob fetcher: candidate served hash-matching bytes \
+                                     that fail structural decode; refusing to relay"
+                                );
+                                continue;
+                            }
                         }
                         if let Err(e) = self
                             .perpetual_tables

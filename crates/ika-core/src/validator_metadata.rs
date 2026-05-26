@@ -158,6 +158,65 @@ pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
         .map_err(|e| IkaError::Unknown(format!("bcs encode versioned mpc data: {e}")))
 }
 
+/// Outcome of `canonicalize_ready_signal_peers`: either a clean
+/// signal with quorum coverage, or a typed rejection reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalizeReadySignalOutcome {
+    /// Signal accepted; the contained vec is the deduped +
+    /// committee-filtered + sorted `validated_peers` ready for
+    /// persistence. Guaranteed to attest to ≥quorum stake.
+    Accept { validated_peers: Vec<AuthorityName> },
+    /// Signal rejected: after dedup + committee-filter, the
+    /// remaining peer set attests to less than quorum stake.
+    /// Recorded so a byzantine signer can't push the freeze
+    /// trigger via empty/sparse signals.
+    BelowQuorumCoverage { attested_stake: u64, quorum: u64 },
+}
+
+/// Canonicalize the `validated_peers` carried on an inbound
+/// `EpochMpcDataReadySignal`. Pure function — extracted from
+/// `AuthorityPerEpochStore::record_epoch_mpc_data_ready_signal`
+/// so the byzantine-resistance properties can be unit-tested
+/// directly:
+///
+/// 1. **Dedup.** The wire format is a `Vec` (for canonical BCS);
+///    consumers treat it as a set. Without dedup-on-receive a
+///    byzantine signer can list a target N times to inflate that
+///    target's attested stake by N*signer_stake.
+/// 2. **Committee filter.** Validators not in the current
+///    committee don't have stake and can't legitimately appear
+///    as attestation targets. Drop them so they can't be used as
+///    padding.
+/// 3. **Quorum-coverage floor.** Reject signals whose canonical
+///    peer set attests to less than the committee's quorum
+///    threshold. An honest validator should not signal until its
+///    `validated_peers` actually carries quorum coverage; a
+///    byzantine signer who races a near-empty signal in early
+///    only succeeds at pushing the freeze trigger toward a
+///    premature snapshot that excludes honest-but-slow peers.
+pub fn canonicalize_ready_signal_peers<S>(
+    validated_peers: &[AuthorityName],
+    stake_of: S,
+    quorum_threshold: u64,
+) -> CanonicalizeReadySignalOutcome
+where
+    S: Fn(&AuthorityName) -> u64,
+{
+    let mut unique: std::collections::BTreeSet<AuthorityName> =
+        validated_peers.iter().copied().collect();
+    unique.retain(|peer| stake_of(peer) > 0);
+    let attested_stake: u64 = unique.iter().map(&stake_of).sum();
+    if attested_stake < quorum_threshold {
+        return CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
+            attested_stake,
+            quorum: quorum_threshold,
+        };
+    }
+    CanonicalizeReadySignalOutcome::Accept {
+        validated_peers: unique.into_iter().collect(),
+    }
+}
+
 /// Result of `compute_freeze_partition`: which announcers cross
 /// into the working set vs. get excluded for this epoch.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -205,7 +264,16 @@ where
     let mut attested_stake: BTreeMap<AuthorityName, u64> = BTreeMap::new();
     for (signer, validated_peers) in signals {
         let signer_stake = stake_of(signer);
-        for peer in validated_peers {
+        // Dedup the signer's attested peers BEFORE crediting
+        // stake. A byzantine signer can otherwise inflate any
+        // target's attested stake by listing them N times in
+        // `validated_peers` and have N*signer_stake credited.
+        // The wire-format itself is `Vec<AuthorityName>` (chosen
+        // for canonical BCS) so we have to enforce set semantics
+        // explicitly at every consumer.
+        let unique_peers: std::collections::BTreeSet<AuthorityName> =
+            validated_peers.iter().copied().collect();
+        for peer in &unique_peers {
             let slot = attested_stake.entry(*peer).or_default();
             *slot = slot.saturating_add(signer_stake);
         }
@@ -221,6 +289,43 @@ where
         }
     }
     FreezePartition { frozen, excluded }
+}
+
+/// Outcome of `verify_peer_blob_for_relay`: was a peer-served
+/// blob safe to insert into local stores and relay to other peers?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerBlobVerdict {
+    /// Bytes hash to the expected digest AND decode to valid
+    /// mpc_data. Safe to insert into both the perpetual table
+    /// (for restart hydration) and the in-memory store (which
+    /// the local Anemo server serves to other peers).
+    Accept,
+    /// Bytes don't hash to the expected digest. Either malicious
+    /// substitution or transport corruption — drop.
+    HashMismatch,
+    /// Bytes hash correctly but don't decode to valid mpc_data
+    /// (BCS error, or `decode_validator_encryption_keys` failed).
+    /// Drop without inserting — accepting would poison the local
+    /// relay cache (the in-memory store backs the local Anemo
+    /// serve endpoint, so every honest receiver of these bytes
+    /// would propagate the garbage onward).
+    DecodeFailed,
+}
+
+/// Pure verification of bytes a peer served for a specific
+/// announcement digest. Used by `PeerBlobFetcher` before inserting
+/// into the perpetual + in-memory blob stores. Pulled out so the
+/// byzantine-resistance properties (hash check + decode-validate)
+/// are testable without an Anemo network.
+pub fn verify_peer_blob_for_relay(bytes: &[u8], expected_digest: &[u8; 32]) -> PeerBlobVerdict {
+    let observed = ika_network::mpc_artifacts::mpc_data_blob_hash(bytes);
+    if observed != *expected_digest {
+        return PeerBlobVerdict::HashMismatch;
+    }
+    if !blob_decodes_to_valid_mpc_data(bytes) {
+        return PeerBlobVerdict::DecodeFailed;
+    }
+    PeerBlobVerdict::Accept
 }
 
 /// Tells whether a candidate mpc_data blob is structurally
@@ -2202,6 +2307,174 @@ mod tests {
         let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert_eq!(partition.excluded, vec![d]);
+    }
+
+    // -------- verify_peer_blob_for_relay: peer fetcher's
+    //          per-blob decision before inserting into local
+    //          stores + relaying onward.
+
+    /// Happy path: real `derive_mpc_data_blob` output presented
+    /// with its correct Blake2b256 digest. Accept.
+    #[test]
+    fn verify_peer_blob_for_relay_accepts_real_blob() {
+        let seed = RootSeed::new([0xAB; 32]);
+        let blob = derive_mpc_data_blob(&seed).expect("derive");
+        let digest = mpc_data_blob_hash(&blob);
+        assert_eq!(
+            verify_peer_blob_for_relay(&blob, &digest),
+            PeerBlobVerdict::Accept
+        );
+    }
+
+    /// Hash-mismatch case: bytes don't hash to the expected
+    /// digest (transport corruption or attempted byte
+    /// substitution by a relayer). Drop — never insert.
+    #[test]
+    fn verify_peer_blob_for_relay_rejects_hash_mismatch() {
+        let seed = RootSeed::new([0xAB; 32]);
+        let blob = derive_mpc_data_blob(&seed).expect("derive");
+        // The signed announcement committed to this digest:
+        let signed_digest = [0xDE; 32];
+        // But the bytes hash to something else.
+        assert_eq!(
+            verify_peer_blob_for_relay(&blob, &signed_digest),
+            PeerBlobVerdict::HashMismatch
+        );
+    }
+
+    /// Critical byzantine scenario: the announcer signed a
+    /// digest of structurally-broken bytes. Other peers (or the
+    /// announcer themselves on serve) deliver bytes that DO hash
+    /// to the signed digest but FAIL `blob_decodes_to_valid_mpc_data`.
+    /// Accepting would insert garbage into the local in-memory
+    /// store, which then serves it to OTHER peers via Anemo,
+    /// turning every honest receiver into a relay for the bad
+    /// bytes. Verify the verdict is `DecodeFailed`, not `Accept`.
+    #[test]
+    fn verify_peer_blob_for_relay_rejects_hash_matching_garbage() {
+        // 256 bytes that won't BCS-decode to VersionedMPCData.
+        let garbage: Vec<u8> = (0u32..256).map(|i| (i % 251) as u8).collect();
+        let digest = mpc_data_blob_hash(&garbage);
+        // Bytes hash correctly (the announcer would have signed
+        // this digest), but they're not valid mpc_data.
+        assert_eq!(
+            verify_peer_blob_for_relay(&garbage, &digest),
+            PeerBlobVerdict::DecodeFailed
+        );
+    }
+
+    // -------- canonicalize_ready_signal_peers: receive-time
+    //          byzantine resistance for `EpochMpcDataReadySignal`.
+
+    /// Happy path: a well-formed signal with quorum coverage
+    /// returns the sorted, deduped, committee-filtered list.
+    #[test]
+    fn canonicalize_ready_signal_accepts_quorum_coverage() {
+        let (a, b, c) = (auth(0xAA), auth(0xBB), auth(0xCC));
+        // Stake 1 each; quorum = 3. Signal lists all three.
+        let outcome = canonicalize_ready_signal_peers(
+            &[c, a, b], // unsorted on purpose
+            |_| 1,
+            3,
+        );
+        match outcome {
+            CanonicalizeReadySignalOutcome::Accept { validated_peers } => {
+                assert_eq!(validated_peers, vec![a, b, c]);
+            }
+            other => panic!("expected Accept, got {other:?}"),
+        }
+    }
+
+    /// Byzantine signer pads `validated_peers` with duplicates of
+    /// the same target to inflate apparent coverage. Canonicalize
+    /// must dedup before computing attested-stake — so a list of
+    /// `[a, a, a]` with 1-stake-each committee counts as 1 stake,
+    /// well below a quorum of 3.
+    #[test]
+    fn canonicalize_ready_signal_rejects_duplicate_padding() {
+        let a = auth(0xAA);
+        let outcome = canonicalize_ready_signal_peers(&[a, a, a, a], |_| 1, 3);
+        match outcome {
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
+                attested_stake,
+                quorum,
+            } => {
+                assert_eq!(attested_stake, 1);
+                assert_eq!(quorum, 3);
+            }
+            other => panic!("dup-padding must NOT cross the quorum floor: got {other:?}"),
+        }
+    }
+
+    /// Byzantine signer pads with non-committee authorities (zero
+    /// stake) to try to make `validated_peers` look full. The
+    /// committee filter drops them so they don't contribute toward
+    /// the apparent attested stake.
+    #[test]
+    fn canonicalize_ready_signal_rejects_non_committee_padding() {
+        let a = auth(0xAA);
+        let outsider1 = auth(0xF0);
+        let outsider2 = auth(0xF1);
+        let outcome = canonicalize_ready_signal_peers(
+            &[a, outsider1, outsider2],
+            |peer| if *peer == a { 1 } else { 0 },
+            3,
+        );
+        match outcome {
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage { attested_stake, .. } => {
+                assert_eq!(attested_stake, 1)
+            }
+            other => panic!("non-committee padding must NOT count: got {other:?}"),
+        }
+    }
+
+    /// Byzantine "race the freeze trigger" attack: signal an empty
+    /// `validated_peers` to spend stake toward the freeze quorum
+    /// without contributing useful attestations, pushing freeze
+    /// earlier than honest validators would have. Receive-side
+    /// must reject this.
+    #[test]
+    fn canonicalize_ready_signal_rejects_empty_set() {
+        let outcome = canonicalize_ready_signal_peers(&[], |_| 1, 3);
+        assert!(matches!(
+            outcome,
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
+        ));
+    }
+
+    /// Byzantine scenario: a single signer lists a target peer
+    /// many times in `validated_peers` to try to inflate that
+    /// target's attested stake. `compute_freeze_partition` must
+    /// dedup before crediting — the signer should only contribute
+    /// `signer_stake` once per peer regardless of how many copies
+    /// of that peer appear.
+    ///
+    /// Without dedup-on-tally a byzantine validator with weight 1
+    /// could list itself 3 times and reach the 3-stake quorum
+    /// alone, smuggling itself into the frozen set with zero
+    /// honest attestation. With dedup the same signer contributes
+    /// at most 1 to its own count and falls below quorum.
+    #[test]
+    fn freeze_partition_duplicate_validated_peers_cannot_inflate_stake() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // Only D announces; the other three are signers.
+        let announcements: BTreeMap<_, _> = [(d, [0xDD; 32])].into_iter().collect();
+        // Byzantine D submits a signal listing itself three times.
+        // No honest signer attests to D (they don't have D's
+        // bytes — D withheld).
+        let signals: BTreeMap<_, _> = [
+            (a, vec![]), // honest signers with no D
+            (b, vec![]),
+            (c, vec![]),
+            (d, vec![d, d, d]), // byzantine dup-inflation attempt
+        ]
+        .into_iter()
+        .collect();
+        // With unit stakes and quorum=3, D contributes at most 1
+        // (deduped) to its own attestation — far below the threshold.
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        assert!(partition.frozen.is_empty(), "D must not slip past dedup");
         assert_eq!(partition.excluded, vec![d]);
     }
 

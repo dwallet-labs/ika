@@ -1206,9 +1206,19 @@ impl DWalletMPCManager {
             return true;
         }
         let Some(perpetual) = self.epoch_store.perpetual_tables_handle() else {
-            return false;
+            // Bootstrap window — `install_perpetual_tables_for_handoff`
+            // hasn't fired yet. Behave like the empty-frozen-set
+            // branch above ("no opinion") rather than blocking
+            // every session forever. Compare
+            // `compute_locally_validated_peers`, which also treats
+            // an absent perpetual handle as "not enough info to
+            // veto."
+            tracing::debug!(
+                "local readiness: perpetual tables not installed yet, deferring opinion"
+            );
+            return true;
         };
-        for (_, expected_digest) in &frozen {
+        for expected_digest in frozen.values() {
             let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(expected_digest) else {
                 return false;
             };

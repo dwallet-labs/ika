@@ -2040,6 +2040,17 @@ impl AuthorityPerEpochStore {
     pub fn clear_expected_handoff_attestation(&self) {
         self.expected_handoff_attestation.store(None);
         *self.handoff_aggregator.lock() = None;
+        // Also drop the pre-install buffer: those peer signatures
+        // were attesting to a specific expected attestation that
+        // we've now cleared. If the caller re-installs a different
+        // attestation later, replaying these against it would
+        // surface as `AttestationMismatch` for every entry. Empty
+        // the buffer here so the slate is consistent with what
+        // `install_expected_handoff_attestation` will replay
+        // (only DB-persisted signatures get replayed under a
+        // freshly-installed attestation; in-memory pending must
+        // be re-broadcast by peers).
+        self.pending_handoff_signatures.lock().clear();
     }
 
     /// Install the perpetual-tables handle used to persist a fresh
@@ -2478,7 +2489,8 @@ impl AuthorityPerEpochStore {
             return Ok(Vec::new());
         };
         let tables = self.tables()?;
-        let mut validated: Vec<AuthorityName> = Vec::new();
+        let mut validated: std::collections::BTreeSet<AuthorityName> =
+            std::collections::BTreeSet::new();
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
             let (authority, signed) = entry?;
             let digest = signed.announcement.blob_hash;
@@ -2486,11 +2498,22 @@ impl AuthorityPerEpochStore {
                 continue;
             };
             if crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
-                validated.push(authority);
+                validated.insert(authority);
             }
         }
-        validated.sort();
-        Ok(validated)
+        // Include our own authority unconditionally: by the time
+        // this validator emits its ready signal, it has already
+        // derived + persisted its own blob locally (the producer
+        // task seeds both the perpetual table and the in-memory
+        // store at announcement time). The announcement-table
+        // entry only lands after a consensus round-trip, which
+        // can lag this method; without explicitly attesting to
+        // ourselves we'd under-count own-stake in
+        // `local_blob_coverage_meets_quorum` AND emit a signal
+        // whose `validated_peers` excluded self — leading to
+        // self-exclusion at the freeze tally.
+        validated.insert(self.name);
+        Ok(validated.into_iter().collect())
     }
 
     /// Whether the locally-validated peer set covers a stake
@@ -2500,22 +2523,18 @@ impl AuthorityPerEpochStore {
     /// have at least quorum-of-stake of peer mpc_data locally
     /// validated, otherwise downstream freeze could capture a
     /// premature input set and exclude legitimate validators.
+    ///
+    /// `compute_locally_validated_peers` always includes our own
+    /// authority (see its docstring), so the stake sum below
+    /// already accounts for self-stake without a separate
+    /// fixup.
     pub fn local_blob_coverage_meets_quorum(&self) -> IkaResult<bool> {
         let validated = self.compute_locally_validated_peers()?;
         let committee = self.committee();
-        let mut stake: u64 = 0;
-        for authority in &validated {
-            stake = stake.saturating_add(committee.weight(authority));
-        }
-        // Always count our own stake — the producer task inserts
-        // the own blob into the in-memory store before announce,
-        // but compute_locally_validated_peers filters by the
-        // *announcement table*, which only contains entries that
-        // hit consensus and got verified. Our own announcement
-        // can race with our own ready signal.
-        if !validated.contains(&self.name) {
-            stake = stake.saturating_add(committee.weight(&self.name));
-        }
+        let stake: u64 = validated
+            .iter()
+            .map(|authority| committee.weight(authority))
+            .sum();
         Ok(stake >= committee.quorum_threshold())
     }
 
@@ -2552,11 +2571,43 @@ impl AuthorityPerEpochStore {
         {
             return Ok(());
         }
+        let committee = self.committee();
+        // Canonicalize via the pure helper — handles dedup +
+        // committee filter + quorum-coverage floor in one place
+        // so the byzantine-resistance properties are unit-testable
+        // without a live epoch store. See
+        // `validator_metadata::canonicalize_ready_signal_peers`.
+        let canonical_peers = match crate::validator_metadata::canonicalize_ready_signal_peers(
+            &signal.validated_peers,
+            |peer| committee.weight(peer),
+            committee.quorum_threshold(),
+        ) {
+            crate::validator_metadata::CanonicalizeReadySignalOutcome::Accept {
+                validated_peers,
+            } => validated_peers,
+            crate::validator_metadata::CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
+                attested_stake,
+                quorum,
+            } => {
+                warn!(
+                    signer = ?signal.authority,
+                    attested_stake,
+                    quorum,
+                    "EpochMpcDataReadySignal below quorum coverage — dropping; \
+                     signer should re-broadcast once they have more peer blobs validated"
+                );
+                return Ok(());
+            }
+        };
+        let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
+            authority: signal.authority,
+            epoch: signal.epoch,
+            validated_peers: canonical_peers,
+        };
         tables
             .epoch_mpc_data_ready_signals
-            .insert(&signal.authority, signal)?;
+            .insert(&signal.authority, &canonical)?;
 
-        let committee = self.committee();
         let total_stake: u64 = tables
             .epoch_mpc_data_ready_signals
             .safe_iter()
