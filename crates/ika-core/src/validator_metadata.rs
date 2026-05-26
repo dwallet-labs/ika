@@ -1853,6 +1853,67 @@ mod tests {
         );
     }
 
+    /// Restart-replay semantics: the production
+    /// `AuthorityPerEpochStore::install_expected_handoff_attestation`
+    /// walks the persisted `handoff_signatures` DB and replays each
+    /// signer into a fresh aggregator. For that replay to be safe
+    /// across process restarts (or even just attestation re-installs),
+    /// the aggregator's `insert_verified` MUST be (a) commutative
+    /// over distinct signers and (b) idempotent on a repeat-insert
+    /// of the same signer's signature. This test pins both: insert
+    /// the same set of signatures in two different orders and assert
+    /// the resulting certs are byte-identical, then re-insert one
+    /// signer and assert the cert doesn't change.
+    #[test]
+    fn handoff_aggregator_replay_is_commutative_and_idempotent() {
+        let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(7, [0x99; 32], vec![]).expect("build");
+
+        // Build three signed messages from the first three signers
+        // (committee quorum threshold for a 4-member committee is
+        // 3 with unit stakes).
+        let signed: Vec<_> = (0..3)
+            .map(|i| sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]))
+            .collect();
+
+        // Order A: 0, 1, 2.
+        let mut agg_a = HandoffAggregator::new(committee.clone(), att.clone());
+        for msg in &signed {
+            agg_a.insert_verified(msg.signer, msg.signature.clone());
+        }
+        let cert_a = agg_a
+            .certified()
+            .expect("agg_a should certify after 3 sigs")
+            .clone();
+
+        // Order B: 2, 0, 1 — same signatures, different order.
+        let mut agg_b = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in [2usize, 0, 1] {
+            agg_b.insert_verified(signed[i].signer, signed[i].signature.clone());
+        }
+        let cert_b = agg_b.certified().expect("agg_b should certify").clone();
+
+        // Replay-order independence: the cert bytes must match
+        // exactly, otherwise restart-replay could produce a
+        // committee-disagreeable cert.
+        assert_eq!(
+            bcs::to_bytes(&cert_a).unwrap(),
+            bcs::to_bytes(&cert_b).unwrap(),
+            "aggregator replay must be order-independent"
+        );
+
+        // Idempotency: re-inserting an already-recorded signer's
+        // signature MUST NOT mutate the cert. (DB replay could fire
+        // twice if the install path is re-entered.)
+        let pre_replay = agg_b.certified().cloned();
+        agg_b.insert_verified(signed[0].signer, signed[0].signature.clone());
+        let post_replay = agg_b.certified().cloned();
+        assert_eq!(
+            pre_replay, post_replay,
+            "re-inserting a recorded signer must be a no-op"
+        );
+    }
+
     #[test]
     fn process_handoff_signature_rejects_non_matching_attestation() {
         let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
