@@ -169,6 +169,15 @@ pub(crate) struct DWalletMPCManager {
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
+    /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
+    /// shape we last passed to `update_network_key`. Used by
+    /// `instantiate_agreed_keys_from_voted_data` to distinguish
+    /// "agreed data hasn't changed since we last instantiated"
+    /// from "agreed data was just overwritten by a fresh quorum
+    /// (typically the reconfig output flipping)" — only the latter
+    /// needs a re-instantiation pass.
+    last_instantiated_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
     // Different epochs will see repeating values of this variable,
@@ -313,6 +322,7 @@ impl DWalletMPCManager {
             sent_presign_sequence_numbers: HashSet::new(),
             network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
+            last_instantiated_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
@@ -554,8 +564,24 @@ impl DWalletMPCManager {
 
             let key_id = key_data.id;
 
-            // Skip if this key has already reached agreement.
-            if self.agreed_network_key_data.contains_key(&key_id) {
+            // Compare only the *content* fields (DKG output bytes,
+            // latest reconfig output bytes, state) — see the matching
+            // fingerprint in `dwallet_mpc_service::network_key_data_fingerprint`
+            // for the rationale. `current_epoch` flips every epoch
+            // boundary by design even when the underlying bytes are
+            // unchanged, and we don't want that to look like an update
+            // (it would force a wasteful `update_network_key` pass
+            // that re-decrypts the key shares).
+            if self
+                .agreed_network_key_data
+                .get(&key_id)
+                .is_some_and(|agreed| {
+                    agreed.network_dkg_public_output == key_data.network_dkg_public_output
+                        && agreed.current_reconfiguration_public_output
+                            == key_data.current_reconfiguration_public_output
+                        && agreed.state == key_data.state
+                })
+            {
                 continue;
             }
 
@@ -570,11 +596,23 @@ impl DWalletMPCManager {
 
             // Check if the parties that voted for this data form an authorized subset.
             if self.access_structure.is_authorized_subset(parties).is_ok() {
-                self.agreed_network_key_data.insert(key_id, key_data);
+                let was_update = self
+                    .agreed_network_key_data
+                    .insert(key_id, key_data)
+                    .is_some();
                 info!(
                     ?key_id,
-                    consensus_round, "Network key data has been agreed upon"
+                    consensus_round,
+                    updated = was_update,
+                    "Network key data has been agreed upon"
                 );
+                // Clear stale per-content vote buckets for this key —
+                // the new agreement supersedes them, and keeping them
+                // around would let an obsolete content keep matching
+                // quorum on future votes.
+                if was_update {
+                    self.network_key_data_votes.remove(&key_id);
+                }
             }
         }
     }
@@ -1348,18 +1386,43 @@ impl DWalletMPCManager {
     }
 
     /// Instantiates agreed network keys from consensus-voted data.
-    /// For each key in `agreed_network_key_data` that is not yet loaded locally,
-    /// instantiates the key from the consensus-voted data.
-    /// Returns the IDs of newly instantiated keys.
+    /// For each key in `agreed_network_key_data` either (a) not yet
+    /// loaded locally, or (b) loaded but with a stale shape compared
+    /// to the latest agreed bytes (typically the reconfig output
+    /// flipping each epoch), runs the instantiation pass. Returns
+    /// the IDs touched.
+    ///
+    /// The `last_instantiated_network_key_data` snapshot prevents
+    /// re-running on every poll: re-instantiation costs a per-curve
+    /// decrypt + key-share regenerate inside `update_network_key`,
+    /// so we only do it when the agreed bytes actually changed.
     pub(crate) async fn instantiate_agreed_keys_from_voted_data(&mut self) -> Vec<ObjectID> {
         let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
             .agreed_network_key_data
             .iter()
-            .filter(|(key_id, _)| {
-                !self
+            .filter(|(key_id, key_data)| {
+                // Filter to: first instantiation OR the *content*
+                // (DKG output, reconfig output, state) has moved
+                // since we last instantiated. Excludes the
+                // per-epoch `current_epoch` field for the same
+                // reason the sender's fingerprint does — see
+                // `dwallet_mpc_service::network_key_data_fingerprint`.
+                if !self
                     .network_keys
                     .network_encryption_keys
                     .contains_key(key_id)
+                {
+                    return true;
+                }
+                match self.last_instantiated_network_key_data.get(key_id) {
+                    None => true,
+                    Some(prev) => {
+                        prev.network_dkg_public_output != key_data.network_dkg_public_output
+                            || prev.current_reconfiguration_public_output
+                                != key_data.current_reconfiguration_public_output
+                            || prev.state != key_data.state
+                    }
+                }
             })
             .map(|(key_id, key_data)| (*key_id, key_data.clone()))
             .collect();
@@ -1437,6 +1500,12 @@ impl DWalletMPCManager {
                                     "failed to cache reconfiguration output digest from consensus-voted data"
                                 );
                             }
+                            // Snapshot the data we just instantiated so
+                            // the next poll skips this key unless a
+                            // newer quorum has overwritten
+                            // `agreed_network_key_data` since.
+                            self.last_instantiated_network_key_data
+                                .insert(key_id, key_data);
                         }
                         new_key_ids.push(key_id);
                     }
