@@ -17,8 +17,8 @@ use super::ValidatorMetadataClient;
 /// Wrapped by a joining validator (not yet in the consensus committee)
 /// to ask a current-committee peer to relay their `mpc_data`
 /// announcement into consensus. The peer verifies the signature
-/// against the `PendingActiveSet` before relaying (see step 6); for
-/// transport here the wire format is just the signed announcement.
+/// against the `PendingActiveSet` before relaying; for transport
+/// here the wire format is just the signed announcement.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmitMpcDataAnnouncementRequest {
     pub announcement: SignedValidatorMpcDataAnnouncement,
@@ -41,7 +41,7 @@ pub enum SubmitMpcDataAnnouncementResponse {
 /// Implementations are responsible for:
 /// - verifying the announcement (sig against current committee OR
 ///   pending active set, depending on whether the signer is a member
-///   of the current consensus committee or a joiner — see step 6),
+///   of the current consensus committee or a joiner),
 /// - bouncing duplicates by the latest-by-timestamp rule,
 /// - submitting the resulting `ConsensusTransaction` via the adapter.
 #[async_trait::async_trait]

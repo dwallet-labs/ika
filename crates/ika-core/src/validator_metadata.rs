@@ -1914,6 +1914,79 @@ mod tests {
         );
     }
 
+    /// Models the production install path's two-source replay:
+    /// `AuthorityPerEpochStore::install_expected_handoff_attestation`
+    /// (1) walks `handoff_signatures` (DB-persisted), then
+    /// (2) drains the in-memory `pending_handoff_signatures`
+    ///     buffer.
+    ///
+    /// The unit-level `handoff_aggregator_replay_is_commutative_and_idempotent`
+    /// pins order-independence on `insert_verified` alone. This test
+    /// additionally pins that the dual-source interleaving produces
+    /// a byte-identical cert regardless of which source is replayed
+    /// first — i.e., interpreting a buffered signature as "came
+    /// from the buffer" vs "came from the DB" doesn't change the
+    /// outcome.
+    ///
+    /// Without this property, a restart-with-non-empty-buffer
+    /// could (in principle) produce a cert that doesn't match a
+    /// cert built by a peer who never saw a pre-install buffer
+    /// for the same signatures.
+    #[test]
+    fn handoff_install_replay_dual_source_byte_identical() {
+        let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(11, [0xCD; 32], vec![]).expect("build");
+
+        // Three signatures total; we'll split them between DB and
+        // buffer in different ways across runs.
+        let signed: Vec<_> = (0..3)
+            .map(|i| sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]))
+            .collect();
+
+        // Scenario A: signatures 0 and 1 came from DB, signature 2
+        // came from pending-buffer. Replay order: DB first, then
+        // buffer.
+        let mut agg_a = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in [0, 1] {
+            agg_a.insert_verified(signed[i].signer, signed[i].signature.clone());
+        }
+        agg_a.insert_verified(signed[2].signer, signed[2].signature.clone());
+        let cert_a = agg_a.certified().expect("cert").clone();
+
+        // Scenario B: signature 0 came from DB, signatures 1 and 2
+        // came from pending-buffer. Same overall set; different
+        // split. Same replay order.
+        let mut agg_b = HandoffAggregator::new(committee.clone(), att.clone());
+        agg_b.insert_verified(signed[0].signer, signed[0].signature.clone());
+        for i in [1, 2] {
+            agg_b.insert_verified(signed[i].signer, signed[i].signature.clone());
+        }
+        let cert_b = agg_b.certified().expect("cert").clone();
+
+        // Scenario C: signature 0 came from buffer, signatures 1
+        // and 2 came from DB. Buffer replayed FIRST.
+        let mut agg_c = HandoffAggregator::new(committee.clone(), att.clone());
+        agg_c.insert_verified(signed[0].signer, signed[0].signature.clone());
+        for i in [1, 2] {
+            agg_c.insert_verified(signed[i].signer, signed[i].signature.clone());
+        }
+        let cert_c = agg_c.certified().expect("cert").clone();
+
+        // All three scenarios must produce byte-identical certs.
+        // The wire-level cert is what peers verify, so deserialized
+        // equality isn't enough — the BCS bytes must match.
+        let bytes_a = bcs::to_bytes(&cert_a).unwrap();
+        let bytes_b = bcs::to_bytes(&cert_b).unwrap();
+        let bytes_c = bcs::to_bytes(&cert_c).unwrap();
+        assert_eq!(bytes_a, bytes_b);
+        assert_eq!(bytes_a, bytes_c);
+
+        // Sanity: a duplicate replay (e.g., a buffered sig that
+        // was already in the DB) is also a no-op.
+        agg_a.insert_verified(signed[1].signer, signed[1].signature.clone());
+        assert_eq!(bcs::to_bytes(agg_a.certified().unwrap()).unwrap(), bytes_a);
+    }
+
     #[test]
     fn process_handoff_signature_rejects_non_matching_attestation() {
         let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);

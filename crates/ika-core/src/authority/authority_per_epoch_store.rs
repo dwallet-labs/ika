@@ -2607,19 +2607,6 @@ impl AuthorityPerEpochStore {
             |peer| committee.weight(peer),
             committee.quorum_threshold(),
         );
-        // Surface byzantine-padding attempts. Honest emitters
-        // dedup + committee-filter before broadcast, so any
-        // collapse here is a strong byzantine signal worth a
-        // `warn!` for operators to act on.
-        if !diagnostics.non_committee_dropped.is_empty() || diagnostics.duplicates_collapsed != 0 {
-            warn!(
-                signer = ?signal.authority,
-                duplicates_collapsed = diagnostics.duplicates_collapsed,
-                non_committee_dropped = ?diagnostics.non_committee_dropped,
-                "EpochMpcDataReadySignal padded with duplicates / non-committee \
-                 authorities — likely byzantine signer"
-            );
-        }
         let canonical_peers = match outcome {
             crate::validator_metadata::CanonicalizeReadySignalOutcome::Accept {
                 validated_peers,
@@ -2645,9 +2632,8 @@ impl AuthorityPerEpochStore {
         // prevents a byzantine signer from oscillating attestation
         // sets to disturb the partition.
         if let Some(existing) = existing.as_ref() {
-            let existing_set: std::collections::BTreeSet<_> =
-                existing.validated_peers.iter().copied().collect();
-            let new_set: std::collections::BTreeSet<_> = canonical_peers.iter().copied().collect();
+            let existing_set: BTreeSet<_> = existing.validated_peers.iter().copied().collect();
+            let new_set: BTreeSet<_> = canonical_peers.iter().copied().collect();
             if !new_set.is_superset(&existing_set) || new_set.len() == existing_set.len() {
                 debug!(
                     signer = ?signal.authority,
@@ -2657,6 +2643,23 @@ impl AuthorityPerEpochStore {
                 );
                 return Ok(());
             }
+        }
+        // Surface byzantine-padding attempts. Placed AFTER the
+        // strict-superset gate so a byzantine signer re-submitting
+        // the same padded payload every consensus round doesn't
+        // log-flood: the gate drops the repeat above, so only the
+        // first padded payload (or a strictly-grown padded payload)
+        // makes it here. Honest emitters dedup + committee-filter
+        // before broadcast, so reaching this branch is a strong
+        // byzantine signal worth a `warn!` for operators.
+        if !diagnostics.non_committee_dropped.is_empty() || diagnostics.duplicates_collapsed != 0 {
+            warn!(
+                signer = ?signal.authority,
+                duplicates_collapsed = diagnostics.duplicates_collapsed,
+                non_committee_dropped = ?diagnostics.non_committee_dropped,
+                "EpochMpcDataReadySignal padded with duplicates / non-committee \
+                 authorities — likely byzantine signer"
+            );
         }
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,
