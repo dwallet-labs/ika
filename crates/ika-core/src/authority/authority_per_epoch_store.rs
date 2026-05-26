@@ -390,9 +390,17 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
 
     /// Returns whether the per-key DKG ready quorum has been
-    /// reached for `network_key_id`. Specific to network DKG
-    /// kickoff; reconfig sessions only gate on
-    /// [`is_mpc_data_frozen`].
+    /// Whether stake-quorum of `NetworkKeyDKGReadySignal`s have been
+    /// observed for `network_key_id` this epoch.
+    ///
+    /// **Currently unused by production kickoff logic.** Validators
+    /// broadcast per-key ready signals and the receive side records
+    /// them in `network_key_dkg_ready_signals`, but no production
+    /// code path reads this method to gate network DKG session
+    /// start — that gate is `is_mpc_data_frozen()` alone.
+    /// Per-key state is kept on the trait so a future kickoff gate
+    /// (or operator dashboard) can consume it without a separate
+    /// protocol rollout.
     fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool>;
 
     /// Reflects the per-epoch `protocol_config` flag that gates
@@ -2673,9 +2681,16 @@ impl AuthorityPerEpochStore {
 
     /// Records a `NetworkKeyDKGReadySignal`. Idempotent —
     /// re-broadcasts from the same authority for the same
-    /// `network_key_id` are dropped. This signal is consumed by
-    /// per-key DKG kickoff (which may gate on a per-key quorum)
-    /// but does NOT trigger the `mpc_data` freeze. The freeze is
+    /// `network_key_id` are dropped.
+    ///
+    /// **Recorded but not yet consumed.** This signal is kept in
+    /// the `network_key_dkg_ready_signals` table for a future
+    /// per-key kickoff gate or operator dashboard, but no
+    /// production code reads `has_network_key_dkg_ready_quorum`
+    /// today — the session-kickoff gate uses `is_mpc_data_frozen`
+    /// alone. See the trait method's docstring.
+    ///
+    /// Does NOT trigger the `mpc_data` freeze. The freeze is
     /// gated only on `EpochMpcDataReadySignal` quorum — see the
     /// docstring on `freeze_mpc_data_if_first` for why.
     pub fn record_network_key_dkg_ready_signal(
