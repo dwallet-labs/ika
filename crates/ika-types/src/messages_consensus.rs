@@ -578,7 +578,7 @@ impl ConsensusTransaction {
     pub fn new_validator_mpc_data_announcement(signed: SignedValidatorMpcDataAnnouncement) -> Self {
         let mut hasher = DefaultHasher::new();
         signed.announcement.validator.hash(&mut hasher);
-        signed.announcement.epoch.hash(&mut hasher);
+        signed.auth_sig.epoch.hash(&mut hasher);
         signed.announcement.timestamp_ms.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
@@ -691,7 +691,7 @@ impl ConsensusTransaction {
             ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed) => {
                 ConsensusTransactionKey::ValidatorMpcDataAnnouncement(
                     signed.announcement.validator,
-                    signed.announcement.epoch,
+                    signed.auth_sig.epoch,
                     signed.announcement.timestamp_ms,
                 )
             }

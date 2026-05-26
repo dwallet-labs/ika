@@ -400,6 +400,23 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// false, the kickoff gate and other off-chain hooks behave
     /// as legacy (chain-only).
     fn off_chain_validator_metadata_enabled(&self) -> bool;
+
+    /// Returns the freeze-time `validator -> blob_hash` snapshot
+    /// for this epoch (post-attestation-tally working set), or an
+    /// empty map if the freeze hasn't fired yet. Surfaced on the
+    /// trait so the MPC manager's per-validator local-readiness
+    /// gate can mockable-test the "I have the frozen-set blobs"
+    /// branch without needing a real epoch store.
+    fn get_frozen_mpc_data_input_set_trait(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>>;
+
+    /// Returns the perpetual-tables handle, or `None` if it isn't
+    /// installed yet. Returning `Option<Arc<…>>` keeps the trait
+    /// dyn-safe — `AuthorityPerpetualTables` itself doesn't need
+    /// to be on this trait because the local-readiness gate only
+    /// needs `get_mpc_artifact_blob`.
+    fn perpetual_tables_handle(
+        &self,
+    ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>>;
 }
 
 impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
@@ -710,6 +727,16 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.protocol_config()
             .off_chain_validator_metadata_enabled()
+    }
+
+    fn get_frozen_mpc_data_input_set_trait(&self) -> IkaResult<HashMap<AuthorityName, [u8; 32]>> {
+        self.get_frozen_validator_mpc_data_input_set()
+    }
+
+    fn perpetual_tables_handle(
+        &self,
+    ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>> {
+        self.perpetual_tables_for_handoff_load_full()
     }
 }
 
@@ -1025,25 +1052,39 @@ pub struct AuthorityEpochTables {
     pub(crate) validator_mpc_data_announcements:
         DBMap<AuthorityName, SignedValidatorMpcDataAnnouncement>,
 
-    /// Set of validators that have broadcast an
-    /// `EpochMpcDataReadySignal` for this epoch. The presence of an
-    /// entry is the only fact recorded — the value is unit because
-    /// the signal payload is already covered by the key + wire
-    /// authority binding. Re-broadcasts are no-ops. Once the
-    /// accumulated stake of signers reaches `quorum_threshold`, the
-    /// `frozen_validator_mpc_data_input_set` snapshot below is
-    /// taken exactly once.
-    pub(crate) epoch_mpc_data_ready_signals: DBMap<AuthorityName, ()>,
+    /// Map signer -> `EpochMpcDataReadySignal` for this epoch.
+    /// We keep the full signal (not just the unit value) so the
+    /// freeze gate can read each signer's `validated_peers` set
+    /// when tallying per-announcer attestations. Re-broadcasts
+    /// from the same signer are last-write-wins; in practice an
+    /// honest validator only emits once per epoch.
+    pub(crate) epoch_mpc_data_ready_signals:
+        DBMap<AuthorityName, ika_types::validator_metadata::EpochMpcDataReadySignal>,
 
-    /// Frozen `validator -> blob_hash` snapshot taken at the consensus
-    /// position where the first quorum of `EpochMpcDataReadySignal`s
-    /// landed this epoch. This is the canonical mpc-data input set
-    /// every honest validator agrees on — both the network DKG / per-
-    /// network-key reconfiguration MPC (consumed in later steps) and
-    /// the handoff cert pin it. Empty until quorum; populated once
-    /// and never modified within the epoch (`freeze_mpc_data_if_first`
-    /// is idempotent on a non-empty table).
+    /// Frozen `validator -> blob_hash` snapshot taken at the
+    /// consensus position where the first quorum of
+    /// `EpochMpcDataReadySignal`s landed this epoch. Membership is
+    /// per-announcer attestation-gated: a validator V appears in
+    /// this map iff a stake-quorum of signers attested via
+    /// `validated_peers` to having V's blob locally + decode-
+    /// validated. Announcers that don't reach that threshold are
+    /// recorded in `epoch_excluded_validators` instead.
+    /// Empty until quorum; populated once and never modified within
+    /// the epoch (`freeze_mpc_data_if_first` is idempotent on a
+    /// non-empty table).
     pub(crate) frozen_validator_mpc_data_input_set: DBMap<AuthorityName, [u8; 32]>,
+
+    /// Announcers that crossed the freeze gate's "announcement
+    /// present" test but didn't have a quorum of signers attest to
+    /// having a valid blob for them. Written at the same logical
+    /// point as `frozen_validator_mpc_data_input_set`. The set is
+    /// consensus-deterministic (every honest validator computes
+    /// the same tally from the same consensus-ordered signals);
+    /// downstream MPC / handoff consumers treat membership here
+    /// as "this validator is excluded from the working set for
+    /// this epoch — same semantics as today's `bad chain mpc_data
+    /// → ignore that validator`."
+    pub(crate) epoch_excluded_validators: DBMap<AuthorityName, ()>,
 
     /// Per-signer Ed25519 signatures over this epoch's handoff
     /// attestation, captured from consensus order. Verified against
@@ -1801,21 +1842,22 @@ impl AuthorityPerEpochStore {
     /// received via consensus.
     ///
     /// Rules:
-    /// 1. `announcement.epoch == auth_sig.epoch` (sanity).
-    /// 2. `announcement.validator == auth_sig.authority` (sanity).
-    /// 3. For current-epoch announcements, the BLS sig is verified
-    ///    against `self.committee()` — only current-committee
-    ///    members can announce for this epoch.
-    /// 4. Latest-by-timestamp: the stored entry for a given
+    /// 1. `announcement.validator == auth_sig.authority` (sanity).
+    /// 2. For current-epoch announcements (`auth_sig.epoch ==
+    ///    current_epoch`), the BLS sig is verified against
+    ///    `self.committee()` — only current-committee members can
+    ///    announce for this epoch.
+    /// 3. Latest-by-timestamp: the stored entry for a given
     ///    `validator` is only replaced when the incoming
     ///    announcement has a strictly newer `timestamp_ms`. Replays
     ///    and stale duplicates are dropped silently.
     ///
     /// Cross-epoch (next-epoch joiner) announcements
-    /// (`announcement.epoch == current_epoch + 1`) need a separate
-    /// pubkey-lookup path (`PendingActiveSet`) that's wired in a
-    /// later step; they're logged and dropped here so a buggy or
-    /// malicious relayer can't smuggle in unverified state.
+    /// (`auth_sig.epoch == current_epoch + 1`) verify against the
+    /// `PendingActiveSet` via the installed
+    /// `joiner_pubkey_provider`; everything else is logged and
+    /// dropped so a buggy or malicious relayer can't smuggle in
+    /// unverified state.
     pub fn record_validator_mpc_data_announcement(
         &self,
         signed: &SignedValidatorMpcDataAnnouncement,
@@ -1829,14 +1871,6 @@ impl AuthorityPerEpochStore {
         use ika_types::intent::{Intent, IntentScope};
         let current_epoch = self.epoch();
         let next_epoch = current_epoch.saturating_add(1);
-        if signed.announcement.epoch != signed.auth_sig.epoch {
-            warn!(
-                announcement_epoch = signed.announcement.epoch,
-                auth_sig_epoch = signed.auth_sig.epoch,
-                "validator mpc data announcement epoch mismatch — dropping"
-            );
-            return Ok(());
-        }
         if signed.announcement.validator != signed.auth_sig.authority {
             warn!(
                 announcement_validator = ?signed.announcement.validator,
@@ -1845,7 +1879,8 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
-        if signed.announcement.epoch == current_epoch {
+        let sig_epoch = signed.auth_sig.epoch;
+        if sig_epoch == current_epoch {
             if let Err(e) = signed.auth_sig.verify_secure(
                 &signed.announcement,
                 Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
@@ -1858,7 +1893,7 @@ impl AuthorityPerEpochStore {
                 );
                 return Ok(());
             }
-        } else if signed.announcement.epoch == next_epoch {
+        } else if sig_epoch == next_epoch {
             let Some(provider) = self.joiner_pubkey_provider.load_full() else {
                 debug!(
                     validator = ?signed.announcement.validator,
@@ -1881,7 +1916,7 @@ impl AuthorityPerEpochStore {
             }
         } else {
             warn!(
-                announcement_epoch = signed.announcement.epoch,
+                auth_sig_epoch = sig_epoch,
                 current_epoch, "validator mpc data announcement epoch out of range — dropping"
             );
             return Ok(());
@@ -2020,6 +2055,17 @@ impl AuthorityPerEpochStore {
     ) {
         self.perpetual_tables_for_handoff
             .store(Some(perpetual_tables));
+    }
+
+    /// Returns the perpetual-tables handle, or `None` if it
+    /// hasn't been installed yet (early bootstrap). Read-only
+    /// access for callers that need to look up `mpc_artifact_blobs`
+    /// — e.g. the per-validator local-readiness gate in
+    /// `DWalletMPCManager::perform_cryptographic_computation`.
+    pub fn perpetual_tables_for_handoff_load_full(
+        &self,
+    ) -> Option<Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>> {
+        self.perpetual_tables_for_handoff.load_full()
     }
 
     /// Assembles this validator's local handoff attestation by
@@ -2410,6 +2456,69 @@ impl AuthorityPerEpochStore {
             .get(validator)?)
     }
 
+    /// Computes the set of authorities whose mpc_data blob is
+    /// currently locally available AND decode-validates against
+    /// the protocol-expected shape. This is what
+    /// `EpochMpcDataReadySignal.validated_peers` should be
+    /// populated with at emit time.
+    ///
+    /// Returns an empty vec when off-chain mode is disabled (v3),
+    /// when perpetual storage isn't attached, or when no
+    /// announcements have arrived yet — callers should treat
+    /// "fewer than stake-quorum coverage" as "not yet ready to
+    /// signal."
+    pub fn compute_locally_validated_peers(&self) -> IkaResult<Vec<AuthorityName>> {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(Vec::new());
+        }
+        let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
+            return Ok(Vec::new());
+        };
+        let tables = self.tables()?;
+        let mut validated: Vec<AuthorityName> = Vec::new();
+        for entry in tables.validator_mpc_data_announcements.safe_iter() {
+            let (authority, signed) = entry?;
+            let digest = signed.announcement.blob_hash;
+            let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(&digest) else {
+                continue;
+            };
+            if crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
+                validated.push(authority);
+            }
+        }
+        validated.sort();
+        Ok(validated)
+    }
+
+    /// Whether the locally-validated peer set covers a stake
+    /// quorum of the current committee. Used by the announcement
+    /// sender as the emit-gate for `EpochMpcDataReadySignal`:
+    /// honest validators should not signal "ready" until they
+    /// have at least quorum-of-stake of peer mpc_data locally
+    /// validated, otherwise downstream freeze could capture a
+    /// premature input set and exclude legitimate validators.
+    pub fn local_blob_coverage_meets_quorum(&self) -> IkaResult<bool> {
+        let validated = self.compute_locally_validated_peers()?;
+        let committee = self.committee();
+        let mut stake: u64 = 0;
+        for authority in &validated {
+            stake = stake.saturating_add(committee.weight(authority));
+        }
+        // Always count our own stake — the producer task inserts
+        // the own blob into the in-memory store before announce,
+        // but compute_locally_validated_peers filters by the
+        // *announcement table*, which only contains entries that
+        // hit consensus and got verified. Our own announcement
+        // can race with our own ready signal.
+        if !validated.contains(&self.name) {
+            stake = stake.saturating_add(committee.weight(&self.name));
+        }
+        Ok(stake >= committee.quorum_threshold())
+    }
+
     /// Records an `EpochMpcDataReadySignal`. Idempotent — repeat
     /// signals from the same authority are dropped. The *first* time
     /// the set of signers reaches the committee's `quorum_threshold`
@@ -2445,7 +2554,7 @@ impl AuthorityPerEpochStore {
         }
         tables
             .epoch_mpc_data_ready_signals
-            .insert(&signal.authority, &())?;
+            .insert(&signal.authority, signal)?;
 
         let committee = self.committee();
         let total_stake: u64 = tables
@@ -2494,41 +2603,89 @@ impl AuthorityPerEpochStore {
         Ok(())
     }
 
-    /// Snapshots `validator_mpc_data_announcements` into
-    /// `frozen_validator_mpc_data_input_set` iff the latter is
-    /// empty. Idempotent.
+    /// Computes the per-announcer attestation tally and snapshots
+    /// the frozen working set + excluded set. Idempotent on a
+    /// non-empty frozen table.
     ///
-    /// Only `EpochMpcDataReadySignal` quorum triggers this. The
-    /// epoch-wide signal carries the implicit promise "I have
-    /// already announced my own mpc_data," so the announcement
-    /// table is guaranteed populated for every signer before any
-    /// of their signals can be counted. Per-key
-    /// `NetworkKeyDKGReadySignal`s do NOT trigger freeze: a
-    /// validator can emit a per-key ready signal without having
-    /// finished its own mpc_data announcement broadcast, and
-    /// freezing on per-key quorum permanently excludes late
-    /// announcers from the input set (which then breaks handoff /
-    /// reconfig / class-groups assembly for them).
+    /// Fired only on `EpochMpcDataReadySignal` quorum. For each
+    /// validator V that announced this epoch:
+    /// - sum the stake of every signer whose `validated_peers`
+    ///   contains V,
+    /// - if that stake ≥ committee quorum threshold, V enters
+    ///   `frozen_validator_mpc_data_input_set`,
+    /// - otherwise V enters `epoch_excluded_validators`.
+    ///
+    /// This makes "you're in the working set" consensus-
+    /// deterministic and stake-quorum-attested: a malicious
+    /// announcer who withheld their blob from honest peers can't
+    /// be smuggled into the working set, even if they signed a
+    /// valid announcement digest. Per-key
+    /// `NetworkKeyDKGReadySignal`s do NOT trigger freeze (see the
+    /// docstring on `record_network_key_dkg_ready_signal`).
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
         }
-        let mut snapshot: Vec<(AuthorityName, [u8; 32])> = Vec::new();
+        let committee = self.committee();
+        // Materialize the inputs as `BTreeMap` so the pure tally
+        // function in `validator_metadata` can be exercised by
+        // unit tests without an `AuthorityPerEpochStore`. The map
+        // sizes here are O(committee size), so the copy is cheap
+        // relative to the rest of an epoch boundary.
+        let mut announcements: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
+            std::collections::BTreeMap::new();
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
             let (authority, signed) = entry?;
-            snapshot.push((authority, signed.announcement.blob_hash));
+            announcements.insert(authority, signed.announcement.blob_hash);
         }
+        let mut signals: std::collections::BTreeMap<AuthorityName, Vec<AuthorityName>> =
+            std::collections::BTreeMap::new();
+        for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
+            let (signer, signal) = entry?;
+            signals.insert(signer, signal.validated_peers);
+        }
+        let committee_for_tally = committee.clone();
+        let partition = crate::validator_metadata::compute_freeze_partition(
+            &announcements,
+            &signals,
+            |authority| committee_for_tally.weight(authority),
+            committee.quorum_threshold(),
+        );
         info!(
             current_epoch = self.epoch(),
-            entries = snapshot.len(),
-            "ready quorum reached — freezing epoch mpc_data input set snapshot"
+            frozen = partition.frozen.len(),
+            excluded = partition.excluded.len(),
+            excluded_set = ?partition.excluded,
+            "ready quorum reached — freezing attestation-validated mpc_data input set"
         );
-        for (authority, blob_hash) in snapshot {
+        for (authority, blob_hash) in &partition.frozen {
             tables
                 .frozen_validator_mpc_data_input_set
-                .insert(&authority, &blob_hash)?;
+                .insert(authority, blob_hash)?;
+        }
+        for authority in &partition.excluded {
+            tables.epoch_excluded_validators.insert(authority, &())?;
         }
         Ok(())
+    }
+
+    /// Returns the per-epoch set of authorities the freeze gate
+    /// excluded from the working set. Consensus-deterministic
+    /// across honest validators; downstream consumers
+    /// (`Committee.class_groups_public_keys_and_proofs` build,
+    /// handoff item generation, reconfig MPC kickoff) treat
+    /// membership as "this validator is excluded from MPC this
+    /// epoch — same semantics as on-chain bad mpc_data today."
+    pub fn get_epoch_excluded_validators(
+        &self,
+    ) -> IkaResult<std::collections::HashSet<AuthorityName>> {
+        Ok(self
+            .tables()?
+            .epoch_excluded_validators
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(authority, _)| authority)
+            .collect())
     }
 
     /// Returns the frozen `validator -> blob_hash` snapshot, or an

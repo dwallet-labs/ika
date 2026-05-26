@@ -380,14 +380,26 @@ where
                 }
                 crate::validator_metadata::OffChainClassGroupsAssembly::Incomplete { missing } => {
                     if off_chain_on {
+                        // Under v4 there is NO chain fallback. The
+                        // off-chain pipeline (consensus
+                        // announcements + P2P blob delivery +
+                        // attestation-tally freeze) is the only
+                        // path; missing entries here are transient
+                        // (P2P hasn't converged yet) and the
+                        // outer sync loop should retry on the next
+                        // tick. Return a typed error rather than
+                        // silently reading from chain.
                         warn!(
                             epoch,
                             missing = missing.len(),
+                            ?missing,
                             "off_chain mode: off-chain class-groups assembly incomplete; \
-                             falling back to chain mpc_data read (chain is supposed to be \
-                             write-only for these blobs — investigate why announcements \
-                             haven't propagated)"
+                             no chain fallback — retrying on next sync tick"
                         );
+                        return Err(DwalletMPCError::OffChainAssemblyIncomplete {
+                            epoch,
+                            missing: missing.len(),
+                        });
                     } else {
                         debug!(
                             epoch,

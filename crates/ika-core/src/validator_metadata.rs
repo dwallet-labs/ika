@@ -89,8 +89,10 @@ pub enum JoinerAnnouncementVerdict {
     /// The signature didn't verify against the claimed authority
     /// for `expected_epoch`.
     InvalidSignature,
-    /// `signed.announcement.epoch != signed.auth_sig.epoch` or the
-    /// announcement validator != sig authority.
+    /// `signed.announcement.validator != signed.auth_sig.authority`,
+    /// or `auth_sig.epoch != expected_epoch`. The epoch lives only
+    /// in `auth_sig.epoch` after the v4 refactor — the announcement
+    /// body no longer carries it.
     InconsistentEnvelope,
 }
 
@@ -107,9 +109,8 @@ pub fn verify_joiner_announcement(
 ) -> JoinerAnnouncementVerdict {
     use ika_types::crypto::IkaAuthoritySignature;
     use ika_types::intent::IntentMessage;
-    if signed.announcement.epoch != signed.auth_sig.epoch
-        || signed.announcement.validator != signed.auth_sig.authority
-        || signed.announcement.epoch != expected_epoch
+    if signed.announcement.validator != signed.auth_sig.authority
+        || signed.auth_sig.epoch != expected_epoch
     {
         return JoinerAnnouncementVerdict::InconsistentEnvelope;
     }
@@ -157,6 +158,102 @@ pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
         .map_err(|e| IkaError::Unknown(format!("bcs encode versioned mpc data: {e}")))
 }
 
+/// Result of `compute_freeze_partition`: which announcers cross
+/// into the working set vs. get excluded for this epoch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FreezePartition {
+    /// Announcers attested to by a stake quorum of signers.
+    /// `Vec<(authority, blob_hash)>`; the order follows the input
+    /// announcements (deterministic given the BTreeMap input).
+    pub frozen: Vec<(AuthorityName, [u8; 32])>,
+    /// Announcers that appeared in the announcement table but
+    /// didn't reach stake-quorum of attestations.
+    pub excluded: Vec<AuthorityName>,
+}
+
+/// Computes the freeze-time partition from announcements and
+/// recorded `EpochMpcDataReadySignal`s. Pure function — extracted
+/// from `AuthorityPerEpochStore::freeze_mpc_data_if_first` so the
+/// attestation-tally logic can be unit-tested directly against
+/// byzantine scenarios (silent withholder, malicious-data
+/// withholder, late propagation) without standing up a full
+/// epoch store.
+///
+/// Inputs:
+/// - `announcements`: validator → blob_hash, the announcement
+///   table at freeze time.
+/// - `signals`: signer → `validated_peers` list, the ready-
+///   signals seen so far (typically already at stake quorum).
+/// - `stake_of`: callback returning each authority's committee
+///   stake.
+/// - `quorum_threshold`: the committee's stake-quorum threshold.
+///
+/// Output: every announcer is partitioned into `frozen` (≥quorum
+/// attested) or `excluded` (otherwise). Announcers that don't
+/// appear in any signer's `validated_peers` end up in `excluded`,
+/// which is the expected outcome for a byzantine validator that
+/// announces but withholds/corrupts its blob.
+pub fn compute_freeze_partition<S>(
+    announcements: &BTreeMap<AuthorityName, [u8; 32]>,
+    signals: &BTreeMap<AuthorityName, Vec<AuthorityName>>,
+    stake_of: S,
+    quorum_threshold: u64,
+) -> FreezePartition
+where
+    S: Fn(&AuthorityName) -> u64,
+{
+    let mut attested_stake: BTreeMap<AuthorityName, u64> = BTreeMap::new();
+    for (signer, validated_peers) in signals {
+        let signer_stake = stake_of(signer);
+        for peer in validated_peers {
+            let slot = attested_stake.entry(*peer).or_default();
+            *slot = slot.saturating_add(signer_stake);
+        }
+    }
+    let mut frozen: Vec<(AuthorityName, [u8; 32])> = Vec::new();
+    let mut excluded: Vec<AuthorityName> = Vec::new();
+    for (authority, blob_hash) in announcements {
+        let stake = attested_stake.get(authority).copied().unwrap_or(0);
+        if stake >= quorum_threshold {
+            frozen.push((*authority, *blob_hash));
+        } else {
+            excluded.push(*authority);
+        }
+    }
+    FreezePartition { frozen, excluded }
+}
+
+/// Tells whether a candidate mpc_data blob is structurally
+/// usable: it BCS-decodes into `VersionedMPCData`, and the inner
+/// class-groups encoding decodes into a valid
+/// `ValidatorEncryptionKeysAndProof`. Pure function — no I/O,
+/// no allocation beyond the decode itself. Used by:
+///
+/// - The peer-blob fetcher / receive-and-relay path: bytes that
+///   fail this check don't get inserted into the perpetual or
+///   in-memory store (we never knowingly serve garbage).
+/// - The `EpochMpcDataReadySignal.validated_peers` emit gate:
+///   only authorities whose blob passes this check are attested
+///   to in the signal.
+/// - The freeze gate (`freeze_mpc_data_if_first`): announcers
+///   whose blob doesn't satisfy this check across a stake-quorum
+///   of signers are excluded from the frozen working set.
+///
+/// This is the structural check, not a cryptographic-validity
+/// check: it doesn't verify class-groups proofs (those happen
+/// inside MPC). A byzantine actor can produce bytes that pass
+/// this check but contain mathematically invalid keys; that
+/// failure surfaces in MPC, where the standard malicious-party
+/// detection catches it.
+pub fn blob_decodes_to_valid_mpc_data(blob: &[u8]) -> bool {
+    use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
+    let Ok(versioned) = bcs::from_bytes::<VersionedMPCData>(blob) else {
+        return false;
+    };
+    let inner = versioned.class_groups_public_key_and_proof();
+    ika_types::committee::decode_validator_encryption_keys(&inner).is_some()
+}
+
 /// Returns the current wall-clock time as milliseconds since the
 /// Unix epoch. Used as the `timestamp_ms` field of a new
 /// announcement; the latest-by-timestamp rule means later calls
@@ -180,7 +277,6 @@ pub fn sign_validator_mpc_data_announcement(
 ) -> SignedValidatorMpcDataAnnouncement {
     let announcement = ValidatorMpcDataAnnouncement {
         validator,
-        epoch,
         timestamp_ms,
         blob_hash,
     };
@@ -202,11 +298,26 @@ pub fn sign_validator_mpc_data_announcement(
 /// — the consensus authority binding (sender == authority) is the
 /// only authentication needed, and the consensus handler enforces it
 /// at message verification time.
+///
+/// `validated_peers` is the set of authorities whose mpc_data blob
+/// the caller has locally decode-validated. The freeze gate
+/// (`freeze_mpc_data_if_first`) tallies these attestations across
+/// the quorum-of-signals to decide which announcers cross into the
+/// frozen set. The signal should not be emitted until
+/// `validated_peers` covers a stake-quorum of the current
+/// committee — see `EpochMpcDataReadySignal` doc.
 pub fn build_epoch_mpc_data_ready_signal_transaction(
     authority: AuthorityName,
     epoch: EpochId,
+    mut validated_peers: Vec<AuthorityName>,
 ) -> ConsensusTransaction {
-    let signal = EpochMpcDataReadySignal { authority, epoch };
+    validated_peers.sort();
+    validated_peers.dedup();
+    let signal = EpochMpcDataReadySignal {
+        authority,
+        epoch,
+        validated_peers,
+    };
     ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
 }
 
@@ -588,14 +699,27 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
         committee_authorities: &[AuthorityName],
     ) -> OffChainClassGroupsAssembly {
         let Some(store) = self.epoch_store.upgrade() else {
-            // Epoch ended underneath us — caller falls back to chain.
+            // Epoch ended underneath us — return Incomplete so the
+            // caller retries or falls back per its own policy.
             return OffChainClassGroupsAssembly::Incomplete {
                 missing: committee_authorities.to_vec(),
             };
         };
+        // Under off-chain mode, skip committee members the freeze
+        // gate already excluded (no quorum of signers attested to
+        // having their blob). These validators are deliberately not
+        // part of the working set this epoch — same semantics as
+        // today's "bad chain mpc_data → ignore that validator." For
+        // them, "missing from the off-chain map" is the intended
+        // outcome, not an assembly failure.
+        let excluded: std::collections::HashSet<AuthorityName> =
+            store.get_epoch_excluded_validators().unwrap_or_default();
         let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
         let mut announcement_missing: Vec<AuthorityName> = Vec::new();
         for authority in committee_authorities {
+            if excluded.contains(authority) {
+                continue;
+            }
             match store.get_validator_mpc_data_announcement(authority) {
                 Ok(Some(signed)) => {
                     pairs.push((*authority, signed.announcement.blob_hash));
@@ -605,8 +729,10 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
         }
         if !announcement_missing.is_empty() {
             // Per-epoch table doesn't have an announcement for some
-            // committee member — consensus hasn't delivered it yet
-            // (early bootstrap window).
+            // non-excluded committee member — consensus hasn't
+            // delivered it yet (early bootstrap window). Under v4
+            // the caller should retry on the next tick rather than
+            // read mpc_data from chain.
             return OffChainClassGroupsAssembly::Incomplete {
                 missing: announcement_missing,
             };
@@ -617,15 +743,6 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
             perpetual.get_mpc_artifact_blob(digest).ok().flatten()
         });
         if let OffChainClassGroupsAssembly::Incomplete { ref missing } = result {
-            // Distinguish "announcement received but blob not in
-            // local perpetual store" from "announcement not yet
-            // received" — they require different remediations.
-            // Currently the only insert path into the perpetual
-            // blob store is the validator's OWN announcement (via
-            // `mpc_data_announcement_sender::send_announcement`)
-            // and locally-produced MPC outputs; peer blobs need a
-            // P2P fetch that isn't wired up yet — see the
-            // `fetch_blob` helper in `ika_network::mpc_artifacts`.
             let blob_only_missing: Vec<_> = missing
                 .iter()
                 .filter(|m| pairs.iter().any(|(a, _)| a == *m))
@@ -633,11 +750,12 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
             tracing::debug!(
                 store_epoch = store.epoch(),
                 requested = committee_authorities.len(),
+                excluded = excluded.len(),
                 announcement_present = pairs.len(),
                 blob_missing_in_perpetual = blob_only_missing.len(),
                 ?blob_only_missing,
-                "PROPAGATION_GAP: announcements received but blob bytes not in local \
-                 perpetual store — peer blobs are never P2P-fetched after announcement"
+                "off-chain class-groups assembly incomplete; \
+                 waiting for P2P propagation to converge"
             );
         }
         result
@@ -1906,5 +2024,225 @@ mod tests {
         let zero_sig = make_consensus_keys(1)[0].sign(b"garbage");
         bad.signatures[0].1 = zero_sig;
         assert!(verify_certified_handoff_attestation(&bad, &committee, &provider).is_err());
+    }
+
+    /// Garbage bytes (random, but with a length plausible for a
+    /// real blob) must be rejected by the structural decoder.
+    /// This is what filters byzantine bytes that hash-verify but
+    /// don't actually decode to usable mpc_data; honest receivers
+    /// drop them at the announcement / fetch boundary and leave
+    /// the announcer out of their `validated_peers` attestation.
+    #[test]
+    fn blob_decodes_to_valid_mpc_data_rejects_garbage() {
+        let garbage: Vec<u8> = (0u32..256).map(|i| (i % 251) as u8).collect();
+        assert!(!blob_decodes_to_valid_mpc_data(&garbage));
+        // Empty bytes also rejected.
+        assert!(!blob_decodes_to_valid_mpc_data(&[]));
+    }
+
+    /// A well-formed `derive_mpc_data_blob` output round-trips
+    /// through the validator — this is the positive case for the
+    /// pure decode-check helper.
+    #[test]
+    fn blob_decodes_to_valid_mpc_data_accepts_real_blob() {
+        let seed = RootSeed::new([7u8; 32]);
+        let blob = derive_mpc_data_blob(&seed).expect("derive");
+        assert!(blob_decodes_to_valid_mpc_data(&blob));
+    }
+
+    // -------- compute_freeze_partition byzantine scenarios --------
+    //
+    // These exercise the freeze gate's attestation-tally logic
+    // directly via the pure helper. The unit tests are intentionally
+    // free of `AuthorityPerEpochStore` plumbing so the byzantine
+    // semantics are pinned down in the simplest possible form: given
+    // a set of announcements + a set of `EpochMpcDataReadySignal`s,
+    // compute who's IN the working set and who's OUT.
+
+    fn auth(byte: u8) -> AuthorityName {
+        AuthorityName::new([byte; 48])
+    }
+
+    /// All 4 validators announce, all honestly validate each
+    /// other's blob, and all signal ready with the full peer set —
+    /// the happy path. Every announcer crosses the quorum and the
+    /// excluded set is empty.
+    #[test]
+    fn freeze_partition_happy_path_includes_all() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let announcements: BTreeMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0x44; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let all = vec![a, b, c, d];
+        let signals: BTreeMap<_, _> = all.iter().map(|signer| (*signer, all.clone())).collect();
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// Byzantine scenario: validator D never broadcasts an
+    /// announcement at all (e.g. process crashed, malicious
+    /// silence). The honest validators announce and signal — but
+    /// nobody has D's blob, so nobody's `validated_peers` contains
+    /// D, so no attestation stake is recorded for D.
+    ///
+    /// `announcements` here doesn't even include D (we wouldn't
+    /// have a row for them). `partition.frozen` covers the 3
+    /// honest announcers; `partition.excluded` is empty because
+    /// D never made the table. This is the "silent withholding"
+    /// outcome: the network proceeds with the surviving committee
+    /// minus the missing announcer.
+    #[test]
+    fn freeze_partition_byzantine_silent_no_announcement_at_all() {
+        let (a, b, c, _d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // D never announced — they're absent from the table.
+        let announcements: BTreeMap<_, _> = [(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])]
+            .into_iter()
+            .collect();
+        // Honest signers only attest to peers they actually have.
+        // They never received D's blob (D never published) so D
+        // is not in their `validated_peers`.
+        let honest_view = vec![a, b, c];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// Byzantine scenario: validator D *did* broadcast an
+    /// announcement (their digest landed in consensus) but
+    /// withheld the blob bytes — honest peers tried to fetch via
+    /// P2P, failed, never decode-validated. Honest signers
+    /// therefore don't include D in their `validated_peers`. At
+    /// freeze, D's announcement is on file but no attestation
+    /// stake reaches D → D goes into the excluded set.
+    ///
+    /// This is the "exclude-on-no-bytes" outcome that the design
+    /// is built around: the working committee proceeds without
+    /// the byzantine actor, same semantics as today's "bad chain
+    /// mpc_data → ignore that validator."
+    #[test]
+    fn freeze_partition_byzantine_announces_digest_but_withholds_blob() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // D's announcement landed (their digest is in the table)…
+        let announcements: BTreeMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0xDD; 32]),
+        ]
+        .into_iter()
+        .collect();
+        // …but no honest validator has D's blob locally, so D is
+        // not in anyone's `validated_peers`.
+        let honest_view = vec![a, b, c];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert_eq!(partition.excluded, vec![d]);
+    }
+
+    /// Byzantine scenario: validator D broadcasts an announcement
+    /// AND serves bytes — but the bytes are malicious (don't decode
+    /// to valid mpc_data, e.g. random garbage that happens to hash
+    /// to the announced digest). Honest validators verify the hash
+    /// (passes) then run `blob_decodes_to_valid_mpc_data` (fails),
+    /// so they DON'T list D in `validated_peers`. The freeze tally
+    /// excludes D exactly like the withholding case.
+    ///
+    /// We additionally model a byzantine signer (D itself, or any
+    /// colluder) trying to vouch for D in *their own* signal: with
+    /// only 1/4 stake of byzantine attestation, D still falls
+    /// short of the 3/4 quorum threshold → excluded.
+    #[test]
+    fn freeze_partition_byzantine_malicious_blob_excluded() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let announcements: BTreeMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0xBE; 32]),
+        ]
+        .into_iter()
+        .collect();
+        // Honest signers tried to use D's blob, found it bad,
+        // dropped D from their attestation.
+        let honest_view = vec![a, b, c];
+        // Byzantine D vouches for itself (and everyone, including
+        // itself), but a single byzantine signer can't push D
+        // past the 3/4 quorum on its own.
+        let byzantine_view = vec![a, b, c, d];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+            (d, byzantine_view),
+        ]
+        .into_iter()
+        .collect();
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert_eq!(partition.excluded, vec![d]);
+    }
+
+    /// Late-propagation scenario (not byzantine): validator D's
+    /// blob exists and is valid, but takes a moment longer than
+    /// the others to fetch via P2P. By the time freeze fires
+    /// (because A/B/C signaled with stake-quorum coverage), D's
+    /// blob is in 2 of 3 honest signers' `validated_peers` but
+    /// not in the third. With unit stakes and quorum 3, 2 stake
+    /// of attestation is below the threshold → D is excluded.
+    ///
+    /// This is the test that proves the design's tradeoff:
+    /// honest-but-slow validators can also fall out of the
+    /// frozen set under tight propagation. The remediation is
+    /// either (a) wait longer before signaling, or (b) raise the
+    /// freeze gate's wall-clock floor — both addressed in the
+    /// design discussion.
+    #[test]
+    fn freeze_partition_late_propagation_falls_short_of_quorum() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let announcements: BTreeMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0x44; 32]),
+        ]
+        .into_iter()
+        .collect();
+        // C is slow — they don't yet have D's bytes.
+        let signals: BTreeMap<_, _> = [
+            (a, vec![a, b, c, d]),
+            (b, vec![a, b, c, d]),
+            (c, vec![a, b, c]), // missing D
+        ]
+        .into_iter()
+        .collect();
+        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        // A/B/C are in everyone's view → frozen.
+        // D has 2/3 attestation stake, below the quorum of 3 → excluded.
+        assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert_eq!(partition.excluded, vec![d]);
     }
 }

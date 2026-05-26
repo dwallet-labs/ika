@@ -21,13 +21,19 @@
 //! The task runs every few seconds: it iterates the per-epoch
 //! `validator_mpc_data_announcements` table, skips authorities whose
 //! blob is already in the local perpetual store (own producer cache,
-//! prior fetch, or restart hydration), maps the announcer's
-//! `AuthorityName` to its Anemo `PeerId` via the live committee
-//! snapshot, calls `fetch_blob` over Anemo, hash-verifies the bytes
-//! against the announcement digest, and inserts the blob into both
-//! the perpetual table and the in-memory cache backing the local
-//! Anemo server. The in-memory write is what lets *other* peers
-//! fetch the blob from this validator without a node restart.
+//! prior fetch, or restart hydration), and for every missing blob
+//! asks peers over Anemo until one of them serves bytes that
+//! hash-verify against the announcement digest. The fetcher
+//! deliberately does NOT only ask the originator: a byzantine
+//! originator that signs an announcement but withholds the bytes
+//! would otherwise win — once *any* honest peer has fetched the
+//! blob, it can serve it on the originator's behalf
+//! (`fetch_blob` is content-addressed by digest, so any holder is
+//! authoritative). The valid bytes get inserted into both the
+//! perpetual table and the in-memory cache backing the local
+//! Anemo server — the in-memory write is what lets *other* peers
+//! fetch the blob from this validator without a restart, turning
+//! every honest receiver into a relay.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
@@ -35,6 +41,7 @@ use anemo::{Network, PeerId};
 use ika_network::mpc_artifacts::{InMemoryBlobStore, fetch_blob, mpc_data_blob_hash};
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
+use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -141,60 +148,106 @@ impl PeerBlobFetcher {
             pending = pending.len(),
             "peer blob fetcher: starting fetch pass"
         );
-        for (authority, digest) in pending {
-            let Some(peer_id) = self.authority_names_to_peer_ids.get(&authority).copied() else {
+        // Build a shuffled candidate peer list once per pass.
+        // Asking the originator first preserves the obvious-case
+        // fast path; falling through to a randomized order over
+        // the rest of the committee spreads load and prevents a
+        // byzantine originator from winning by withholding (any
+        // peer that already fetched the blob can serve it).
+        let mut other_peers: Vec<(AuthorityName, PeerId)> = self
+            .authority_names_to_peer_ids
+            .iter()
+            .filter(|(authority, _)| **authority != self.own_authority)
+            .map(|(authority, peer_id)| (*authority, *peer_id))
+            .collect();
+        other_peers.shuffle(&mut rand::rng());
+
+        for (announcer, digest) in pending {
+            // Try the originator first, then every other peer in
+            // shuffled order. Break as soon as one serves valid
+            // bytes.
+            let originator_peer = self.authority_names_to_peer_ids.get(&announcer).copied();
+            let mut candidates: Vec<(AuthorityName, PeerId)> = Vec::new();
+            if let Some(peer_id) = originator_peer {
+                candidates.push((announcer, peer_id));
+            }
+            for entry in &other_peers {
+                if Some(entry.1) == originator_peer {
+                    continue;
+                }
+                candidates.push(*entry);
+            }
+            if candidates.is_empty() {
                 debug!(
-                    ?authority,
-                    "peer blob fetcher: no PeerId mapping for announcer; skipping"
+                    ?announcer,
+                    "peer blob fetcher: no peers mapped at all; skipping"
                 );
                 continue;
-            };
-            match fetch_blob(&self.p2p_network, peer_id, digest).await {
-                Ok(Some(bytes)) => {
-                    let observed = mpc_data_blob_hash(&bytes);
-                    if observed != digest {
-                        warn!(
-                            ?authority,
+            }
+
+            let mut fetched = false;
+            for (candidate_authority, peer_id) in candidates {
+                match fetch_blob(&self.p2p_network, peer_id, digest).await {
+                    Ok(Some(bytes)) => {
+                        let observed = mpc_data_blob_hash(&bytes);
+                        if observed != digest {
+                            warn!(
+                                ?announcer,
+                                ?candidate_authority,
+                                ?peer_id,
+                                expected = ?digest,
+                                observed = ?observed,
+                                "peer blob fetcher: candidate served bytes that don't match \
+                                 the announcement digest; trying next peer"
+                            );
+                            continue;
+                        }
+                        if let Err(e) = self
+                            .perpetual_tables
+                            .insert_mpc_artifact_blob(digest, &bytes)
+                        {
+                            warn!(
+                                error = ?e,
+                                ?announcer,
+                                ?candidate_authority,
+                                "peer blob fetcher: perpetual insert failed; trying next peer"
+                            );
+                            continue;
+                        }
+                        self.in_memory_blob_store.insert(digest, bytes);
+                        info!(
+                            ?announcer,
+                            served_by = ?candidate_authority,
                             ?peer_id,
-                            expected = ?digest,
-                            observed = ?observed,
-                            "peer blob fetcher: peer served bytes that don't match the \
-                             announcement digest; dropping"
+                            "peer blob fetcher: fetched + cached peer mpc_data blob"
                         );
-                        continue;
+                        fetched = true;
+                        break;
                     }
-                    if let Err(e) = self
-                        .perpetual_tables
-                        .insert_mpc_artifact_blob(digest, &bytes)
-                    {
-                        warn!(error = ?e, ?authority, "peer blob fetcher: perpetual insert failed");
-                        continue;
+                    Ok(None) => {
+                        debug!(
+                            ?announcer,
+                            ?candidate_authority,
+                            ?peer_id,
+                            "peer blob fetcher: candidate doesn't have the blob; trying next"
+                        );
                     }
-                    // Mirror the perpetual insert into the in-memory
-                    // cache backing the local Anemo server so peers
-                    // that ask us for this blob get a hit too.
-                    self.in_memory_blob_store.insert(digest, bytes);
-                    info!(
-                        ?authority,
-                        ?peer_id,
-                        "peer blob fetcher: fetched + cached peer mpc_data blob"
-                    );
+                    Err(e) => {
+                        debug!(
+                            ?announcer,
+                            ?candidate_authority,
+                            ?peer_id,
+                            error = ?e,
+                            "peer blob fetcher: transport error; trying next peer"
+                        );
+                    }
                 }
-                Ok(None) => {
-                    debug!(
-                        ?authority,
-                        ?peer_id,
-                        "peer blob fetcher: peer doesn't have the blob yet; will retry"
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        ?authority,
-                        ?peer_id,
-                        error = ?e,
-                        "peer blob fetcher: transport error; will retry"
-                    );
-                }
+            }
+            if !fetched {
+                debug!(
+                    ?announcer,
+                    "peer blob fetcher: no candidate served the blob this pass; will retry"
+                );
             }
         }
     }

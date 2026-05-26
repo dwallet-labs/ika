@@ -1176,6 +1176,49 @@ impl DWalletMPCManager {
             })
     }
 
+    /// Whether this validator has every frozen-set member's
+    /// mpc_data blob locally available and decode-validated.
+    /// Returns `true` under v3 (off_chain disabled — no frozen set
+    /// to check), under v4 when the frozen set is still empty
+    /// (freeze hasn't fired — caller's gate is purely additive,
+    /// other gates govern session start), or when every authority
+    /// in the frozen set has a blob whose hash matches the frozen
+    /// digest AND the blob structurally decodes.
+    ///
+    /// Used by `perform_cryptographic_computation` to hold back
+    /// network DKG / reconfig session messages on a validator
+    /// whose P2P fan-out hasn't fully converged yet. The remedy
+    /// is "wait until the next tick"; the rest of the network
+    /// proceeds via threshold.
+    fn local_mpc_data_ready_for_frozen_set(&self) -> bool {
+        if !self.epoch_store.off_chain_validator_metadata_enabled() {
+            return true;
+        }
+        let Ok(frozen) = self.epoch_store.get_frozen_mpc_data_input_set_trait() else {
+            return true;
+        };
+        if frozen.is_empty() {
+            // Freeze gate hasn't fired yet. Other readiness
+            // gates (NetworkKeyDKGReadySignal quorum, on-chain
+            // session activation) cover session start; the
+            // local-readiness gate just doesn't have an opinion
+            // until the frozen set materializes.
+            return true;
+        }
+        let Some(perpetual) = self.epoch_store.perpetual_tables_handle() else {
+            return false;
+        };
+        for (_, expected_digest) in &frozen {
+            let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(expected_digest) else {
+                return false;
+            };
+            if !crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
     pub(super) fn new_session(
@@ -1264,11 +1307,32 @@ impl DWalletMPCManager {
                     SessionType::NetworkOwnedAddressSign => true,
                 };
 
-                if should_advance {
-                    Some((session, request))
-                } else {
-                    None
+                if !should_advance {
+                    return None;
                 }
+
+                // Local-readiness gate for network DKG / reconfig
+                // sessions under v4 off_chain mode. These sessions
+                // consume the frozen-set members' mpc_data blobs
+                // (class-groups keys). If the freeze gate has fired
+                // but P2P propagation hasn't delivered every
+                // frozen-set blob to this validator yet, we hold off
+                // emitting our first-round message — other validators
+                // proceed via threshold; we catch up on the next tick
+                // once the missing blob lands. Without this gate, we
+                // would emit a round message computed against an
+                // incomplete view of peer class-groups material and
+                // cross-reject in MPC.
+                if matches!(
+                    &request.protocol_data,
+                    crate::request_protocol_data::ProtocolData::NetworkEncryptionKeyDkg { .. }
+                        | crate::request_protocol_data::ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+                ) && !self.local_mpc_data_ready_for_frozen_set()
+                {
+                    return None;
+                }
+
+                Some((session, request))
             })
             .collect();
 

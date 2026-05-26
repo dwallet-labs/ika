@@ -182,7 +182,31 @@ impl MpcDataAnnouncementSender {
 
     async fn send_epoch_ready_signal(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
-        let tx = build_epoch_mpc_data_ready_signal_transaction(self.authority, self.epoch_id);
+        // Emit-gate: only signal "ready" when this validator has a
+        // stake-quorum of peer mpc_data locally and decode-validated.
+        // Without this gate, a fast signaler could push the network
+        // into a premature freeze that excludes legitimately-slow
+        // honest validators. Returns Ok without sending — the caller
+        // loop tries again next tick once more peer blobs land.
+        if !epoch_store
+            .local_blob_coverage_meets_quorum()
+            .map_err(DwalletMPCError::IkaError)?
+        {
+            debug!(
+                epoch = self.epoch_id,
+                "deferring EpochMpcDataReadySignal: \
+                 local blob coverage below stake-quorum"
+            );
+            return Ok(());
+        }
+        let validated_peers = epoch_store
+            .compute_locally_validated_peers()
+            .map_err(DwalletMPCError::IkaError)?;
+        let tx = build_epoch_mpc_data_ready_signal_transaction(
+            self.authority,
+            self.epoch_id,
+            validated_peers,
+        );
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;

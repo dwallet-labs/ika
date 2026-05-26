@@ -469,6 +469,29 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // protocol-config version, so report enabled.
         true
     }
+
+    fn get_frozen_mpc_data_input_set_trait(
+        &self,
+    ) -> IkaResult<std::collections::HashMap<ika_types::crypto::AuthorityName, [u8; 32]>> {
+        // Tests don't drive the freeze gate; return an empty map
+        // which short-circuits the local-readiness check ("freeze
+        // hasn't fired yet, no opinion") so the per-session gate
+        // doesn't block test sessions.
+        Ok(std::collections::HashMap::new())
+    }
+
+    fn perpetual_tables_handle(
+        &self,
+    ) -> Option<
+        std::sync::Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+    > {
+        // Tests don't install a perpetual tables handle; returning
+        // None is consistent with "freeze hasn't been populated
+        // either," and `local_mpc_data_ready_for_frozen_set`
+        // short-circuits to `true` on an empty frozen set before
+        // it would touch this.
+        None
+    }
 }
 
 impl TestingSubmitToConsensus {

@@ -58,10 +58,10 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         // announcements would come from validators that are
         // already in the committee and can submit themselves —
         // refuse to relay those.
-        if announcement.announcement.epoch != next_epoch {
+        if announcement.auth_sig.epoch != next_epoch {
             return Err(format!(
                 "announcement epoch {} is not next_epoch {next_epoch}",
-                announcement.announcement.epoch
+                announcement.auth_sig.epoch
             ));
         }
         let Some(provider) = epoch_store.joiner_pubkey_provider() else {
