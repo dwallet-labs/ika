@@ -1047,7 +1047,7 @@ fn build_secp256k1_taproot_sign_public_input(
         network_encryption_key_public_data.secp256k1_protocol_public_parameters();
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.secp256k1_decryption_key_share_public_parameters();
-    let (dkg_output, presign_value) = decode_schnorr_vss_dkg_and_presign::<
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
         Secp256k1AsyncDKGProtocol,
         Secp256k1TaprootProtocol,
     >(dwallet_decentralized_public_output, presign)?;
@@ -1081,7 +1081,7 @@ fn build_curve25519_eddsa_sign_public_input(
         network_encryption_key_public_data.curve25519_protocol_public_parameters();
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.curve25519_decryption_key_share_public_parameters();
-    let (dkg_output, presign_value) = decode_schnorr_vss_dkg_and_presign::<
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
         Curve25519AsyncDKGProtocol,
         Curve25519EdDSAProtocol,
     >(dwallet_decentralized_public_output, presign)?;
@@ -1115,7 +1115,7 @@ fn build_ristretto_schnorrkel_sign_public_input(
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.ristretto_decryption_key_share_public_parameters();
-    let (dkg_output, presign_value) = decode_schnorr_vss_dkg_and_presign::<
+    let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
         RistrettoAsyncDKGProtocol,
         RistrettoSchnorrkelSubstrateProtocol,
     >(dwallet_decentralized_public_output, presign)?;
@@ -1209,6 +1209,24 @@ where
             )))
         })?;
     Ok((dkg_output, presign_value))
+}
+
+/// AHE Schnorr DKG + presign decode. Shares the BCS wire shape with ECDSA at
+/// this rev (same versioned wrapper, same `D`/`P` shape); only the per-curve
+/// struct differs. Delegates to [`decode_ecdsa_dkg_and_presign`], which
+/// accepts the V2-tagged AHE presign.
+fn decode_schnorr_ahe_dkg_and_presign<D, P>(
+    dwallet_decentralized_public_output: &SerializedWrappedMPCPublicOutput,
+    presign: &SerializedWrappedMPCPublicOutput,
+) -> DwalletMPCResult<(
+    <D as twopc_mpc::dkg::Protocol>::DecentralizedPartyDKGOutput,
+    <P as twopc_mpc::presign::Protocol>::Presign,
+)>
+where
+    D: twopc_mpc::dkg::Protocol,
+    P: twopc_mpc::presign::Protocol,
+{
+    decode_ecdsa_dkg_and_presign::<D, P>(dwallet_decentralized_public_output, presign)
 }
 
 /// Fast Schnorr (VSS) DKG + presign decode. The dWallet DKG output uses the
