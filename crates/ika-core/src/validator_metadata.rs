@@ -173,6 +173,22 @@ pub enum CanonicalizeReadySignalOutcome {
     BelowQuorumCoverage { attested_stake: u64, quorum: u64 },
 }
 
+/// Outcome of dropping non-committee names during canonicalize.
+/// Surfaced from the helper so callers can decide whether to log
+/// — a non-empty `dropped` set with same-sized `dropped` is
+/// usually a byzantine padding attempt and worth a `warn!`.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CanonicalizeReadySignalDiagnostics {
+    /// Names that appeared in the inbound `validated_peers` but
+    /// were dropped because they have zero stake (not in the
+    /// current committee). Always sorted.
+    pub non_committee_dropped: Vec<AuthorityName>,
+    /// Number of duplicate entries collapsed during dedup.
+    /// Honest emitters dedup before broadcast, so a non-zero
+    /// value is a strong byzantine signal.
+    pub duplicates_collapsed: usize,
+}
+
 /// Canonicalize the `validated_peers` carried on an inbound
 /// `EpochMpcDataReadySignal`. Pure function — extracted from
 /// `AuthorityPerEpochStore::record_epoch_mpc_data_ready_signal`
@@ -186,7 +202,9 @@ pub enum CanonicalizeReadySignalOutcome {
 /// 2. **Committee filter.** Validators not in the current
 ///    committee don't have stake and can't legitimately appear
 ///    as attestation targets. Drop them so they can't be used as
-///    padding.
+///    padding. The committee-filter drops are returned in
+///    `diagnostics.non_committee_dropped` so callers can log
+///    byzantine attempts.
 /// 3. **Quorum-coverage floor.** Reject signals whose canonical
 ///    peer set attests to less than the committee's quorum
 ///    threshold. An honest validator should not signal until its
@@ -194,27 +212,50 @@ pub enum CanonicalizeReadySignalOutcome {
 ///    byzantine signer who races a near-empty signal in early
 ///    only succeeds at pushing the freeze trigger toward a
 ///    premature snapshot that excludes honest-but-slow peers.
+///    Threshold check uses `>= quorum_threshold` — the standard
+///    BFT quorum-stake floor; the `Committee::quorum_threshold`
+///    callers pass in already incorporates the `2f+1` rounding.
 pub fn canonicalize_ready_signal_peers<S>(
     validated_peers: &[AuthorityName],
     stake_of: S,
     quorum_threshold: u64,
-) -> CanonicalizeReadySignalOutcome
+) -> (
+    CanonicalizeReadySignalOutcome,
+    CanonicalizeReadySignalDiagnostics,
+)
 where
     S: Fn(&AuthorityName) -> u64,
 {
     let mut unique: std::collections::BTreeSet<AuthorityName> =
         validated_peers.iter().copied().collect();
+    let duplicates_collapsed = validated_peers.len().saturating_sub(unique.len());
+    let mut non_committee_dropped: Vec<AuthorityName> = unique
+        .iter()
+        .copied()
+        .filter(|peer| stake_of(peer) == 0)
+        .collect();
+    non_committee_dropped.sort();
     unique.retain(|peer| stake_of(peer) > 0);
+    let diagnostics = CanonicalizeReadySignalDiagnostics {
+        non_committee_dropped,
+        duplicates_collapsed,
+    };
     let attested_stake: u64 = unique.iter().map(&stake_of).sum();
     if attested_stake < quorum_threshold {
-        return CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
-            attested_stake,
-            quorum: quorum_threshold,
-        };
+        return (
+            CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
+                attested_stake,
+                quorum: quorum_threshold,
+            },
+            diagnostics,
+        );
     }
-    CanonicalizeReadySignalOutcome::Accept {
-        validated_peers: unique.into_iter().collect(),
-    }
+    (
+        CanonicalizeReadySignalOutcome::Accept {
+            validated_peers: unique.into_iter().collect(),
+        },
+        diagnostics,
+    )
 }
 
 /// Result of `compute_freeze_partition`: which announcers cross
@@ -2377,7 +2418,7 @@ mod tests {
     fn canonicalize_ready_signal_accepts_quorum_coverage() {
         let (a, b, c) = (auth(0xAA), auth(0xBB), auth(0xCC));
         // Stake 1 each; quorum = 3. Signal lists all three.
-        let outcome = canonicalize_ready_signal_peers(
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(
             &[c, a, b], // unsorted on purpose
             |_| 1,
             3,
@@ -2388,17 +2429,21 @@ mod tests {
             }
             other => panic!("expected Accept, got {other:?}"),
         }
+        assert!(diagnostics.non_committee_dropped.is_empty());
+        assert_eq!(diagnostics.duplicates_collapsed, 0);
     }
 
     /// Byzantine signer pads `validated_peers` with duplicates of
     /// the same target to inflate apparent coverage. Canonicalize
     /// must dedup before computing attested-stake — so a list of
     /// `[a, a, a]` with 1-stake-each committee counts as 1 stake,
-    /// well below a quorum of 3.
+    /// well below a quorum of 3. The diagnostics surface the
+    /// number of collapses so the caller can log a byzantine
+    /// signal.
     #[test]
     fn canonicalize_ready_signal_rejects_duplicate_padding() {
         let a = auth(0xAA);
-        let outcome = canonicalize_ready_signal_peers(&[a, a, a, a], |_| 1, 3);
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&[a, a, a, a], |_| 1, 3);
         match outcome {
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
                 attested_stake,
@@ -2409,18 +2454,20 @@ mod tests {
             }
             other => panic!("dup-padding must NOT cross the quorum floor: got {other:?}"),
         }
+        assert_eq!(diagnostics.duplicates_collapsed, 3);
     }
 
     /// Byzantine signer pads with non-committee authorities (zero
     /// stake) to try to make `validated_peers` look full. The
     /// committee filter drops them so they don't contribute toward
-    /// the apparent attested stake.
+    /// the apparent attested stake — and the diagnostics surface
+    /// the dropped names for caller-side logging.
     #[test]
     fn canonicalize_ready_signal_rejects_non_committee_padding() {
         let a = auth(0xAA);
         let outsider1 = auth(0xF0);
         let outsider2 = auth(0xF1);
-        let outcome = canonicalize_ready_signal_peers(
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(
             &[a, outsider1, outsider2],
             |peer| if *peer == a { 1 } else { 0 },
             3,
@@ -2431,6 +2478,10 @@ mod tests {
             }
             other => panic!("non-committee padding must NOT count: got {other:?}"),
         }
+        assert_eq!(
+            diagnostics.non_committee_dropped,
+            vec![outsider1, outsider2]
+        );
     }
 
     /// Byzantine "race the freeze trigger" attack: signal an empty
@@ -2440,11 +2491,36 @@ mod tests {
     /// must reject this.
     #[test]
     fn canonicalize_ready_signal_rejects_empty_set() {
-        let outcome = canonicalize_ready_signal_peers(&[], |_| 1, 3);
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&[], |_| 1, 3);
         assert!(matches!(
             outcome,
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
         ));
+        assert!(diagnostics.non_committee_dropped.is_empty());
+        assert_eq!(diagnostics.duplicates_collapsed, 0);
+    }
+
+    /// Diagnostics surface both kinds of byzantine padding so the
+    /// epoch-store caller can `warn!` on persistent offenders. This
+    /// test pins the dual-signal behavior — a single inbound signal
+    /// can contain both duplicates AND non-committee names.
+    #[test]
+    fn canonicalize_ready_signal_diagnostics_capture_mixed_padding() {
+        let (a, b) = (auth(0xAA), auth(0xBB));
+        let outsider = auth(0xF0);
+        // [a, a, b, outsider, b] — 1 dup of `a`, 1 dup of `b`,
+        // and one non-committee `outsider`.
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(
+            &[a, a, b, outsider, b],
+            |peer| if *peer == a || *peer == b { 1 } else { 0 },
+            2, // quorum just low enough for `{a, b}` to clear
+        );
+        assert!(matches!(
+            outcome,
+            CanonicalizeReadySignalOutcome::Accept { .. }
+        ));
+        assert_eq!(diagnostics.duplicates_collapsed, 2);
+        assert_eq!(diagnostics.non_committee_dropped, vec![outsider]);
     }
 
     /// Pure assertion of the "strict-superset re-emit" gate at

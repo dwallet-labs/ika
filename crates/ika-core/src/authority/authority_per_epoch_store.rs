@@ -2594,11 +2594,25 @@ impl AuthorityPerEpochStore {
         // so the byzantine-resistance properties are unit-testable
         // without a live epoch store. See
         // `validator_metadata::canonicalize_ready_signal_peers`.
-        let canonical_peers = match crate::validator_metadata::canonicalize_ready_signal_peers(
+        let (outcome, diagnostics) = crate::validator_metadata::canonicalize_ready_signal_peers(
             &signal.validated_peers,
             |peer| committee.weight(peer),
             committee.quorum_threshold(),
-        ) {
+        );
+        // Surface byzantine-padding attempts. Honest emitters
+        // dedup + committee-filter before broadcast, so any
+        // collapse here is a strong byzantine signal worth a
+        // `warn!` for operators to act on.
+        if !diagnostics.non_committee_dropped.is_empty() || diagnostics.duplicates_collapsed != 0 {
+            warn!(
+                signer = ?signal.authority,
+                duplicates_collapsed = diagnostics.duplicates_collapsed,
+                non_committee_dropped = ?diagnostics.non_committee_dropped,
+                "EpochMpcDataReadySignal padded with duplicates / non-committee \
+                 authorities — likely byzantine signer"
+            );
+        }
+        let canonical_peers = match outcome {
             crate::validator_metadata::CanonicalizeReadySignalOutcome::Accept {
                 validated_peers,
             } => validated_peers,
