@@ -427,7 +427,7 @@ where
                 mpc_data.and_then(|mpc_data| {
                     let class_groups_public_key_and_proof =
                         bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.class_groups_public_key_and_proof(),
+                            &mpc_data.mpc_data_bytes(),
                         );
 
                     match class_groups_public_key_and_proof {
