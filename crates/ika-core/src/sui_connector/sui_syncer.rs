@@ -422,20 +422,25 @@ where
         let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id)?;
-                match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                    &mpc_data.mpc_data_bytes(),
-                ) {
-                    Ok(k) => Some((*name, k)),
-                    Err(e) => {
-                        warn!(
-                            authority = ?name,
-                            error = ?e,
-                            "Failed to decode mainnet-v1.1.8 ClassGroupsEncryptionKeyAndProof from Move-side mpc_data"
+                let mpc_data = committee_mpc_data.get(id);
+
+                mpc_data.and_then(|mpc_data| {
+                    let class_groups_public_key_and_proof =
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.class_groups_public_key_and_proof(),
                         );
-                        None
+
+                    match class_groups_public_key_and_proof {
+                        Ok(key_and_proof) => Some((*name, key_and_proof)),
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize class groups public key and proof: {}",
+                                e
+                            );
+                            None
+                        }
                     }
-                }
+                })
             })
             .collect();
 
