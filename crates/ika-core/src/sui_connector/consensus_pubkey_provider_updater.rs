@@ -1,0 +1,150 @@
+// Copyright (c) dWallet Labs, Ltd.
+// SPDX-License-Identifier: BSD-3-Clause-Clear
+
+//! Per-epoch task that installs a `ConsensusPubkeyProvider` on the
+//! current `AuthorityPerEpochStore`, sourced from the current
+//! committee's on-chain `StakingPool.validator_info.consensus_pubkey`
+//! fields.
+//!
+//! Step 7's handoff signature verification (`process_handoff_signature`)
+//! reads the installed provider to look up each signer's Ed25519
+//! consensus pubkey. Without a provider installed, every incoming
+//! handoff signature drops with `UnknownSigner`. This task fetches
+//! the validator info for the current committee's members from
+//! chain (`get_validators_info_by_ids`), maps each
+//! `AuthorityName` to its `consensus_pubkey`, and installs the
+//! result as a `StaticConsensusPubkeyProvider`.
+//!
+//! Fetch cadence is intentionally slow (15s) because the consensus
+//! pubkey is fixed at validator registration and shouldn't change
+//! mid-epoch. The task retries on transport failure rather than
+//! aborting.
+
+use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::validator_metadata::StaticConsensusPubkeyProvider;
+use fastcrypto::ed25519::Ed25519PublicKey;
+use ika_sui_client::{SuiClient, SuiClientInner};
+use ika_types::committee::EpochId;
+use ika_types::crypto::AuthorityName;
+use ika_types::sui::SystemInner;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Weak};
+use std::time::Duration;
+use tracing::{info, warn};
+
+pub struct ConsensusPubkeyProviderUpdater<C> {
+    epoch_store: Weak<AuthorityPerEpochStore>,
+    epoch_id: EpochId,
+    sui_client: Arc<SuiClient<C>>,
+    /// Cache of the last-installed `AuthorityName -> consensus_pubkey`
+    /// map (compared by serialized form) so we don't reinstall when
+    /// nothing has changed.
+    last_installed: parking_lot::Mutex<Option<BTreeMap<AuthorityName, Vec<u8>>>>,
+}
+
+impl<C> ConsensusPubkeyProviderUpdater<C>
+where
+    C: SuiClientInner + 'static,
+{
+    pub fn new(
+        epoch_store: Weak<AuthorityPerEpochStore>,
+        epoch_id: EpochId,
+        sui_client: Arc<SuiClient<C>>,
+    ) -> Self {
+        Self {
+            epoch_store,
+            epoch_id,
+            sui_client,
+            last_installed: parking_lot::Mutex::new(None),
+        }
+    }
+
+    pub async fn run(self: Arc<Self>) {
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && !epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "off-chain validator metadata disabled; consensus pubkey updater exiting"
+            );
+            return;
+        }
+        loop {
+            if let Err(err) = self.refresh().await {
+                warn!(error=?err, "consensus pubkey provider refresh failed; will retry");
+            }
+            tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    }
+
+    async fn refresh(&self) -> anyhow::Result<()> {
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return Ok(());
+        };
+        // Direct chain fetch every 15s — small payload, doesn't
+        // race with the syncer's own system-object poll, and
+        // avoids plumbing another receiver out of `SuiSyncer`.
+        let (_, system_inner) = self
+            .sui_client
+            .get_system_inner()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
+        let SystemInner::V1(system_inner) = system_inner;
+        // We want the consensus pubkeys of the current committee
+        // — the validators whose handoff signatures we'll be
+        // verifying this epoch.
+        let validator_ids: Vec<_> = system_inner
+            .validator_set
+            .active_committee
+            .members
+            .iter()
+            .map(|m| m.validator_id)
+            .collect();
+        if validator_ids.is_empty() {
+            return Ok(());
+        }
+        let staking_pools = self
+            .sui_client
+            .get_validators_info_by_ids(validator_ids)
+            .await?;
+
+        let mut consensus_keys_by_name: BTreeMap<AuthorityName, Ed25519PublicKey> = BTreeMap::new();
+        for pool in &staking_pools {
+            let verified = pool
+                .validator_info
+                .verify()
+                .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+            let name: AuthorityName = (&verified.protocol_pubkey).into();
+            consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
+        }
+
+        let serialized: BTreeMap<AuthorityName, Vec<u8>> = consensus_keys_by_name
+            .iter()
+            .map(|(name, pk)| {
+                use fastcrypto::traits::EncodeDecodeBase64;
+                (*name, pk.encode_base64().into_bytes())
+            })
+            .collect();
+        {
+            let last = self.last_installed.lock();
+            if last.as_ref() == Some(&serialized) {
+                return Ok(());
+            }
+        }
+
+        let entries: Vec<(AuthorityName, Ed25519PublicKey)> =
+            consensus_keys_by_name.into_iter().collect();
+        let entry_count = entries.len();
+        let provider = StaticConsensusPubkeyProvider::from_iter(entries);
+        epoch_store.install_consensus_pubkey_provider(Box::new(provider));
+        *self.last_installed.lock() = Some(serialized);
+        info!(
+            epoch = self.epoch_id,
+            members = entry_count,
+            "installed ConsensusPubkeyProvider from current committee"
+        );
+        Ok(())
+    }
+}

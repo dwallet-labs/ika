@@ -458,6 +458,47 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             blending_index,
         )))
     }
+
+    fn cache_network_dkg_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        // Testing impl: no-op. The integration test gate doesn't
+        // exercise handoff attestation contents, so we don't need
+        // a per-test in-memory mirror.
+        Ok(())
+    }
+
+    fn cache_network_reconfiguration_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        Ok(())
+    }
+
+    fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
+        // Testing impl: report frozen so the session-kickoff gate
+        // doesn't block tests that never produce the actual freeze
+        // signal flow. Production builds use the real per-epoch
+        // store, where this reflects the snapshot taken in step 4.
+        Ok(true)
+    }
+
+    fn has_network_key_dkg_ready_quorum(
+        &self,
+        _network_key_id: &sui_types::base_types::ObjectID,
+    ) -> IkaResult<bool> {
+        // Same rationale as `is_mpc_data_frozen`.
+        Ok(true)
+    }
+
+    fn off_chain_validator_metadata_enabled(&self) -> bool {
+        // Tests exercise the off-chain pipeline regardless of
+        // protocol-config version, so report enabled.
+        true
+    }
 }
 
 impl TestingSubmitToConsensus {

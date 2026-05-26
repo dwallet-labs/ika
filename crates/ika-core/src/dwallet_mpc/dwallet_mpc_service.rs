@@ -80,6 +80,36 @@ const FIVE_KILO_BYTES: usize = 5 * 1024;
 
 pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
 
+/// Fingerprint the *content* of a `DWalletNetworkEncryptionKeyData`
+/// that downstream consumers actually depend on: the DKG output
+/// bytes, the latest reconfig output bytes, and the state. We
+/// deliberately exclude `current_epoch` from the fingerprint
+/// because that field changes every epoch boundary by design,
+/// and re-broadcasting on an epoch tick (when the underlying
+/// bytes are unchanged) would force downstream
+/// `instantiate_agreed_keys_from_voted_data` to redo the per-curve
+/// decrypt + key-share regeneration in `update_network_key` — a
+/// ~30s crypto pass that can starve other concurrent MPC work
+/// (notably an in-flight network-key DKG for a *different* key).
+/// Including only the content fields means we re-broadcast iff
+/// the data downstream consumers care about has actually changed.
+fn network_key_data_fingerprint(
+    data: &ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
+) -> [u8; 32] {
+    use fastcrypto::hash::{Blake2b256, HashFunction};
+    let mut hasher = Blake2b256::default();
+    hasher.update(&data.network_dkg_public_output);
+    hasher.update(&data.current_reconfiguration_public_output);
+    let state_tag: u8 = match data.state {
+        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG => 0,
+        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::NetworkDKGCompleted => 1,
+        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration => 2,
+        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted => 3,
+    };
+    hasher.update([state_tag]);
+    hasher.finalize().into()
+}
+
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -105,8 +135,17 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
-    /// Tracks which network key IDs have already been sent through consensus.
-    sent_network_key_ids: HashSet<ObjectID>,
+    /// Per-key fingerprint of the last `DWalletNetworkEncryptionKeyData`
+    /// shape this validator submitted via `ConsensusNetworkKeyData`.
+    /// We re-broadcast when the chain-derived (off-chain-overlaid)
+    /// bytes change — typically once per epoch as reconfig output
+    /// flips — so validators that didn't reach `Finalize` locally for
+    /// a given reconfig can pick up the updated bytes via consensus.
+    /// Without this, the receiver-side `agreed_network_key_data` map
+    /// stays pinned at the first quorum (the DKG output) and reconfig
+    /// state never propagates to lagging validators in v4 off_chain
+    /// mode.
+    sent_network_key_data_fingerprints: HashMap<ObjectID, [u8; 32]>,
     /// Receiver for network-owned-address sign requests.
     network_owned_address_sign_requests_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
@@ -218,7 +257,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
-            sent_network_key_ids: HashSet::new(),
+            sent_network_key_data_fingerprints: HashMap::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
             submitted_noa_sign_messages: HashSet::new(),
@@ -296,7 +335,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
-            sent_network_key_ids: HashSet::new(),
+            sent_network_key_data_fingerprints: HashMap::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
@@ -565,19 +604,50 @@ impl DWalletMPCService {
         // Only include presign requests that haven't been sent yet.
         let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
 
-        // Read raw key data from the Sui watch channel and filter to keys not yet sent
-        // and only in completed states (with actual usable data).
-        // Scoped to ensure the RwLockReadGuard is dropped before any `.await`.
+        // Read raw key data from the Sui watch channel and filter to
+        // keys whose chain-derived shape is *new to consensus* — either
+        // we've never broadcast it, or the bytes have changed since we
+        // last did (typically the reconfig output flipping each epoch).
+        // The fingerprint comparison fires re-broadcast on real content
+        // change, not on every poll, so a stable epoch doesn't spam
+        // consensus.
+        //
+        // Skip keys still in `AwaitingNetworkDKG`: their data hasn't
+        // been computed yet, so there's nothing to vote on.
+        //
+        // Scoped to ensure the RwLockReadGuard is dropped before any
+        // `.await`.
         let new_key_data: Vec<_> = {
             let all_key_data = self.sui_data_requests.network_keys_receiver.borrow();
             all_key_data
                 .values()
-                .filter(|data| !self.sent_network_key_ids.contains(&data.id))
                 .filter(|data| {
                     !matches!(
                         &data.state,
                         DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
                     )
+                })
+                .filter(|data| {
+                    // In v4 off_chain mode, validators that haven't
+                    // locally `Finalize`'d a key's DKG/reconfig have
+                    // empty bytes in their `network_keys_receiver`
+                    // snapshot (the chain blob read is skipped and the
+                    // local overlay has nothing to return yet).
+                    // Broadcasting with empty bytes would split the
+                    // receiver-side vote tally between "real-content"
+                    // and "empty-content" buckets and prevent quorum
+                    // on either — so just don't broadcast yet, and
+                    // wait for the next service-loop tick after the
+                    // P2P fetcher or local `Finalize` populates the
+                    // bytes.
+                    !data.network_dkg_public_output.is_empty()
+                })
+                .filter(|data| {
+                    let fingerprint = network_key_data_fingerprint(data);
+                    self.sent_network_key_data_fingerprints
+                        .get(&data.id)
+                        .copied()
+                        != Some(fingerprint)
                 })
                 .cloned()
                 .collect()
@@ -651,8 +721,12 @@ impl DWalletMPCService {
             }
         }
 
-        // One message per new network key.
+        // One message per network key whose data has changed since
+        // our last broadcast (or which we've never broadcast). The
+        // fingerprint records what we just sent so we don't re-send
+        // identical bytes on the next service-loop tick.
         for key_data in &new_key_data {
+            let fingerprint = network_key_data_fingerprint(key_data);
             let tx = ConsensusTransaction::new_network_key_data(self.name, key_data.clone());
             if let Err(e) = self
                 .dwallet_submit_to_consensus
@@ -661,7 +735,8 @@ impl DWalletMPCService {
             {
                 error!(error = ?e, consensus_round, "Failed to submit network key data");
             } else {
-                self.sent_network_key_ids.insert(key_data.id);
+                self.sent_network_key_data_fingerprints
+                    .insert(key_data.id, fingerprint);
             }
         }
 
@@ -1821,6 +1896,51 @@ impl DWalletMPCService {
                 }
             },
             SessionType::User | SessionType::System => {
+                // Cache canonical (non-rejected) network DKG /
+                // reconfig output bytes locally before they get
+                // moved into the message builder. The handoff
+                // trigger reads these back at EndOfPublish.
+                //
+                // Skipped entirely when the off-chain validator
+                // metadata feature is disabled — leaves the cache
+                // empty and the syncer overlay path naturally
+                // falls through to chain-only reads.
+                if !rejected && self.epoch_store.off_chain_validator_metadata_enabled() {
+                    match &session_request.protocol_data {
+                        ProtocolData::NetworkEncryptionKeyDkg {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_dkg_output(
+                                *dwallet_network_encryption_key_id,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network DKG output"
+                                );
+                            }
+                        }
+                        ProtocolData::NetworkEncryptionKeyReconfiguration {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_reconfiguration_output(
+                                *dwallet_network_encryption_key_id,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network reconfiguration output"
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
                     &session_identifier,
                     session_request,

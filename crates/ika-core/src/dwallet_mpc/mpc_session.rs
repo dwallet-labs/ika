@@ -428,6 +428,20 @@ impl DWalletMPCManager {
             tokio::task::yield_now().await;
         }
 
+        // Drain DKG / reconfig requests parked on the off-chain
+        // freeze gate. We retry every cycle because the gate's
+        // satisfaction signal (a fresh quorum) doesn't trigger us
+        // directly — it shows up in the per-epoch store, which we
+        // re-read inside `handle_mpc_request`. Requests that still
+        // don't pass get re-queued.
+        let pending_freeze = mem::take(&mut self.requests_pending_for_frozen_mpc_data);
+        for request in pending_freeze {
+            if Some(SessionStatus::Failed) == self.handle_mpc_request(request.clone()) {
+                failed_sessions_waiting_to_send_reject.push(request.clone());
+            }
+            tokio::task::yield_now().await;
+        }
+
         // Handle the new requests batch.
         // `handle_mpc_request()` may fail on the condition of either waiting for the next committee or network key information,
         // in which case it would be added to the corresponding queue,
@@ -525,6 +539,42 @@ impl DWalletMPCManager {
                     .push(request);
             }
 
+            return None;
+        }
+
+        // Off-chain mpc_data freeze gate: both network DKG and
+        // reconfig sessions wait until the per-epoch mpc_data input
+        // set is frozen by quorum. Per the design memo, *either*
+        // signal type — `EpochMpcDataReadySignal` or
+        // `NetworkKeyDKGReadySignal` — can drive the freeze, so
+        // gating on the freeze itself covers both cases without
+        // needing a per-key signal as a separate hard requirement.
+        // (Per-key signals remain useful as a narrower early
+        // commitment but aren't a kickoff prerequisite.)
+        //
+        // Bypassed entirely when the off-chain validator metadata
+        // protocol feature is disabled — legacy chain-only behavior.
+        let off_chain_gate_passes = match &request.protocol_data {
+            ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+                !self.epoch_store.off_chain_validator_metadata_enabled()
+                    || self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+            }
+            _ => true,
+        };
+        if !off_chain_gate_passes {
+            debug!(
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                session_identifier=?session_identifier,
+                "off-chain mpc_data freeze gate not satisfied — deferring"
+            );
+            if self
+                .requests_pending_for_frozen_mpc_data
+                .iter()
+                .all(|e| e.session_identifier != session_identifier)
+            {
+                self.requests_pending_for_frozen_mpc_data.push(request);
+            }
             return None;
         }
 

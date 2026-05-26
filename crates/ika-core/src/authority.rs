@@ -853,6 +853,14 @@ impl AuthorityState {
         self.epoch_store.load()
     }
 
+    /// Returns the shared `AuthorityPerpetualTables` handle. Used by
+    /// producer-side broadcasters (e.g. mpc_data announcement) to
+    /// persist content-addressed blobs so peers can fetch them by
+    /// digest over the existing `GetMpcDataBlob` RPC.
+    pub fn perpetual_tables(&self) -> Arc<AuthorityPerpetualTables> {
+        self.perpetual_tables.clone()
+    }
+
     // Load the epoch store, should be used in tests only.
     pub fn epoch_store_for_testing(&self) -> Guard<Arc<AuthorityPerEpochStore>> {
         self.load_epoch_store_one_call_per_task()
@@ -1048,6 +1056,17 @@ impl AuthorityState {
             epoch_start_configuration,
             cur_epoch_store.get_chain_identifier(),
         )?;
+        // The new epoch store starts with `perpetual_tables_for_handoff`
+        // empty. Install ours so the per-epoch handoff record path
+        // persists freshly certified attestations into perpetual
+        // storage from this epoch onward (mirrors what
+        // `IkaNode::new` does for the genesis epoch store). Without
+        // this, every reconfig after the first drops handoff certs
+        // silently — the cert insert site logs "perpetual tables
+        // not installed; handoff cert not persisted" and joiners
+        // never see the cert that authenticated their place in the
+        // committee.
+        new_epoch_store.install_perpetual_tables_for_handoff(self.perpetual_tables.clone());
         self.epoch_store.store(new_epoch_store.clone());
         Ok(new_epoch_store)
     }

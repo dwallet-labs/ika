@@ -21,14 +21,15 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
-// Version 1: Original version.
-// Version 4: Internal presign sessions, BLS checkpoints, NOA checkpoints, +
-//            validator-key publication switch from `ClassGroupsEncryptionKeyAndProof`
-//            (mainnet-v1.1.8 shape, v3) to `ValidatorEncryptionKeysAndProofs`
-//            (class-groups + per-curve PVSS HPKE). DKG / Reconfiguration switch
-//            to `twopc_mpc::decentralized_party::*` (PR #1707 upstream); at v3
-//            they run against `decentralized_party_backward_compatible::*` to
-//            stay wire-compatible with mainnet-v1.1.8 peers.
+// Version 1: Original baseline.
+// Version 2: network_encryption_key_version = 2.
+// Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
+// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions off;
+//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
+//            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
+//            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
+// Version 5: noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -172,6 +173,16 @@ struct FeatureFlags {
     // EdDSAVSS, SchnorrkelSubstrateVSS. DKG-created keys only.
     #[serde(skip_serializing_if = "is_false")]
     fast_schnorr_supported: bool,
+
+    // If true, enables the off-chain validator-metadata pipeline:
+    // per-epoch `ValidatorMpcDataAnnouncement` + ready signals
+    // broadcast over consensus, the step-14 kickoff gate, the
+    // sui_syncer DKG/reconfig blob and class-groups overlays,
+    // and the handoff cert produced at EndOfPublish. False means
+    // legacy chain-only behavior; flipping to true at a protocol
+    // version boundary ensures every validator switches together.
+    #[serde(skip_serializing_if = "is_false")]
+    off_chain_validator_metadata: bool,
 }
 
 #[allow(unused)]
@@ -405,6 +416,10 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
+    }
+
+    pub fn off_chain_validator_metadata_enabled(&self) -> bool {
+        self.feature_flags.off_chain_validator_metadata
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -689,10 +704,13 @@ impl ProtocolConfig {
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
-                    cfg.feature_flags.noa_checkpoints = true;
+                    cfg.feature_flags.off_chain_validator_metadata = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
+                // 5 => {
+                //     cfg.feature_flags.noa_checkpoints = true;
+                // }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
