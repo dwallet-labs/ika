@@ -2347,6 +2347,23 @@ impl AuthorityPerEpochStore {
             // finished its own snapshot ready check. Buffer the
             // peer's signature; `install_expected_handoff_attestation`
             // will replay it once we have something to match against.
+            //
+            // Membership pre-check: drop signatures from authorities
+            // that aren't in the current committee BEFORE the buffer
+            // insert. Without this, a byzantine peer can submit
+            // arbitrarily many `HandoffSignatureMessage`s with random
+            // `signer` names — the per-signer `pending.retain(…)`
+            // dedup below would fail to match (every fake name is
+            // unique), and the buffer would grow without bound until
+            // OOM. With the membership check, the buffer is bounded
+            // by committee size N regardless of byzantine spam.
+            if self.committee.weight(&msg.signer) == 0 {
+                debug!(
+                    signer = ?msg.signer,
+                    "non-committee handoff signature — dropping before buffer insert"
+                );
+                return Ok(None);
+            }
             let mut pending = self.pending_handoff_signatures.lock();
             // Per-signer dedup: a peer re-broadcasting the same V2
             // (or sending two slightly different attestations)
@@ -2538,13 +2555,18 @@ impl AuthorityPerEpochStore {
         Ok(stake >= committee.quorum_threshold())
     }
 
-    /// Records an `EpochMpcDataReadySignal`. Idempotent — repeat
-    /// signals from the same authority are dropped. The *first* time
-    /// the set of signers reaches the committee's `quorum_threshold`
-    /// (by stake), takes the `validator_mpc_data_announcements`
-    /// snapshot into `frozen_validator_mpc_data_input_set`. Subsequent
-    /// signals are recorded but the snapshot is not modified
-    /// (`freeze_mpc_data_if_first` is idempotent on a non-empty
+    /// Records an `EpochMpcDataReadySignal`. A signer's signal may
+    /// be re-emitted within the same epoch when their local
+    /// `validated_peers` set grows (see
+    /// `mpc_data_announcement_sender::send_epoch_ready_signal`).
+    /// We honor that by accepting a follow-up signal from a
+    /// recorded signer iff the new canonical peer set is a strict
+    /// superset of the stored one; same-or-shrinking updates are
+    /// dropped to keep one-shot semantics and prevent a byzantine
+    /// signer from oscillating between attestation sets to mess
+    /// with the tally. The *first* time the set of signers
+    /// reaches `quorum_threshold` by stake, the
+    /// attestation-tally freeze runs (idempotent on a non-empty
     /// frozen table).
     pub fn record_epoch_mpc_data_ready_signal(
         &self,
@@ -2565,12 +2587,7 @@ impl AuthorityPerEpochStore {
             return Ok(());
         }
         let tables = self.tables()?;
-        if tables
-            .epoch_mpc_data_ready_signals
-            .contains_key(&signal.authority)?
-        {
-            return Ok(());
-        }
+        let existing = tables.epoch_mpc_data_ready_signals.get(&signal.authority)?;
         let committee = self.committee();
         // Canonicalize via the pure helper — handles dedup +
         // committee filter + quorum-coverage floor in one place
@@ -2599,6 +2616,26 @@ impl AuthorityPerEpochStore {
                 return Ok(());
             }
         };
+        // Strict-superset re-emit gate: if we already have a
+        // signal from this authority, only accept the new one if
+        // it widens the attestation set. Same-or-shrinking sets
+        // are dropped — keeps one-shot semantics for tally and
+        // prevents a byzantine signer from oscillating attestation
+        // sets to disturb the partition.
+        if let Some(existing) = existing.as_ref() {
+            let existing_set: std::collections::BTreeSet<_> =
+                existing.validated_peers.iter().copied().collect();
+            let new_set: std::collections::BTreeSet<_> = canonical_peers.iter().copied().collect();
+            if !new_set.is_superset(&existing_set) || new_set.len() == existing_set.len() {
+                debug!(
+                    signer = ?signal.authority,
+                    existing_len = existing_set.len(),
+                    new_len = new_set.len(),
+                    "ignoring non-superset EpochMpcDataReadySignal re-emit"
+                );
+                return Ok(());
+            }
+        }
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,
             epoch: signal.epoch,
@@ -3631,11 +3668,13 @@ impl AuthorityPerEpochStore {
             }) => {
                 // Cert (if quorum just crossed) is intentionally
                 // not handled here; perpetual-persist plumbing
-                // (step 7c) hangs off the record outcome from a
-                // dedicated drain task. Dropping it on the floor
-                // for now is safe — the next ordered signature
-                // crossing quorum will mint it again, and
-                // restart-replay rebuilds the aggregator.
+                // lives inside `record_handoff_signature` itself
+                // (it writes the cert into perpetual storage on
+                // the `Certified` outcome). Dropping the return
+                // value here is safe — the next ordered signature
+                // crossing quorum mints the same cert again, and
+                // restart-replay rebuilds the aggregator from
+                // persisted signatures.
                 let _ = self.record_handoff_signature(message)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }

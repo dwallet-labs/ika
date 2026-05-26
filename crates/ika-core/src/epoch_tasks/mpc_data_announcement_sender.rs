@@ -20,7 +20,9 @@
 //! forever, leaving the step-14 kickoff gate permanently closed,
 //! and stalling network DKG / reconfig.
 
-use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::validator_metadata::{
@@ -36,7 +38,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
@@ -60,7 +62,20 @@ pub struct MpcDataAnnouncementSender {
     bls_keypair: Arc<AuthorityKeyPair>,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     announcement_sent: AtomicBool,
-    epoch_ready_signal_sent: AtomicBool,
+    /// Size of the `validated_peers` set in the most recently
+    /// emitted `EpochMpcDataReadySignal`, or `0` if we haven't
+    /// emitted yet this epoch. We re-emit whenever our local
+    /// `compute_locally_validated_peers()` set grows past this
+    /// value — without that, a validator who first emits at
+    /// just-barely-quorum coverage stays pinned at that snapshot
+    /// even as P2P propagation later delivers more peer blobs.
+    /// The network's freeze tally then permanently under-counts
+    /// attestations for those late-arriving honest peers, and
+    /// they get excluded for the entire epoch. Re-emit stops once
+    /// the freeze has fired locally (`is_mpc_data_frozen()`) —
+    /// after that point further attestations don't change the
+    /// already-snapshotted partition.
+    last_emitted_validated_peers_count: AtomicUsize,
     /// Per-key ready signals already submitted this epoch — keeps
     /// us from re-sending if the network-keys snapshot is observed
     /// repeatedly.
@@ -91,7 +106,7 @@ impl MpcDataAnnouncementSender {
             bls_keypair,
             network_keys_receiver,
             announcement_sent: AtomicBool::new(false),
-            epoch_ready_signal_sent: AtomicBool::new(false),
+            last_emitted_validated_peers_count: AtomicUsize::new(0),
             per_key_signals_sent: Mutex::new(HashSet::new()),
         }
     }
@@ -119,7 +134,6 @@ impl MpcDataAnnouncementSender {
             }
 
             if self.announcement_sent.load(Ordering::Acquire)
-                && !self.epoch_ready_signal_sent.load(Ordering::Acquire)
                 && let Err(err) = self.send_epoch_ready_signal().await
             {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
@@ -150,8 +164,8 @@ impl MpcDataAnnouncementSender {
             // Persist failure isn't fatal — the announcement still
             // goes through, but peers won't be able to fetch our
             // blob until the next restart hydrates it (or until
-            // step 9's producer cache writes the same digest on
-            // any future DKG/reconfig output we produce).
+            // the producer-side caching path writes the same digest
+            // again on a future DKG / reconfig output we produce).
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
         // Mirror into the in-memory cache backing the local
@@ -182,12 +196,20 @@ impl MpcDataAnnouncementSender {
 
     async fn send_epoch_ready_signal(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
+        // Stop re-emitting once the network-wide freeze has fired.
+        // After that point further attestations don't change the
+        // already-snapshotted partition.
+        if epoch_store
+            .is_mpc_data_frozen()
+            .map_err(DwalletMPCError::IkaError)?
+        {
+            return Ok(());
+        }
         // Emit-gate: only signal "ready" when this validator has a
         // stake-quorum of peer mpc_data locally and decode-validated.
         // Without this gate, a fast signaler could push the network
         // into a premature freeze that excludes legitimately-slow
-        // honest validators. Returns Ok without sending — the caller
-        // loop tries again next tick once more peer blobs land.
+        // honest validators.
         if !epoch_store
             .local_blob_coverage_meets_quorum()
             .map_err(DwalletMPCError::IkaError)?
@@ -202,6 +224,19 @@ impl MpcDataAnnouncementSender {
         let validated_peers = epoch_store
             .compute_locally_validated_peers()
             .map_err(DwalletMPCError::IkaError)?;
+        // Re-emit policy: emit if we've never emitted (count = 0)
+        // OR the validated set has grown since the last emission.
+        // Re-emitting with a stable set is wasted consensus
+        // bandwidth; emitting with a *strictly larger* set lets
+        // the freeze tally pick up later-arriving honest peers'
+        // blobs that we couldn't attest to on the first emit.
+        let prev_count = self
+            .last_emitted_validated_peers_count
+            .load(Ordering::Acquire);
+        if validated_peers.len() <= prev_count {
+            return Ok(());
+        }
+        let new_count = validated_peers.len();
         let tx = build_epoch_mpc_data_ready_signal_transaction(
             self.authority,
             self.epoch_id,
@@ -210,19 +245,30 @@ impl MpcDataAnnouncementSender {
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
-        self.epoch_ready_signal_sent.store(true, Ordering::Release);
-        info!(epoch = self.epoch_id, "submitted EpochMpcDataReadySignal");
+        self.last_emitted_validated_peers_count
+            .store(new_count, Ordering::Release);
+        info!(
+            epoch = self.epoch_id,
+            validated_peers_count = new_count,
+            prev_count,
+            "submitted EpochMpcDataReadySignal"
+        );
         Ok(())
     }
 
     async fn send_pending_per_key_signals(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
         let snapshot = self.network_keys_receiver.borrow().clone();
-        // For each network key, signal readiness regardless of
-        // state. The chain-side state can lag (it's `AwaitingNetworkDKG`
-        // until output lands), and per-key quorum is what unblocks
-        // the DKG kickoff gate; suppressing readiness while waiting
-        // would deadlock.
+        // For each network key, broadcast a per-key readiness
+        // signal. These signals are currently recorded by
+        // `record_network_key_dkg_ready_signal` but don't feed
+        // the freeze tally (epoch-wide signal is the only freeze
+        // trigger) or session kickoff (which gates only on the
+        // freeze itself). They're kept on the wire so a future
+        // per-key kickoff gate or operator dashboard can
+        // consume them without a separate rollout. We always
+        // signal — chain-side key state can lag, suppressing
+        // would deadlock that future consumer.
         let candidates: Vec<ObjectID> = snapshot.keys().copied().collect();
         for key_id in candidates {
             {

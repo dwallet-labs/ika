@@ -704,8 +704,8 @@ where
 /// means "I don't have this blob off-chain" — the caller falls
 /// back to the chain read.
 ///
-/// This is read-only on the hot path; producer caching (step 9)
-/// is the write side.
+/// This is read-only on the hot path; the producer-side blob
+/// caching path is the write side.
 pub trait NetworkKeyBlobSource: Send + Sync + 'static {
     fn network_dkg_output_blob(
         &self,
@@ -722,7 +722,9 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
 /// proofs map from off-chain announcements + locally-cached
 /// blobs. Implementations return `Complete` only when every
 /// supplied authority resolved — partial maps are rejected
-/// upstream per step 13's strict gate.
+/// upstream because reconfig MPC reads
+/// `Committee.class_groups_public_keys_and_proofs` directly and
+/// any silently-missing entry would drop that validator's share.
 pub trait OffChainCommitteeClassGroupsSource: Send + Sync + 'static {
     fn try_assemble_class_groups(
         &self,
@@ -776,8 +778,10 @@ impl NetworkKeyBlobSource for EpochStoreBlobSource {
 /// 2. Look the blob up by digest in perpetual `mpc_artifact_blobs`.
 /// 3. Decode and accumulate into the class-groups map.
 ///
-/// Any miss along the way produces `Incomplete` — partial maps are
-/// never returned (see step 13's design rationale).
+/// Any miss along the way produces `Incomplete` — partial maps
+/// are never returned because the consuming reconfig MPC would
+/// silently drop the share for any validator missing from the
+/// map.
 pub struct EpochStoreClassGroupsSource {
     epoch_store:
         std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
@@ -2441,6 +2445,43 @@ mod tests {
             outcome,
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
         ));
+    }
+
+    /// Pure assertion of the "strict-superset re-emit" gate at
+    /// the type level. The reciprocal logic lives in
+    /// `AuthorityPerEpochStore::record_epoch_mpc_data_ready_signal`
+    /// and is exercised end-to-end by the integration suite; this
+    /// test just pins the set-theoretic property the gate's filter
+    /// MUST preserve: a follow-up `validated_peers` set replaces
+    /// the prior one iff it's a strict superset.
+    ///
+    /// Without this property a byzantine signer could oscillate
+    /// attestation sets (e.g., flip between `[A, B]` and `[A, C]`)
+    /// to disturb the freeze tally without ever exceeding the
+    /// prior coverage. Strict-superset is the smallest gate that
+    /// admits honest "I now have more peer blobs" updates while
+    /// rejecting byzantine churn.
+    #[test]
+    fn ready_signal_reemit_requires_strict_superset() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        use std::collections::BTreeSet;
+
+        let prior: BTreeSet<_> = [a, b, c].iter().copied().collect();
+
+        // Same set — must NOT replace.
+        let same: BTreeSet<_> = [a, b, c].iter().copied().collect();
+        assert!(same.is_superset(&prior));
+        assert_eq!(same.len(), prior.len());
+
+        // Strict superset — must replace.
+        let widened: BTreeSet<_> = [a, b, c, d].iter().copied().collect();
+        assert!(widened.is_superset(&prior));
+        assert!(widened.len() > prior.len());
+
+        // Different (not a superset) — must NOT replace, even
+        // though it's the same size.
+        let oscillated: BTreeSet<_> = [a, b, d].iter().copied().collect();
+        assert!(!oscillated.is_superset(&prior));
     }
 
     /// Byzantine scenario: a single signer lists a target peer

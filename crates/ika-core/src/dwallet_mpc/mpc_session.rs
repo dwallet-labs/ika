@@ -544,13 +544,13 @@ impl DWalletMPCManager {
 
         // Off-chain mpc_data freeze gate: both network DKG and
         // reconfig sessions wait until the per-epoch mpc_data input
-        // set is frozen by quorum. Per the design memo, *either*
-        // signal type — `EpochMpcDataReadySignal` or
-        // `NetworkKeyDKGReadySignal` — can drive the freeze, so
-        // gating on the freeze itself covers both cases without
-        // needing a per-key signal as a separate hard requirement.
-        // (Per-key signals remain useful as a narrower early
-        // commitment but aren't a kickoff prerequisite.)
+        // set is frozen. Only `EpochMpcDataReadySignal` quorum
+        // triggers the freeze (see the docstring on
+        // `freeze_mpc_data_if_first`); the per-key
+        // `NetworkKeyDKGReadySignal` is recorded but doesn't gate
+        // the kickoff. Gating on the freeze itself is the single
+        // source of truth — once it has fired, the working set is
+        // pinned and DKG / reconfig can proceed.
         //
         // Bypassed entirely when the off-chain validator metadata
         // protocol feature is disabled — legacy chain-only behavior.

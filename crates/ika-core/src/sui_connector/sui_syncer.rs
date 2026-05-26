@@ -587,15 +587,15 @@ where
                 };
                 match chain_fetched {
                     Ok(key_full_data) => {
-                        // Step 12 overlay: prefer locally-cached
-                        // protocol-output blobs (populated by
-                        // step 9's producer cache) over the chain
-                        // blobs. The lightweight metadata (id,
-                        // epoch, state, dkg_at_epoch) always
-                        // comes from chain. If no source is
-                        // installed or the source has neither
-                        // blob, the merged value equals the chain
-                        // copy byte-for-byte.
+                        // Off-chain overlay: prefer locally-cached
+                        // protocol-output blobs (populated by the
+                        // producer-side caching path on MPC output)
+                        // over the chain blobs. The lightweight
+                        // metadata (id, epoch, state, dkg_at_epoch)
+                        // always comes from chain. If no source is
+                        // installed or the source has neither blob,
+                        // the merged value equals the chain copy
+                        // byte-for-byte.
                         let merged = match network_key_blob_source.load_full() {
                             Some(source) => {
                                 crate::validator_metadata::fetch_network_key_data_with_off_chain_blobs(

@@ -1198,11 +1198,12 @@ impl DWalletMPCManager {
             return true;
         };
         if frozen.is_empty() {
-            // Freeze gate hasn't fired yet. Other readiness
-            // gates (NetworkKeyDKGReadySignal quorum, on-chain
-            // session activation) cover session start; the
-            // local-readiness gate just doesn't have an opinion
-            // until the frozen set materializes.
+            // Freeze gate hasn't fired yet. The on-chain
+            // session-activation gate is the single source of
+            // truth for session start while the freeze is
+            // still pending; the local-readiness gate just
+            // doesn't have an opinion until the frozen set
+            // materializes.
             return true;
         }
         let Some(perpetual) = self.epoch_store.perpetual_tables_handle() else {
