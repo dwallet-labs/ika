@@ -113,10 +113,20 @@ impl PeerBlobFetcher {
                     continue;
                 }
                 let digest = signed.announcement.blob_hash;
-                if matches!(
-                    self.perpetual_tables.get_mpc_artifact_blob(&digest),
-                    Ok(Some(_))
-                ) {
+                // If we have the blob in perpetual storage, we're
+                // done fetching it. But we also want the in-memory
+                // store backing the local Anemo server to have it,
+                // so peers asking us for the blob get a hit. After
+                // a restart, perpetual is populated by hydration
+                // but the in-memory store starts empty until the
+                // hydration pass runs — and even after hydration,
+                // any blob inserted by a code path that bypasses
+                // the in-memory mirror (e.g. a future caller) would
+                // leave us serving misses. Backfill on the spot.
+                if let Ok(Some(bytes)) = self.perpetual_tables.get_mpc_artifact_blob(&digest) {
+                    if !self.in_memory_blob_store.contains(&digest) {
+                        self.in_memory_blob_store.insert(digest, bytes);
+                    }
                     continue;
                 }
                 out.push((authority, digest));

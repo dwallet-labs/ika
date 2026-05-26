@@ -808,8 +808,23 @@ pub struct AuthorityPerEpochStore {
     /// the time EndOfPublish fires. Installed by the producer side
     /// when it has the frozen mpc-data input set plus the DKG /
     /// reconfig output digests. Until installed, incoming handoff
-    /// signatures drop with `AttestationMismatch`.
+    /// signatures land in `pending_handoff_signatures` and are
+    /// replayed against the aggregator at install time.
     expected_handoff_attestation: ArcSwapOption<ika_types::handoff::HandoffAttestation>,
+
+    /// Buffer of `HandoffSignatureMessage`s received via
+    /// `EndOfPublishV2` before this validator installed its own
+    /// local expected attestation. Without this buffer, peer V2
+    /// signatures that race ahead of our local install would be
+    /// silently dropped — a validator that's slow to finish its own
+    /// DKG / reconfig snapshot would lose every peer's vote that
+    /// arrived first, leaving the aggregator under quorum for
+    /// epochs at a time. Drained inside
+    /// `install_expected_handoff_attestation` after the aggregator
+    /// is constructed. Bounded by the committee size in practice
+    /// (each validator emits one V2 per epoch).
+    pending_handoff_signatures:
+        parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
 
     /// In-memory stake-weighted accumulator over verified handoff
     /// signatures. Rebuilt from `handoff_signatures` + the installed
@@ -1507,6 +1522,7 @@ impl AuthorityPerEpochStore {
             joiner_pubkey_provider: ArcSwapOption::empty(),
             consensus_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
+            pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
         });
@@ -1946,7 +1962,7 @@ impl AuthorityPerEpochStore {
         if attestation_unchanged && guard.is_some() {
             return Ok(());
         }
-        let mut aggregator = HandoffAggregator::new(self.committee.clone(), attestation);
+        let mut aggregator = HandoffAggregator::new(self.committee.clone(), attestation.clone());
         // Replay persisted signatures into the fresh aggregator.
         // They were verified once already on the way into the DB;
         // re-inserting trusts that (no provider re-verification
@@ -1958,6 +1974,31 @@ impl AuthorityPerEpochStore {
             aggregator.insert_verified(signer, signature);
         }
         *guard = Some(aggregator);
+        drop(guard);
+        // Drain peer V2 signatures that arrived before this
+        // attestation was installed. Each goes through
+        // `process_handoff_signature` for real verification
+        // against `expected`; mismatched-attestation peers get
+        // rejected normally (and stay rejected — they had
+        // outdated bytes). The buffer is bounded by committee
+        // size in practice.
+        let drained: Vec<_> = std::mem::take(&mut *self.pending_handoff_signatures.lock());
+        if !drained.is_empty() {
+            debug!(
+                pending = drained.len(),
+                epoch = attestation.epoch,
+                "replaying buffered peer handoff signatures after attestation install"
+            );
+            for msg in drained {
+                if let Err(e) = self.record_handoff_signature(&msg) {
+                    warn!(
+                        error = ?e,
+                        signer = ?msg.signer,
+                        "buffered handoff signature replay failed — dropping"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2245,9 +2286,22 @@ impl AuthorityPerEpochStore {
             return Ok(None);
         }
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
+            // No expected attestation yet — this validator hasn't
+            // finished its own snapshot ready check. Buffer the
+            // peer's signature; `install_expected_handoff_attestation`
+            // will replay it once we have something to match against.
+            let mut pending = self.pending_handoff_signatures.lock();
+            // Per-signer dedup: a peer re-broadcasting the same V2
+            // (or sending two slightly different attestations)
+            // shouldn't grow the buffer unbounded. Last-write-wins
+            // matches how `process_handoff_signature` treats an
+            // already-recorded signer.
+            pending.retain(|m| m.signer != msg.signer);
+            pending.push(msg.clone());
             debug!(
                 signer = ?msg.signer,
-                "no expected handoff attestation installed — dropping signature"
+                pending_len = pending.len(),
+                "buffering peer handoff signature until expected attestation installs"
             );
             return Ok(None);
         };
@@ -2408,12 +2462,11 @@ impl AuthorityPerEpochStore {
 
     /// Records a `NetworkKeyDKGReadySignal`. Idempotent —
     /// re-broadcasts from the same authority for the same
-    /// `network_key_id` are dropped. The *first* time any
-    /// signal-kind quorum (epoch-wide or per-key) is reached,
-    /// `freeze_mpc_data_if_first` snapshots `mpc_data` into the
-    /// epoch-wide frozen set. Per-key quorums after that point still
-    /// get recorded — DKG kickoff for a specific key may wait on
-    /// the per-key quorum — but the frozen set isn't re-snapshotted.
+    /// `network_key_id` are dropped. This signal is consumed by
+    /// per-key DKG kickoff (which may gate on a per-key quorum)
+    /// but does NOT trigger the `mpc_data` freeze. The freeze is
+    /// gated only on `EpochMpcDataReadySignal` quorum — see the
+    /// docstring on `freeze_mpc_data_if_first` for why.
     pub fn record_network_key_dkg_ready_signal(
         &self,
         signal: &ika_types::validator_metadata::NetworkKeyDKGReadySignal,
@@ -2438,29 +2491,24 @@ impl AuthorityPerEpochStore {
             return Ok(());
         }
         tables.network_key_dkg_ready_signals.insert(&key, &())?;
-
-        let committee = self.committee();
-        let total_stake: u64 = tables
-            .network_key_dkg_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .filter_map(|((key_id, authority), _)| {
-                (key_id == signal.network_key_id).then_some(authority)
-            })
-            .map(|authority| committee.weight(&authority))
-            .sum();
-        if total_stake >= committee.quorum_threshold() {
-            self.freeze_mpc_data_if_first(&tables)?;
-        }
         Ok(())
     }
 
     /// Snapshots `validator_mpc_data_announcements` into
-    /// `frozen_validator_mpc_data_input_set` iff the latter is empty.
-    /// Idempotent — whichever signal type fires the first quorum
-    /// (today only `EpochMpcDataReadySignal`; later steps add
-    /// `NetworkKeyDKGReadySignal`) wins, and subsequent triggers
-    /// no-op.
+    /// `frozen_validator_mpc_data_input_set` iff the latter is
+    /// empty. Idempotent.
+    ///
+    /// Only `EpochMpcDataReadySignal` quorum triggers this. The
+    /// epoch-wide signal carries the implicit promise "I have
+    /// already announced my own mpc_data," so the announcement
+    /// table is guaranteed populated for every signer before any
+    /// of their signals can be counted. Per-key
+    /// `NetworkKeyDKGReadySignal`s do NOT trigger freeze: a
+    /// validator can emit a per-key ready signal without having
+    /// finished its own mpc_data announcement broadcast, and
+    /// freezing on per-key quorum permanently excludes late
+    /// announcers from the input set (which then breaks handoff /
+    /// reconfig / class-groups assembly for them).
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
@@ -2690,6 +2738,21 @@ impl AuthorityPerEpochStore {
                     );
                     return None;
                 }
+                // Under v4 (off_chain_validator_metadata_enabled),
+                // the EndOfPublishV2 bundled variant is the only
+                // legitimate way to vote EOP. A peer emitting
+                // standalone V1 is misconfigured — drop it so we
+                // don't count the vote against a missing handoff.
+                if self
+                    .protocol_config()
+                    .off_chain_validator_metadata_enabled()
+                {
+                    warn!(
+                        %authority,
+                        "EndOfPublish (V1) received under v4 — drop (V2 is the only valid variant)"
+                    );
+                    return None;
+                }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind:
@@ -2699,6 +2762,22 @@ impl AuthorityPerEpochStore {
                     },
                 ..
             }) => {
+                // Under v3 (off_chain_validator_metadata_enabled
+                // is false), V2 isn't part of the protocol —
+                // `record_handoff_signature` no-ops in v3 but
+                // `process_end_of_publish_vote` would still count
+                // the V2 vote and create a half-processed message.
+                // Drop V2 outright under v3.
+                if !self
+                    .protocol_config()
+                    .off_chain_validator_metadata_enabled()
+                {
+                    warn!(
+                        %authority,
+                        "EndOfPublishV2 received under v3 — drop (V1 is the only valid variant)"
+                    );
+                    return None;
+                }
                 if &transaction.sender_authority() != authority {
                     warn!(
                         "EndOfPublishV2 authority {} does not match its author from consensus {}",
@@ -2714,6 +2793,22 @@ impl AuthorityPerEpochStore {
                     warn!(
                         "EndOfPublishV2 bundled handoff signer {} does not match EOP authority {}",
                         handoff_signature.signer, authority
+                    );
+                    return None;
+                }
+                // The bundled attestation must be for the current
+                // epoch. Without this check, a peer could bundle a
+                // stale-epoch attestation: `record_handoff_signature`
+                // would reject the handoff half with
+                // `AttestationMismatch`, but the EOP vote half of
+                // `process_consensus_transaction` would still count.
+                let current_epoch = self.epoch();
+                if handoff_signature.attestation.epoch != current_epoch {
+                    warn!(
+                        attestation_epoch = handoff_signature.attestation.epoch,
+                        current_epoch,
+                        signer = %handoff_signature.signer,
+                        "EndOfPublishV2 bundled attestation is for a different epoch — dropping"
                     );
                     return None;
                 }

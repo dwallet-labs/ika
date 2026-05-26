@@ -405,3 +405,118 @@ pub(crate) fn send_start_network_key_reconfiguration_event(
         ));
     });
 }
+
+/// Validates the multi-key `NetworkKeyData` re-broadcast path:
+/// after K0 is installed, simulate an off-chain reconfig output
+/// update by pushing a *new* `DWalletNetworkEncryptionKeyData`
+/// shape to `network_keys_sender` (same `id`, same DKG bytes,
+/// non-empty `current_reconfiguration_public_output`). The
+/// `dwallet_mpc_service` should detect the content change via its
+/// fingerprint, re-emit `NetworkKeyData` to consensus, and the
+/// receiver-side `agreed_network_key_data` should overwrite with
+/// the new shape. Before the fix that lives next to this test,
+/// the broadcast was one-shot and the updated reconfig output
+/// never propagated to lagging validators.
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_key_data_rebroadcast_on_reconfig_output_change() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+
+    // Bootstrap K0 + assert every validator has it installed.
+    let (next_round, k0_bytes, k0_id) = create_network_key_test(&mut test_state).await;
+
+    // Sanity: at this point every validator's
+    // `agreed_network_key_data` should hold K0 with empty
+    // `current_reconfiguration_public_output`.
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        let agreed = service
+            .dwallet_mpc_manager()
+            .agreed_network_key_data
+            .get(&k0_id)
+            .unwrap_or_else(|| panic!("validator {i} missing K0 in agreed_network_key_data"));
+        assert!(
+            agreed.current_reconfiguration_public_output.is_empty(),
+            "validator {i} K0 should start with empty reconfig output"
+        );
+    }
+
+    // Simulate an off-chain reconfig output arriving on the chain
+    // snapshot — same K0 id, same DKG bytes, but now a non-empty
+    // reconfig output blob.
+    let reconfig_output: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
+    let updated = Arc::new(HashMap::from([(
+        k0_id,
+        DWalletNetworkEncryptionKeyData {
+            id: k0_id,
+            current_epoch: 1,
+            dkg_at_epoch: 1,
+            current_reconfiguration_public_output: reconfig_output.clone(),
+            network_dkg_public_output: k0_bytes.clone(),
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        },
+    )]));
+    test_state.sui_data_senders.iter().for_each(|sender| {
+        let _ = sender.network_keys_sender.send(updated.clone());
+    });
+
+    // First pass: each validator detects the content fingerprint
+    // change and emits a fresh `NetworkKeyData` vote.
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        next_round,
+    );
+    // Second pass: with the votes distributed, the receiver side
+    // hits quorum on the new content and overwrites
+    // `agreed_network_key_data` with the reconfig-output-bearing
+    // shape.
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        let agreed = service
+            .dwallet_mpc_manager()
+            .agreed_network_key_data
+            .get(&k0_id)
+            .unwrap_or_else(|| panic!("validator {i} lost K0 from agreed map"));
+        assert_eq!(
+            agreed.current_reconfiguration_public_output, reconfig_output,
+            "validator {i} did not pick up the updated reconfig output bytes — \
+             rebroadcast path or content-only fingerprint regressed"
+        );
+        assert!(
+            matches!(
+                agreed.state,
+                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
+            ),
+            "validator {i} K0 state should track the updated shape"
+        );
+    }
+}

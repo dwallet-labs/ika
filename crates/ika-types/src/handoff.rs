@@ -130,6 +130,44 @@ mod tests {
         assert!(matches!(keys[2], HandoffItemKey::ValidatorMpcData { .. }));
     }
 
+    /// Reordering the variants of `HandoffItemKey` would silently
+    /// change the BCS-encoded discriminant byte and fork the
+    /// committee on canonical sort + serialization. Sort-stability
+    /// alone isn't enough: a swap could leave sort order intact
+    /// while the on-wire bytes differ between validators running
+    /// pre- and post-swap binaries.
+    ///
+    /// This test pins the BCS variant-discriminant byte for each
+    /// `HandoffItemKey` variant against a fixed, deterministic
+    /// input. If you intentionally change variant order, update
+    /// the expected tags here AND coordinate a network-wide
+    /// upgrade — never silently.
+    #[test]
+    fn handoff_item_key_bcs_variant_tags_are_frozen() {
+        let key_id = ObjectID::from_bytes([0x11; ObjectID::LENGTH]).unwrap();
+        let validator = AuthorityName::new([0x22; 48]);
+
+        let dkg_bytes =
+            bcs::to_bytes(&HandoffItemKey::NetworkDkgOutput { key_id }).expect("encode");
+        assert_eq!(
+            dkg_bytes[0], 0,
+            "NetworkDkgOutput variant tag must remain 0 — reordering the enum forks the committee"
+        );
+        let reconfig_bytes =
+            bcs::to_bytes(&HandoffItemKey::NetworkReconfigurationOutput { key_id })
+                .expect("encode");
+        assert_eq!(
+            reconfig_bytes[0], 1,
+            "NetworkReconfigurationOutput variant tag must remain 1 — reordering the enum forks the committee"
+        );
+        let mpc_data_bytes =
+            bcs::to_bytes(&HandoffItemKey::ValidatorMpcData { validator }).expect("encode");
+        assert_eq!(
+            mpc_data_bytes[0], 2,
+            "ValidatorMpcData variant tag must remain 2 — reordering the enum forks the committee"
+        );
+    }
+
     #[test]
     fn handoff_attestation_bcs_roundtrip_preserves_sorted_items() {
         let key_id = ObjectID::random();

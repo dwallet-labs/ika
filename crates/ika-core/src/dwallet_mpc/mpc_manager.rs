@@ -167,7 +167,7 @@ pub(crate) struct DWalletMPCManager {
         HashMap<ObjectID, HashMap<DWalletNetworkEncryptionKeyData, HashSet<PartyID>>>,
 
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
-    agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
     /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
     /// shape we last passed to `update_network_key`. Used by

@@ -153,10 +153,28 @@ impl AuthorityPerpetualTables {
     }
 
     /// Inserts an MPC artifact blob keyed by `digest = Blake2b256(bytes)`.
-    /// Idempotent — callers writing the same bytes produce the same
-    /// digest. Callers MUST compute the digest from the exact bytes
-    /// they pass in; the table does not re-verify.
+    /// Idempotent on equal `(digest, bytes)`.
+    ///
+    /// Verifies `Blake2b256(bytes) == digest` before writing. The
+    /// blob table is perpetual and is served back to peers by
+    /// digest, so a wrong-digest insert would silently corrupt P2P
+    /// fetches across epochs — peers asking for `digest=X` would
+    /// receive bytes that don't hash to `X` and either fail
+    /// verification or, worse, accept an inconsistent value if
+    /// they don't verify. Caller bugs are caught here at the
+    /// boundary rather than detonating downstream.
     pub fn insert_mpc_artifact_blob(&self, digest: [u8; 32], bytes: &[u8]) -> IkaResult {
+        use fastcrypto::hash::{Blake2b256, HashFunction};
+        let mut hasher = Blake2b256::default();
+        hasher.update(bytes);
+        let computed: [u8; 32] = hasher.finalize().into();
+        if computed != digest {
+            return Err(IkaError::SuiConnectorInternalError(format!(
+                "insert_mpc_artifact_blob: digest mismatch — caller passed {} but Blake2b256(bytes) = {}",
+                hex::encode(digest),
+                hex::encode(computed),
+            )));
+        }
         self.mpc_artifact_blobs.insert(&digest, &bytes.to_vec())?;
         Ok(())
     }
@@ -348,5 +366,47 @@ mod tests {
             .unwrap();
         let count = tables.iter_certified_handoff_attestations().count();
         assert_eq!(count, 1);
+    }
+
+    fn blake2b_digest(bytes: &[u8]) -> [u8; 32] {
+        use fastcrypto::hash::{Blake2b256, HashFunction};
+        let mut hasher = Blake2b256::default();
+        hasher.update(bytes);
+        hasher.finalize().into()
+    }
+
+    #[tokio::test]
+    async fn insert_mpc_artifact_blob_accepts_matching_digest() {
+        let (_dir, tables) = open_tables();
+        let bytes = b"hello world".to_vec();
+        let digest = blake2b_digest(&bytes);
+        tables
+            .insert_mpc_artifact_blob(digest, &bytes)
+            .expect("insert with correct digest must succeed");
+        let loaded = tables.get_mpc_artifact_blob(&digest).unwrap().unwrap();
+        assert_eq!(loaded, bytes);
+    }
+
+    #[tokio::test]
+    async fn insert_mpc_artifact_blob_rejects_mismatched_digest() {
+        let (_dir, tables) = open_tables();
+        let bytes = b"hello world".to_vec();
+        let wrong_digest = [0xFFu8; 32];
+        let err = tables
+            .insert_mpc_artifact_blob(wrong_digest, &bytes)
+            .expect_err("wrong digest must be rejected at the boundary");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("digest mismatch"),
+            "expected digest-mismatch error, got: {msg}"
+        );
+        // Verify nothing was written.
+        assert!(
+            tables
+                .get_mpc_artifact_blob(&wrong_digest)
+                .unwrap()
+                .is_none(),
+            "rejected insert must not write the blob"
+        );
     }
 }
