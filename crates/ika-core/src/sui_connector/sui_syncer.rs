@@ -10,7 +10,7 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{Committee, EpochId, StakeUnit, decode_validator_encryption_keys};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -362,6 +362,7 @@ where
                         secp256k1_pvss = bundles.secp256k1_pvss.len(),
                         secp256r1_pvss = bundles.secp256r1_pvss.len(),
                         ristretto_pvss = bundles.ristretto_pvss.len(),
+                        vss_hpke = bundles.vss_hpke.len(),
                         "assembled committee class-groups off-chain"
                     );
                     return Ok(Committee::new(
@@ -374,6 +375,7 @@ where
                         bundles.secp256k1_pvss,
                         bundles.secp256r1_pvss,
                         bundles.ristretto_pvss,
+                        bundles.vss_hpke,
                         quorum_threshold,
                         validity_threshold,
                     ));
@@ -411,41 +413,35 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        // Shape-tolerant decode per validator. PVSS HashMaps gain an entry only
-        // when the validator published the post-PR-#1707 bundle shape;
-        // mainnet-v1.1.8-shape validators contribute only their class-groups key.
-        let decoded_per_validator: Vec<_> = committee
+        // Chain reads are the mainnet-v1.1.8 shape always: the Move-side
+        // `MPCDataV1::mpc_data_bytes` field stores bare
+        // `ClassGroupsEncryptionKeyAndProof`. The full bundle (PVSS + VSS HPKE)
+        // arrives via the off-chain validator-metadata pipeline (see PR #1721)
+        // and is overlaid onto Committee through a separate path. No
+        // try-then-fallback decode — one shape per path.
+        let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id)?;
-                let decoded = decode_validator_encryption_keys(
-                    &mpc_data.class_groups_public_key_and_proof(),
-                );
-                if decoded.is_none() {
-                    warn!(
-                        authority = ?name,
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
-                    );
-                }
-                decoded.map(|d| (*name, d))
-            })
-            .collect();
+                let mpc_data = committee_mpc_data.get(id);
 
-        let class_group_encryption_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .map(|(n, v)| (*n, v.class_groups.clone()))
-            .collect();
-        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(n, v)| v.secp256k1_pvss.clone().map(|k| (*n, k)))
-            .collect();
-        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(n, v)| v.secp256r1_pvss.clone().map(|k| (*n, k)))
-            .collect();
-        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(n, v)| v.ristretto_pvss.clone().map(|k| (*n, k)))
+                mpc_data.and_then(|mpc_data| {
+                    let class_groups_public_key_and_proof =
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.class_groups_public_key_and_proof(),
+                        );
+
+                    match class_groups_public_key_and_proof {
+                        Ok(key_and_proof) => Some((*name, key_and_proof)),
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize class groups public key and proof: {}",
+                                e
+                            );
+                            None
+                        }
+                    }
+                })
+            })
             .collect();
 
         Ok(Committee::new(
@@ -455,9 +451,12 @@ where
                 .map(|(_, (name, stake))| (*name, *stake))
                 .collect(),
             class_group_encryption_keys_and_proofs,
-            secp256k1_pvss_public_keys_and_proofs,
-            secp256r1_pvss_public_keys_and_proofs,
-            ristretto_pvss_public_keys_and_proofs,
+            // PVSS + VSS HPKE come from the off-chain pipeline (PR #1721), not
+            // from chain reads — empty here.
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
             quorum_threshold,
             validity_threshold,
         ))

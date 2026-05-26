@@ -26,7 +26,8 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use commitment::CommitmentSizedNumber;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -1624,7 +1625,7 @@ impl DWalletMPCService {
                 }
                 Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                     malicious_parties,
-                    private_output: _,
+                    private_output,
                     public_output_value,
                 }) => {
                     info!(
@@ -1632,6 +1633,61 @@ impl DWalletMPCService {
                         validator=?validator_name,
                         "Reached output for session"
                     );
+
+                    // Fast Schnorr (VSS) presign: persist the private nonce-share
+                    // output. The GOD layer produces a blended
+                    // `bcs(Vec<PrivatePresignOutput>)`; split it into one serialized
+                    // `PrivatePresignOutput` per blending index and persist each row
+                    // keyed by `(presign session id, blending index)`, for the later
+                    // sign to recover. All other protocols (AHE presign, DKG, reconfig,
+                    // sign) have empty/irrelevant private outputs — skip.
+                    if matches!(
+                        request.protocol_data,
+                        ProtocolData::Presign { .. } | ProtocolData::InternalPresign { .. }
+                    ) && let Some(signature_algorithm) = request
+                        .protocol_data
+                        .signature_algorithm()
+                        .filter(|algorithm| algorithm.is_vss())
+                    {
+                        let presign_session_id = CommitmentSizedNumber::from_le_slice(
+                            session_identifier.to_vec().as_slice(),
+                        );
+                        match crate::dwallet_mpc::sign::split_vss_presign_private_outputs(
+                            signature_algorithm,
+                            &private_output,
+                        ) {
+                            Ok(entries) => {
+                                entries
+                                    .into_iter()
+                                    .for_each(|(blending_index, entry_bytes)| {
+                                        if let Err(err) =
+                                            self.epoch_store.store_presign_private_output(
+                                                presign_session_id,
+                                                blending_index,
+                                                entry_bytes,
+                                            )
+                                        {
+                                            error!(
+                                                ?session_identifier,
+                                                validator=?validator_name,
+                                                ?blending_index,
+                                                error=?err,
+                                                "failed to persist VSS presign private output"
+                                            );
+                                        }
+                                    });
+                            }
+                            Err(err) => {
+                                error!(
+                                    ?session_identifier,
+                                    validator=?validator_name,
+                                    error=?err,
+                                    "failed to split blended VSS presign private output"
+                                );
+                            }
+                        }
+                    }
+
                     let consensus_adapter = self.dwallet_submit_to_consensus.clone();
                     let malicious_authorities = if !malicious_parties.is_empty() {
                         let malicious_authorities =
@@ -2301,7 +2357,8 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
+        let (_validator_mpc_secrets, validator_encryption_keys_and_proofs) =
+            ValidatorMPCSecrets::from_seed(&root_seed);
 
         // Verify that the validators local class-groups key is the
         // same as stored in the system state object onchain.
@@ -2312,11 +2369,8 @@ impl DWalletMPCService {
         // groups + 3 PVSS keys); compare against the same combined struct re-derived from
         // the local key material. See the wire-incompat warning on
         // `ValidatorEncryptionKeysAndProofs`.
-        if onchain_validator
-            .get_mpc_data()
-            .unwrap()
-            .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
+        if onchain_validator.get_mpc_data().unwrap().mpc_data_bytes()
+            != bcs::to_bytes(&validator_encryption_keys_and_proofs)?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),

@@ -51,6 +51,7 @@ use crate::system_checkpoints::{
     PendingSystemCheckpointV1, SystemCheckpointHeight, SystemCheckpointService,
     SystemCheckpointServiceNotify,
 };
+use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use group::PartyID;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
@@ -333,6 +334,26 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         presign_session_id: SessionIdentifier,
         presign_blending_index: u16,
     ) -> IkaResult<bool>;
+
+    /// Persists a single Fast Schnorr (VSS) presign's private output
+    /// (`bcs(PrivatePresignOutput)`) keyed by `(presign session id, blending index)`,
+    /// so the later sign can recover the nonce shares for that exact blended presign.
+    /// Self-prunes at epoch rotation. VSS sessions only.
+    fn store_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+        private_output: Vec<u8>,
+    ) -> IkaResult<()>;
+
+    /// Loads a persisted VSS presign private output by `(session id, blending index)`,
+    /// if present. Absent on a non-VSS presign, after epoch rotation, or on disk loss
+    /// — the sign treats `None` as a soft-fail (this validator drops out of the quorum).
+    fn get_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+    ) -> IkaResult<Option<Vec<u8>>>;
 
     /// Assigns a presign to a user by moving it from the internal pool to the assigned pool.
     /// This is used for external presign requests.
@@ -625,6 +646,29 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     ) -> IkaResult<bool> {
         let tables = self.tables()?;
         tables.is_presign_used(presign_session_id, presign_blending_index)
+    }
+
+    fn store_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+        private_output: Vec<u8>,
+    ) -> IkaResult<()> {
+        let tables = self.tables()?;
+        tables.store_presign_private_output(
+            presign_session_id,
+            presign_blending_index,
+            private_output,
+        )
+    }
+
+    fn get_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        let tables = self.tables()?;
+        tables.get_presign_private_output(presign_session_id, presign_blending_index)
     }
 
     fn assign_presign(
@@ -953,6 +997,22 @@ pub struct AuthorityEpochTables {
     #[default_options_override_fn = "internal_presign_pool_table_default_config"]
     internal_presign_pool_schnorrkel_substrate:
         DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    /// Fast Schnorr (VSS) internal presign pools. Same structure as the AHE pools
+    /// above: keyed by `(network_encryption_key_id: ObjectID, session_sequence_number:
+    /// u64)`, value `(SessionIdentifier, Vec<(blending_index, presign_bytes)>)` — the
+    /// session that produced the presigns plus its blending-index-tagged serialized
+    /// presigns, consumed lowest-sequence-number-first within a given key ID. Kept
+    /// separate from their AHE siblings because VSS presign bytes are a different
+    /// format (a VSS sign must never pop an AHE presign, or vice versa).
+    #[default_options_override_fn = "internal_presign_pool_table_default_config"]
+    internal_presign_pool_taproot_vss:
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    #[default_options_override_fn = "internal_presign_pool_table_default_config"]
+    internal_presign_pool_eddsa_vss:
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
+    #[default_options_override_fn = "internal_presign_pool_table_default_config"]
+    internal_presign_pool_schnorrkel_substrate_vss:
+        DBMap<(ObjectID, u64), (SessionIdentifier, Vec<(u16, Vec<u8>)>)>,
 
     /// Tracks the total count of presigns in each pool by (signature algorithm, network encryption key ID).
     /// Value is the count.
@@ -999,6 +1059,28 @@ pub struct AuthorityEpochTables {
     assigned_presigns_taproot: DBMap<(SessionIdentifier, u16), AssignedPresign>,
     #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
     assigned_presigns_schnorrkel_substrate: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    // Fast Schnorr (VSS) assigned-presign pools (separate from AHE siblings).
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_taproot_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_eddsa_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+    #[default_options_override_fn = "assigned_presign_pool_table_default_config"]
+    assigned_presigns_schnorrkel_substrate_vss: DBMap<(SessionIdentifier, u16), AssignedPresign>,
+
+    /// Per-validator secret nonce shares from Fast Schnorr (VSS) presign sessions,
+    /// persisted between presign-finalize and sign so the sign party can rebuild its
+    /// `PrivateInput`. AHE Schnorr has no such secret presign output (its nonce lives
+    /// encrypted inside the on-chain presign), so only VSS sessions write here.
+    ///
+    /// Key: `(presign session_id, blending_index)` — uniquely identifies a single
+    ///      blended presign, matching the pool/`used_presigns` keying. Carried from
+    ///      the presign pop, so the sign no longer re-parses it from the public presign.
+    /// Value: `bcs(PrivatePresignOutput)` — the single output for that blending index.
+    ///
+    /// Self-prunes on epoch rotation (per-epoch physical DB drop). A missing row at
+    /// sign time is a soft-fail that excludes this validator's contribution, not a
+    /// hard error — the 2f+1 quorum absorbs it.
+    presign_private_outputs: DBMap<(CommitmentSizedNumber, u16), Vec<u8>>,
 
     /// Latest `ValidatorMpcDataAnnouncement` observed for each
     /// current-committee validator this epoch, signed with their
@@ -1185,6 +1267,11 @@ impl AuthorityEpochTables {
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 &self.internal_presign_pool_schnorrkel_substrate
             }
+            DWalletSignatureAlgorithm::TaprootVSS => &self.internal_presign_pool_taproot_vss,
+            DWalletSignatureAlgorithm::EdDSAVSS => &self.internal_presign_pool_eddsa_vss,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                &self.internal_presign_pool_schnorrkel_substrate_vss
+            }
         }
     }
 
@@ -1365,6 +1452,29 @@ impl AuthorityEpochTables {
             .contains_key(&(presign_session_id, presign_blending_index))?)
     }
 
+    pub fn store_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+        private_output: Vec<u8>,
+    ) -> IkaResult<()> {
+        self.presign_private_outputs.insert(
+            &(presign_session_id, presign_blending_index),
+            &private_output,
+        )?;
+        Ok(())
+    }
+
+    pub fn get_presign_private_output(
+        &self,
+        presign_session_id: CommitmentSizedNumber,
+        presign_blending_index: u16,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self
+            .presign_private_outputs
+            .get(&(presign_session_id, presign_blending_index))?)
+    }
+
     /// Returns a reference to the assigned presign pool table for the given signature algorithm.
     fn assigned_presign_pool_table(
         &self,
@@ -1377,6 +1487,11 @@ impl AuthorityEpochTables {
             DWalletSignatureAlgorithm::Taproot => &self.assigned_presigns_taproot,
             DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 &self.assigned_presigns_schnorrkel_substrate
+            }
+            DWalletSignatureAlgorithm::TaprootVSS => &self.assigned_presigns_taproot_vss,
+            DWalletSignatureAlgorithm::EdDSAVSS => &self.assigned_presigns_eddsa_vss,
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                &self.assigned_presigns_schnorrkel_substrate_vss
             }
         }
     }
@@ -1595,6 +1710,12 @@ impl AuthorityPerEpochStore {
             self.committee.secp256k1_pvss_public_keys_and_proofs.clone(),
             self.committee.secp256r1_pvss_public_keys_and_proofs.clone(),
             self.committee.ristretto_pvss_public_keys_and_proofs.clone(),
+            // Test-only helper: the prior committee retains only the verified
+            // public-key values, not the raw VSS HPKE proofs, so the next-epoch
+            // committee starts with an empty raw input. Tests that need a
+            // populated VSS-verified map should call
+            // `Committee::set_vss_hpke_verified_for_testing` on the result.
+            std::collections::HashMap::new(),
             self.committee.quorum_threshold,
             self.committee.validity_threshold,
         );

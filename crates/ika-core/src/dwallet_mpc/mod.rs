@@ -3,6 +3,7 @@
 
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
+use group::curve25519;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, RistrettoPvssEncryptionKeyAndProof,
     Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
@@ -98,6 +99,12 @@ pub(crate) struct ValidatorMpcKeysByPartyId {
     pub secp256k1_pvss: HashMap<PartyID, Secp256k1PvssEncryptionKeyAndProof>,
     pub secp256r1_pvss: HashMap<PartyID, Secp256r1PvssEncryptionKeyAndProof>,
     pub ristretto_pvss: HashMap<PartyID, RistrettoPvssEncryptionKeyAndProof>,
+    /// Fast Schnorr (VSS) HPKE encryption public **key values** (curve25519,
+    /// serializable form), already filtered to the parties whose UC proof of
+    /// knowledge verified at [`Committee::new`]. Read sites rebuild
+    /// `EncryptionPublicKey` via `EncryptionPublicKey::new(value, &pp)` — a
+    /// cheap curve-point parse — without re-running the UC proof verification.
+    pub vss_hpke_verified_party_encryption_key_values: HashMap<PartyID, curve25519::Value>,
 }
 
 pub(crate) fn get_validator_mpc_keys_by_party_id(
@@ -143,6 +150,10 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
         secp256k1_pvss,
         secp256r1_pvss,
         ristretto_pvss,
+        // Verified-once at Committee::new — copy the cached values directly.
+        vss_hpke_verified_party_encryption_key_values: committee
+            .vss_hpke_verified_party_encryption_key_values
+            .clone(),
     })
 }
 

@@ -142,6 +142,14 @@ impl ProtocolCryptographicData {
                             .map_err(DwalletMPCError::from)?;
                     Vec::new()
                 }
+                VersionedPresignOutput::V3(_) => {
+                    // V3 is Fast Schnorr (VSS) presign, which is NOA-only and
+                    // never goes through user-driven partial-signature verification.
+                    return Err(DwalletMPCError::InvalidInput(
+                        "PartialSignatureVerification is not supported for VSS presigns (V3)"
+                            .to_string(),
+                    ));
+                }
                 VersionedPresignOutput::V2(_) => {
                     match data.signature_algorithm {
                         DWalletSignatureAlgorithm::ECDSASecp256k1 => {

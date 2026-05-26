@@ -3,7 +3,9 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStoreTrait;
 use crate::dwallet_mpc::integration_tests::create_dwallet::{
     DWalletTestResult, create_dwallet_test_inner,
 };
-use crate::dwallet_mpc::integration_tests::network_dkg::create_network_key_test;
+use crate::dwallet_mpc::integration_tests::network_dkg::{
+    create_network_key_test, reconfigure_network_key,
+};
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::IntegrationTestState;
 use crate::dwallet_session_request::DWalletSessionRequest;
@@ -632,3 +634,179 @@ async fn global_presign_request_uses_correct_metadata_test() {
 
     info!("Global presign request test completed successfully!");
 }
+
+// === Fast Schnorr (VSS) external (user-driven) sign E2E tests ===
+
+/// Full external VSS sign flow for a standard (universal) user dWallet:
+/// reconfigured network key → user DKG → fill the internal VSS presign pool →
+/// global presign → centralized party's partial signature (the `Unverified` path,
+/// unlike NOA's emulated `ToBeEmulated` path) → VSS sign.
+///
+/// This exercises external/global VSS presign and the user-driven VSS sign path,
+/// complementing the NOA VSS tests (which cover the emulated-centralized-party path).
+/// `signature_algorithm_index` is the per-curve algorithm index the centralized party
+/// expects (TaprootVSS=2, EdDSAVSS=1, SchnorrkelSubstrateVSS=1); each VSS algorithm
+/// has a single hash at index 0.
+async fn external_vss_sign_flow(
+    curve: DWalletCurve,
+    signature_algorithm: DWalletSignatureAlgorithm,
+    signature_algorithm_index: u32,
+    hash_scheme: HashScheme,
+) {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = utils::create_test_protocol_config_guard();
+    let epoch_id = 1;
+    let mut test_state = utils::build_test_state(4);
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
+
+    // Create a standard (universal) user dWallet on the curve, on the ORIGINAL
+    // (pre-reconfig) network key. VSS sign requires a UniversalPublicDKGOutput, which
+    // the standard DKG flow produces, and the DKG runs against the pre-reconfig key
+    // exactly as the user-driven sign flow does.
+    let (consensus_round, network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    let DWalletTestResult {
+        flow_completion_consensus_round: consensus_round,
+        dkg_output: dwallet_dkg_output,
+        dwallet_secret_key_share,
+        ..
+    } = create_dwallet_test_inner(
+        &mut test_state,
+        consensus_round,
+        network_key_id,
+        network_key_bytes.clone(),
+        curve,
+    )
+    .await;
+    info!(?curve, ?signature_algorithm, "VSS dWallet DKG completed");
+
+    // Now reconfigure the network key — VSS sign reads the per-curve secret-key
+    // polynomial commitments and recovers each validator's share from the
+    // reconfiguration output.
+    let consensus_round = reconfigure_network_key(
+        &mut test_state,
+        consensus_round + 1,
+        network_key_id,
+        network_key_bytes.clone(),
+    )
+    .await;
+
+    // Fill the internal VSS presign pool, then request a global presign.
+    let consensus_round = utils::advance_rounds_while_presign_pool_empty(
+        &mut test_state,
+        signature_algorithm,
+        network_key_id,
+        consensus_round,
+    )
+    .await;
+    let presign_id = ObjectID::random();
+    send_global_presign_request_event(
+        epoch_id,
+        &test_state.sui_data_senders,
+        [11; 32],
+        11,
+        presign_id,
+        network_key_id,
+        curve,
+        signature_algorithm,
+    );
+    let (consensus_round, presign_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round).await;
+    let DWalletCheckpointMessageKind::RespondDWalletPresign(presign_output) =
+        presign_checkpoint.messages().clone().pop().unwrap()
+    else {
+        panic!("Expected DWallet presign output message");
+    };
+
+    // The centralized party produces its partial signature (Unverified path).
+    let protocol_pp =
+        network_dkg_public_output_to_protocol_pp_inner(curve as u32, network_key_bytes).unwrap();
+    let message_to_sign = bcs::to_bytes("Hello Fast Schnorr World!").unwrap();
+    let centralized_sign = advance_centralized_sign_party(
+        protocol_pp,
+        dwallet_dkg_output.output.clone(),
+        dwallet_secret_key_share,
+        presign_output.presign.clone(),
+        message_to_sign.clone(),
+        curve as u32,
+        signature_algorithm_index,
+        0, // each VSS algorithm has its single hash at index 0
+    )
+    .unwrap();
+    send_start_sign_event(
+        epoch_id,
+        &test_state.sui_data_senders,
+        [12; 32],
+        12,
+        network_key_id,
+        ObjectID::from_bytes(dwallet_dkg_output.dwallet_id).unwrap(),
+        dwallet_dkg_output.output,
+        presign_output.presign,
+        centralized_sign,
+        message_to_sign,
+        curve,
+        signature_algorithm,
+        hash_scheme,
+    );
+    let (_, sign_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, consensus_round + 1).await;
+    let DWalletCheckpointMessageKind::RespondDWalletSign(_sign_output) =
+        sign_checkpoint.messages().clone().pop().unwrap()
+    else {
+        panic!("Expected DWallet sign output message");
+    };
+    info!(
+        ?curve,
+        ?signature_algorithm,
+        "Fast Schnorr (VSS) external sign E2E test completed"
+    );
+}
+
+// External (user-driven) VSS sign is not externally accessible for now —
+// Fast Schnorr is internal-NOA-only. VSS variants were removed from
+// `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES` and the SDK's
+// `SignatureAlgorithm` enum, so on-chain `validate_curve_and_signature_algorithm`
+// aborts external `request_sign` / `request_presign` for VSS. These tests
+// exercise that now-unreachable path; they are kept in-tree (the underlying
+// `external_vss_sign_flow` Rust path is preserved) and will be re-enabled when
+// VSS is opened up externally.
+
+#[ignore = "external VSS sign is gated off; VSS is internal-NOA-only for now"]
+#[tokio::test]
+#[cfg(test)]
+async fn test_external_vss_sign_eddsa() {
+    external_vss_sign_flow(
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSAVSS,
+        1,
+        HashScheme::SHA512,
+    )
+    .await;
+}
+
+#[ignore = "external VSS sign is gated off; VSS is internal-NOA-only for now"]
+#[tokio::test]
+#[cfg(test)]
+async fn test_external_vss_sign_taproot() {
+    external_vss_sign_flow(
+        DWalletCurve::Secp256k1,
+        DWalletSignatureAlgorithm::TaprootVSS,
+        2,
+        HashScheme::SHA256,
+    )
+    .await;
+}
+
+// NOTE: external (user-driven) SchnorrkelSubstrateVSS sign is intentionally NOT
+// tested here. It needs a *user* Ristretto dWallet, but the create-dWallet test
+// helper's encrypted-user-share path fails for Ristretto
+// (`encrypt_secret_key_share_and_prove_v2` returns a group error at
+// `create_dwallet.rs:368`) — a pre-existing harness/curve limitation unrelated to
+// Fast Schnorr (the existing create-dWallet tests only ever use Secp256k1).
+// SchnorrkelSubstrateVSS sign is covered by
+// `test_network_owned_address_sign_schnorrkel_substrate_vss` (the NOA path, which
+// uses the emulated threshold DKG and encrypts no user share).

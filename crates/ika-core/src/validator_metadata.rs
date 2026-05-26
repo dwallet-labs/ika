@@ -12,7 +12,7 @@
 //! `timestamp_ms` parameter), so producer-side and any verifier
 //! re-derivation will produce byte-identical blobs.
 
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey, Ed25519Signature};
@@ -137,21 +137,20 @@ pub fn verify_joiner_announcement(
 /// paths hashing this output produce the same digest.
 ///
 /// At `network_encryption_key_version == 3` (the v4 protocol shape)
-/// the inner bytes are the post-PR-#1707 `ValidatorEncryptionKeysAndProofs`
-/// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
-/// `decode_validator_encryption_keys` accepts either shape (new or
-/// mainnet-v1.1.8 class-groups-only); using the new shape here is
-/// what lets the off-chain class-groups assembler resolve all four
-/// committee key sets on a v4 cluster and avoid the "0/N PVSS
-/// keys decoded" rejection during network DKG and reconfig.
+/// the inner bytes are the full 5-field `ValidatorEncryptionKeysAndProofs`
+/// bundle — class-groups + per-curve PVSS HPKE keys + the Fast Schnorr (VSS)
+/// curve25519 HPKE key + their proofs. The off-chain pipeline propagates
+/// these bytes verbatim; the receiving side deserializes directly with
+/// `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>` (no shape-tolerant
+/// fallback — chain reads use the bare `ClassGroupsEncryptionKeyAndProof`
+/// shape and never reach this path).
 pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
-    let bundle =
-        ClassGroupsAndPvssKeyPairAndProof::from_seed(seed).validator_encryption_keys_and_proofs();
+    let (_secrets, bundle) = ValidatorMPCSecrets::from_seed(seed);
     let inner = bcs::to_bytes(&bundle).map_err(|e| {
         IkaError::Unknown(format!("bcs encode ValidatorEncryptionKeysAndProofs: {e}"))
     })?;
     let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-        class_groups_public_key_and_proof: inner,
+        mpc_data_bytes: inner,
     });
     bcs::to_bytes(&mpc_data)
         .map_err(|e| IkaError::Unknown(format!("bcs encode versioned mpc data: {e}")))
@@ -380,14 +379,13 @@ pub fn build_network_key_dkg_ready_signal_transaction(
 /// `Committee.class_groups_public_keys_and_proofs` directly and an
 /// empty/partial entry silently drops that validator's share.
 /// Assembled validator-key bundles needed to build a `Committee`
-/// off-chain. `class_groups` is required for every committee
-/// authority (the strict gate). The three PVSS halves are
-/// opportunistic per-validator: present only when the validator
-/// published under the post-PR-#1707 shape
-/// (`network_encryption_key_version == 3`). At protocol_version
-/// `<= 4`, validators publish the bare class-groups shape and the
-/// three PVSS maps come back empty — matching the chain-fallback's
-/// `filter_map` semantics in `sui_syncer::new_committee`.
+/// off-chain. Every committee authority MUST contribute the full
+/// 5-field `ValidatorEncryptionKeysAndProofs` bundle: the off-chain
+/// pipeline propagates this bundle verbatim, and the assembler decodes
+/// directly (no shape-tolerant fallback). All five maps are populated
+/// for every authority in a `Complete` assembly. Chain reads, by
+/// contrast, only carry the bare class-groups shape and never reach
+/// this struct.
 #[derive(Debug)]
 pub struct OffChainCommitteeBundles {
     pub class_groups: std::collections::HashMap<
@@ -405,6 +403,13 @@ pub struct OffChainCommitteeBundles {
     pub ristretto_pvss: std::collections::HashMap<
         AuthorityName,
         ika_types::committee::RistrettoPvssEncryptionKeyAndProof,
+    >,
+    /// Fast Schnorr (VSS) curve25519 HPKE public key + UC proof per
+    /// authority. Required by the VSS presign `PublicInput` (verified
+    /// once at `Committee::new` into the verified key-value map).
+    pub vss_hpke: std::collections::HashMap<
+        AuthorityName,
+        ika_types::committee::VssHpkeEncryptionKeyAndProof,
     >,
 }
 
@@ -437,12 +442,18 @@ where
     F: Fn(&[u8; 32]) -> Option<Vec<u8>>,
 {
     use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-    use ika_types::committee::decode_validator_encryption_keys;
+    use ika_types::committee::ValidatorEncryptionKeysAndProofs;
 
+    // The off-chain pipeline propagates the full 5-field
+    // `ValidatorEncryptionKeysAndProofs` bundle as opaque BCS bytes inside the
+    // `MPCDataV1` wrapper. Decode directly to that shape — no shape-tolerant
+    // fallback; chain reads use the bare `ClassGroupsEncryptionKeyAndProof`
+    // shape via a different path.
     let mut class_groups = std::collections::HashMap::new();
     let mut secp256k1_pvss = std::collections::HashMap::new();
     let mut secp256r1_pvss = std::collections::HashMap::new();
     let mut ristretto_pvss = std::collections::HashMap::new();
+    let mut vss_hpke = std::collections::HashMap::new();
     let mut missing = Vec::new();
     for (authority, digest) in announcements {
         let Some(blob) = blob_lookup(&digest) else {
@@ -453,21 +464,16 @@ where
             missing.push(authority);
             continue;
         };
-        let inner_bytes = versioned.class_groups_public_key_and_proof();
-        let Some(decoded) = decode_validator_encryption_keys(&inner_bytes) else {
+        let inner_bytes = versioned.mpc_data_bytes();
+        let Ok(decoded) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(&inner_bytes) else {
             missing.push(authority);
             continue;
         };
         class_groups.insert(authority, decoded.class_groups);
-        if let Some(k) = decoded.secp256k1_pvss {
-            secp256k1_pvss.insert(authority, k);
-        }
-        if let Some(k) = decoded.secp256r1_pvss {
-            secp256r1_pvss.insert(authority, k);
-        }
-        if let Some(k) = decoded.ristretto_pvss {
-            ristretto_pvss.insert(authority, k);
-        }
+        secp256k1_pvss.insert(authority, decoded.secp256k1_pvss);
+        secp256r1_pvss.insert(authority, decoded.secp256r1_pvss);
+        ristretto_pvss.insert(authority, decoded.ristretto_pvss);
+        vss_hpke.insert(authority, decoded.vss_hpke_public_key_and_proof);
     }
     if missing.is_empty() {
         OffChainClassGroupsAssembly::Complete(OffChainCommitteeBundles {
@@ -475,6 +481,7 @@ where
             secp256k1_pvss,
             secp256r1_pvss,
             ristretto_pvss,
+            vss_hpke,
         })
     } else {
         OffChainClassGroupsAssembly::Incomplete { missing }
@@ -1119,6 +1126,7 @@ mod tests {
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             1,
             1,
         );
@@ -1469,6 +1477,7 @@ mod tests {
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             q,
             v,
         ));
@@ -1517,6 +1526,7 @@ mod tests {
         let committee = Arc::new(Committee::new(
             5,
             voting_rights,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),

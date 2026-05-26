@@ -5,6 +5,7 @@
 //!
 //! It integrates both Presign parties (each representing a round in the Presign protocol).
 
+use crate::dwallet_mpc::ValidatorMpcKeysByPartyId;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations;
 use commitment::CommitmentSizedNumber;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
@@ -13,17 +14,22 @@ use dwallet_mpc_types::dwallet_mpc::{
     NetworkEncryptionKeyPublicData, SerializedWrappedMPCPublicOutput,
     VersionedDwalletDKGPublicOutput,
 };
+use group::GroupElement as _;
+use group::curve25519;
 use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol,
-    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256r1AsyncDKGProtocol,
+    Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol, RistrettoSchnorrkelSubstrateProtocol,
+    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol,
     Secp256r1ECDSAProtocol,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
+use mpc::hybrid_public_key_encryption::EncryptionPublicKey;
 use mpc::{
-    GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery, WeightedThresholdAccessStructure,
+    AsynchronouslyAdvanceable, GuaranteedOutputDeliveryRoundResult, GuaranteesOutputDelivery,
+    WeightedThresholdAccessStructure,
 };
 use std::collections::HashMap;
 use twopc_mpc::dkg::decentralized_party::VersionedOutput;
@@ -48,6 +54,16 @@ pub(crate) enum PresignPublicInputByProtocol {
     SchnorrkelSubstrate(
         <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput,
     ),
+    #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: TaprootVSS")]
+    TaprootVSS(<PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSAVSS")]
+    EdDSAVSS(<PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput),
+    #[strum(
+        to_string = "Presign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
+    )]
+    SchnorrkelSubstrateVSS(
+        <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput,
+    ),
 }
 
 #[derive(strum_macros::Display)]
@@ -66,6 +82,18 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
     SchnorrkelSubstrate(
         AdvanceRequest<<PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message>,
     ),
+    #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: TaprootVSS")]
+    TaprootVSS(AdvanceRequest<<PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::Message>),
+    #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSAVSS")]
+    EdDSAVSS(AdvanceRequest<<PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::Message>),
+    #[strum(
+        to_string = "Presign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
+    )]
+    SchnorrkelSubstrateVSS(
+        AdvanceRequest<
+            <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::Message,
+        >,
+    ),
 }
 
 impl PresignAdvanceRequestByProtocol {
@@ -75,6 +103,9 @@ impl PresignAdvanceRequestByProtocol {
         access_structure: &WeightedThresholdAccessStructure,
         consensus_round: u64,
         schnorr_presign_second_round_delay: u64,
+        // Consensus-round delay for the VSS presign Aggregation round (round 3).
+        // Only the VSS arms use it; AHE presign is 2 rounds and ignores it.
+        schnorr_presign_third_round_delay: u64,
         serialized_messages_by_consensus_round: HashMap<u64, HashMap<PartyID, Vec<u8>>>,
     ) -> DwalletMPCResult<Option<Self>> {
         let advance_request = match protocol {
@@ -141,6 +172,57 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Secp256r1ECDSA)
             }
+            // VSS (Fast Schnorr) presign is 3 rounds: Dealing → Accusation (round 2)
+            // → Aggregation (round 3). Round 2 reuses the schnorr second-round delay;
+            // round 3 uses the dedicated third-round delay.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    PresignParty<Secp256k1TaprootVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::from([
+                        (2, schnorr_presign_second_round_delay),
+                        (3, schnorr_presign_third_round_delay),
+                    ]),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(PresignAdvanceRequestByProtocol::TaprootVSS)
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    PresignParty<Curve25519EdDSAVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::from([
+                        (2, schnorr_presign_second_round_delay),
+                        (3, schnorr_presign_third_round_delay),
+                    ]),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(PresignAdvanceRequestByProtocol::EdDSAVSS)
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                let advance_request = mpc_computations::try_ready_to_advance::<
+                    PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol>,
+                >(
+                    party_id,
+                    access_structure,
+                    consensus_round,
+                    HashMap::from([
+                        (2, schnorr_presign_second_round_delay),
+                        (3, schnorr_presign_third_round_delay),
+                    ]),
+                    &serialized_messages_by_consensus_round,
+                )?;
+
+                advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS)
+            }
         };
 
         Ok(advance_request)
@@ -152,9 +234,15 @@ impl PresignPublicInputByProtocol {
         protocol: DWalletSignatureAlgorithm,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_public_output: Option<SerializedWrappedMPCPublicOutput>,
+        validator_mpc_keys_by_party_id: &ValidatorMpcKeysByPartyId,
     ) -> DwalletMPCResult<Self> {
         if dwallet_public_output.is_none() {
-            return Self::try_new_v2(protocol, network_encryption_key_public_data, None);
+            return Self::try_new_v2(
+                protocol,
+                network_encryption_key_public_data,
+                None,
+                validator_mpc_keys_by_party_id,
+            );
         }
         // Safe to unwrap as we checked for None above
         match bcs::from_bytes(&dwallet_public_output.unwrap())? {
@@ -165,6 +253,7 @@ impl PresignPublicInputByProtocol {
                 protocol,
                 network_encryption_key_public_data,
                 Some(dkg_output),
+                validator_mpc_keys_by_party_id,
             ),
         }
     }
@@ -191,6 +280,7 @@ impl PresignPublicInputByProtocol {
         protocol: DWalletSignatureAlgorithm,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         dwallet_dkg_output: Option<MPCPublicOutput>,
+        validator_mpc_keys_by_party_id: &ValidatorMpcKeysByPartyId,
     ) -> DwalletMPCResult<Self> {
         let input = match protocol {
             DWalletSignatureAlgorithm::ECDSASecp256k1 => {
@@ -275,10 +365,92 @@ impl PresignPublicInputByProtocol {
 
                 PresignPublicInputByProtocol::Taproot(pub_input)
             }
+            // VSS (Fast Schnorr) presign PublicInput carries the per-party
+            // curve25519 HPKE encryption keys + the UC-verified party set.
+            // UC proofs were verified ONCE at `Committee::new`; the verified
+            // public-key values live in
+            // `validator_mpc_keys_by_party_id.vss_hpke_verified_party_encryption_key_values`.
+            // Here we only re-parse them into `EncryptionPublicKey` (a cheap
+            // curve-point check), with no per-session UC proof re-verification.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                let _ = dwallet_dkg_output;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.secp256k1_protocol_public_parameters();
+                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
+                    rebuild_vss_party_encryption_keys(
+                        &validator_mpc_keys_by_party_id
+                            .vss_hpke_verified_party_encryption_key_values,
+                    );
+                let pub_input: <PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
+                        protocol_public_parameters,
+                        party_encryption_keys,
+                        parties_with_uc_verified_public_keys,
+                    };
+                PresignPublicInputByProtocol::TaprootVSS(pub_input)
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                let _ = dwallet_dkg_output;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.curve25519_protocol_public_parameters();
+                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
+                    rebuild_vss_party_encryption_keys(
+                        &validator_mpc_keys_by_party_id
+                            .vss_hpke_verified_party_encryption_key_values,
+                    );
+                let pub_input: <PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
+                        protocol_public_parameters,
+                        party_encryption_keys,
+                        parties_with_uc_verified_public_keys,
+                    };
+                PresignPublicInputByProtocol::EdDSAVSS(pub_input)
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                let _ = dwallet_dkg_output;
+                let protocol_public_parameters =
+                    network_encryption_key_public_data.ristretto_protocol_public_parameters();
+                let (party_encryption_keys, parties_with_uc_verified_public_keys) =
+                    rebuild_vss_party_encryption_keys(
+                        &validator_mpc_keys_by_party_id
+                            .vss_hpke_verified_party_encryption_key_values,
+                    );
+                let pub_input: <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput =
+                    twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
+                        protocol_public_parameters,
+                        party_encryption_keys,
+                        parties_with_uc_verified_public_keys,
+                    };
+                PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(pub_input)
+            }
         };
 
         Ok(input)
     }
+}
+
+/// Reconstruct `EncryptionPublicKey` curve points from the verified key VALUES
+/// cached on [`Committee`]. Cheap (just `EncryptionPublicKey::new(value, &pp)`)
+/// — no UC proof verification, that already happened once at committee
+/// construction. Parties whose value somehow fails the curve-point check are
+/// silently dropped (should not happen for values that passed verification).
+fn rebuild_vss_party_encryption_keys(
+    values: &HashMap<PartyID, curve25519::Value>,
+) -> (
+    HashMap<PartyID, EncryptionPublicKey>,
+    std::collections::HashSet<PartyID>,
+) {
+    let public_parameters = curve25519::PublicParameters::default();
+    let party_encryption_keys: HashMap<PartyID, EncryptionPublicKey> = values
+        .iter()
+        .filter_map(|(party_id, value)| {
+            EncryptionPublicKey::new(*value, &public_parameters)
+                .ok()
+                .map(|ek| (*party_id, ek))
+        })
+        .collect();
+    let parties = party_encryption_keys.keys().copied().collect();
+    (party_encryption_keys, parties)
 }
 
 pub fn compute_presign<P: presign::Protocol>(
@@ -287,6 +459,11 @@ pub fn compute_presign<P: presign::Protocol>(
     session_id: CommitmentSizedNumber,
     advance_request: AdvanceRequest<<P::PresignParty as mpc::Party>::Message>,
     public_input: <P::PresignParty as mpc::Party>::PublicInput,
+    // AHE Schnorr / ECDSA presign has a `()` private input (`None`). VSS presign
+    // needs the validator's curve25519 HPKE secret as `PrivateInput`, constructed
+    // at the compute layer (it is deliberately non-serializable, so it can't ride
+    // the serialized `MPCPrivateInput` seam).
+    private_input: Option<<P::PresignParty as AsynchronouslyAdvanceable>::PrivateInput>,
     is_internal: bool,
     rng: &mut impl CsRng,
 ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
@@ -296,7 +473,7 @@ pub fn compute_presign<P: presign::Protocol>(
             party_id,
             access_structure,
             advance_request,
-            None,
+            private_input,
             &public_input,
             rng,
         )

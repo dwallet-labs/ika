@@ -209,6 +209,30 @@ pub enum DWalletSignatureAlgorithm {
     EdDSA,
     #[strum(to_string = "SchnorrkelSubstrate")]
     SchnorrkelSubstrate,
+    /// Fast Schnorr (VSS) variant of Taproot on secp256k1. DKG-created keys only.
+    #[strum(to_string = "TaprootVSS")]
+    TaprootVSS,
+    /// Fast Schnorr (VSS) variant of EdDSA on curve25519. DKG-created keys only.
+    #[strum(to_string = "EdDSAVSS")]
+    EdDSAVSS,
+    /// Fast Schnorr (VSS) variant of SchnorrkelSubstrate on ristretto. DKG-created keys only.
+    #[strum(to_string = "SchnorrkelSubstrateVSS")]
+    SchnorrkelSubstrateVSS,
+}
+
+impl DWalletSignatureAlgorithm {
+    /// True for the Fast Schnorr (VSS) signature algorithms. These are gated by
+    /// the `fast_schnorr_supported` protocol feature flag, support DKG-created
+    /// keys only (never imported), and do not support the combined
+    /// DKG-and-sign fast path.
+    pub fn is_vss(&self) -> bool {
+        matches!(
+            self,
+            DWalletSignatureAlgorithm::TaprootVSS
+                | DWalletSignatureAlgorithm::EdDSAVSS
+                | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS
+        )
+    }
 }
 
 #[derive(
@@ -293,7 +317,18 @@ pub enum DwalletNetworkMPCError {
     MissingProtocolPublicParametersForCurve(DWalletCurve),
 }
 
-pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
+/// Opaque BCS bytes of a validator's published MPC public-key payload.
+///
+/// Shape depends on the propagation path:
+/// - Chain reads (Move `MPCDataV1::mpc_data_bytes`) — bare
+///   `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8).
+/// - Off-chain pipeline (`derive_mpc_data_blob` → consensus + P2P) — the full
+///   5-field `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve PVSS
+///   HPKE + Fast Schnorr VSS HPKE).
+///
+/// Each consumer decodes directly to its expected shape with
+/// `bcs::from_bytes::<T>` — no try-then-fallback.
+pub type MpcDataBytes = Vec<u8>;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedEncryptionKeyValue {
@@ -318,6 +353,10 @@ pub enum VersionedDwalletDKGPublicOutput {
 pub enum VersionedPresignOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    /// Fast Schnorr (VSS) presign. Distinct shape from V2 — the inner bytes
+    /// decode to a curve-specific `schnorr::vss::Presign`, not the AHE
+    /// presign decoded by V2 consumers.
+    V3(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -428,17 +467,17 @@ pub enum VersionedMPCData {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct MPCDataV1 {
-    pub class_groups_public_key_and_proof: ClassGroupsPublicKeyAndProofBytes,
+    pub mpc_data_bytes: MpcDataBytes,
 }
 
 #[enum_dispatch]
 pub trait MPCDataTrait {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes;
+    fn mpc_data_bytes(&self) -> MpcDataBytes;
 }
 
 impl MPCDataTrait for MPCDataV1 {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes {
-        self.class_groups_public_key_and_proof.clone()
+    fn mpc_data_bytes(&self) -> MpcDataBytes {
+        self.mpc_data_bytes.clone()
     }
 }
 

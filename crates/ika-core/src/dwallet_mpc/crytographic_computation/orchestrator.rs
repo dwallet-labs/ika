@@ -80,6 +80,20 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
+
+    /// Fast Schnorr (VSS) HPKE curve25519 secret key, derived once at startup
+    /// from `root_seed` and reused for every VSS presign — avoids re-running
+    /// the HPKE keypair generation per presign.
+    vss_hpke_secret_key: group::curve25519::Scalar,
+
+    /// Under msim, the simulated node this orchestrator belongs to, captured at
+    /// construction (which runs inside the validator's node context). The rayon
+    /// worker that runs a cryptographic computation has no node context, so it uses
+    /// this handle to re-enter the node (for the compute's tracing) and to spawn the
+    /// completion task via `NodeHandle::spawn` — `Handle::spawn` would call
+    /// `NodeHandle::current().unwrap()` on the rayon worker and abort the process.
+    #[cfg(msim)]
+    sim_node: Option<sui_simulator::runtime::NodeHandle>,
 }
 
 impl CryptographicComputationsOrchestrator {
@@ -101,6 +115,17 @@ impl CryptographicComputationsOrchestrator {
             "Available CPU cores for Rayon cryptographic computations"
         );
 
+        // Capture the simulated node here: construction runs in the validator's
+        // node context (the log above succeeds via tracing), whereas `try_spawn`'s
+        // rayon-dispatching task can run outside one. No-op under non-msim.
+        #[cfg(msim)]
+        let sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
+        let vss_hpke_secret_key =
+            dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(
+                &root_seed,
+            );
+
         Ok(CryptographicComputationsOrchestrator {
             available_cores_for_cryptographic_computations: available_cores_for_computations,
             completed_computation_sender: report_computation_completed_sender,
@@ -108,6 +133,9 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
+            vss_hpke_secret_key,
+            #[cfg(msim)]
+            sim_node,
         })
     }
 
@@ -261,42 +289,58 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
+        let vss_hpke_secret_key = self.vss_hpke_secret_key;
 
-        // Under msim, tokio APIs and tracing instrumentation require running
-        // inside a simulated node context; rayon worker threads have none and
-        // panic at `NodeHandle::current().unwrap()`. Capture this task's node
-        // handle and enter it for the lifetime of the rayon closure so both
-        // the crypto compute (which logs via tracing) and the completion
-        // spawn see a node. The cfg(not(msim)) branch is a no-op binding.
+        // Under msim, tokio APIs and tracing instrumentation require a simulated
+        // node context; rayon worker threads have none and abort at
+        // `NodeHandle::current().unwrap()`. Use the node captured at construction
+        // (`try_current()` on this rayon-dispatching task can already be outside a
+        // node). Enter it for the compute's tracing, and spawn the completion via
+        // `NodeHandle::spawn` (targets the node directly) rather than `Handle::spawn`
+        // (which calls `NodeHandle::current()`). No-op under non-msim.
         #[cfg(msim)]
-        let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+        let sim_node = self.sim_node.clone();
 
         rayon::spawn_fifo(move || {
             #[cfg(msim)]
-            let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+            let _node_guard = sim_node.as_ref().map(|n| n.enter_node());
 
             let advance_start_time = Instant::now();
 
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                vss_hpke_secret_key,
+                dwallet_mpc_metrics.clone(),
+            );
 
             let elapsed = advance_start_time.elapsed();
             let elapsed_ms = elapsed.as_millis();
 
-            handle.spawn(async move {
-                if let Err(err) = computation_channel_sender
-                    .send(ComputationCompletionUpdate {
-                        computation_id,
-                        party_id,
-                        protocol_metadata,
-                        computation_result,
-                        elapsed_ms,
-                    })
-                    .await
-                {
+            let completion_update = ComputationCompletionUpdate {
+                computation_id,
+                party_id,
+                protocol_metadata,
+                computation_result,
+                elapsed_ms,
+            };
+            let send_completion = async move {
+                if let Err(err) = computation_channel_sender.send(completion_update).await {
                     error!(error=?err, "failed to send a computation completion update");
                 }
-            });
+            };
+
+            #[cfg(msim)]
+            match sim_node.as_ref() {
+                Some(node) => {
+                    node.spawn(send_completion);
+                }
+                None => {
+                    handle.spawn(send_completion);
+                }
+            }
+            #[cfg(not(msim))]
+            handle.spawn(send_completion);
         });
 
         self.currently_running_cryptographic_computations

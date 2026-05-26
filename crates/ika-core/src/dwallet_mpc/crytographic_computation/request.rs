@@ -28,6 +28,7 @@ impl Request {
         self,
         computation_id: ComputationId,
         root_seed: RootSeed,
+        vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         info!(
@@ -47,6 +48,7 @@ impl Request {
                 computation_id.consensus_round,
                 computation_id.session_identifier,
                 root_seed,
+                vss_hpke_secret_key,
                 dwallet_mpc_metrics,
             )
         } else {

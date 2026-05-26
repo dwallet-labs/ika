@@ -20,8 +20,11 @@ use crate::dwallet_mpc::protocol_cryptographic_data::ProtocolCryptographicData;
 use crate::dwallet_mpc::reconfiguration::advance_network_reconfiguration_bwd_compat;
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
-    SignAdvanceRequestByProtocol, SignPublicInputByProtocol, compute_dwallet_dkg_and_sign,
-    compute_sign, update_expected_decrypters_metrics,
+    SignAdvanceRequestByProtocol, SignPublicInputByProtocol,
+    build_curve25519_eddsa_vss_sign_private_input,
+    build_ristretto_schnorrkel_vss_sign_private_input,
+    build_secp256k1_taproot_vss_sign_private_input, compute_dwallet_dkg_and_sign, compute_sign,
+    update_expected_decrypters_metrics,
 };
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use crate::request_protocol_data::{
@@ -37,9 +40,10 @@ use group::PartyID;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
-    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol,
-    Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
+    Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol,
+    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelSubstrateProtocol,
+    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol,
+    Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
 };
 use ika_types::messages_dwallet_mpc::{Secp256k1ECDSAProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
@@ -73,7 +77,11 @@ impl ProtocolCryptographicData {
         schnorr_presign_second_round_delay: u64,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
         decryption_key_shares: &DwalletMPCNetworkKeys,
-        _protocol_config: &ProtocolConfig,
+        // Persisted VSS presign `PrivateOutput` (`bcs(Vec<PrivatePresignOutput>)`)
+        // for this sign's presign session, read by the manager (which has the
+        // epoch store). Only populated for Fast Schnorr (VSS) sign requests.
+        presign_private_output: Option<Vec<u8>>,
+        protocol_config: &ProtocolConfig,
     ) -> Result<Option<Self>, DwalletMPCError> {
         let res = match protocol_specific_data {
             ProtocolData::ImportedKeyVerification { data, .. } => {
@@ -134,6 +142,7 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
+                    protocol_config.schnorr_presign_third_round_delay(),
                     serialized_messages_by_consensus_round,
                 )?;
 
@@ -158,6 +167,7 @@ impl ProtocolCryptographicData {
                     access_structure,
                     consensus_round,
                     schnorr_presign_second_round_delay,
+                    protocol_config.schnorr_presign_third_round_delay(),
                     serialized_messages_by_consensus_round,
                 )?;
 
@@ -192,14 +202,32 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+                if data.signature_algorithm.is_vss() {
+                    // Fast Schnorr (VSS): carry the secret-key-share source (the
+                    // reconfiguration output if the key reconfigured, else the network
+                    // DKG output) for secret-key-share recovery at compute time, plus
+                    // the persisted presign nonce data, instead of the AHE decryption
+                    // key shares.
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
+                    ProtocolCryptographicData::SignVSS {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        vss_shamir_cache,
+                        presign_private_output,
+                    }
+                } else {
+                    let decryption_key_shares = decryption_key_shares
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::Sign {
-                    data: data.clone(),
-                    public_input: public_input.clone(),
-                    advance_request,
-                    decryption_key_shares: decryption_key_shares.clone(),
+                    ProtocolCryptographicData::Sign {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
                 }
             }
             ProtocolData::NetworkOwnedAddressSign {
@@ -223,14 +251,33 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+                if data.signature_algorithm.is_vss() {
+                    // Fast Schnorr (VSS) NOA sign reuses the external-sign compute path
+                    // (`SignVSS`): VSS has no AHE decryption-key shares / decrypters, so
+                    // the NOA-vs-external compute distinction collapses. Output is still
+                    // routed to the NOA channel by the request's session type. The
+                    // presign (popped from the internal VSS pool) carries the private
+                    // nonce output, read by the manager as for external VSS sign.
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
+                    ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        vss_shamir_cache,
+                        presign_private_output,
+                    }
+                } else {
+                    let decryption_key_shares = decryption_key_shares
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::NetworkOwnedAddressSign {
-                    data: data.clone(),
-                    public_input: public_input.clone(),
-                    advance_request,
-                    decryption_key_shares: decryption_key_shares.clone(),
+                    ProtocolCryptographicData::NetworkOwnedAddressSign {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
                 }
             }
             ProtocolData::DWalletDKGAndSign {
@@ -254,14 +301,32 @@ impl ProtocolCryptographicData {
                     return Ok(None);
                 };
 
-                let decryption_key_shares = decryption_key_shares
-                    .decryption_key_shares(dwallet_network_encryption_key_id)?;
+                if data.signature_algorithm.is_vss() {
+                    // Fast Schnorr (VSS) combined DKG-and-sign: as for `SignVSS`, carry the
+                    // secret-key-share source (reconfiguration output if the key
+                    // reconfigured, else the network DKG output) for secret-key-share
+                    // recovery at compute time, plus the persisted presign nonce data,
+                    // instead of the AHE decryption key shares.
+                    let vss_shamir_cache = decryption_key_shares
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone();
+                    ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        vss_shamir_cache,
+                        presign_private_output,
+                    }
+                } else {
+                    let decryption_key_shares = decryption_key_shares
+                        .decryption_key_shares(dwallet_network_encryption_key_id)?;
 
-                ProtocolCryptographicData::DWalletDKGAndSign {
-                    data: data.clone(),
-                    public_input: public_input.clone(),
-                    advance_request,
-                    decryption_key_shares: decryption_key_shares.clone(),
+                    ProtocolCryptographicData::DWalletDKGAndSign {
+                        data: data.clone(),
+                        public_input: public_input.clone(),
+                        advance_request,
+                        decryption_key_shares: decryption_key_shares.clone(),
+                    }
                 }
             }
             ProtocolData::NetworkEncryptionKeyDkg {
@@ -401,6 +466,7 @@ impl ProtocolCryptographicData {
         consensus_round: u64,
         session_identifier: SessionIdentifier,
         root_seed: RootSeed,
+        vss_hpke_secret_key: group::curve25519::Scalar,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
         let protocol_metadata: DWalletSessionRequestMetricData = (&self).into();
@@ -568,6 +634,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 false,
                 &mut rng,
             )?),
@@ -581,6 +648,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 false,
                 &mut rng,
             )?),
@@ -594,6 +662,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 false,
                 &mut rng,
             )?),
@@ -607,6 +676,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 false,
                 &mut rng,
             )?),
@@ -621,6 +691,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 false,
                 &mut rng,
             )?),
@@ -634,6 +705,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 true,
                 &mut rng,
             )?),
@@ -647,6 +719,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 true,
                 &mut rng,
             )?),
@@ -660,6 +733,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 true,
                 &mut rng,
             )?),
@@ -673,6 +747,7 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
                 true,
                 &mut rng,
             )?),
@@ -687,6 +762,97 @@ impl ProtocolCryptographicData {
                 session_id,
                 advance_request,
                 public_input,
+                None,
+                true,
+                &mut rng,
+            )?),
+            // Fast Schnorr (VSS) presign: the `PrivateInput` is the validator's
+            // curve25519 HPKE secret (one keypair serves all VSS curves), derived
+            // locally from `root_seed`. It is deliberately non-serializable, so it
+            // is constructed here rather than threaded through the serialized seam.
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256k1TaprootVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
+                false,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<Curve25519EdDSAVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
+                false,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::Presign {
+                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
+                false,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<Secp256k1TaprootVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<Curve25519EdDSAVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
+                true,
+                &mut rng,
+            )?),
+            ProtocolCryptographicData::InternalPresign {
+                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                ..
+            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                party_id,
+                access_structure,
+                session_id,
+                advance_request,
+                public_input,
+                Some(vss_presign_private_input(vss_hpke_secret_key)),
                 true,
                 &mut rng,
             )?),
@@ -831,6 +997,181 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::Sign {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            // Fast Schnorr (VSS) sign: assemble the 8-field VSS PrivateInput here
+            // (root_seed is available) — secret-key Shamir shares recovered from the
+            // reconfiguration output + the persisted presign nonce data — then run
+            // the generic sign. VSS has no expected_decrypters metrics.
+            ProtocolCryptographicData::SignVSS {
+                public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_secp256k1_taproot_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<Secp256k1TaprootVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::SignVSS {
+                public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_curve25519_eddsa_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<Curve25519EdDSAVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::SignVSS {
+                public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::SignVSS {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            // NOA Fast Schnorr (VSS) sign: identical compute to `SignVSS`, but `data`
+            // is the native `NetworkOwnedAddressSignData`, coerced to `SignData` only
+            // here (mirroring the AHE `NetworkOwnedAddressSign` compute arms).
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_secp256k1_taproot_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<Secp256k1TaprootVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_curve25519_eddsa_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<Curve25519EdDSAVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &SignData::from(&data),
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
                 public_input,
                 advance_request,
                 ..
@@ -989,6 +1330,101 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::DWalletDKGAndSign {
+                public_input,
+                advance_request,
+                ..
+            } => Err(DwalletMPCError::MPCParametersMissmatchInputToRequest(
+                public_input.to_string(),
+                advance_request.to_string(),
+            )),
+            // Fast Schnorr (VSS) combined DKG-and-sign: assemble the VSS `PrivateInput`
+            // from the secret-key-share source + persisted presign nonce data (the
+            // builder is shared verbatim with standalone VSS sign — the private-input
+            // type is identical), reading the presign id/index from
+            // `public_input.presign`. VSS has no AHE decrypters, so there is no
+            // `update_expected_decrypters_metrics` here (as in the `SignVSS` arms).
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                public_input: DKGAndSignPublicInputByProtocol::TaprootVSS(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_secp256k1_taproot_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_dwallet_dkg_and_sign::<Secp256k1TaprootVSSProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                public_input: DKGAndSignPublicInputByProtocol::EdDSAVSS(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_curve25519_eddsa_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_dwallet_dkg_and_sign::<Curve25519EdDSAVSSProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                public_input: DKGAndSignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                vss_shamir_cache,
+                presign_private_output,
+                data,
+                ..
+            } => {
+                let private_input = build_ristretto_schnorrkel_vss_sign_private_input(
+                    &vss_shamir_cache,
+                    presign_private_output,
+                    public_input.presign.session_id,
+                    public_input.presign.presign_blending_index,
+                )?;
+                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                    data.curve,
+                    party_id,
+                    access_structure,
+                    session_id,
+                    advance_request,
+                    public_input,
+                    Some(private_input),
+                    &data.signature_algorithm,
+                    &mut rng,
+                )
+            }
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
                 public_input,
                 advance_request,
                 ..
@@ -1236,6 +1672,17 @@ impl ProtocolCryptographicData {
     }
 }
 
+/// Constructs the Fast Schnorr (VSS) presign `PrivateInput` — the validator's
+/// curve25519 HPKE secret — from its `RootSeed`. One curve25519 keypair serves
+/// all VSS signing curves, so the same `PrivateInput` type is used for every VSS
+/// presign protocol. The secret is non-serializable and so is built here at the
+/// compute layer rather than threaded through the serialized `MPCPrivateInput`.
+fn vss_presign_private_input(
+    vss_hpke_secret_key: group::curve25519::Scalar,
+) -> twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput {
+    twopc_mpc::schnorr::vss::presign::decentralized_party::PrivateInput::new(vss_hpke_secret_key)
+}
+
 fn parse_signature_from_sign_output(
     signature_algorithm: &DWalletSignatureAlgorithm,
     public_output_value: Vec<u8>,
@@ -1263,6 +1710,22 @@ fn parse_signature_from_sign_output(
         }
         DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
+
+            Ok(signature.to_bytes().to_vec())
+        }
+        // Fast Schnorr (VSS) produces the same signature object as its AHE sibling.
+        DWalletSignatureAlgorithm::TaprootVSS => {
+            let signature: TaprootSignature = bcs::from_bytes(&public_output_value)?;
+
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::EdDSAVSS => {
+            let signature: EdDSASignature = bcs::from_bytes(&public_output_value)?;
+
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
 
             Ok(signature.to_bytes().to_vec())
         }

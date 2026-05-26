@@ -19,11 +19,11 @@ use crate::dwallet_mpc::{
     party_id_to_authority_name,
 };
 use crate::dwallet_session_request::DWalletSessionRequest;
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
 };
-use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
+use dwallet_mpc_types::mpc_protocol_configuration::network_presign_pool_algorithms;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -35,11 +35,12 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
-    SuiChainObservationUpdate,
+    Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol, DWalletInternalMPCOutputKind,
+    DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyData, GlobalPresignRequest, IdleStatusUpdate,
+    RistrettoSchnorrkelSubstrateProtocol, RistrettoSchnorrkelSubstrateVSSProtocol,
+    Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier, SessionType, SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -281,12 +282,33 @@ impl DWalletMPCManager {
             CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
-        let class_groups_key_pair_and_proof = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        // Derive ALL of this validator's MPC key material once from the seed:
+        // class-groups secret (AHE) + per-curve PVSS decryption keys (used by
+        // VSS Shamir-share pre-derivation at network-key ingestion). The
+        // matching public encryption keys come from the same derivation and
+        // feed the publics struct so VSS shamir pre-derivation has both
+        // halves without re-running `from_seed` per network key. Secrets and
+        // publics are deliberately split into separate structs so the secret
+        // type never shares a struct with public material.
+        let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
+        let validator_pvss_secrets_for_vss =
+            crate::dwallet_mpc::network_dkg::ValidatorPvssSecretsForVss {
+                secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,
+                ristretto_decryption_key: validator_mpc_secrets.ristretto_pvss_decryption_key,
+            };
+        let validator_pvss_publics_for_vss =
+            crate::dwallet_mpc::network_dkg::ValidatorPvssEncryptionKeysForVss {
+                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
+                ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
+            };
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
-            class_groups_decryption_key: class_groups_key_pair_and_proof.decryption_key(),
+            class_groups_decryption_key: validator_mpc_secrets.class_groups.decryption_key,
+            validator_pvss_secrets_for_vss,
+            validator_pvss_publics_for_vss,
             validator_decryption_key_shares: HashMap::new(),
+            validator_vss_shamir_cache: HashMap::new(),
         };
         let dwallet_network_keys = DwalletMPCNetworkKeys::new(validator_private_data);
 
@@ -852,92 +874,95 @@ impl DWalletMPCManager {
                 None => return,
             };
 
+        // Iterate the dedicated internal-pool driver — `network_presign_pool_algorithms`
+        // is decoupled from `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`
+        // (the externally-requestable list serialized into the on-chain
+        // `support_config`). VSS variants live ONLY here, gated on the feature
+        // flag: they feed NOA (network-owned-address) VSS sign but are not
+        // externally requestable on-chain.
+        let pool_algorithms =
+            network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
         for key_id in agreed_key_ids {
-            for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
-                for signature_algorithm in signature_algorithms {
-                    let is_network_owned_address_signing_presign =
-                        agreed_network_owned_address_signing_key_id == key_id;
+            for (curve, signature_algorithm) in pool_algorithms.iter().copied() {
+                let is_network_owned_address_signing_presign =
+                    agreed_network_owned_address_signing_key_id == key_id;
 
-                    let (
-                        minimal_pool_size,
-                        maximum_pool_size,
-                        consensus_round_delay,
-                        sessions_to_instantiate,
-                    ) = if is_network_owned_address_signing_presign {
-                        (
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_minimum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_maximum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_consensus_round_delay(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_sessions_to_instantiate(
-                                    signature_algorithm,
-                                ),
-                        )
-                    } else {
-                        (
-                            self.protocol_config
-                                .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_consensus_round_delay(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_internal_presign_sessions_to_instantiate(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                        )
-                    };
-
-                    // Skip instantiation if previous sessions for this (curve, algorithm)
-                    // haven't completed yet. Each session produces a variable number of
-                    // presigns (1 to n-t), so overlapping batches cause pool overshoot.
-                    let instantiated = self
-                        .instantiated_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    let completed = self
-                        .completed_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    if instantiated != completed {
-                        continue;
-                    }
-
-                    let current_pool_size =
-                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
-
-                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
-                        && current_pool_size < minimal_pool_size)
-                        || (network_is_idle && current_pool_size < maximum_pool_size)
-                    {
-                        for _ in 1..=sessions_to_instantiate {
-                            self.instantiate_internal_presign_session(
-                                consensus_round,
-                                key_id,
+                let (
+                    minimal_pool_size,
+                    maximum_pool_size,
+                    consensus_round_delay,
+                    sessions_to_instantiate,
+                ) = if is_network_owned_address_signing_presign {
+                    (
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_minimum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_maximum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_consensus_round_delay(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_sessions_to_instantiate(
+                                signature_algorithm,
+                            ),
+                    )
+                } else {
+                    (
+                        self.protocol_config
+                            .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_consensus_round_delay(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_sessions_to_instantiate(
                                 curve,
                                 signature_algorithm,
-                            );
-                            *self
-                                .instantiated_internal_presign_sessions
-                                .entry((curve, signature_algorithm))
-                                .or_insert(0) += 1;
-                        }
+                            ),
+                    )
+                };
+
+                // Skip instantiation if previous sessions for this (curve, algorithm)
+                // haven't completed yet. Each session produces a variable number of
+                // presigns (1 to n-t), so overlapping batches cause pool overshoot.
+                let instantiated = self
+                    .instantiated_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let completed = self
+                    .completed_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                if instantiated != completed {
+                    continue;
+                }
+
+                let current_pool_size =
+                    self.internal_presign_pool_size(key_id, curve, signature_algorithm);
+
+                if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
+                    && current_pool_size < minimal_pool_size)
+                    || (network_is_idle && current_pool_size < maximum_pool_size)
+                {
+                    for _ in 1..=sessions_to_instantiate {
+                        self.instantiate_internal_presign_session(
+                            consensus_round,
+                            key_id,
+                            curve,
+                            signature_algorithm,
+                        );
+                        *self
+                            .instantiated_internal_presign_sessions
+                            .entry((curve, signature_algorithm))
+                            .or_insert(0) += 1;
                     }
                 }
             }
@@ -1095,9 +1120,15 @@ impl DWalletMPCManager {
             return false;
         }
 
-        // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
-        // with the sign session input path, which expects this wrapping.
-        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+        // Wrap the raw presign bytes for consistency with the sign session
+        // input path, which expects a versioned wrapper. AHE presigns use V2;
+        // Fast Schnorr (VSS) presigns are a different shape and use V3.
+        let versioned = if signature_algorithm.is_vss() {
+            VersionedPresignOutput::V3(presign)
+        } else {
+            VersionedPresignOutput::V2(presign)
+        };
+        let wrapped_presign = match bcs::to_bytes(&versioned) {
             Ok(bytes) => bytes,
             Err(e) => {
                 error!(
@@ -1664,6 +1695,33 @@ impl DWalletMPCManager {
                     }
                     DWalletSignatureAlgorithm::Taproot => {
                         self.record_internal_presign_output::<Secp256k1TaprootProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::TaprootVSS => {
+                        self.record_internal_presign_output::<Secp256k1TaprootVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSAVSS => {
+                        self.record_internal_presign_output::<Curve25519EdDSAVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateVSSProtocol>(
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                             session_sequence_number,

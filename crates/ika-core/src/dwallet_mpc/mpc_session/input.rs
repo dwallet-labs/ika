@@ -83,6 +83,21 @@ pub(crate) fn session_input_from_request(
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
+
+    // Defense-in-depth protocol-version gate for Fast Schnorr (VSS): the primary
+    // enforcement is the on-chain supported-algorithm map population, but reject
+    // any VSS presign/sign request here too if the active protocol version does
+    // not enable it. (Move has no version gate; this is the Rust-side gate.)
+    if let Some(signature_algorithm) = request.protocol_data.signature_algorithm()
+        && signature_algorithm.is_vss()
+        && !protocol_config.fast_schnorr_supported()
+    {
+        return Err(DwalletMPCError::InvalidInput(format!(
+            "Fast Schnorr (VSS) algorithm {signature_algorithm} requested but \
+             fast_schnorr_supported is disabled at this protocol version"
+        )));
+    }
+
     match &request.protocol_data {
         ProtocolData::DWalletDKG {
             dwallet_network_encryption_key_id,
@@ -116,6 +131,16 @@ pub(crate) fn session_input_from_request(
                 &data.centralized_public_key_share_and_proof,
                 BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -126,6 +151,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,
+                    &vss_shamir_cache,
                     data.signature_algorithm,
                 )?),
                 None,
@@ -283,6 +309,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     None,
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))
@@ -305,6 +332,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))
@@ -317,21 +345,35 @@ pub(crate) fn session_input_from_request(
             presign,
             message_centralized_signature,
             ..
-        } => Ok((
-            PublicInput::Sign(SignPublicInputByProtocol::try_new(
-                request.session_identifier,
-                dwallet_decentralized_public_output,
-                message.clone(),
-                presign,
-                message_centralized_signature,
-                data.hash_scheme,
-                access_structure,
-                network_keys
-                    .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,
-                data.signature_algorithm,
-            )?),
-            None,
-        )),
+        } => {
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_decentralized_public_output,
+                    message.clone(),
+                    presign,
+                    message_centralized_signature,
+                    data.hash_scheme,
+                    access_structure,
+                    network_keys.get_network_encryption_key_public_data(
+                        dwallet_network_encryption_key_id,
+                    )?,
+                    &vss_shamir_cache,
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::NetworkOwnedAddressSign {
             data,
             dwallet_network_encryption_key_id,
@@ -349,6 +391,16 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
             let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
+            // Mirror the AHE "no decryption key shares" wait path: a missing
+            // cache means the network key hasn't been ingested yet (the cache
+            // is populated atomically with the AHE shares in
+            // `decrypt_and_store_secret_key_shares`). Propagate the
+            // `WaitingForNetworkKey` error so the session isn't processed
+            // until the key arrives — same shape as
+            // `get_network_encryption_key_public_data` above.
+            let vss_shamir_cache = network_keys
+                .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                .clone();
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -359,6 +411,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_scheme,
                     access_structure,
                     encryption_key_public_data,
+                    &vss_shamir_cache,
                     data.signature_algorithm,
                 )?),
                 None,
