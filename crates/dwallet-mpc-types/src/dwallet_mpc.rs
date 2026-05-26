@@ -317,7 +317,18 @@ pub enum DwalletNetworkMPCError {
     MissingProtocolPublicParametersForCurve(DWalletCurve),
 }
 
-pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
+/// Opaque BCS bytes of a validator's published MPC public-key payload.
+///
+/// Shape depends on the propagation path:
+/// - Chain reads (Move `MPCDataV1::mpc_data_bytes`) — bare
+///   `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8).
+/// - Off-chain pipeline (`derive_mpc_data_blob` → consensus + P2P) — the full
+///   5-field `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve PVSS
+///   HPKE + Fast Schnorr VSS HPKE).
+///
+/// Each consumer decodes directly to its expected shape with
+/// `bcs::from_bytes::<T>` — no try-then-fallback.
+pub type MpcDataBytes = Vec<u8>;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedEncryptionKeyValue {
@@ -456,17 +467,17 @@ pub enum VersionedMPCData {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct MPCDataV1 {
-    pub class_groups_public_key_and_proof: ClassGroupsPublicKeyAndProofBytes,
+    pub mpc_data_bytes: MpcDataBytes,
 }
 
 #[enum_dispatch]
 pub trait MPCDataTrait {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes;
+    fn mpc_data_bytes(&self) -> MpcDataBytes;
 }
 
 impl MPCDataTrait for MPCDataV1 {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes {
-        self.class_groups_public_key_and_proof.clone()
+    fn mpc_data_bytes(&self) -> MpcDataBytes {
+        self.mpc_data_bytes.clone()
     }
 }
 

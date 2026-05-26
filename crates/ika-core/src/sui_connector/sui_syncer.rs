@@ -414,7 +414,7 @@ where
             .map_err(DwalletMPCError::IkaError)?;
 
         // Chain reads are the mainnet-v1.1.8 shape always: the Move-side
-        // `MPCDataV1::class_groups_public_key_and_proof` field stores bare
+        // `MPCDataV1::mpc_data_bytes` field stores bare
         // `ClassGroupsEncryptionKeyAndProof`. The full bundle (PVSS + VSS HPKE)
         // arrives via the off-chain validator-metadata pipeline (see PR #1721)
         // and is overlaid onto Committee through a separate path. No
@@ -424,7 +424,7 @@ where
             .filter_map(|(id, (name, _))| {
                 let mpc_data = committee_mpc_data.get(id)?;
                 match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                    &mpc_data.class_groups_public_key_and_proof(),
+                    &mpc_data.mpc_data_bytes(),
                 ) {
                     Ok(k) => Some((*name, k)),
                     Err(e) => {

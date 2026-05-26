@@ -148,7 +148,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                 let class_groups_public_key_and_proof =
                     validator.mpc_data.as_ref().and_then(|mpc_data| {
                         bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.class_groups_public_key_and_proof(),
+                            &mpc_data.mpc_data_bytes(),
                         )
                         .ok()
                     });
@@ -196,7 +196,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .filter_map(|validator| {
                 let mpc_data = validator.mpc_data.as_ref()?;
                 match bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                    &mpc_data.class_groups_public_key_and_proof(),
+                    &mpc_data.mpc_data_bytes(),
                 ) {
                     Ok(k) => Some((validator.authority_name(), k)),
                     Err(e) => {

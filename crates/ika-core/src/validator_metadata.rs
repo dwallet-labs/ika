@@ -150,7 +150,7 @@ pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
         IkaError::Unknown(format!("bcs encode ValidatorEncryptionKeysAndProofs: {e}"))
     })?;
     let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-        class_groups_public_key_and_proof: inner,
+        mpc_data_bytes: inner,
     });
     bcs::to_bytes(&mpc_data)
         .map_err(|e| IkaError::Unknown(format!("bcs encode versioned mpc data: {e}")))
@@ -464,7 +464,7 @@ where
             missing.push(authority);
             continue;
         };
-        let inner_bytes = versioned.class_groups_public_key_and_proof();
+        let inner_bytes = versioned.mpc_data_bytes();
         let Ok(decoded) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(&inner_bytes) else {
             missing.push(authority);
             continue;

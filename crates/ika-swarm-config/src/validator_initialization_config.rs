@@ -62,16 +62,14 @@ impl ValidatorInitializationConfig {
         // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
         //
         // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Per the cryptography-private @ 9d35fa76 bump,
-        // the bytes published into the Move-side `class_groups_public_key_and_proof` field carry
+        // the bytes published into the Move-side `mpc_data_bytes` field carry
         // the COMBINED `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys), not the
         // bare `ClassGroupsEncryptionKeyAndProof` mainnet expects. Validators on either side of
         // this serialization boundary cannot decode each other's records — by design for the
         // bump's local-network scope. See `ValidatorEncryptionKeysAndProofs`'s docstring.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-            class_groups_public_key_and_proof: bcs::to_bytes(
-                &ValidatorMPCSecrets::from_seed(&self.root_seed).1,
-            )
-            .unwrap(),
+            mpc_data_bytes: bcs::to_bytes(&ValidatorMPCSecrets::from_seed(&self.root_seed).1)
+                .unwrap(),
         });
 
         ValidatorInfo {

@@ -475,9 +475,7 @@ impl IkaValidatorCommand {
                 } else {
                     bcs::to_bytes(&validator_encryption_keys_and_proofs)?
                 };
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: mpc_data_bytes,
-                });
+                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
 
                 let validator_info = ValidatorInfo {
                     name,
@@ -1011,9 +1009,7 @@ impl IkaValidatorCommand {
                     bcs::to_bytes(&new_validator_publics)?
                 };
 
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: mpc_data_bytes,
-                });
+                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
 
                 let response = set_next_epoch_mpc_data_bytes(
                     context,

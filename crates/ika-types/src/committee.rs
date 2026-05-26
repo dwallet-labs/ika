@@ -624,9 +624,9 @@ pub type VssHpkeEncryptionKeyAndProof = (curve25519::Value, VssHpkeKnowledgeOfDe
 /// three per-curve PVSS HPKE keys, and the Fast Schnorr (VSS) curve25519 HPKE
 /// key — all with their respective UC-secure proofs.
 ///
-/// **NOT** what Move stores. The Move field
-/// `MPCDataV1::class_groups_public_key_and_proof` always carries the bare
-/// `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8 shape). The bundle here
+/// **NOT** what Move stores. The Move field `MPCDataV1::mpc_data_bytes`
+/// always carries the bare `ClassGroupsEncryptionKeyAndProof`
+/// (mainnet-v1.1.8 shape). The bundle here
 /// is broadcast off-chain (consensus-signed announcement + P2P blob fetch),
 /// reaches consensus via `EpochMpcDataReadySignal`, and is then deserialized
 /// directly with `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` at

@@ -2369,10 +2369,7 @@ impl DWalletMPCService {
         // groups + 3 PVSS keys); compare against the same combined struct re-derived from
         // the local key material. See the wire-incompat warning on
         // `ValidatorEncryptionKeysAndProofs`.
-        if onchain_validator
-            .get_mpc_data()
-            .unwrap()
-            .class_groups_public_key_and_proof()
+        if onchain_validator.get_mpc_data().unwrap().mpc_data_bytes()
             != bcs::to_bytes(&validator_encryption_keys_and_proofs)?
         {
             return Err(DwalletMPCError::MPCManagerError(
