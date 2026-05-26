@@ -134,18 +134,17 @@ pub struct ValidatorPrivateDecryptionKeyData {
     /// Validator-private PVSS HPKE secret decryption keys (secp256k1 +
     /// ristretto). Used at network-key ingestion to pre-derive the Fast
     /// Schnorr (VSS) Shamir shares; paired with `validator_pvss_publics_for_vss`
-    /// (the matching public encryption keys). `None` if Fast Schnorr is not
-    /// configured on this node (e.g. integration tests that don't exercise
-    /// VSS). The VSS HPKE curve25519 **secret** key isn't here — it's needed
-    /// only at the presign hot path and is cached on
-    /// `CryptographicComputationsOrchestrator`.
-    pub validator_pvss_secrets_for_vss: Option<ValidatorPvssSecretsForVss>,
+    /// (the matching public encryption keys). Always derived from this
+    /// validator's `RootSeed` at startup. The VSS HPKE curve25519 **secret**
+    /// key isn't here — it's needed only at the presign hot path and is
+    /// cached on `CryptographicComputationsOrchestrator`.
+    pub validator_pvss_secrets_for_vss: ValidatorPvssSecretsForVss,
 
     /// Public counterpart of [`Self::validator_pvss_secrets_for_vss`]: this
     /// validator's own PVSS encryption keys (per curve). Kept separate from
     /// the secrets struct so the secret type never shares a struct with
-    /// public material. `None` exactly when the secrets are also `None`.
-    pub validator_pvss_publics_for_vss: Option<ValidatorPvssEncryptionKeysForVss>,
+    /// public material.
+    pub validator_pvss_publics_for_vss: ValidatorPvssEncryptionKeysForVss,
 
     /// A map of the validator's decryption key shares.
     ///
@@ -297,19 +296,16 @@ impl ValidatorPrivateDecryptionKeyData {
             .insert(key_id, decryption_key_shares);
 
         // Pre-derive VSS Shamir shares + commitments at ingestion. All-or-
-        // nothing: if this validator isn't configured for VSS, or the network
-        // key is pre-V3, OR any per-curve derivation fails, we insert nothing
-        // into the cache. VSS sign sites then `?`-propagate
-        // `WaitingForNetworkKey` exactly like the AHE wait path.
-        if let (Some(secrets), Some(publics)) = (
-            self.validator_pvss_secrets_for_vss.as_ref(),
-            self.validator_pvss_publics_for_vss.as_ref(),
+        // nothing: if the network key is pre-V3 OR any per-curve derivation
+        // fails, we insert nothing into the cache and VSS sign sites then
+        // `?`-propagate `WaitingForNetworkKey` like the AHE wait path.
+        if let Some(vss_cache) = derive_vss_shamir_cache_for_key(
+            &key,
+            self.party_id,
+            &self.validator_pvss_secrets_for_vss,
+            &self.validator_pvss_publics_for_vss,
         ) {
-            if let Some(vss_cache) =
-                derive_vss_shamir_cache_for_key(&key, self.party_id, secrets, publics)
-            {
-                self.validator_vss_shamir_cache.insert(key_id, vss_cache);
-            }
+            self.validator_vss_shamir_cache.insert(key_id, vss_cache);
         }
 
         Ok(())

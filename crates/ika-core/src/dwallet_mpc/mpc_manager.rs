@@ -291,18 +291,16 @@ impl DWalletMPCManager {
         // publics are deliberately split into separate structs so the secret
         // type never shares a struct with public material.
         let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
-        let validator_pvss_secrets_for_vss = Some(
+        let validator_pvss_secrets_for_vss =
             crate::dwallet_mpc::network_dkg::ValidatorPvssSecretsForVss {
                 secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,
                 ristretto_decryption_key: validator_mpc_secrets.ristretto_pvss_decryption_key,
-            },
-        );
-        let validator_pvss_publics_for_vss = Some(
+            };
+        let validator_pvss_publics_for_vss =
             crate::dwallet_mpc::network_dkg::ValidatorPvssEncryptionKeysForVss {
                 secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
                 ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
-            },
-        );
+            };
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
