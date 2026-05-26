@@ -24,8 +24,9 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Version 1: Original baseline.
 // Version 2: network_encryption_key_version = 2.
 // Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
-// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions off;
-//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
+// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
+//            consensus_skip_gced_blocks_in_direct_finalization on; bls_checkpoints on;
+//            fast_schnorr_supported on (internal NOA-VSS only); post-PR-#1707 crypto
 //            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
@@ -384,8 +385,8 @@ impl ProtocolConfig {
     }
 
     /// True iff Fast Schnorr (VSS) signature algorithms are enabled at this
-    /// protocol version (>= 5). Gates `TaprootVSS`, `EdDSAVSS`, and
-    /// `SchnorrkelSubstrateVSS` request acceptance.
+    /// protocol version (>= 4). Gates the internal NOA-VSS presign pool and
+    /// the Rust-side defense-in-depth VSS request guard.
     pub fn fast_schnorr_supported(&self) -> bool {
         self.feature_flags.fast_schnorr_supported
     }
@@ -705,6 +706,7 @@ impl ProtocolConfig {
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.off_chain_validator_metadata = true;
+                    cfg.feature_flags.fast_schnorr_supported = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
