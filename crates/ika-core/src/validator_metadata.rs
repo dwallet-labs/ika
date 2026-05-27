@@ -472,6 +472,7 @@ pub fn sign_validator_mpc_data_announcement(
 pub fn build_epoch_mpc_data_ready_signal_transaction(
     authority: AuthorityName,
     epoch: EpochId,
+    sequence_number: u64,
     mut validated_peers: Vec<AuthorityName>,
 ) -> ConsensusTransaction {
     validated_peers.sort();
@@ -479,6 +480,7 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
     let signal = EpochMpcDataReadySignal {
         authority,
         epoch,
+        sequence_number,
         validated_peers,
     };
     ConsensusTransaction::new_epoch_mpc_data_ready_signal(signal)
@@ -2771,6 +2773,59 @@ mod tests {
     /// frozen set under tight propagation. The remediation is
     /// either (a) wait longer before signaling, or (b) raise the
     /// freeze gate's wall-clock floor — both addressed in the
+    /// `ConsensusTransactionKey` for `EpochMpcDataReadySignal` must
+    /// include the `sequence_number`, otherwise the generic same-key
+    /// dedup at `verify_consensus_transaction` drops every re-emit
+    /// after the first and the receive-side strict-superset gate
+    /// never runs. This test pins the wire-level contract so a
+    /// future refactor that drops the sequence number from the key
+    /// fails loudly.
+    #[test]
+    fn ready_signal_consensus_key_includes_sequence_number() {
+        use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
+        let authority = auth(0xAA);
+        let epoch = 42;
+        let validated_peers = vec![auth(0x11), auth(0x22)];
+
+        let tx_seq0 = build_epoch_mpc_data_ready_signal_transaction(
+            authority,
+            epoch,
+            0,
+            validated_peers.clone(),
+        );
+        let tx_seq1 =
+            build_epoch_mpc_data_ready_signal_transaction(authority, epoch, 1, validated_peers);
+
+        let key0 = match tx_seq0.kind {
+            ika_types::messages_consensus::ConsensusTransactionKind::EpochMpcDataReadySignal(
+                signal,
+            ) => ConsensusTransactionKey::EpochMpcDataReadySignal(
+                signal.authority,
+                signal.epoch,
+                signal.sequence_number,
+            ),
+            _ => panic!("expected EpochMpcDataReadySignal transaction kind"),
+        };
+        let key1 = match tx_seq1.kind {
+            ika_types::messages_consensus::ConsensusTransactionKind::EpochMpcDataReadySignal(
+                signal,
+            ) => ConsensusTransactionKey::EpochMpcDataReadySignal(
+                signal.authority,
+                signal.epoch,
+                signal.sequence_number,
+            ),
+            _ => panic!("expected EpochMpcDataReadySignal transaction kind"),
+        };
+        assert_ne!(
+            key0, key1,
+            "consecutive re-emits from the same authority + epoch must produce \
+             distinct ConsensusTransactionKeys so the consensus dedup gate doesn't \
+             drop them silently"
+        );
+        // Sanity: silence "unused" on the imported alias.
+        let _ = ConsensusTransaction::new_epoch_mpc_data_ready_signal;
+    }
+
     /// design discussion.
     #[test]
     fn freeze_partition_late_propagation_falls_short_of_quorum() {

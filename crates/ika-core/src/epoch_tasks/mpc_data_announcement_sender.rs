@@ -76,6 +76,13 @@ pub struct MpcDataAnnouncementSender {
     /// after that point further attestations don't change the
     /// already-snapshotted partition.
     last_emitted_validated_peers_count: AtomicUsize,
+    /// Sequence number of the most recently emitted signal,
+    /// starting at 0. Bumped on every re-emit and included in the
+    /// consensus key so the generic same-key dedup at
+    /// `verify_consensus_transaction` doesn't drop the re-emits —
+    /// without this, only the first emit per (authority, epoch)
+    /// would reach the strict-superset gate.
+    next_sequence_number: std::sync::atomic::AtomicU64,
     /// Per-key ready signals already submitted this epoch — keeps
     /// us from re-sending if the network-keys snapshot is observed
     /// repeatedly.
@@ -107,6 +114,7 @@ impl MpcDataAnnouncementSender {
             network_keys_receiver,
             announcement_sent: AtomicBool::new(false),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
+            next_sequence_number: std::sync::atomic::AtomicU64::new(0),
             per_key_signals_sent: Mutex::new(HashSet::new()),
         }
     }
@@ -237,9 +245,17 @@ impl MpcDataAnnouncementSender {
             return Ok(());
         }
         let new_count = validated_peers.len();
+        // Reserve a sequence number BEFORE submit so we don't
+        // collide with a concurrent producer call (the loop is
+        // single-threaded today, but `fetch_add` keeps the
+        // invariant local). The first emit is seq=0; re-emits are
+        // 1, 2, ... — included in the consensus key so they don't
+        // get deduped at verify time.
+        let sequence_number = self.next_sequence_number.fetch_add(1, Ordering::AcqRel);
         let tx = build_epoch_mpc_data_ready_signal_transaction(
             self.authority,
             self.epoch_id,
+            sequence_number,
             validated_peers,
         );
         self.consensus_adapter
@@ -249,6 +265,7 @@ impl MpcDataAnnouncementSender {
             .store(new_count, Ordering::Release);
         info!(
             epoch = self.epoch_id,
+            sequence_number,
             validated_peers_count = new_count,
             prev_count,
             "submitted EpochMpcDataReadySignal"

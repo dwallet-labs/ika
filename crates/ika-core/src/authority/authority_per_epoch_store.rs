@@ -2666,6 +2666,7 @@ impl AuthorityPerEpochStore {
         let canonical = ika_types::validator_metadata::EpochMpcDataReadySignal {
             authority: signal.authority,
             epoch: signal.epoch,
+            sequence_number: signal.sequence_number,
             validated_peers: canonical_peers,
         };
         tables

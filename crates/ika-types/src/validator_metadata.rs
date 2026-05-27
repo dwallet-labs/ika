@@ -67,7 +67,12 @@ pub struct SignedValidatorMpcDataAnnouncement {
 /// `validated_peers` (or `validated_peers ∪ {self}`) covers a stake
 /// quorum of the current committee. Emitting earlier would let
 /// network DKG / reconfig start before mpc_data has propagated
-/// across the network.
+/// across the network. When new peer blobs land after the first
+/// emit, the producer re-emits with `sequence_number` incremented
+/// (see below) — the consensus key includes the sequence number so
+/// re-emits aren't dropped by the same-key dedup gate, and the
+/// receive-side strict-superset rule prevents byzantine oscillation
+/// between attestation sets.
 ///
 /// Authentication: the consensus authority binding (sender ==
 /// `authority`) is sufficient; no separate signature is needed.
@@ -75,6 +80,14 @@ pub struct SignedValidatorMpcDataAnnouncement {
 pub struct EpochMpcDataReadySignal {
     pub authority: AuthorityName,
     pub epoch: EpochId,
+    /// Monotonically-increasing per-signer-per-epoch counter,
+    /// starting at 0 for the first emit and bumped on every
+    /// re-emit. Included in `ConsensusTransactionKey` so the
+    /// generic same-key dedup at consensus verify doesn't drop
+    /// re-emits — without this counter, only the first emit per
+    /// (authority, epoch) would reach `record_epoch_mpc_data_ready_signal`
+    /// and the strict-superset re-emit gate would never fire.
+    pub sequence_number: u64,
     /// Authorities whose mpc_data blob this signer has locally
     /// decode-validated. Wire-encoded as a sorted `Vec` (we sort
     /// on emit) so the BCS bytes are canonical and identical
@@ -129,6 +142,7 @@ mod tests {
         let signal = EpochMpcDataReadySignal {
             authority: make_authority(3),
             epoch: 99,
+            sequence_number: 7,
             validated_peers: vec![make_authority(1), make_authority(2)],
         };
         let bytes = bcs::to_bytes(&signal).expect("encode");

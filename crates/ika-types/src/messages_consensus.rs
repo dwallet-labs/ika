@@ -97,8 +97,16 @@ pub enum ConsensusTransactionKey {
     /// per validator per epoch handoff).
     HandoffSignature(AuthorityName, u64 /* epoch */),
     /// A validator's "I'm ready for this epoch's MPC sessions" vote,
-    /// keyed by signer + epoch (one vote per validator per epoch).
-    EpochMpcDataReadySignal(AuthorityName, u64 /* epoch */),
+    /// keyed by signer + epoch + sequence_number. The sequence
+    /// number lets a signer re-emit with a wider `validated_peers`
+    /// set as P2P blob propagation converges; without it, the
+    /// generic same-key dedup at `verify_consensus_transaction`
+    /// would silently drop every emit after the first.
+    EpochMpcDataReadySignal(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* sequence_number */
+    ),
     /// A validator's per-network-key "I'm ready to DKG this key"
     /// vote. Keyed by signer + network_key_id + epoch (one vote per
     /// validator per key per epoch).
@@ -224,12 +232,13 @@ impl Debug for ConsensusTransactionKey {
                     epoch
                 )
             }
-            ConsensusTransactionKey::EpochMpcDataReadySignal(authority, epoch) => {
+            ConsensusTransactionKey::EpochMpcDataReadySignal(authority, epoch, seq) => {
                 write!(
                     f,
-                    "EpochMpcDataReadySignal({:?}, epoch={})",
+                    "EpochMpcDataReadySignal({:?}, epoch={}, seq={})",
                     authority.concise(),
-                    epoch
+                    epoch,
+                    seq
                 )
             }
             ConsensusTransactionKey::NetworkKeyDKGReadySignal(authority, key_id, epoch) => {
@@ -699,7 +708,11 @@ impl ConsensusTransaction {
                 ConsensusTransactionKey::HandoffSignature(message.signer, message.attestation.epoch)
             }
             ConsensusTransactionKind::EpochMpcDataReadySignal(signal) => {
-                ConsensusTransactionKey::EpochMpcDataReadySignal(signal.authority, signal.epoch)
+                ConsensusTransactionKey::EpochMpcDataReadySignal(
+                    signal.authority,
+                    signal.epoch,
+                    signal.sequence_number,
+                )
             }
             ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal) => {
                 ConsensusTransactionKey::NetworkKeyDKGReadySignal(
