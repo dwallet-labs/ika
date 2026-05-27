@@ -1931,12 +1931,28 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
+        // Reject the reserved sentinel timestamp. `sign_validator_mpc_data_announcement`
+        // refuses to produce one, so reaching here means a byzantine peer
+        // crafted one to wedge the strict-monotonic gate below.
+        if signed.announcement.timestamp_ms == 0 {
+            warn!(
+                validator = ?signed.announcement.validator,
+                "validator mpc data announcement with reserved sentinel timestamp_ms=0 — dropping"
+            );
+            return Ok(());
+        }
         let tables = self.tables()?;
         if let Some(existing) = tables
             .validator_mpc_data_announcements
             .get(&signed.announcement.validator)?
             && existing.announcement.timestamp_ms >= signed.announcement.timestamp_ms
         {
+            // Strict `>=`: an incoming announcement with timestamp
+            // equal to the stored one is also dropped. Equal
+            // timestamps from the same signer can only happen if the
+            // sender re-uses a stale signed payload (replay) — the
+            // honest producer-side clock is millisecond-resolution
+            // and the producer rate is one announcement per epoch.
             debug!(
                 validator = ?signed.announcement.validator,
                 incoming_ts = signed.announcement.timestamp_ms,
@@ -2518,28 +2534,48 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         let mut validated: std::collections::BTreeSet<AuthorityName> =
             std::collections::BTreeSet::new();
+        let mut own_announcement_seen = false;
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
             let (authority, signed) = entry?;
             let digest = signed.announcement.blob_hash;
             let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(&digest) else {
+                if authority == self.name {
+                    // Our own announcement is in the table but the
+                    // perpetual blob isn't there — perpetual insert
+                    // silently failed at producer time, or disk
+                    // wiped our bytes. Attesting to self here would
+                    // be a lie: peers can't fetch from us either.
+                    // Don't insert self, log loudly so operators
+                    // notice.
+                    own_announcement_seen = true;
+                    warn!(
+                        validator = ?self.name,
+                        blob_hash = ?digest,
+                        "own announcement is in the per-epoch table but the \
+                         corresponding mpc_data blob is missing from perpetual \
+                         storage; refusing to self-attest until the blob is \
+                         re-persisted (operator should restart this validator)"
+                    );
+                }
                 continue;
             };
             if crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
+                if authority == self.name {
+                    own_announcement_seen = true;
+                }
                 validated.insert(authority);
             }
         }
-        // Include our own authority unconditionally: by the time
-        // this validator emits its ready signal, it has already
-        // derived + persisted its own blob locally (the producer
-        // task seeds both the perpetual table and the in-memory
-        // store at announcement time). The announcement-table
-        // entry only lands after a consensus round-trip, which
-        // can lag this method; without explicitly attesting to
-        // ourselves we'd under-count own-stake in
-        // `local_blob_coverage_meets_quorum` AND emit a signal
-        // whose `validated_peers` excluded self — leading to
-        // self-exclusion at the freeze tally.
-        validated.insert(self.name);
+        // If our own announcement hasn't landed in the table yet
+        // (consensus round-trip in flight), attest to self
+        // optimistically: the producer just derived + persisted our
+        // blob in-process, and the in-memory backing the Anemo
+        // server is seeded with the same bytes. Self-exclusion at
+        // this transient window would let our own stake count
+        // against the freeze tally.
+        if !own_announcement_seen {
+            validated.insert(self.name);
+        }
         Ok(validated.into_iter().collect())
     }
 
@@ -2551,10 +2587,14 @@ impl AuthorityPerEpochStore {
     /// validated, otherwise downstream freeze could capture a
     /// premature input set and exclude legitimate validators.
     ///
-    /// `compute_locally_validated_peers` always includes our own
-    /// authority (see its docstring), so the stake sum below
-    /// already accounts for self-stake without a separate
-    /// fixup.
+    /// `compute_locally_validated_peers` includes our own authority
+    /// when our own blob is locally available (either decode-
+    /// validated in perpetual storage, or before our announcement
+    /// has landed in the per-epoch table — the producer-just-
+    /// submitted window). If our own perpetual blob is missing and
+    /// our announcement is already in the table, self is omitted —
+    /// see the comment inside that function. The stake sum below
+    /// already accounts for self-stake without a separate fixup.
     pub fn local_blob_coverage_meets_quorum(&self) -> IkaResult<bool> {
         let validated = self.compute_locally_validated_peers()?;
         let committee = self.committee();

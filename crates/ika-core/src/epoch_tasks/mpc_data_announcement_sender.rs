@@ -182,13 +182,15 @@ impl MpcDataAnnouncementSender {
         // our blob during this epoch's first run would miss until
         // the next restart.
         self.in_memory_blob_store.insert(digest, blob.clone());
+        let timestamp_ms = now_ms().map_err(DwalletMPCError::IkaError)?;
         let signed = sign_validator_mpc_data_announcement(
             self.authority,
             self.epoch_id,
-            now_ms(),
+            timestamp_ms,
             digest,
             &self.bls_keypair,
-        );
+        )
+        .map_err(DwalletMPCError::IkaError)?;
         let tx = ConsensusTransaction::new_validator_mpc_data_announcement(signed);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)

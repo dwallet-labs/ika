@@ -421,23 +421,48 @@ pub fn blob_decodes_to_valid_mpc_data(blob: &[u8]) -> bool {
 /// Unix epoch. Used as the `timestamp_ms` field of a new
 /// announcement; the latest-by-timestamp rule means later calls
 /// (e.g. after a seed rotation) win.
-pub fn now_ms() -> u64 {
+///
+/// Returns `Err` rather than a sentinel `0` if the system clock is
+/// before the Unix epoch — `timestamp_ms = 0` is rejected by
+/// `sign_validator_mpc_data_announcement` as a sentinel and would
+/// wedge the validator (no future signing for the rest of the
+/// epoch because `timestamp_ms > 0` would always pass the strict-
+/// monotonic gate).
+pub fn now_ms() -> IkaResult<u64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+        .map_err(|e| IkaError::Generic {
+            error: format!(
+                "system clock is before the Unix epoch — refusing to sign \
+                 a sentinel announcement: {e}"
+            ),
+        })
 }
 
 /// Signs a `ValidatorMpcDataAnnouncement` with the validator's
 /// authority (BLS) keypair, producing a
 /// `SignedValidatorMpcDataAnnouncement` ready to submit via consensus.
+///
+/// Rejects `timestamp_ms == 0` as a sentinel: the per-epoch table
+/// deduplicates with strict-greater-than, so an entry written at
+/// `timestamp_ms = 0` cannot be replaced by a later honest write
+/// from the same validator and would wedge them for the rest of
+/// the epoch.
 pub fn sign_validator_mpc_data_announcement(
     validator: AuthorityName,
     epoch: EpochId,
     timestamp_ms: u64,
     blob_hash: [u8; 32],
     keypair: &AuthorityKeyPair,
-) -> SignedValidatorMpcDataAnnouncement {
+) -> IkaResult<SignedValidatorMpcDataAnnouncement> {
+    if timestamp_ms == 0 {
+        return Err(IkaError::Generic {
+            error: "refusing to sign a ValidatorMpcDataAnnouncement with \
+                    timestamp_ms == 0 (reserved sentinel)"
+                .into(),
+        });
+    }
     let announcement = ValidatorMpcDataAnnouncement {
         validator,
         timestamp_ms,
@@ -450,10 +475,10 @@ pub fn sign_validator_mpc_data_announcement(
         validator,
         keypair,
     );
-    SignedValidatorMpcDataAnnouncement {
+    Ok(SignedValidatorMpcDataAnnouncement {
         announcement,
         auth_sig,
-    }
+    })
 }
 
 /// Builds the `ConsensusTransaction` that wraps an
@@ -1429,6 +1454,7 @@ mod tests {
         blob_hash: [u8; 32],
     ) -> SignedValidatorMpcDataAnnouncement {
         sign_validator_mpc_data_announcement(name_of(kp), target_epoch, 42_000, blob_hash, kp)
+            .expect("non-zero timestamp signs successfully")
     }
 
     #[test]
@@ -1468,7 +1494,8 @@ mod tests {
             1,
         );
 
-        let signed = sign_validator_mpc_data_announcement(name, 5, 1_000, [0xAB; 32], &kp);
+        let signed = sign_validator_mpc_data_announcement(name, 5, 1_000, [0xAB; 32], &kp)
+            .expect("non-zero timestamp signs successfully");
         signed
             .auth_sig
             .verify_secure(
