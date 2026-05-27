@@ -2532,51 +2532,38 @@ impl AuthorityPerEpochStore {
             return Ok(Vec::new());
         };
         let tables = self.tables()?;
-        let mut validated: std::collections::BTreeSet<AuthorityName> =
-            std::collections::BTreeSet::new();
-        let mut own_announcement_seen = false;
+        let mut announcements: Vec<(AuthorityName, [u8; 32])> = Vec::new();
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
             let (authority, signed) = entry?;
-            let digest = signed.announcement.blob_hash;
-            let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(&digest) else {
-                if authority == self.name {
-                    // Our own announcement is in the table but the
-                    // perpetual blob isn't there — perpetual insert
-                    // silently failed at producer time, or disk
-                    // wiped our bytes. Attesting to self here would
-                    // be a lie: peers can't fetch from us either.
-                    // Don't insert self, log loudly so operators
-                    // notice.
-                    own_announcement_seen = true;
-                    warn!(
-                        validator = ?self.name,
-                        blob_hash = ?digest,
-                        "own announcement is in the per-epoch table but the \
-                         corresponding mpc_data blob is missing from perpetual \
-                         storage; refusing to self-attest until the blob is \
-                         re-persisted (operator should restart this validator)"
-                    );
-                }
-                continue;
-            };
-            if crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
-                if authority == self.name {
-                    own_announcement_seen = true;
-                }
-                validated.insert(authority);
-            }
+            announcements.push((authority, signed.announcement.blob_hash));
         }
-        // If our own announcement hasn't landed in the table yet
-        // (consensus round-trip in flight), attest to self
-        // optimistically: the producer just derived + persisted our
-        // blob in-process, and the in-memory backing the Anemo
-        // server is seeded with the same bytes. Self-exclusion at
-        // this transient window would let our own stake count
-        // against the freeze tally.
-        if !own_announcement_seen {
-            validated.insert(self.name);
+        let decision = crate::validator_metadata::decide_locally_validated_peers(
+            self.name,
+            announcements,
+            |digest| {
+                perpetual
+                    .get_mpc_artifact_blob(digest)
+                    .ok()
+                    .flatten()
+                    .map(|bytes| crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes))
+                    .unwrap_or(false)
+            },
+        );
+        if decision.self_blob_unhealthy {
+            // Own announcement is in the table but the corresponding
+            // perpetual blob is missing or fails decode. Attesting
+            // to self here would lie to peers (they'd fetch from us
+            // and get nothing); log loudly so operators notice and
+            // restart this validator to re-persist the blob.
+            warn!(
+                validator = ?self.name,
+                "own announcement is in the per-epoch table but the \
+                 corresponding mpc_data blob is missing or invalid in \
+                 perpetual storage; refusing to self-attest until the \
+                 blob is re-persisted (operator should restart this validator)"
+            );
         }
-        Ok(validated.into_iter().collect())
+        Ok(decision.validated.into_iter().collect())
     }
 
     /// Whether the locally-validated peer set covers a stake

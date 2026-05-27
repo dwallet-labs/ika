@@ -799,6 +799,132 @@ where
     }
 }
 
+/// Pre-assembly decision for `EpochStoreClassGroupsSource`. Extracted
+/// as a pure helper so the post-freeze-vs-pre-freeze branching can be
+/// unit-tested without standing up an `AuthorityPerEpochStore`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssemblyInputDecision {
+    /// Ready to pass to `assemble_committee_class_groups_off_chain`.
+    Pairs(Vec<(AuthorityName, [u8; 32])>),
+    /// Pre-freeze: some non-excluded committee member's announcement
+    /// hasn't been delivered yet. Caller returns `Incomplete` with
+    /// this list so the outer loop retries on the next tick.
+    AnnouncementMissing(Vec<AuthorityName>),
+    /// Either every committee member is excluded (pre-freeze) or
+    /// nobody in the frozen set is in `committee_authorities`
+    /// (post-freeze). Caller returns `Incomplete` with the full
+    /// committee — a `Complete` here would silently build a broken
+    /// committee.
+    EverythingExcluded,
+}
+
+/// Decides which `(authority, digest)` pairs to feed into
+/// `assemble_committee_class_groups_off_chain` given the current
+/// epoch's freeze state. Post-freeze (`!frozen.is_empty()`), the
+/// frozen map is the single source of truth — anyone not in
+/// `frozen` is silently skipped, which is what prevents a single
+/// never-announcing committee member from permanently stalling
+/// assembly. Pre-freeze, the announcement table is iterated
+/// directly so early-bootstrap retries surface honest peers we
+/// haven't seen yet.
+pub fn decide_assembly_inputs<F>(
+    committee_authorities: &[AuthorityName],
+    frozen: &std::collections::HashMap<AuthorityName, [u8; 32]>,
+    excluded: &std::collections::HashSet<AuthorityName>,
+    announcement_lookup: F,
+) -> AssemblyInputDecision
+where
+    F: Fn(&AuthorityName) -> Option<[u8; 32]>,
+{
+    let frozen_fired = !frozen.is_empty();
+    let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
+    let mut announcement_missing: Vec<AuthorityName> = Vec::new();
+    for authority in committee_authorities {
+        if frozen_fired {
+            if let Some(blob_hash) = frozen.get(authority) {
+                pairs.push((*authority, *blob_hash));
+            }
+            continue;
+        }
+        if excluded.contains(authority) {
+            continue;
+        }
+        match announcement_lookup(authority) {
+            Some(blob_hash) => pairs.push((*authority, blob_hash)),
+            None => announcement_missing.push(*authority),
+        }
+    }
+    if !announcement_missing.is_empty() {
+        return AssemblyInputDecision::AnnouncementMissing(announcement_missing);
+    }
+    if pairs.is_empty() {
+        return AssemblyInputDecision::EverythingExcluded;
+    }
+    AssemblyInputDecision::Pairs(pairs)
+}
+
+/// Decision returned by [`decide_locally_validated_peers`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedPeersDecision {
+    /// The set of authorities whose blob is locally available AND
+    /// decode-valid. Self is included when self's own blob is
+    /// healthy locally, or omitted when self's announcement is
+    /// already in the table but its blob is missing or corrupt
+    /// (see `self_blob_unhealthy`).
+    pub validated: std::collections::BTreeSet<AuthorityName>,
+    /// `true` iff self's announcement appears in the input AND
+    /// self's blob fails the `blob_valid_for_digest` check. The
+    /// caller is expected to emit a `warn!` when this is true so
+    /// operators notice the persist failure.
+    pub self_blob_unhealthy: bool,
+}
+
+/// Builds the locally-validated-peers set from a stream of
+/// `(authority, blob_hash)` announcements plus a digest-to-validity
+/// callback. Self is inserted optimistically when self's announcement
+/// hasn't landed in the input yet (the producer-just-submitted
+/// window before consensus delivers it back); self is omitted when
+/// self's announcement is present but the blob check fails — to
+/// avoid lying to peers about serving our own bytes.
+///
+/// Extracted from `AuthorityPerEpochStore::compute_locally_validated_peers`
+/// so the self-attest gate can be unit-tested without a live store.
+pub fn decide_locally_validated_peers<F>(
+    self_authority: AuthorityName,
+    announcements: impl IntoIterator<Item = (AuthorityName, [u8; 32])>,
+    blob_valid_for_digest: F,
+) -> ValidatedPeersDecision
+where
+    F: Fn(&[u8; 32]) -> bool,
+{
+    let mut validated: std::collections::BTreeSet<AuthorityName> =
+        std::collections::BTreeSet::new();
+    let mut self_announcement_seen = false;
+    let mut self_blob_unhealthy = false;
+    for (authority, digest) in announcements {
+        let is_self = authority == self_authority;
+        if is_self {
+            self_announcement_seen = true;
+        }
+        if blob_valid_for_digest(&digest) {
+            validated.insert(authority);
+        } else if is_self {
+            self_blob_unhealthy = true;
+        }
+    }
+    if !self_announcement_seen {
+        // Optimistic self-insert: announcement-table entry lags
+        // the producer's in-process persist, so this is the
+        // common path on epoch start. The producer guarantees
+        // we have our own bytes locally before submitting.
+        validated.insert(self_authority);
+    }
+    ValidatedPeersDecision {
+        validated,
+        self_blob_unhealthy,
+    }
+}
+
 /// Off-chain source of the large `DWalletNetworkEncryptionKeyData`
 /// blobs (DKG output, current reconfiguration output). Implemented
 /// at runtime by `AuthorityPerEpochStore`, which holds digest
@@ -923,72 +1049,29 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
                 missing: committee_authorities.to_vec(),
             };
         };
-        // Post-freeze, the `frozen_validator_mpc_data_input_set`
-        // map is the single source of truth for "who's in this
-        // epoch's working set." A committee member who never
-        // announced will not be in `frozen` (they couldn't reach
-        // attestation quorum), and treating them as implicitly
-        // excluded here is what prevents a single crashed
-        // never-announcer from permanently stalling assembly. The
-        // pre-freeze code path below still iterates the announcement
-        // table directly so early-bootstrap retries surface
-        // honest peers we just haven't seen yet.
         let frozen = store
             .get_frozen_validator_mpc_data_input_set()
             .unwrap_or_default();
-        let frozen_fired = !frozen.is_empty();
-        // Excluded set is also surfaced from the per-epoch table so
-        // we have a precise "missing" diagnostic; same semantics as
-        // before — these were known to the freeze and intentionally
-        // dropped.
         let excluded: std::collections::HashSet<AuthorityName> =
             store.get_epoch_excluded_validators().unwrap_or_default();
-        let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
-        let mut announcement_missing: Vec<AuthorityName> = Vec::new();
-        for authority in committee_authorities {
-            if frozen_fired {
-                // Post-freeze: only committee members in the frozen
-                // set contribute. Anyone not in `frozen` (whether
-                // they were explicitly excluded or simply never
-                // announced) is silently skipped.
-                if let Some(blob_hash) = frozen.get(authority) {
-                    pairs.push((*authority, *blob_hash));
+        let pairs =
+            match decide_assembly_inputs(committee_authorities, &frozen, &excluded, |authority| {
+                store
+                    .get_validator_mpc_data_announcement(authority)
+                    .ok()
+                    .flatten()
+                    .map(|signed| signed.announcement.blob_hash)
+            }) {
+                AssemblyInputDecision::Pairs(pairs) => pairs,
+                AssemblyInputDecision::AnnouncementMissing(missing) => {
+                    return OffChainClassGroupsAssembly::Incomplete { missing };
                 }
-                continue;
-            }
-            if excluded.contains(authority) {
-                continue;
-            }
-            match store.get_validator_mpc_data_announcement(authority) {
-                Ok(Some(signed)) => {
-                    pairs.push((*authority, signed.announcement.blob_hash));
+                AssemblyInputDecision::EverythingExcluded => {
+                    return OffChainClassGroupsAssembly::Incomplete {
+                        missing: committee_authorities.to_vec(),
+                    };
                 }
-                _ => announcement_missing.push(*authority),
-            }
-        }
-        if !announcement_missing.is_empty() {
-            // Per-epoch table doesn't have an announcement for some
-            // non-excluded committee member — consensus hasn't
-            // delivered it yet (early bootstrap window). Under v4
-            // the caller should retry on the next tick rather than
-            // read mpc_data from chain.
-            return OffChainClassGroupsAssembly::Incomplete {
-                missing: announcement_missing,
             };
-        }
-        if pairs.is_empty() {
-            // Nothing to assemble: every committee member was
-            // either explicitly `excluded` by the freeze or there
-            // was no announcement to inspect. A `Complete` with
-            // empty maps would silently build a `Committee` whose
-            // `class_groups_public_keys_and_proofs` is empty,
-            // dropping every share at reconfig MPC — surface as
-            // `Incomplete` with the full committee so the caller
-            // knows to retry instead of building a broken committee.
-            return OffChainClassGroupsAssembly::Incomplete {
-                missing: committee_authorities.to_vec(),
-            };
-        }
         let perpetual = self.perpetual.clone();
         let assembly_pairs: Vec<_> = pairs.clone();
         let result = assemble_committee_class_groups_off_chain(assembly_pairs, move |digest| {
@@ -2219,6 +2302,188 @@ mod tests {
             }
             other => panic!("expected Incomplete, got {other:?}"),
         }
+    }
+
+    /// Post-freeze, `decide_assembly_inputs` uses the frozen map
+    /// as the single source of truth — a committee member who
+    /// never announced (so isn't in `frozen` *or*
+    /// `excluded`) is silently skipped, not surfaced as
+    /// `AnnouncementMissing`. Without this, a single crashed
+    /// validator would stall the cluster forever under v4.
+    #[test]
+    fn decide_assembly_inputs_post_freeze_skips_never_announcer() {
+        let a = auth(0xAA);
+        let b = auth(0xBB);
+        let c = auth(0xCC);
+        let d = auth(0xDD); // never announced; not in frozen, not in excluded
+
+        let mut frozen = std::collections::HashMap::new();
+        frozen.insert(a, [0x01; 32]);
+        frozen.insert(b, [0x02; 32]);
+        frozen.insert(c, [0x03; 32]);
+        let excluded = std::collections::HashSet::new();
+        let decision = decide_assembly_inputs(&[a, b, c, d], &frozen, &excluded, |_| {
+            panic!("post-freeze must not consult announcement_lookup")
+        });
+        match decision {
+            AssemblyInputDecision::Pairs(pairs) => {
+                let names: Vec<_> = pairs.iter().map(|(a, _)| *a).collect();
+                assert_eq!(names, vec![a, b, c], "D silently skipped, not missing");
+            }
+            other => panic!("expected Pairs, got {other:?}"),
+        }
+    }
+
+    /// Pre-freeze (frozen map empty), a non-excluded committee
+    /// member with no announcement surfaces as
+    /// `AnnouncementMissing` so the outer loop retries.
+    #[test]
+    fn decide_assembly_inputs_pre_freeze_surfaces_announcement_missing() {
+        let a = auth(0xAA);
+        let b = auth(0xBB);
+        let frozen = std::collections::HashMap::new();
+        let excluded = std::collections::HashSet::new();
+        let decision = decide_assembly_inputs(&[a, b], &frozen, &excluded, |authority| {
+            if *authority == a {
+                Some([0x01; 32])
+            } else {
+                None
+            }
+        });
+        match decision {
+            AssemblyInputDecision::AnnouncementMissing(missing) => {
+                assert_eq!(missing, vec![b]);
+            }
+            other => panic!("expected AnnouncementMissing, got {other:?}"),
+        }
+    }
+
+    /// Pre-freeze with every committee member explicitly excluded
+    /// returns `EverythingExcluded` — the wrapper then returns
+    /// `Incomplete` with the full committee, never `Complete{empty}`.
+    #[test]
+    fn decide_assembly_inputs_all_excluded_pre_freeze_is_everything_excluded() {
+        let a = auth(0xAA);
+        let b = auth(0xBB);
+        let frozen = std::collections::HashMap::new();
+        let mut excluded = std::collections::HashSet::new();
+        excluded.insert(a);
+        excluded.insert(b);
+        let decision = decide_assembly_inputs(&[a, b], &frozen, &excluded, |_| {
+            panic!("excluded members must not be looked up")
+        });
+        assert!(matches!(
+            decision,
+            AssemblyInputDecision::EverythingExcluded
+        ));
+    }
+
+    /// Post-freeze with NO committee member in the frozen map (the
+    /// degenerate state — implausible in practice but possible if
+    /// `committee_authorities` and the frozen set were computed
+    /// from different snapshots) returns `EverythingExcluded`.
+    #[test]
+    fn decide_assembly_inputs_post_freeze_no_overlap_is_everything_excluded() {
+        let a = auth(0xAA);
+        let b = auth(0xBB);
+        let c = auth(0xCC);
+        let mut frozen = std::collections::HashMap::new();
+        // frozen has c only — neither a nor b is in it.
+        frozen.insert(c, [0x03; 32]);
+        let excluded = std::collections::HashSet::new();
+        let decision = decide_assembly_inputs(&[a, b], &frozen, &excluded, |_| None);
+        assert!(matches!(
+            decision,
+            AssemblyInputDecision::EverythingExcluded
+        ));
+    }
+
+    /// `decide_locally_validated_peers` includes self optimistically
+    /// when self's announcement isn't in the input yet (the
+    /// producer-just-submitted window before consensus replays).
+    #[test]
+    fn decide_locally_validated_peers_includes_self_optimistically_when_announcement_absent() {
+        let self_authority = auth(0xAA);
+        let b = auth(0xBB);
+        // Input only has B; self's announcement hasn't landed yet.
+        let decision =
+            decide_locally_validated_peers(self_authority, vec![(b, [0xBB; 32])], |_| true);
+        assert!(decision.validated.contains(&self_authority));
+        assert!(decision.validated.contains(&b));
+        assert!(!decision.self_blob_unhealthy);
+    }
+
+    /// When self's announcement is in the input and the blob check
+    /// passes, self is included normally and `self_blob_unhealthy`
+    /// is false.
+    #[test]
+    fn decide_locally_validated_peers_includes_self_when_blob_healthy() {
+        let self_authority = auth(0xAA);
+        let b = auth(0xBB);
+        let decision = decide_locally_validated_peers(
+            self_authority,
+            vec![(self_authority, [0xAA; 32]), (b, [0xBB; 32])],
+            |_| true,
+        );
+        assert!(decision.validated.contains(&self_authority));
+        assert!(decision.validated.contains(&b));
+        assert!(!decision.self_blob_unhealthy);
+    }
+
+    /// When self's announcement is in the input but the blob check
+    /// fails, self is OMITTED and `self_blob_unhealthy` is true.
+    /// The wrapper then emits a loud `warn!` so the operator
+    /// notices the persist failure — and our peers no longer see
+    /// our self-attestation, so they don't try to fetch bytes
+    /// we don't have.
+    #[test]
+    fn decide_locally_validated_peers_omits_self_when_blob_unhealthy() {
+        let self_authority = auth(0xAA);
+        let b = auth(0xBB);
+        let self_digest = [0xAA; 32];
+        let decision = decide_locally_validated_peers(
+            self_authority,
+            vec![(self_authority, self_digest), (b, [0xBB; 32])],
+            |digest| *digest != self_digest, // self's blob fails, B's passes
+        );
+        assert!(
+            !decision.validated.contains(&self_authority),
+            "self must NOT be self-attested when own blob unhealthy"
+        );
+        assert!(decision.validated.contains(&b));
+        assert!(decision.self_blob_unhealthy);
+    }
+
+    /// A peer whose blob fails the validity check is silently
+    /// excluded from `validated`; the flag tracks only self.
+    #[test]
+    fn decide_locally_validated_peers_omits_peer_with_unhealthy_blob() {
+        let self_authority = auth(0xAA);
+        let b = auth(0xBB);
+        let c = auth(0xCC);
+        let bad_digest = [0xBB; 32];
+        let decision = decide_locally_validated_peers(
+            self_authority,
+            vec![(b, bad_digest), (c, [0xCC; 32])],
+            |digest| *digest != bad_digest,
+        );
+        // Self is inserted optimistically (no self announcement in input).
+        assert!(decision.validated.contains(&self_authority));
+        assert!(!decision.validated.contains(&b));
+        assert!(decision.validated.contains(&c));
+        assert!(!decision.self_blob_unhealthy);
+    }
+
+    /// Empty announcements input still inserts self optimistically.
+    /// This is the very-first-tick case before the producer has
+    /// even submitted.
+    #[test]
+    fn decide_locally_validated_peers_empty_input_inserts_self() {
+        let self_authority = auth(0xAA);
+        let decision = decide_locally_validated_peers(self_authority, std::iter::empty(), |_| true);
+        assert_eq!(decision.validated.len(), 1);
+        assert!(decision.validated.contains(&self_authority));
+        assert!(!decision.self_blob_unhealthy);
     }
 
     /// Empty announcements input must NOT produce `Complete` — a
