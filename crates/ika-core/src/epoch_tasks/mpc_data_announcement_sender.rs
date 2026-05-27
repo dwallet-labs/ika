@@ -17,8 +17,8 @@
 //!
 //! Without this task running, no validator would broadcast its
 //! mpc_data — leaving `frozen_validator_mpc_data_input_set` empty
-//! forever, leaving the step-14 kickoff gate permanently closed,
-//! and stalling network DKG / reconfig.
+//! forever, blocking `is_mpc_data_frozen()`, and stalling network
+//! DKG / reconfiguration kickoff for the epoch.
 
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,

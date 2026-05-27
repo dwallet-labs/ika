@@ -1,16 +1,33 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Producer-side helpers for the off-chain validator-metadata flow.
+//! Pure helpers for the off-chain validator-metadata flow. The
+//! module is split into three concerns:
 //!
-//! `derive_mpc_data_blob` produces the canonical BCS bytes that a
-//! validator commits to (this is what gets hashed and announced; the
-//! same bytes are served over P2P). `sign_validator_mpc_data_announcement`
-//! builds the `SignedValidatorMpcDataAnnouncement` ready for consensus.
+//! 1. **Producer helpers** — `derive_mpc_data_blob` produces the
+//!    canonical BCS bytes a validator commits to (hashed, announced,
+//!    served over P2P); `sign_validator_mpc_data_announcement` builds
+//!    the wire-ready `SignedValidatorMpcDataAnnouncement`; helpers
+//!    construct the per-epoch consensus transactions
+//!    (`EpochMpcDataReadySignal`, `NetworkKeyDKGReadySignal`,
+//!    `HandoffSignature`).
+//! 2. **Consensus-side pure verifiers** — `verify_joiner_announcement`
+//!    (returns `Verdict` for a joiner's announcement against the
+//!    PendingActiveSet), `verify_peer_blob_for_relay` (hash + decode
+//!    a peer-served blob before storing/relaying),
+//!    `canonicalize_ready_signal_peers` (dedup + committee-filter +
+//!    quorum-coverage floor for incoming ready signals),
+//!    `compute_freeze_partition` (frozen-vs-excluded tally from
+//!    recorded signals), `verify_certified_handoff_attestation`.
+//! 3. **Off-chain assembly** — `assemble_committee_class_groups_off_chain`
+//!    and the `OffChainCommitteeClassGroupsSource` /
+//!    `NetworkKeyBlobSource` traits that let the per-epoch store
+//!    feed locally-cached blobs into committee construction.
 //!
-//! These functions are deterministic given the same seed (modulo the
-//! `timestamp_ms` parameter), so producer-side and any verifier
-//! re-derivation will produce byte-identical blobs.
+//! All functions here are deterministic given the same inputs
+//! (modulo `timestamp_ms` in `sign_validator_mpc_data_announcement`),
+//! so producer-side and any verifier re-derivation produce
+//! byte-identical results.
 
 use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
@@ -501,8 +518,10 @@ pub fn compute_effective_reconfig_input_set(
 ///
 /// Returns the items sorted strictly ascending by `HandoffItemKey`,
 /// ready to feed straight into `build_handoff_attestation`. Empty
-/// inputs are fine (yields an empty list), which is the state up
-/// until steps 9–11 populate the latter two.
+/// inputs are fine (yields an empty list) — early in an epoch, the
+/// validator-mpc_data set is the first to populate; the per-network-
+/// key DKG and reconfiguration output maps fill in as those sessions
+/// finalize.
 pub fn compute_handoff_items(
     validator_mpc_data: &BTreeMap<AuthorityName, [u8; 32]>,
     network_dkg_outputs: &BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
@@ -628,17 +647,9 @@ pub fn build_network_key_dkg_ready_signal_transaction(
     ConsensusTransaction::new_network_key_dkg_ready_signal(signal)
 }
 
-/// Outcome of trying to assemble the committee's class-groups
-/// public-keys map from off-chain announcements + the local blob
-/// store. `Complete` means every supplied authority resolved
-/// successfully; `Incomplete` means *at least one* didn't and the
-/// caller MUST fall back to the chain-read path — partial maps are
-/// load-bearing-broken because reconfig MPC reads
-/// `Committee.class_groups_public_keys_and_proofs` directly and an
-/// empty/partial entry silently drops that validator's share.
 /// Assembled validator-key bundles needed to build a `Committee`
-/// off-chain. `class_groups` is required for every committee
-/// authority (the strict gate). The three PVSS halves are
+/// off-chain. `class_groups` is required for every authority in the
+/// working set (the strict gate). The three PVSS halves are
 /// opportunistic per-validator: present only when the validator
 /// published under the post-PR-#1707 shape
 /// (`network_encryption_key_version == 3`). At protocol_version
@@ -665,6 +676,17 @@ pub struct OffChainCommitteeBundles {
     >,
 }
 
+/// Outcome of trying to assemble the committee's class-groups
+/// public-keys map from off-chain announcements + the local blob
+/// store. `Complete` means every supplied authority resolved
+/// successfully. `Incomplete` means *at least one* didn't; under
+/// off-chain mode (`off_chain_validator_metadata_enabled`) the
+/// caller returns `OffChainAssemblyIncomplete` and the outer sync
+/// loop retries on the next tick, while in legacy mode the caller
+/// falls back to reading mpc_data from chain. Partial maps are
+/// never returned — reconfig MPC reads
+/// `Committee.class_groups_public_keys_and_proofs` directly and a
+/// missing entry silently drops that validator's share.
 #[derive(Debug)]
 pub enum OffChainClassGroupsAssembly {
     Complete(OffChainCommitteeBundles),
@@ -742,8 +764,15 @@ where
 /// blobs (DKG output, current reconfiguration output). Implemented
 /// at runtime by `AuthorityPerEpochStore`, which holds digest
 /// indices into perpetual `mpc_artifact_blobs`. Returning `None`
-/// means "I don't have this blob off-chain" — the caller falls
-/// back to the chain read.
+/// means "I don't have this blob off-chain" and the caller falls
+/// back to reading the bytes from chain.
+///
+/// Unlike validator `mpc_data` (where off-chain mode makes chain
+/// write-only and there is no read-side fallback under v4), the
+/// per-network-key DKG and reconfiguration output blobs *still*
+/// live on chain even under v4 — the off-chain overlay is an
+/// optimization that avoids repeatedly fetching large blobs, not
+/// a replacement for chain storage. So a `None` here is benign.
 ///
 /// This is read-only on the hot path; the producer-side blob
 /// caching path is the write side.

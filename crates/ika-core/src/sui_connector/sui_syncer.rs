@@ -342,15 +342,15 @@ where
     ) -> DwalletMPCResult<Committee> {
         // Try the off-chain assembly first. The strict
         // `Complete`/`Incomplete` gate inside the source means we
-        // only use the off-chain map when *every* committee member
-        // resolved successfully. In off-chain mode, an `Incomplete`
-        // result is logged with elevated severity — the design
-        // intent is for chain to be write-only for validator
-        // mpc_data — but we still fall back to the chain read so
-        // the cluster can bootstrap before consensus has delivered
-        // every announcement. The
-        // `chain_blob_reads`/`CHAIN_BLOB_READ_*` counters surface
-        // whether the fallback actually fired during a test run.
+        // only use the off-chain map when every (non-excluded)
+        // committee member resolved successfully. Under off-chain
+        // mode (`off_chain_on == true`) an `Incomplete` result
+        // returns `OffChainAssemblyIncomplete` and the outer sync
+        // loop retries on the next tick — there is no chain
+        // fallback for validator mpc_data; chain is write-only.
+        // Under legacy mode (`off_chain_on == false`) we fall
+        // through to the chain read below so existing clusters
+        // keep working.
         if let Some(source) = class_groups_source.load_full() {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();

@@ -383,13 +383,13 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> IkaResult<()>;
 
     /// Returns whether the epoch-wide `mpc_data` input set has been
-    /// frozen — i.e., a quorum of `EpochMpcDataReadySignal` or
-    /// `NetworkKeyDKGReadySignal` has been observed in consensus
-    /// order this epoch. DKG/reconfig session kickoff defers until
-    /// this is `true`.
+    /// frozen — i.e., a stake-quorum of `EpochMpcDataReadySignal`s
+    /// has been observed in consensus order this epoch. Network DKG
+    /// and reconfiguration session kickoff defers until this is
+    /// `true`. `NetworkKeyDKGReadySignal` is recorded for future use
+    /// but does NOT trigger the freeze.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
 
-    /// Returns whether the per-key DKG ready quorum has been
     /// Whether stake-quorum of `NetworkKeyDKGReadySignal`s have been
     /// observed for `network_key_id` this epoch.
     ///
@@ -405,8 +405,10 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     /// Reflects the per-epoch `protocol_config` flag that gates
     /// the entire off-chain validator-metadata pipeline. When
-    /// false, the kickoff gate and other off-chain hooks behave
-    /// as legacy (chain-only).
+    /// false, the producer task, peer-blob fetcher, attestation-
+    /// tally freeze, and handoff-cert path are all disabled, and
+    /// DKG/reconfiguration kickoff falls back to the legacy
+    /// chain-only behavior.
     fn off_chain_validator_metadata_enabled(&self) -> bool;
 
     /// Returns the freeze-time `validator -> blob_hash` snapshot
@@ -2065,9 +2067,8 @@ impl AuthorityPerEpochStore {
     /// `CertifiedHandoffAttestation` once the aggregator crosses
     /// quorum. Called once by `ika-node` at startup, after the
     /// perpetual DB is open. Before this is installed, certs are
-    /// minted by the aggregator but not persisted; joiner-bootstrap
-    /// reads will miss them. Safe in steps 7c+ because no consumer
-    /// is wired yet.
+    /// minted by the aggregator but not persisted; any joiner-
+    /// bootstrap reads scheduled before install will miss them.
     pub fn install_perpetual_tables_for_handoff(
         &self,
         perpetual_tables: Arc<super::authority_perpetual_tables::AuthorityPerpetualTables>,
@@ -2327,19 +2328,20 @@ impl AuthorityPerEpochStore {
 
     /// Records an incoming `HandoffSignatureMessage` from consensus.
     ///
-    /// Drops the message silently when:
-    /// - no expected attestation is installed yet (the producer
-    ///   side hasn't computed one for this validator),
-    /// - no consensus-pubkey provider is installed,
-    /// - the signature fails verification (any
-    ///   `HandoffSignatureVerdict` except `Accept`).
+    /// When no expected attestation is installed yet, the message
+    /// is **buffered** into `pending_handoff_signatures` (bounded
+    /// by committee size, last-write-wins per signer) so that
+    /// `install_expected_handoff_attestation` can replay it once
+    /// the local producer side computes the attestation. Messages
+    /// from non-committee signers and messages that fail signature
+    /// verification (any `HandoffSignatureVerdict` other than
+    /// `Accept`) are dropped silently.
     ///
-    /// On `Accept`, persists the signature into `handoff_signatures`
-    /// (replays no-op via the typed-store `insert` semantics — same
-    /// key, same value), drives the in-memory aggregator, and
-    /// returns the freshly-minted cert if quorum was just crossed.
-    /// Caller (the perpetual-persist step) is responsible for
-    /// writing the cert to perpetual storage.
+    /// On `Accept` (after an attestation is installed), persists
+    /// the per-signer signature into `handoff_signatures`, drives
+    /// the in-memory aggregator, and — if quorum was just crossed —
+    /// writes the freshly-minted cert to perpetual storage and
+    /// returns it to the caller for further fan-out.
     pub fn record_handoff_signature(
         &self,
         msg: &ika_types::handoff::HandoffSignatureMessage,

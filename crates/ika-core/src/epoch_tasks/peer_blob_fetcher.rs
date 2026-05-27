@@ -10,13 +10,13 @@
 //! via consensus carrying only the Blake2b256 digest of its
 //! `mpc_data` blob. The producer side
 //! (`mpc_data_announcement_sender`) caches its own blob locally on
-//! submit, but **peer blobs are not carried on the wire** — by design,
-//! the blob bytes flow over P2P. Without this fetcher every validator
-//! would only ever hold its own blob, the off-chain assembler would
-//! return `Incomplete` for every peer, and `sync_next_committee`
-//! would fall back to reading `get_mpc_data_from_validators_pool`
-//! from chain — which is exactly what the off_chain_validator_metadata
-//! mode is supposed to eliminate.
+//! submit, but **peer blobs are not carried on the wire** — by
+//! design, the blob bytes flow over P2P. Without this fetcher every
+//! validator would only ever hold its own blob, the off-chain
+//! assembler would return `Incomplete` for every peer, and (in
+//! off-chain mode) `sync_next_committee` would loop on
+//! `OffChainAssemblyIncomplete` indefinitely; the legacy chain-read
+//! fallback only runs when off-chain mode is disabled.
 //!
 //! The task runs every few seconds: it iterates the per-epoch
 //! `validator_mpc_data_announcements` table, skips authorities whose

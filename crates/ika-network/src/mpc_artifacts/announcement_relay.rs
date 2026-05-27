@@ -39,9 +39,9 @@ pub enum SubmitMpcDataAnnouncementResponse {
 /// before that, the server holds `None` and rejects requests.
 ///
 /// Implementations are responsible for:
-/// - verifying the announcement (sig against current committee OR
-///   pending active set, depending on whether the signer is a member
-///   of the current consensus committee or a joiner),
+/// - verifying the announcement against the `PendingActiveSet`
+///   (the relay is joiner-only; current-committee validators
+///   submit their own announcements directly via consensus),
 /// - bouncing duplicates by the latest-by-timestamp rule,
 /// - submitting the resulting `ConsensusTransaction` via the adapter.
 #[async_trait::async_trait]

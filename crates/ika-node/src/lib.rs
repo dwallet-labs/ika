@@ -1574,11 +1574,12 @@ impl IkaNode {
             };
 
             // Install the off-chain blob overlay so the network-
-            // keys sync task prefers locally-cached DKG / reconfig
-            // output bytes (populated by step 9's producer cache)
-            // over the chain blobs. Replaces the previous-epoch
-            // installation (if any); the `Weak` adapter naturally
-            // expires when the per-epoch store drops.
+            // keys sync task prefers locally-cached DKG /
+            // reconfiguration output bytes (populated by the
+            // producer cache) over the chain blobs. Replaces the
+            // previous-epoch installation (if any); the `Weak`
+            // adapter naturally expires when the per-epoch store
+            // drops.
             if off_chain_metadata_enabled {
                 self.sui_connector_service
                     .install_network_key_blob_source(Box::new(
