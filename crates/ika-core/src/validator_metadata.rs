@@ -725,7 +725,9 @@ where
     let mut secp256r1_pvss = std::collections::HashMap::new();
     let mut ristretto_pvss = std::collections::HashMap::new();
     let mut missing = Vec::new();
+    let mut saw_any = false;
     for (authority, digest) in announcements {
+        saw_any = true;
         let Some(blob) = blob_lookup(&digest) else {
             missing.push(authority);
             continue;
@@ -749,6 +751,16 @@ where
         if let Some(k) = decoded.ristretto_pvss {
             ristretto_pvss.insert(authority, k);
         }
+    }
+    // Empty input -> never `Complete`. `Complete` with empty maps
+    // would silently build a `Committee` whose
+    // `class_groups_public_keys_and_proofs` is empty, dropping every
+    // validator's share at reconfig MPC. Force the caller to handle
+    // "no announcements yet" as `Incomplete` and retry.
+    if !saw_any {
+        return OffChainClassGroupsAssembly::Incomplete {
+            missing: Vec::new(),
+        };
     }
     if missing.is_empty() {
         OffChainClassGroupsAssembly::Complete(OffChainCommitteeBundles {
@@ -886,18 +898,39 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
                 missing: committee_authorities.to_vec(),
             };
         };
-        // Under off-chain mode, skip committee members the freeze
-        // gate already excluded (no quorum of signers attested to
-        // having their blob). These validators are deliberately not
-        // part of the working set this epoch — same semantics as
-        // today's "bad chain mpc_data → ignore that validator." For
-        // them, "missing from the off-chain map" is the intended
-        // outcome, not an assembly failure.
+        // Post-freeze, the `frozen_validator_mpc_data_input_set`
+        // map is the single source of truth for "who's in this
+        // epoch's working set." A committee member who never
+        // announced will not be in `frozen` (they couldn't reach
+        // attestation quorum), and treating them as implicitly
+        // excluded here is what prevents a single crashed
+        // never-announcer from permanently stalling assembly. The
+        // pre-freeze code path below still iterates the announcement
+        // table directly so early-bootstrap retries surface
+        // honest peers we just haven't seen yet.
+        let frozen = store
+            .get_frozen_validator_mpc_data_input_set()
+            .unwrap_or_default();
+        let frozen_fired = !frozen.is_empty();
+        // Excluded set is also surfaced from the per-epoch table so
+        // we have a precise "missing" diagnostic; same semantics as
+        // before — these were known to the freeze and intentionally
+        // dropped.
         let excluded: std::collections::HashSet<AuthorityName> =
             store.get_epoch_excluded_validators().unwrap_or_default();
         let mut pairs: Vec<(AuthorityName, [u8; 32])> = Vec::new();
         let mut announcement_missing: Vec<AuthorityName> = Vec::new();
         for authority in committee_authorities {
+            if frozen_fired {
+                // Post-freeze: only committee members in the frozen
+                // set contribute. Anyone not in `frozen` (whether
+                // they were explicitly excluded or simply never
+                // announced) is silently skipped.
+                if let Some(blob_hash) = frozen.get(authority) {
+                    pairs.push((*authority, *blob_hash));
+                }
+                continue;
+            }
             if excluded.contains(authority) {
                 continue;
             }
@@ -916,6 +949,19 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
             // read mpc_data from chain.
             return OffChainClassGroupsAssembly::Incomplete {
                 missing: announcement_missing,
+            };
+        }
+        if pairs.is_empty() {
+            // Nothing to assemble: every committee member was
+            // either explicitly `excluded` by the freeze or there
+            // was no announcement to inspect. A `Complete` with
+            // empty maps would silently build a `Committee` whose
+            // `class_groups_public_keys_and_proofs` is empty,
+            // dropping every share at reconfig MPC — surface as
+            // `Incomplete` with the full committee so the caller
+            // knows to retry instead of building a broken committee.
+            return OffChainClassGroupsAssembly::Incomplete {
+                missing: committee_authorities.to_vec(),
             };
         }
         let perpetual = self.perpetual.clone();
@@ -2145,6 +2191,29 @@ mod tests {
                 assert_eq!(missing, vec![name_b]);
             }
             other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    /// Empty announcements input must NOT produce `Complete` — a
+    /// `Complete` with empty maps would silently build a `Committee`
+    /// whose `class_groups_public_keys_and_proofs` is empty,
+    /// dropping every share at reconfig MPC. The pure helper
+    /// returns `Incomplete` (with empty `missing`) so the caller's
+    /// own context decides what to fill in.
+    #[test]
+    fn assemble_committee_class_groups_off_chain_rejects_empty_input() {
+        let store: std::collections::HashMap<[u8; 32], Vec<u8>> = std::collections::HashMap::new();
+        let outcome = assemble_committee_class_groups_off_chain(std::iter::empty(), |d| {
+            store.get(d).cloned()
+        });
+        match outcome {
+            OffChainClassGroupsAssembly::Incomplete { missing } => {
+                assert!(
+                    missing.is_empty(),
+                    "pure helper has no committee context; missing is empty"
+                );
+            }
+            other => panic!("expected Incomplete on empty input, got {other:?}"),
         }
     }
 
