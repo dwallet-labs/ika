@@ -2437,6 +2437,84 @@ mod tests {
         assert!(verify_certified_handoff_attestation(&bad, &committee, &provider).is_err());
     }
 
+    /// A malicious peer who relays a `CertifiedHandoffAttestation`
+    /// could try to inflate apparent stake by listing the same
+    /// (signer, valid-signature) pair twice in `signatures`. The
+    /// `seen` HashSet in `verify_certified_handoff_attestation`
+    /// must reject the cert with "duplicate signer." Without this
+    /// check, a single high-stake signer could pad themselves
+    /// across the quorum threshold.
+    #[test]
+    fn verify_certified_handoff_attestation_rejects_duplicate_signer() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x12; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+        // Replace one of the signatures with a duplicate of signer 0.
+        let mut tampered = cert.clone();
+        tampered.signatures[2] = tampered.signatures[0].clone();
+        let err = verify_certified_handoff_attestation(&tampered, &committee, &provider)
+            .expect_err("duplicate signer must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.to_lowercase().contains("duplicate"),
+            "expected 'duplicate' in error, got: {msg}"
+        );
+    }
+
+    /// Exactly-quorum stake must verify; quorum-minus-one stake
+    /// must not. With 4 unit-stake validators, quorum_threshold = 3.
+    /// Building a cert with 3 valid signatures and verifying, then
+    /// stripping one signature and re-verifying, pins the
+    /// `stake < quorum_threshold` boundary.
+    #[test]
+    fn verify_certified_handoff_attestation_exact_quorum_and_one_below() {
+        let (committee, names, consensus_kps, provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(5, [0x12; 32], vec![]).expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+        assert_eq!(cert.signatures.len(), 3);
+        verify_certified_handoff_attestation(&cert, &committee, &provider)
+            .expect("exactly-quorum (stake=3, threshold=3) must verify");
+
+        // Strip one signature → stake=2 < quorum=3.
+        let mut below = cert.clone();
+        below.signatures.pop();
+        let err = verify_certified_handoff_attestation(&below, &committee, &provider)
+            .expect_err("below-quorum must be rejected");
+        let msg = format!("{err}").to_lowercase();
+        assert!(
+            msg.contains("quorum") || msg.contains("stake"),
+            "expected quorum/stake error, got: {msg}"
+        );
+    }
+
+    /// `sign_validator_mpc_data_announcement` must refuse to sign
+    /// when `timestamp_ms == 0` — that's the reserved sentinel for
+    /// "system clock failed", and the per-epoch table's strict-`>=`
+    /// dedup gate would otherwise let a once-zero entry wedge the
+    /// validator for the rest of the epoch.
+    #[test]
+    fn sign_announcement_rejects_zero_timestamp() {
+        let kp = random_committee_key_pairs_of_size(1).remove(0);
+        let name = name_of(&kp);
+        let err = sign_validator_mpc_data_announcement(name, 1, 0, [0xAB; 32], &kp)
+            .expect_err("ts=0 must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("timestamp_ms == 0"),
+            "expected sentinel rejection error, got: {msg}"
+        );
+    }
+
     /// Garbage bytes (random, but with a length plausible for a
     /// real blob) must be rejected by the structural decoder.
     /// This is what filters byzantine bytes that hash-verify but
