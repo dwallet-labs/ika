@@ -12,37 +12,48 @@
 //! The generic handoff-attestation types live in [`crate::handoff`].
 
 use crate::committee::EpochId;
-use crate::crypto::{AuthorityName, AuthoritySignInfo};
+use crate::crypto::AuthorityName;
+use fastcrypto::ed25519::Ed25519Signature;
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::ObjectID;
 
-/// What a validator announces over consensus: its identity, a
-/// timestamp (used for the latest-by-timestamp insert rule), and
-/// the Blake2b256 digest of its BCS-encoded `VersionedMPCData`
-/// blob. The blob bytes themselves are out-of-band over P2P.
+/// What a validator announces over consensus: its identity, the
+/// epoch it's announcing for, a timestamp (the version for the
+/// latest-by-timestamp insert rule), and the Blake2b256 digest of
+/// its BCS-encoded `VersionedMPCData` blob. The blob bytes
+/// themselves are out-of-band over P2P.
 ///
-/// The announcement deliberately does NOT carry the epoch in its
-/// body. The signed envelope's `auth_sig.epoch` is the canonical
-/// epoch binding — duplicating it inside the announcement is wire
-/// bloat that doesn't add safety (the signature commits to both
-/// the body and an epoch-AAD via `AuthoritySignature::new_secure`,
-/// and `auth_sig.epoch` is what gets passed to `verify_secure`).
+/// `epoch` lives in the body because the signing key changed to the
+/// Ed25519 consensus key: there's no longer an `AuthoritySignInfo`
+/// envelope to carry it. For a relayed joiner announcement the
+/// joiner's signature is over this whole body, so the epoch is
+/// signature-bound — a sig for one epoch can't be replayed into
+/// another. It's also the source of the `epoch` component of the
+/// consensus dedup key.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ValidatorMpcDataAnnouncement {
     pub validator: AuthorityName,
+    pub epoch: EpochId,
     pub timestamp_ms: u64,
     pub blob_hash: [u8; 32],
 }
 
-/// `ValidatorMpcDataAnnouncement` plus an `AuthoritySignInfo` (BLS)
-/// signature by the validator. Verifiers look up the signer's
-/// protocol pubkey in the current committee (for current-epoch
-/// announcements) or the `PendingActiveSet` (for cross-epoch joiner
-/// announcements).
+/// A joiner's `ValidatorMpcDataAnnouncement` plus an Ed25519
+/// signature by the joiner's **consensus** key. Used only on the
+/// relay path: a next-epoch joiner isn't a consensus participant
+/// yet, so it can't submit directly; it signs with its consensus
+/// key and fans the signed announcement out to current-committee
+/// peers, which verify the signature against the joiner's
+/// next-epoch consensus pubkey before relaying it into consensus.
+///
+/// Current-committee validators submit the bare
+/// `ValidatorMpcDataAnnouncement` directly (no signature — the
+/// consensus block author authenticates them), so this signed
+/// envelope exists only for the joiner-relay case.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignedValidatorMpcDataAnnouncement {
     pub announcement: ValidatorMpcDataAnnouncement,
-    pub auth_sig: AuthoritySignInfo,
+    pub joiner_sig: Ed25519Signature,
 }
 
 /// "I have my own `ValidatorMpcDataAnnouncement` (and any pending
@@ -129,6 +140,7 @@ mod tests {
         let auth = make_authority(2);
         let announcement = ValidatorMpcDataAnnouncement {
             validator: auth,
+            epoch: 7,
             timestamp_ms: 1_000_000,
             blob_hash: [0xDE; 32],
         };

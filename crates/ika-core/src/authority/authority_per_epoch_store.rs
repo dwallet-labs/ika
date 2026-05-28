@@ -7,7 +7,7 @@ use futures::FutureExt;
 use futures::future::{Either, join_all, select};
 use ika_types::committee::Committee;
 use ika_types::committee::CommitteeTrait;
-use ika_types::crypto::{AuthorityName, AuthoritySignInfoTrait};
+use ika_types::crypto::AuthorityName;
 use ika_types::digests::ChainIdentifier;
 use ika_types::error::{IkaError, IkaResult};
 use parking_lot::{Mutex, RwLock};
@@ -75,7 +75,9 @@ use ika_types::messages_system_checkpoints::{
     SystemCheckpointSignatureMessage,
 };
 use ika_types::sui::epoch_start_system::{EpochStartSystem, EpochStartSystemTrait};
-use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
+use ika_types::validator_metadata::{
+    SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
+};
 use mpc::WeightedThresholdAccessStructure;
 use mysten_common::sync::notify_once::NotifyOnce;
 use mysten_common::sync::notify_read::NotifyRead;
@@ -1059,8 +1061,7 @@ pub struct AuthorityEpochTables {
     /// the strictly-newer-timestamp entry per validator wins (replays
     /// and duplicates are dropped). Off-chain consumers (later steps)
     /// freeze a snapshot of this table when 2f+1 ready signals land.
-    pub(crate) validator_mpc_data_announcements:
-        DBMap<AuthorityName, SignedValidatorMpcDataAnnouncement>,
+    pub(crate) validator_mpc_data_announcements: DBMap<AuthorityName, ValidatorMpcDataAnnouncement>,
 
     /// Map signer -> `EpochMpcDataReadySignal` for this epoch.
     /// We keep the full signal (not just the unit value) so the
@@ -1868,7 +1869,39 @@ impl AuthorityPerEpochStore {
     /// `joiner_pubkey_provider`; everything else is logged and
     /// dropped so a buggy or malicious relayer can't smuggle in
     /// unverified state.
+    /// Record a current-committee validator's self-submitted
+    /// announcement. The consensus block author was already verified
+    /// to equal `announcement.validator` in
+    /// `verify_consensus_transaction`, so there's no payload
+    /// signature to check here — only that the announcement is for
+    /// the current epoch.
     pub fn record_validator_mpc_data_announcement(
+        &self,
+        announcement: &ValidatorMpcDataAnnouncement,
+    ) -> IkaResult {
+        if !self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return Ok(());
+        }
+        let current_epoch = self.epoch();
+        if announcement.epoch != current_epoch {
+            warn!(
+                announcement_epoch = announcement.epoch,
+                current_epoch, "self validator mpc data announcement epoch mismatch — dropping"
+            );
+            return Ok(());
+        }
+        self.insert_validator_mpc_data_announcement(announcement)
+    }
+
+    /// Record a next-epoch joiner's announcement relayed by a
+    /// current-committee validator. The relayer is unauthenticated
+    /// for the payload, so the joiner's Ed25519 consensus-key
+    /// signature is verified against its next-epoch consensus pubkey
+    /// (via the installed `JoinerPubkeyProvider`) before storing.
+    pub fn record_relayed_validator_mpc_data_announcement(
         &self,
         signed: &SignedValidatorMpcDataAnnouncement,
     ) -> IkaResult {
@@ -1878,65 +1911,45 @@ impl AuthorityPerEpochStore {
         {
             return Ok(());
         }
-        use ika_types::intent::{Intent, IntentScope};
-        let current_epoch = self.epoch();
-        let next_epoch = current_epoch.saturating_add(1);
-        if signed.announcement.validator != signed.auth_sig.authority {
+        let next_epoch = self.epoch().saturating_add(1);
+        let Some(provider) = self.joiner_pubkey_provider.load_full() else {
             warn!(
-                announcement_validator = ?signed.announcement.validator,
-                auth_sig_authority = ?signed.auth_sig.authority,
-                "validator mpc data announcement authority mismatch — dropping"
+                validator = ?signed.announcement.validator,
+                "no joiner pubkey provider installed — dropping relayed announcement"
             );
             return Ok(());
-        }
-        let sig_epoch = signed.auth_sig.epoch;
-        if sig_epoch == current_epoch {
-            if let Err(e) = signed.auth_sig.verify_secure(
-                &signed.announcement,
-                Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
-                self.committee(),
-            ) {
+        };
+        match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
+            JoinerAnnouncementVerdict::Accept => {}
+            verdict @ (JoinerAnnouncementVerdict::UnregisteredJoiner
+            | JoinerAnnouncementVerdict::InvalidSignature
+            | JoinerAnnouncementVerdict::InconsistentEnvelope) => {
                 warn!(
-                    error = ?e,
-                    authority = ?signed.auth_sig.authority,
-                    "invalid validator mpc data announcement signature — dropping"
+                    ?verdict,
+                    authority = ?signed.announcement.validator,
+                    "joiner mpc data announcement rejected — dropping"
                 );
                 return Ok(());
             }
-        } else if sig_epoch == next_epoch {
-            let Some(provider) = self.joiner_pubkey_provider.load_full() else {
-                debug!(
-                    validator = ?signed.announcement.validator,
-                    "no joiner pubkey provider installed — dropping next-epoch announcement"
-                );
-                return Ok(());
-            };
-            match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
-                JoinerAnnouncementVerdict::Accept => {}
-                verdict @ (JoinerAnnouncementVerdict::UnregisteredJoiner
-                | JoinerAnnouncementVerdict::InvalidSignature
-                | JoinerAnnouncementVerdict::InconsistentEnvelope) => {
-                    warn!(
-                        ?verdict,
-                        authority = ?signed.auth_sig.authority,
-                        "joiner mpc data announcement rejected — dropping"
-                    );
-                    return Ok(());
-                }
-            }
-        } else {
-            warn!(
-                auth_sig_epoch = sig_epoch,
-                current_epoch, "validator mpc data announcement epoch out of range — dropping"
-            );
-            return Ok(());
         }
+        self.insert_validator_mpc_data_announcement(&signed.announcement)
+    }
+
+    /// Shared tail of both record paths: reject the sentinel
+    /// timestamp, apply the latest-by-timestamp dedup, and store the
+    /// bare announcement. The signature (if any) has already been
+    /// verified by the caller and isn't needed by downstream
+    /// consumers, which read only the announcement body.
+    fn insert_validator_mpc_data_announcement(
+        &self,
+        announcement: &ValidatorMpcDataAnnouncement,
+    ) -> IkaResult {
         // Reject the reserved sentinel timestamp. `sign_validator_mpc_data_announcement`
         // refuses to produce one, so reaching here means a byzantine peer
         // crafted one to wedge the strict-monotonic gate below.
-        if signed.announcement.timestamp_ms == 0 {
+        if announcement.timestamp_ms == 0 {
             warn!(
-                validator = ?signed.announcement.validator,
+                validator = ?announcement.validator,
                 "validator mpc data announcement with reserved sentinel timestamp_ms=0 — dropping"
             );
             return Ok(());
@@ -1944,26 +1957,26 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         if let Some(existing) = tables
             .validator_mpc_data_announcements
-            .get(&signed.announcement.validator)?
-            && existing.announcement.timestamp_ms >= signed.announcement.timestamp_ms
+            .get(&announcement.validator)?
+            && existing.timestamp_ms >= announcement.timestamp_ms
         {
             // Strict `>=`: an incoming announcement with timestamp
             // equal to the stored one is also dropped. Equal
-            // timestamps from the same signer can only happen if the
-            // sender re-uses a stale signed payload (replay) — the
+            // timestamps from the same validator can only happen if
+            // the sender re-uses a stale payload (replay) — the
             // honest producer-side clock is millisecond-resolution
             // and the producer rate is one announcement per epoch.
             debug!(
-                validator = ?signed.announcement.validator,
-                incoming_ts = signed.announcement.timestamp_ms,
-                stored_ts = existing.announcement.timestamp_ms,
+                validator = ?announcement.validator,
+                incoming_ts = announcement.timestamp_ms,
+                stored_ts = existing.timestamp_ms,
                 "older or equal-timestamp validator mpc data announcement — dropping"
             );
             return Ok(());
         }
         tables
             .validator_mpc_data_announcements
-            .insert(&signed.announcement.validator, signed)?;
+            .insert(&announcement.validator, announcement)?;
         Ok(())
     }
 
@@ -2503,7 +2516,7 @@ impl AuthorityPerEpochStore {
     pub fn get_validator_mpc_data_announcement(
         &self,
         validator: &AuthorityName,
-    ) -> IkaResult<Option<SignedValidatorMpcDataAnnouncement>> {
+    ) -> IkaResult<Option<ValidatorMpcDataAnnouncement>> {
         Ok(self
             .tables()?
             .validator_mpc_data_announcements
@@ -2534,8 +2547,8 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         let mut announcements: Vec<(AuthorityName, [u8; 32])> = Vec::new();
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
-            let (authority, signed) = entry?;
-            announcements.push((authority, signed.announcement.blob_hash));
+            let (authority, announcement) = entry?;
+            announcements.push((authority, announcement.blob_hash));
         }
         let decision = crate::validator_metadata::decide_locally_validated_peers(
             self.name,
@@ -2785,8 +2798,8 @@ impl AuthorityPerEpochStore {
         let mut announcements: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
             std::collections::BTreeMap::new();
         for entry in tables.validator_mpc_data_announcements.safe_iter() {
-            let (authority, signed) = entry?;
-            announcements.insert(authority, signed.announcement.blob_hash);
+            let (authority, announcement) = entry?;
+            announcements.insert(authority, announcement.blob_hash);
         }
         let mut signals: std::collections::BTreeMap<AuthorityName, Vec<AuthorityName>> =
             std::collections::BTreeMap::new();
@@ -3157,17 +3170,33 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
                 ..
             }) => {
-                // The wire authority binding is the *relayer*. For
-                // current-epoch announcements the relayer is the
-                // signer; for cross-epoch joiner announcements the
-                // relayer can be any current-committee member. Both
-                // cases pass the wire check trivially — the
-                // signer's BLS sig over the inner announcement is
-                // what authenticates the validator's intent and is
-                // checked downstream when the record handler runs.
+                // Self-submission: the consensus block author IS the
+                // announcer. Enforce it here so a validator can't
+                // submit an announcement attributed to someone else
+                // (that's what the relayed kind, with its Ed25519
+                // joiner signature, is for).
+                if transaction.sender_authority() != announcement.validator {
+                    warn!(
+                        "ValidatorMpcDataAnnouncement validator {} does not match its author from consensus {}",
+                        announcement.validator, transaction.certificate_author_index
+                    );
+                    return None;
+                }
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
+                ..
+            }) => {
+                // The wire authority binding is the *relayer* — any
+                // current-committee validator may relay a joiner's
+                // announcement, so there's no sender constraint here.
+                // The joiner's Ed25519 consensus-key signature over
+                // the inner announcement is what authenticates the
+                // joiner's intent, and it's checked downstream when
+                // the record handler runs.
                 let _ = signed;
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -3718,10 +3747,17 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
                 ..
             }) => {
-                self.record_validator_mpc_data_announcement(signed)?;
+                self.record_validator_mpc_data_announcement(announcement)?;
+                Ok(ConsensusCertificateResult::ConsensusMessage)
+            }
+            SequencedConsensusTransactionKind::External(ConsensusTransaction {
+                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
+                ..
+            }) => {
+                self.record_relayed_validator_mpc_data_announcement(signed)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {

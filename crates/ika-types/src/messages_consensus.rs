@@ -20,6 +20,7 @@ use crate::supported_protocol_versions::{
 };
 use crate::validator_metadata::{
     EpochMpcDataReadySignal, NetworkKeyDKGReadySignal, SignedValidatorMpcDataAnnouncement,
+    ValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;
@@ -83,11 +84,26 @@ pub enum ConsensusTransactionKey {
     NetworkKeyData(AuthorityName, ObjectID),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
-    /// A validator's MPC data announcement, keyed by validator + epoch
-    /// + timestamp_ms. Timestamp acts as the version within
-    /// (validator, epoch); the consensus handler keeps the
-    /// latest-by-timestamp entry per validator.
+    /// A current-committee validator's self-submitted MPC data
+    /// announcement, keyed by validator + epoch + timestamp_ms. The
+    /// timestamp is the version within (validator, epoch); the
+    /// consensus handler keeps the latest-by-timestamp entry. The
+    /// consensus block author authenticates the validator, so this
+    /// kind carries no payload signature.
     ValidatorMpcDataAnnouncement(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* timestamp_ms */
+    ),
+    /// A next-epoch joiner's MPC data announcement relayed by a
+    /// current-committee validator. Keyed by the joiner (not the
+    /// relayer) + epoch + timestamp_ms, so two honest relayers
+    /// forwarding the same joiner announcement dedupe. The relayer
+    /// is unauthenticated for the payload (any current-committee
+    /// validator may relay), so the joiner's Ed25519 consensus-key
+    /// signature is verified against its next-epoch consensus pubkey
+    /// before the relay forwards it.
+    RelayedValidatorMpcDataAnnouncement(
         AuthorityName,
         u64, /* epoch */
         u64, /* timestamp_ms */
@@ -224,6 +240,15 @@ impl Debug for ConsensusTransactionKey {
                     ts
                 )
             }
+            ConsensusTransactionKey::RelayedValidatorMpcDataAnnouncement(joiner, epoch, ts) => {
+                write!(
+                    f,
+                    "RelayedValidatorMpcDataAnnouncement({:?}, epoch={}, ts={})",
+                    joiner.concise(),
+                    epoch,
+                    ts
+                )
+            }
             ConsensusTransactionKey::HandoffSignature(authority, epoch) => {
                 write!(
                     f,
@@ -332,7 +357,15 @@ pub enum ConsensusTransactionKind {
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
     NetworkKeyData(ConsensusNetworkKeyData),
     NOAObservation(ConsensusNOAObservation),
-    ValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
+    /// Self-submission by a current-committee validator: the bare
+    /// announcement, no payload signature (the consensus block
+    /// author authenticates the sender).
+    ValidatorMpcDataAnnouncement(ValidatorMpcDataAnnouncement),
+    /// Relay of a next-epoch joiner's announcement by a
+    /// current-committee validator: carries the joiner's Ed25519
+    /// consensus-key signature, verified against the joiner's
+    /// next-epoch consensus pubkey before the relay forwards it.
+    RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
     HandoffSignature(Box<HandoffSignatureMessage>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
     NetworkKeyDKGReadySignal(NetworkKeyDKGReadySignal),
@@ -584,15 +617,36 @@ impl ConsensusTransaction {
         }
     }
 
-    pub fn new_validator_mpc_data_announcement(signed: SignedValidatorMpcDataAnnouncement) -> Self {
+    /// Self-submission by a current-committee validator: the bare
+    /// announcement, no signature. The consensus block author
+    /// authenticates the sender, and `verify_consensus_transaction`
+    /// enforces `sender == announcement.validator`.
+    pub fn new_validator_mpc_data_announcement(announcement: ValidatorMpcDataAnnouncement) -> Self {
+        let mut hasher = DefaultHasher::new();
+        announcement.validator.hash(&mut hasher);
+        announcement.epoch.hash(&mut hasher);
+        announcement.timestamp_ms.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
+        }
+    }
+
+    /// Relay of a next-epoch joiner's announcement by a
+    /// current-committee validator. Carries the joiner's Ed25519
+    /// consensus-key signature, verified before forwarding.
+    pub fn new_relayed_validator_mpc_data_announcement(
+        signed: SignedValidatorMpcDataAnnouncement,
+    ) -> Self {
         let mut hasher = DefaultHasher::new();
         signed.announcement.validator.hash(&mut hasher);
-        signed.auth_sig.epoch.hash(&mut hasher);
+        signed.announcement.epoch.hash(&mut hasher);
         signed.announcement.timestamp_ms.hash(&mut hasher);
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
-            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed),
+            kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
         }
     }
 
@@ -697,10 +751,17 @@ impl ConsensusTransaction {
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
             }
-            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(signed) => {
+            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement) => {
                 ConsensusTransactionKey::ValidatorMpcDataAnnouncement(
+                    announcement.validator,
+                    announcement.epoch,
+                    announcement.timestamp_ms,
+                )
+            }
+            ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed) => {
+                ConsensusTransactionKey::RelayedValidatorMpcDataAnnouncement(
                     signed.announcement.validator,
-                    signed.auth_sig.epoch,
+                    signed.announcement.epoch,
                     signed.announcement.timestamp_ms,
                 )
             }

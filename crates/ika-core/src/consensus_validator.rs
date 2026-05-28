@@ -86,6 +86,7 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::NetworkKeyData(..)
                 | ConsensusTransactionKind::NOAObservation(..)
                 | ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..)
+                | ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::HandoffSignature(..)
                 | ConsensusTransactionKind::EpochMpcDataReadySignal(..)
                 | ConsensusTransactionKind::NetworkKeyDKGReadySignal(..)

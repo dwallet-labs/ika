@@ -58,10 +58,10 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         // announcements would come from validators that are
         // already in the committee and can submit themselves —
         // refuse to relay those.
-        if announcement.auth_sig.epoch != next_epoch {
+        if announcement.announcement.epoch != next_epoch {
             return Err(format!(
                 "announcement epoch {} is not next_epoch {next_epoch}",
-                announcement.auth_sig.epoch
+                announcement.announcement.epoch
             ));
         }
         let Some(provider) = epoch_store.joiner_pubkey_provider() else {
@@ -73,7 +73,7 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
                 return Err(format!("joiner verify rejected: {verdict:?}"));
             }
         }
-        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(announcement);
+        let tx = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(announcement);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await

@@ -27,15 +27,17 @@ use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, build_network_key_dkg_ready_signal_transaction,
-    derive_mpc_data_blob, now_ms, sign_validator_mpc_data_announcement,
+    derive_mpc_data_blob, now_ms,
 };
 use dwallet_rng::RootSeed;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::committee::EpochId;
-use ika_types::crypto::{AuthorityKeyPair, AuthorityName};
+use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::error::IkaError;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
+use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -58,7 +60,6 @@ pub struct MpcDataAnnouncementSender {
     /// server, so peers can fetch it over P2P without a restart.
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
-    bls_keypair: Arc<AuthorityKeyPair>,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     announcement_sent: AtomicBool,
     /// Size of the `validated_peers` set in the most recently
@@ -97,7 +98,6 @@ impl MpcDataAnnouncementSender {
         consensus_adapter: Arc<dyn SubmitToConsensus>,
         blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
-        bls_keypair: Arc<AuthorityKeyPair>,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     ) -> Self {
         Self {
@@ -107,7 +107,6 @@ impl MpcDataAnnouncementSender {
             consensus_adapter,
             blob_cache,
             root_seed,
-            bls_keypair,
             network_keys_receiver,
             announcement_sent: AtomicBool::new(false),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
@@ -170,15 +169,24 @@ impl MpcDataAnnouncementSender {
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
         let timestamp_ms = now_ms().map_err(DwalletMPCError::IkaError)?;
-        let signed = sign_validator_mpc_data_announcement(
-            self.authority,
-            self.epoch_id,
+        if timestamp_ms == 0 {
+            return Err(DwalletMPCError::IkaError(IkaError::Generic {
+                error: "system clock returned a zero timestamp; refusing to \
+                        announce with the reserved sentinel"
+                    .into(),
+            }));
+        }
+        // Self-submission: a current-committee validator submits the
+        // bare announcement with no payload signature — the consensus
+        // block author authenticates us, and the receiver enforces
+        // `sender == validator`.
+        let announcement = ValidatorMpcDataAnnouncement {
+            validator: self.authority,
+            epoch: self.epoch_id,
             timestamp_ms,
-            digest,
-            &self.bls_keypair,
-        )
-        .map_err(DwalletMPCError::IkaError)?;
-        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(signed);
+            blob_hash: digest,
+        };
+        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(announcement);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;

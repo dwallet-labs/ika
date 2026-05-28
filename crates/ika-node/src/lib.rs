@@ -1518,7 +1518,6 @@ impl IkaNode {
                 && let Some(components) = &*self.validator_components.lock().await
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
-                let bls_keypair = Arc::new(self.config.protocol_key_pair().copy());
                 let blob_cache = ika_core::blob_cache::BlobCache::new(
                     self.mpc_data_blob_store.clone(),
                     self.state.perpetual_tables(),
@@ -1530,7 +1529,6 @@ impl IkaNode {
                         Arc::new(components.consensus_adapter.clone()),
                         blob_cache,
                         root_seed_kp.root_seed().clone(),
-                        bls_keypair,
                         sui_data_receivers.network_keys_receiver.clone(),
                     );
                 let sender = Arc::new(sender);
@@ -1578,7 +1576,7 @@ impl IkaNode {
                 let updater = ika_core::epoch_tasks::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
-                        sui_data_receivers.next_epoch_committee_receiver.clone(),
+                        sui_client.clone(),
                     );
                 let updater = Arc::new(updater);
                 Some(tokio::spawn(async move {

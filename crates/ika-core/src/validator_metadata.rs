@@ -36,7 +36,7 @@ use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey, Ed25519Signature};
 use fastcrypto::hash::{Blake2b256, HashFunction};
 use fastcrypto::traits::{Signer, VerifyingKey};
 use ika_types::committee::{Committee, CommitteeTrait, EpochId, StakeUnit};
-use ika_types::crypto::{AuthorityKeyPair, AuthorityName, AuthoritySignInfo};
+use ika_types::crypto::AuthorityName;
 use ika_types::error::{IkaError, IkaResult};
 use ika_types::handoff::{
     CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey, HandoffSignatureMessage,
@@ -50,37 +50,39 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Look up whether a given authority is registered as a next-epoch
-/// joiner — i.e., its pubkey is in the `PendingActiveSet` (and the
-/// staking pool's `next_epoch_protocol_pubkey`, if set, matches that
-/// pubkey). Returning `true` certifies the announcement signer; the
-/// caller then verifies the signature using `authority` directly as
-/// the pubkey (`AuthorityName == AuthorityPublicKeyBytes`).
+/// Resolves a next-epoch joiner's Ed25519 **consensus** public key
+/// so a relayer can verify the joiner's signature over its
+/// announcement. Returning `Some(pubkey)` both certifies the
+/// authority as a registered joiner and supplies the key to verify
+/// against; `None` means "not a known next-epoch joiner — drop."
 ///
-/// The Sui-backed impl reads `validator_set.pending_active_set` plus
-/// each entry's `StakingPool.validator_info`'s next-epoch pubkey,
-/// hosted by a `sui_syncer` task that refreshes on a cadence (and on
-/// `CommitteeSelected` events). Before the syncer task is up, an
-/// empty provider is installed, which drops all joiner announcements
-/// — current-committee announcements still work.
+/// The Sui-backed impl reads the next-epoch committee members'
+/// consensus pubkeys (from their staking-pool `validator_info`),
+/// hosted by a task that refreshes on a cadence. Before that task
+/// is up, an empty provider is installed, which drops all joiner
+/// announcements — current-committee self-announcements still work
+/// (they don't go through this provider).
 pub trait JoinerPubkeyProvider: Send + Sync + 'static {
-    fn is_registered_joiner(&self, authority: &AuthorityName) -> bool;
+    fn joiner_consensus_pubkey(&self, authority: &AuthorityName) -> Option<Ed25519PublicKey>;
 }
 
-/// In-memory `JoinerPubkeyProvider` over a fixed `AuthorityName` set.
-/// Used as the default no-op (empty set) and by tests.
+/// In-memory `JoinerPubkeyProvider` over a fixed
+/// `AuthorityName -> Ed25519PublicKey` map. Used as the default
+/// no-op (empty) and by tests.
 pub struct StaticJoinerPubkeyProvider {
-    members: HashSet<AuthorityName>,
+    members: BTreeMap<AuthorityName, Ed25519PublicKey>,
 }
 
 impl StaticJoinerPubkeyProvider {
     pub fn empty() -> Self {
         Self {
-            members: HashSet::new(),
+            members: BTreeMap::new(),
         }
     }
 
-    pub fn from_iter<I: IntoIterator<Item = AuthorityName>>(members: I) -> Self {
+    pub fn from_iter<I: IntoIterator<Item = (AuthorityName, Ed25519PublicKey)>>(
+        members: I,
+    ) -> Self {
         Self {
             members: members.into_iter().collect(),
         }
@@ -88,8 +90,8 @@ impl StaticJoinerPubkeyProvider {
 }
 
 impl JoinerPubkeyProvider for StaticJoinerPubkeyProvider {
-    fn is_registered_joiner(&self, authority: &AuthorityName) -> bool {
-        self.members.contains(authority)
+    fn joiner_consensus_pubkey(&self, authority: &AuthorityName) -> Option<Ed25519PublicKey> {
+        self.members.get(authority).cloned()
     }
 }
 
@@ -103,13 +105,12 @@ pub enum JoinerAnnouncementVerdict {
     /// The provider doesn't know about this authority. Drop the
     /// announcement; it's either spam or the provider is stale.
     UnregisteredJoiner,
-    /// The signature didn't verify against the claimed authority
-    /// for `expected_epoch`.
+    /// The joiner's Ed25519 signature didn't verify against its
+    /// consensus pubkey.
     InvalidSignature,
-    /// `signed.announcement.validator != signed.auth_sig.authority`,
-    /// or `auth_sig.epoch != expected_epoch`. The epoch lives only
-    /// in `auth_sig.epoch` after the v4 refactor — the announcement
-    /// body no longer carries it.
+    /// `signed.announcement.epoch != expected_epoch` — the
+    /// announcement is for a different epoch than the relayer is
+    /// verifying under.
     InconsistentEnvelope,
 }
 
@@ -124,26 +125,19 @@ pub fn verify_joiner_announcement(
     provider: &dyn JoinerPubkeyProvider,
     expected_epoch: EpochId,
 ) -> JoinerAnnouncementVerdict {
-    use ika_types::crypto::IkaAuthoritySignature;
-    use ika_types::intent::IntentMessage;
-    if signed.announcement.validator != signed.auth_sig.authority
-        || signed.auth_sig.epoch != expected_epoch
-    {
+    if signed.announcement.epoch != expected_epoch {
         return JoinerAnnouncementVerdict::InconsistentEnvelope;
     }
-    if !provider.is_registered_joiner(&signed.auth_sig.authority) {
+    let Some(consensus_pubkey) = provider.joiner_consensus_pubkey(&signed.announcement.validator)
+    else {
         return JoinerAnnouncementVerdict::UnregisteredJoiner;
-    }
+    };
     let intent_msg = IntentMessage::new(
         Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
         signed.announcement.clone(),
     );
-    match ika_types::crypto::AuthoritySignature::verify_secure(
-        &signed.auth_sig.signature,
-        &intent_msg,
-        expected_epoch,
-        signed.auth_sig.authority,
-    ) {
+    let bytes = bcs::to_bytes(&intent_msg).expect("intent message BCS-encodable");
+    match consensus_pubkey.verify(&bytes, &signed.joiner_sig) {
         Ok(()) => JoinerAnnouncementVerdict::Accept,
         Err(_) => JoinerAnnouncementVerdict::InvalidSignature,
     }
@@ -440,9 +434,11 @@ pub fn now_ms() -> IkaResult<u64> {
         })
 }
 
-/// Signs a `ValidatorMpcDataAnnouncement` with the validator's
-/// authority (BLS) keypair, producing a
-/// `SignedValidatorMpcDataAnnouncement` ready to submit via consensus.
+/// Signs a `ValidatorMpcDataAnnouncement` with the joiner's Ed25519
+/// **consensus** keypair, producing a
+/// `SignedValidatorMpcDataAnnouncement` for the joiner-relay path.
+/// Current-committee validators submit the bare announcement
+/// directly (no signature) and never call this.
 ///
 /// Rejects `timestamp_ms == 0` as a sentinel: the per-epoch table
 /// deduplicates with strict-greater-than, so an entry written at
@@ -454,7 +450,7 @@ pub fn sign_validator_mpc_data_announcement(
     epoch: EpochId,
     timestamp_ms: u64,
     blob_hash: [u8; 32],
-    keypair: &AuthorityKeyPair,
+    consensus_keypair: &Ed25519KeyPair,
 ) -> IkaResult<SignedValidatorMpcDataAnnouncement> {
     if timestamp_ms == 0 {
         return Err(IkaError::Generic {
@@ -465,19 +461,19 @@ pub fn sign_validator_mpc_data_announcement(
     }
     let announcement = ValidatorMpcDataAnnouncement {
         validator,
+        epoch,
         timestamp_ms,
         blob_hash,
     };
-    let auth_sig = AuthoritySignInfo::new(
-        epoch,
-        &announcement,
+    let intent_msg = IntentMessage::new(
         Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
-        validator,
-        keypair,
+        announcement.clone(),
     );
+    let bytes = bcs::to_bytes(&intent_msg).expect("intent message BCS-encodable");
+    let joiner_sig: Ed25519Signature = consensus_keypair.sign(&bytes);
     Ok(SignedValidatorMpcDataAnnouncement {
         announcement,
-        auth_sig,
+        joiner_sig,
     })
 }
 
@@ -1060,7 +1056,7 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
                     .get_validator_mpc_data_announcement(authority)
                     .ok()
                     .flatten()
-                    .map(|signed| signed.announcement.blob_hash)
+                    .map(|announcement| announcement.blob_hash)
             }) {
                 AssemblyInputDecision::Pairs(pairs) => pairs,
                 AssemblyInputDecision::AnnouncementMissing(missing) => {
@@ -1524,19 +1520,23 @@ mod tests {
     use super::*;
     use fastcrypto::traits::KeyPair;
     use ika_network::mpc_artifacts::mpc_data_blob_hash;
-    use ika_types::crypto::AuthoritySignInfoTrait;
+    use ika_types::crypto::AuthorityKeyPair;
     use ika_types::crypto::random_committee_key_pairs_of_size;
 
     fn name_of(kp: &AuthorityKeyPair) -> AuthorityName {
         kp.public().into()
     }
 
+    /// A joiner announcement signed with an Ed25519 consensus key.
+    /// Returns the signed envelope plus the consensus pubkey to
+    /// register in a provider.
     fn build_signed_for_epoch(
-        kp: &AuthorityKeyPair,
+        name: AuthorityName,
+        consensus_kp: &Ed25519KeyPair,
         target_epoch: EpochId,
         blob_hash: [u8; 32],
     ) -> SignedValidatorMpcDataAnnouncement {
-        sign_validator_mpc_data_announcement(name_of(kp), target_epoch, 42_000, blob_hash, kp)
+        sign_validator_mpc_data_announcement(name, target_epoch, 42_000, blob_hash, consensus_kp)
             .expect("non-zero timestamp signs successfully")
     }
 
@@ -1555,64 +1555,63 @@ mod tests {
     }
 
     #[test]
-    fn sign_announcement_verifies_against_signer() {
-        // Construct a committee containing our signer, then verify
-        // the signed announcement against it. Catches: intent
-        // scope mismatches, epoch mismatches, key-derivation bugs.
-        // Use the project's seeded-deterministic test keypair
-        // generator to avoid the fastcrypto `AllowedRng` version
-        // skew on directly-calling `KeyPair::generate`.
-        let mut keypairs = random_committee_key_pairs_of_size(1);
-        let kp: AuthorityKeyPair = keypairs.remove(0);
-        let name: AuthorityName = (kp.public()).into();
-        let voting_rights = vec![(name, 1u64)];
-        let committee = ika_types::committee::Committee::new(
-            5, // epoch
-            voting_rights,
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-            1,
-            1,
+    fn sign_announcement_verifies_against_consensus_key() {
+        // Sign with the Ed25519 consensus key; verify via the joiner
+        // path against a provider that maps the name to that pubkey.
+        let name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let next_epoch: EpochId = 5;
+        let signed = build_signed_for_epoch(name, consensus_kp, next_epoch, [0xAB; 32]);
+        let provider =
+            StaticJoinerPubkeyProvider::from_iter([(name, consensus_kp.public().clone())]);
+        assert_eq!(
+            verify_joiner_announcement(&signed, &provider, next_epoch),
+            JoinerAnnouncementVerdict::Accept
         );
 
-        let signed = sign_validator_mpc_data_announcement(name, 5, 1_000, [0xAB; 32], &kp)
-            .expect("non-zero timestamp signs successfully");
-        signed
-            .auth_sig
-            .verify_secure(
-                &signed.announcement,
-                Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
-                &committee,
-            )
-            .expect("sig should verify");
-
-        // Tamper the announcement → sig should fail.
+        // Tamper the announcement → Ed25519 sig no longer verifies.
         let mut tampered = signed.clone();
         tampered.announcement.timestamp_ms = 999;
-        assert!(
-            tampered
-                .auth_sig
-                .verify_secure(
-                    &tampered.announcement,
-                    Intent::ika_app(IntentScope::ValidatorMpcDataAnnouncement),
-                    &committee,
-                )
-                .is_err()
+        assert_eq!(
+            verify_joiner_announcement(&tampered, &provider, next_epoch),
+            JoinerAnnouncementVerdict::InvalidSignature
+        );
+    }
+
+    /// A self-submitted announcement and a relayed announcement with
+    /// the same (validator, epoch, timestamp_ms) must produce
+    /// DISTINCT consensus keys — otherwise a self-submission and a
+    /// (byzantine) relay of the same identity would cross-dedupe at
+    /// `verify_consensus_transaction`. The two enum variants keep
+    /// them in separate key spaces.
+    #[test]
+    fn self_and_relayed_announcement_keys_are_distinct() {
+        use ika_types::messages_consensus::ConsensusTransaction;
+        let name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let signed = build_signed_for_epoch(name, consensus_kp, 5, [0x01; 32]);
+        let self_key =
+            ConsensusTransaction::new_validator_mpc_data_announcement(signed.announcement.clone())
+                .key();
+        let relayed_key =
+            ConsensusTransaction::new_relayed_validator_mpc_data_announcement(signed).key();
+        assert_ne!(
+            self_key, relayed_key,
+            "self and relayed keys must not collide for the same identity"
         );
     }
 
     #[test]
     fn verify_joiner_accepts_well_formed_registered_signer() {
-        // Joiner produced a sig for next epoch; the provider lists
-        // them as registered; bytes are byte-perfect — expect Accept.
-        let mut kps = random_committee_key_pairs_of_size(1);
-        let kp = kps.remove(0);
-        let joiner_name = name_of(&kp);
+        // Joiner produced a sig for next epoch; the provider maps
+        // them to their consensus pubkey; bytes are byte-perfect —
+        // expect Accept.
+        let joiner_name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
         let next_epoch: EpochId = 7;
-        let signed = build_signed_for_epoch(&kp, next_epoch, [0x77; 32]);
-        let provider = StaticJoinerPubkeyProvider::from_iter([joiner_name]);
+        let signed = build_signed_for_epoch(joiner_name, consensus_kp, next_epoch, [0x77; 32]);
+        let provider =
+            StaticJoinerPubkeyProvider::from_iter([(joiner_name, consensus_kp.public().clone())]);
         assert_eq!(
             verify_joiner_announcement(&signed, &provider, next_epoch),
             JoinerAnnouncementVerdict::Accept
@@ -1622,10 +1621,10 @@ mod tests {
     #[test]
     fn verify_joiner_rejects_unregistered_signer() {
         // Provider doesn't know this joiner — drop.
-        let mut kps = random_committee_key_pairs_of_size(1);
-        let kp = kps.remove(0);
+        let joiner_name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
         let next_epoch: EpochId = 7;
-        let signed = build_signed_for_epoch(&kp, next_epoch, [0x77; 32]);
+        let signed = build_signed_for_epoch(joiner_name, consensus_kp, next_epoch, [0x77; 32]);
         let provider = StaticJoinerPubkeyProvider::empty();
         assert_eq!(
             verify_joiner_announcement(&signed, &provider, next_epoch),
@@ -1638,13 +1637,13 @@ mod tests {
         // Sig was over the original blob_hash; tamper post-sign and
         // the signature won't verify against the new bytes even
         // though the signer is registered.
-        let mut kps = random_committee_key_pairs_of_size(1);
-        let kp = kps.remove(0);
-        let joiner_name = name_of(&kp);
+        let joiner_name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
         let next_epoch: EpochId = 7;
-        let mut signed = build_signed_for_epoch(&kp, next_epoch, [0x77; 32]);
+        let mut signed = build_signed_for_epoch(joiner_name, consensus_kp, next_epoch, [0x77; 32]);
         signed.announcement.blob_hash = [0x99; 32];
-        let provider = StaticJoinerPubkeyProvider::from_iter([joiner_name]);
+        let provider =
+            StaticJoinerPubkeyProvider::from_iter([(joiner_name, consensus_kp.public().clone())]);
         assert_eq!(
             verify_joiner_announcement(&signed, &provider, next_epoch),
             JoinerAnnouncementVerdict::InvalidSignature
@@ -1654,13 +1653,13 @@ mod tests {
     #[test]
     fn verify_joiner_rejects_wrong_epoch() {
         // Joiner signed for epoch 8 but caller is processing epoch
-        // 7. Reject before signature check — the envelope is
-        // inconsistent with what we're processing.
-        let mut kps = random_committee_key_pairs_of_size(1);
-        let kp = kps.remove(0);
-        let joiner_name = name_of(&kp);
-        let signed = build_signed_for_epoch(&kp, 8, [0x77; 32]);
-        let provider = StaticJoinerPubkeyProvider::from_iter([joiner_name]);
+        // 7. Reject before signature check — the announcement's epoch
+        // is inconsistent with what we're processing.
+        let joiner_name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let signed = build_signed_for_epoch(joiner_name, consensus_kp, 8, [0x77; 32]);
+        let provider =
+            StaticJoinerPubkeyProvider::from_iter([(joiner_name, consensus_kp.public().clone())]);
         assert_eq!(
             verify_joiner_announcement(&signed, &provider, 7),
             JoinerAnnouncementVerdict::InconsistentEnvelope
@@ -1668,38 +1667,49 @@ mod tests {
     }
 
     #[test]
-    fn verify_joiner_rejects_envelope_authority_mismatch() {
-        // The envelope claims one validator but the auth sig was
-        // produced by a different keypair (post-sign mutation of
-        // the announcement.validator field).
-        let mut kps = random_committee_key_pairs_of_size(2);
-        let kp_signer = kps.remove(0);
-        let kp_other = kps.remove(0);
-        let other_name = name_of(&kp_other);
+    fn verify_joiner_rejects_post_sign_validator_mutation() {
+        // The announcement.validator is part of the signed body.
+        // Mutating it post-sign and registering the new name means
+        // the sig (over the original body) is checked against the
+        // new name's pubkey over the mutated body — fails as
+        // InvalidSignature.
+        let signer_name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kps = make_consensus_keys(2);
+        let signer_consensus_kp = &consensus_kps[0];
+        let other_name = name_of(&random_committee_key_pairs_of_size(2)[1]);
+        let other_consensus_kp = &consensus_kps[1];
         let next_epoch: EpochId = 7;
-        let mut signed = build_signed_for_epoch(&kp_signer, next_epoch, [0x77; 32]);
+        let mut signed =
+            build_signed_for_epoch(signer_name, signer_consensus_kp, next_epoch, [0x77; 32]);
         signed.announcement.validator = other_name;
-        let provider = StaticJoinerPubkeyProvider::from_iter([other_name]);
+        let provider = StaticJoinerPubkeyProvider::from_iter([(
+            other_name,
+            other_consensus_kp.public().clone(),
+        )]);
         assert_eq!(
             verify_joiner_announcement(&signed, &provider, next_epoch),
-            JoinerAnnouncementVerdict::InconsistentEnvelope
+            JoinerAnnouncementVerdict::InvalidSignature
         );
     }
 
     #[test]
     fn static_provider_round_trip() {
-        // The fixture rng is seeded-deterministic, so a separate
-        // `random_committee_key_pairs_of_size(N)` call returns the
-        // *same* prefix. To get a non-member, allocate 4 keys and
-        // hold the last one out of the provider.
-        let kps = random_committee_key_pairs_of_size(4);
-        let registered_names: Vec<AuthorityName> = kps[..3].iter().map(name_of).collect();
-        let unknown_name = name_of(&kps[3]);
-        let provider = StaticJoinerPubkeyProvider::from_iter(registered_names.iter().copied());
-        for n in &registered_names {
-            assert!(provider.is_registered_joiner(n));
+        let names: Vec<AuthorityName> = random_committee_key_pairs_of_size(4)
+            .iter()
+            .map(name_of)
+            .collect();
+        let consensus_kps = make_consensus_keys(4);
+        let registered: Vec<(AuthorityName, Ed25519PublicKey)> = names[..3]
+            .iter()
+            .zip(consensus_kps.iter())
+            .map(|(n, kp)| (*n, kp.public().clone()))
+            .collect();
+        let unknown_name = names[3];
+        let provider = StaticJoinerPubkeyProvider::from_iter(registered.clone());
+        for (n, pk) in &registered {
+            assert_eq!(provider.joiner_consensus_pubkey(n).as_ref(), Some(pk));
         }
-        assert!(!provider.is_registered_joiner(&unknown_name));
+        assert!(provider.joiner_consensus_pubkey(&unknown_name).is_none());
     }
 
     // ---- Handoff attestation helpers ----
@@ -2769,9 +2779,9 @@ mod tests {
     /// validator for the rest of the epoch.
     #[test]
     fn sign_announcement_rejects_zero_timestamp() {
-        let kp = random_committee_key_pairs_of_size(1).remove(0);
-        let name = name_of(&kp);
-        let err = sign_validator_mpc_data_announcement(name, 1, 0, [0xAB; 32], &kp)
+        let name = name_of(&random_committee_key_pairs_of_size(1)[0]);
+        let consensus_kp = &make_consensus_keys(1)[0];
+        let err = sign_validator_mpc_data_announcement(name, 1, 0, [0xAB; 32], consensus_kp)
             .expect_err("ts=0 must be rejected");
         let msg = format!("{err}");
         assert!(
