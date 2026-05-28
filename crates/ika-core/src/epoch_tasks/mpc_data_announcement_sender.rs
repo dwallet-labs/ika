@@ -40,7 +40,7 @@ use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
@@ -61,7 +61,13 @@ pub struct MpcDataAnnouncementSender {
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-    announcement_sent: AtomicBool,
+    /// The announcement we've built for this epoch, cached after the
+    /// first derivation. Re-sends reuse the SAME (validator, epoch,
+    /// timestamp_ms) so the consensus key is stable and duplicate
+    /// submissions dedup. `None` until the first `send_announcement`
+    /// derives and persists the blob. Caching also avoids re-running
+    /// the expensive class-groups derivation on every retry tick.
+    cached_announcement: Mutex<Option<ValidatorMpcDataAnnouncement>>,
     /// Size of the `validated_peers` set in the most recently
     /// emitted `EpochMpcDataReadySignal`, or `0` if we haven't
     /// emitted yet this epoch. We re-emit whenever our local
@@ -108,7 +114,7 @@ impl MpcDataAnnouncementSender {
             blob_cache,
             root_seed,
             network_keys_receiver,
-            announcement_sent: AtomicBool::new(false),
+            cached_announcement: Mutex::new(None),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
             next_sequence_number: std::sync::atomic::AtomicU64::new(0),
             per_key_signals_sent: Mutex::new(HashSet::new()),
@@ -131,15 +137,14 @@ impl MpcDataAnnouncementSender {
             return;
         }
         loop {
-            if !self.announcement_sent.load(Ordering::Acquire)
-                && let Err(err) = self.send_announcement().await
-            {
+            // (Re-)submit our announcement until it's confirmed in
+            // the per-epoch table. `send_announcement` self-gates on
+            // confirmation, so this is a cheap no-op once landed.
+            if let Err(err) = self.send_announcement().await {
                 warn!(error=?err, "failed to send validator mpc data announcement; will retry");
             }
 
-            if self.announcement_sent.load(Ordering::Acquire)
-                && let Err(err) = self.send_epoch_ready_signal().await
-            {
+            if let Err(err) = self.send_epoch_ready_signal().await {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
             }
 
@@ -151,6 +156,31 @@ impl MpcDataAnnouncementSender {
         }
     }
 
+    /// Whether our own announcement is recorded in the per-epoch
+    /// table (i.e. our submission was sequenced + processed by
+    /// consensus). Compares against the cached announcement's
+    /// timestamp + digest so a stale entry from a prior derivation
+    /// doesn't count.
+    fn announcement_confirmed(
+        &self,
+        epoch_store: &AuthorityPerEpochStore,
+    ) -> DwalletMPCResult<bool> {
+        let cached = self
+            .cached_announcement
+            .lock()
+            .expect("mutex poisoned")
+            .clone();
+        let Some(cached) = cached else {
+            return Ok(false);
+        };
+        let recorded = epoch_store
+            .get_validator_mpc_data_announcement(&self.authority)
+            .map_err(DwalletMPCError::IkaError)?;
+        Ok(recorded
+            .map(|r| r.timestamp_ms == cached.timestamp_ms && r.blob_hash == cached.blob_hash)
+            .unwrap_or(false))
+    }
+
     fn epoch_store(&self) -> DwalletMPCResult<Arc<AuthorityPerEpochStore>> {
         self.epoch_store
             .upgrade()
@@ -159,13 +189,52 @@ impl MpcDataAnnouncementSender {
 
     async fn send_announcement(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
+        // Confirmation-based gate: stop once our announcement is in
+        // the table. "submit returned Ok" only means handed off to a
+        // background submit task — it can still fail to sequence
+        // (epoch boundary, crash). Re-submitting an idempotent
+        // announcement until it lands closes that gap.
+        if self.announcement_confirmed(&epoch_store)? {
+            return Ok(());
+        }
+        // Build (once) and cache an idempotent announcement. Reusing
+        // the same (validator, epoch, timestamp_ms) keeps the
+        // consensus key stable so re-sends dedup instead of stacking
+        // up duplicate table entries, and avoids re-running the
+        // expensive class-groups derivation on every retry tick.
+        let announcement = self.cached_or_build_announcement()?;
+        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(announcement.clone());
+        self.consensus_adapter
+            .submit_to_consensus(&[tx], &epoch_store)
+            .await?;
+        info!(
+            epoch = self.epoch_id,
+            blob_hash = ?announcement.blob_hash,
+            timestamp_ms = announcement.timestamp_ms,
+            "submitted validator mpc data announcement (will re-submit until confirmed)"
+        );
+        Ok(())
+    }
+
+    /// Returns the cached announcement, building and caching it on
+    /// first call: derive the blob, persist it write-through, and
+    /// stamp it with `now_ms()`. Subsequent calls reuse the cache so
+    /// re-sends are byte-identical (idempotent consensus key) and
+    /// the costly derivation runs exactly once.
+    fn cached_or_build_announcement(&self) -> DwalletMPCResult<ValidatorMpcDataAnnouncement> {
+        {
+            let cached = self.cached_announcement.lock().expect("mutex poisoned");
+            if let Some(announcement) = cached.as_ref() {
+                return Ok(announcement.clone());
+            }
+        }
         let blob = derive_mpc_data_blob(&self.root_seed).map_err(DwalletMPCError::IkaError)?;
         let digest = mpc_data_blob_hash(&blob);
         // Write-through: persists to perpetual AND mirrors into the
-        // in-memory store backing the Anemo server in one call. A
-        // persist failure isn't fatal to the announcement, but peers
-        // won't be able to fetch our blob until it's re-persisted.
-        if let Err(e) = self.blob_cache.insert(digest, blob.clone()) {
+        // in-memory store backing the Anemo server. A persist failure
+        // isn't fatal to the announcement, but peers won't be able to
+        // fetch our blob until it's re-persisted.
+        if let Err(e) = self.blob_cache.insert(digest, blob) {
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
         let timestamp_ms = now_ms().map_err(DwalletMPCError::IkaError)?;
@@ -186,21 +255,19 @@ impl MpcDataAnnouncementSender {
             timestamp_ms,
             blob_hash: digest,
         };
-        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(announcement);
-        self.consensus_adapter
-            .submit_to_consensus(&[tx], &epoch_store)
-            .await?;
-        self.announcement_sent.store(true, Ordering::Release);
-        info!(
-            epoch = self.epoch_id,
-            blob_hash = ?digest,
-            "submitted validator mpc data announcement"
-        );
-        Ok(())
+        *self.cached_announcement.lock().expect("mutex poisoned") = Some(announcement.clone());
+        Ok(announcement)
     }
 
     async fn send_epoch_ready_signal(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
+        // Don't signal "ready" before our own announcement has
+        // landed in the table — otherwise we'd attest to a working
+        // set we're not yet part of. (The loop calls this every tick
+        // now, so the gate lives here rather than at the call site.)
+        if !self.announcement_confirmed(&epoch_store)? {
+            return Ok(());
+        }
         // Stop re-emitting once the network-wide freeze has fired.
         // After that point further attestations don't change the
         // already-snapshotted partition.
@@ -313,5 +380,62 @@ impl MpcDataAnnouncementSender {
         }
         debug!(target: "mpc_data_announcement", epoch = self.epoch_id, "tick");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use ika_network::mpc_artifacts::InMemoryBlobStore;
+    use ika_types::messages_consensus::ConsensusTransaction;
+
+    struct NoopAdapter;
+    #[async_trait::async_trait]
+    impl SubmitToConsensus for NoopAdapter {
+        async fn submit_to_consensus(
+            &self,
+            _transactions: &[ConsensusTransaction],
+            _epoch_store: &Arc<AuthorityPerEpochStore>,
+        ) -> ika_types::error::IkaResult {
+            Ok(())
+        }
+    }
+
+    fn test_sender() -> MpcDataAnnouncementSender {
+        let dir = tempfile::TempDir::new().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        std::mem::forget(dir); // keep the DB path alive for the test
+        let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual);
+        let (_tx, rx) = tokio::sync::watch::channel(Arc::new(HashMap::new()));
+        MpcDataAnnouncementSender::new(
+            Weak::new(),
+            5,
+            AuthorityName::new([9; 48]),
+            Arc::new(NoopAdapter),
+            blob_cache,
+            RootSeed::new([4; 32]),
+            rx,
+        )
+    }
+
+    /// `cached_or_build_announcement` must return a byte-identical
+    /// announcement on repeated calls (same timestamp + digest), so
+    /// re-submissions produce a stable consensus key and dedup
+    /// instead of stacking duplicate table entries.
+    #[tokio::test]
+    async fn cached_announcement_is_idempotent_across_calls() {
+        let sender = test_sender();
+        let first = sender.cached_or_build_announcement().expect("build");
+        let second = sender.cached_or_build_announcement().expect("cached");
+        assert_eq!(
+            first, second,
+            "re-built announcement must equal the cached one"
+        );
+        // Same consensus key on both -> consensus dedup drops the
+        // re-send rather than recording a second entry.
+        let key_first = ConsensusTransaction::new_validator_mpc_data_announcement(first).key();
+        let key_second = ConsensusTransaction::new_validator_mpc_data_announcement(second).key();
+        assert_eq!(key_first, key_second);
     }
 }
