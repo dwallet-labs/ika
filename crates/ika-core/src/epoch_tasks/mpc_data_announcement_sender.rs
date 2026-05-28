@@ -31,7 +31,7 @@ use crate::validator_metadata::{
 };
 use dwallet_rng::RootSeed;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
-use ika_types::committee::EpochId;
+use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -47,6 +47,32 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
+/// Pure decision for the ready-signal emit gate (see
+/// `MpcDataAnnouncementSender::ready_to_finalize`). Extracted so the
+/// joiner-inclusion timing rule is unit-testable without an epoch
+/// store. Emit once either the epoch-clock deadline has passed
+/// (liveness backstop) or the next-epoch committee is published and
+/// every one of its members is locally validated (so a freeze
+/// triggered by these signals captures the joiners).
+fn decide_ready_to_finalize(
+    now_ms: u64,
+    deadline_ms: u64,
+    next_committee_epoch: u64,
+    expected_next_epoch: u64,
+    next_members: &[AuthorityName],
+    validated_peers: &[AuthorityName],
+) -> bool {
+    if now_ms >= deadline_ms {
+        return true;
+    }
+    if next_committee_epoch != expected_next_epoch {
+        // V_{e+1} not published yet — keep waiting.
+        return false;
+    }
+    let validated: HashSet<&AuthorityName> = validated_peers.iter().collect();
+    next_members.iter().all(|name| validated.contains(name))
+}
+
 /// Per-epoch producer task that broadcasts this validator's
 /// mpc_data announcement and the corresponding ready signals.
 pub struct MpcDataAnnouncementSender {
@@ -61,6 +87,13 @@ pub struct MpcDataAnnouncementSender {
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+    /// Next-epoch committee snapshot. The ready-signal emit gate
+    /// waits until `V_{e+1}` is published and all its members are
+    /// locally validated (or an epoch-clock deadline) before
+    /// signalling — so the freeze, which fires on the first quorum
+    /// of ready signals, includes next-epoch joiners (who can only
+    /// announce after `V_{e+1}` is published, mid-epoch).
+    next_epoch_committee_receiver: Receiver<Committee>,
     /// The announcement we've built for this epoch, cached after the
     /// first derivation. Re-sends reuse the SAME (validator, epoch,
     /// timestamp_ms) so the consensus key is stable and duplicate
@@ -105,6 +138,7 @@ impl MpcDataAnnouncementSender {
         blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
+        next_epoch_committee_receiver: Receiver<Committee>,
     ) -> Self {
         Self {
             epoch_store,
@@ -114,6 +148,7 @@ impl MpcDataAnnouncementSender {
             blob_cache,
             root_seed,
             network_keys_receiver,
+            next_epoch_committee_receiver,
             cached_announcement: Mutex::new(None),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
             next_sequence_number: std::sync::atomic::AtomicU64::new(0),
@@ -259,6 +294,40 @@ impl MpcDataAnnouncementSender {
         Ok(announcement)
     }
 
+    /// Whether it's time to emit the ready signal — i.e. the freeze
+    /// is allowed to capture our attestation set. True once either:
+    /// - the next-epoch committee is published AND every one of its
+    ///   members' blobs is locally validated (so a freeze triggered
+    ///   by these signals includes the joiners), or
+    /// - the epoch-clock deadline (3/4 of the epoch) has passed —
+    ///   liveness backstop so a never-announcing joiner can't stall
+    ///   the freeze forever.
+    fn ready_to_finalize(
+        &self,
+        epoch_store: &AuthorityPerEpochStore,
+        validated_peers: &[AuthorityName],
+    ) -> bool {
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+        let epoch_start = epoch_store.epoch_start_state();
+        let deadline = epoch_start
+            .epoch_start_timestamp_ms()
+            .saturating_add(epoch_start.epoch_duration_ms() / 4 * 3);
+        // On clock failure, treat as past the deadline (emit) rather
+        // than stalling the freeze.
+        let now = now_ms().unwrap_or(u64::MAX);
+        let next = self.next_epoch_committee_receiver.borrow();
+        let next_members: Vec<AuthorityName> =
+            next.voting_rights.iter().map(|(name, _)| *name).collect();
+        decide_ready_to_finalize(
+            now,
+            deadline,
+            next.epoch(),
+            epoch_store.epoch() + 1,
+            &next_members,
+            validated_peers,
+        )
+    }
+
     async fn send_epoch_ready_signal(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
         // Don't signal "ready" before our own announcement has
@@ -296,6 +365,24 @@ impl MpcDataAnnouncementSender {
         let validated_peers = epoch_store
             .compute_locally_validated_peers()
             .map_err(DwalletMPCError::IkaError)?;
+        // Defer the ready signal until the next-epoch committee is
+        // known and all its members are locally validated (or the
+        // epoch-clock deadline elapses). The freeze fires on the
+        // first quorum of ready signals, so withholding here is what
+        // lets joiners — who announce only after `V_{e+1}` is
+        // published, mid-epoch — make it into the frozen set, the
+        // next committee's class-groups map, and the handoff cert.
+        // The deadline (wall-clock) only affects WHEN each validator
+        // emits; the freeze snapshot itself is still computed
+        // deterministically at the consensus-ordered quorum point.
+        if !self.ready_to_finalize(&epoch_store, &validated_peers) {
+            debug!(
+                epoch = self.epoch_id,
+                "deferring EpochMpcDataReadySignal: \
+                 next-epoch committee not yet fully validated"
+            );
+            return Ok(());
+        }
         // Re-emit policy: emit if we've never emitted (count = 0)
         // OR the validated set has grown since the last emission.
         // Re-emitting with a stable set is wasted consensus
@@ -387,6 +474,7 @@ impl MpcDataAnnouncementSender {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use fastcrypto::traits::KeyPair;
     use ika_network::mpc_artifacts::InMemoryBlobStore;
     use ika_types::messages_consensus::ConsensusTransaction;
 
@@ -408,6 +496,24 @@ mod tests {
         std::mem::forget(dir); // keep the DB path alive for the test
         let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual);
         let (_tx, rx) = tokio::sync::watch::channel(Arc::new(HashMap::new()));
+        // Minimal next-epoch committee; the idempotency test never
+        // reads it (it exercises `cached_or_build_announcement`).
+        // `Committee::new` validates the member pubkey, so use a real
+        // test keypair rather than a synthetic AuthorityName.
+        let member: AuthorityName = ika_types::crypto::random_committee_key_pairs_of_size(1)[0]
+            .public()
+            .into();
+        let next_committee = Committee::new(
+            6,
+            vec![(member, 1u64)],
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            1,
+            1,
+        );
+        let (_ntx, next_rx) = tokio::sync::watch::channel(next_committee);
         MpcDataAnnouncementSender::new(
             Weak::new(),
             5,
@@ -416,6 +522,7 @@ mod tests {
             blob_cache,
             RootSeed::new([4; 32]),
             rx,
+            next_rx,
         )
     }
 
@@ -423,6 +530,63 @@ mod tests {
     /// announcement on repeated calls (same timestamp + digest), so
     /// re-submissions produce a stable consensus key and dedup
     /// instead of stacking duplicate table entries.
+    fn name(n: u8) -> AuthorityName {
+        AuthorityName::new([n; 48])
+    }
+
+    #[test]
+    fn ready_to_finalize_waits_for_next_committee_then_emits() {
+        let a = name(1);
+        let b = name(2);
+        let joiner = name(3);
+        // Before V_{e+1} is published (next epoch shows current=5,
+        // not 6): not ready, even with everything validated.
+        assert!(!decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b]));
+        // V_{e+1} published (epoch 6) but the joiner isn't validated
+        // yet: not ready.
+        assert!(!decide_ready_to_finalize(
+            100,
+            1000,
+            6,
+            6,
+            &[a, b, joiner],
+            &[a, b]
+        ));
+        // V_{e+1} published AND all its members validated: ready.
+        assert!(decide_ready_to_finalize(
+            100,
+            1000,
+            6,
+            6,
+            &[a, b, joiner],
+            &[a, b, joiner]
+        ));
+    }
+
+    #[test]
+    fn ready_to_finalize_deadline_forces_emit() {
+        let a = name(1);
+        let joiner = name(3);
+        // Past the deadline: emit regardless of next-committee state
+        // or joiner validation (liveness backstop).
+        assert!(decide_ready_to_finalize(
+            1000,
+            1000,
+            5,
+            6,
+            &[a, joiner],
+            &[a]
+        ));
+        assert!(decide_ready_to_finalize(
+            2000,
+            1000,
+            6,
+            6,
+            &[a, joiner],
+            &[a]
+        ));
+    }
+
     #[tokio::test]
     async fn cached_announcement_is_idempotent_across_calls() {
         let sender = test_sender();
