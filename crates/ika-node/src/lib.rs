@@ -682,6 +682,22 @@ impl IkaNode {
         let node = Arc::new(node);
         let node_copy = node.clone();
         let sui_client_clone = sui_client.clone();
+
+        // Joiner-side announcement fan-out: a node selected into the
+        // next-epoch committee but not yet in the current one isn't a
+        // consensus participant, so it relays its mpc_data
+        // announcement to current-committee peers over P2P. Runs on
+        // all nodes; it only acts when it observes itself as a true
+        // joiner. Spawned alongside (not inside) reconfiguration
+        // because it must fire mid-epoch when `V_{e+1}` is published,
+        // not at the epoch boundary.
+        let joiner_node = node.clone();
+        let joiner_next_committee_receiver =
+            sui_data_receivers.next_epoch_committee_receiver.clone();
+        spawn_monitored_task!(async move {
+            Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver).await;
+        });
+
         spawn_monitored_task!(async move {
             let result = Self::monitor_reconfiguration(
                 node_copy,
@@ -696,6 +712,96 @@ impl IkaNode {
         });
 
         Ok(node)
+    }
+
+    /// Watches the next-epoch committee and, when this node is a true
+    /// joiner (in `V_{e+1}` but not the current committee), fans its
+    /// signed `ValidatorMpcDataAnnouncement` out to current-committee
+    /// peers via P2P so an honest relayer forwards it into consensus.
+    /// Continuing validators (in both committees) and leaving/observer
+    /// nodes never act — they fall through the membership check.
+    async fn monitor_joiner_announcements(
+        node: Arc<Self>,
+        mut next_epoch_committee_receiver: tokio::sync::watch::Receiver<
+            ika_types::committee::Committee,
+        >,
+    ) {
+        use ika_core::blob_cache::BlobCache;
+        use ika_core::epoch_tasks::joiner_announcement_sender::{
+            JoinerAnnouncementSender, JoinerFanoutConfig, P2pAnnouncementFanout,
+        };
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+
+        // Without a root seed we can't derive our mpc_data blob, so
+        // we can't be a joiner — nothing to do.
+        let Some(root_seed_kp) = node.config.root_seed_key_pair.as_ref() else {
+            return;
+        };
+        let root_seed = root_seed_kp.root_seed().clone();
+        let consensus_keypair = Arc::new(node.config.consensus_key_pair().copy());
+        let mut last_handled_next_epoch: Option<u64> = None;
+        loop {
+            let next_committee = next_epoch_committee_receiver.borrow_and_update().clone();
+            let next_epoch = next_committee.epoch();
+            if last_handled_next_epoch != Some(next_epoch) {
+                let epoch_store = node.state.load_epoch_store_one_call_per_task();
+                if epoch_store
+                    .protocol_config()
+                    .off_chain_validator_metadata_enabled()
+                    && next_epoch == epoch_store.epoch() + 1
+                {
+                    let self_name = epoch_store.name;
+                    let in_next = next_committee
+                        .voting_rights
+                        .iter()
+                        .any(|(name, _)| *name == self_name);
+                    let in_current = epoch_store.committee().authority_exists(&self_name);
+                    if in_next && !in_current {
+                        let peer_ids: Vec<anemo::PeerId> = epoch_store
+                            .epoch_start_state()
+                            .get_authority_names_to_peer_ids()
+                            .into_values()
+                            .collect();
+                        let current_committee_size = epoch_store.committee().voting_rights.len();
+                        // f+1 distinct accepting peers ensures at least
+                        // one honest relayer (committee is 3f+1).
+                        let min_accepts = current_committee_size / 3 + 1;
+                        let blob_cache = BlobCache::new(
+                            node.mpc_data_blob_store.clone(),
+                            node.state.perpetual_tables(),
+                        );
+                        let fanout = Arc::new(P2pAnnouncementFanout::new(
+                            node.p2p_network.clone(),
+                            peer_ids,
+                        ));
+                        let sender = JoinerAnnouncementSender::new(
+                            self_name,
+                            next_epoch,
+                            root_seed.clone(),
+                            consensus_keypair.clone(),
+                            blob_cache,
+                            fanout,
+                            JoinerFanoutConfig {
+                                min_accepts,
+                                retry_interval: Duration::from_secs(10),
+                                max_attempts: 30,
+                            },
+                        );
+                        info!(
+                            next_epoch,
+                            "this node is a next-epoch joiner; fanning out its mpc_data announcement"
+                        );
+                        spawn_monitored_task!(async move {
+                            sender.run().await;
+                        });
+                        last_handled_next_epoch = Some(next_epoch);
+                    }
+                }
+            }
+            if next_epoch_committee_receiver.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     pub fn subscribe_to_epoch_change(&self) -> broadcast::Receiver<SystemInner> {
