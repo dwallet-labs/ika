@@ -10,6 +10,7 @@
 pub mod announcement_relay;
 pub mod end_of_publish_sender;
 pub mod handoff_signature_sender;
+pub mod joiner_announcement_sender;
 pub mod joiner_pubkey_provider_updater;
 pub mod mpc_data_announcement_sender;
 pub mod peer_blob_fetcher;
