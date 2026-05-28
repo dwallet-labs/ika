@@ -34,8 +34,7 @@ use crate::authority::authority_per_epoch_store::{
 use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::validator_metadata::{
-    build_epoch_mpc_data_ready_signal_transaction, build_network_key_dkg_ready_signal_transaction,
-    derive_mpc_data_blob, now_ms,
+    build_epoch_mpc_data_ready_signal_transaction, derive_mpc_data_blob, now_ms,
 };
 use dwallet_rng::RootSeed;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
@@ -44,16 +43,13 @@ use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
 use ika_types::messages_consensus::ConsensusTransaction;
-use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use sui_types::base_types::ObjectID;
 use tokio::sync::watch::Receiver;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Outcome of the ready-signal emit gate ([`decide_ready_to_finalize`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +122,6 @@ pub struct MpcDataAnnouncementSender {
     /// server, so peers can fetch it over P2P without a restart.
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
-    network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     /// Next-epoch committee snapshot. The ready-signal emit gate
     /// waits until `V_{e+1}` is published and all its members are
     /// locally validated (or an epoch-clock deadline) before
@@ -162,10 +157,6 @@ pub struct MpcDataAnnouncementSender {
     /// without this, only the first emit per (authority, epoch)
     /// would reach the strict-superset gate.
     next_sequence_number: std::sync::atomic::AtomicU64,
-    /// Per-key ready signals already submitted this epoch — keeps
-    /// us from re-sending if the network-keys snapshot is observed
-    /// repeatedly.
-    per_key_signals_sent: Mutex<HashSet<ObjectID>>,
 }
 
 impl MpcDataAnnouncementSender {
@@ -177,7 +168,6 @@ impl MpcDataAnnouncementSender {
         consensus_adapter: Arc<dyn SubmitToConsensus>,
         blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
-        network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
         next_epoch_committee_receiver: Receiver<Committee>,
     ) -> Self {
         Self {
@@ -187,12 +177,10 @@ impl MpcDataAnnouncementSender {
             consensus_adapter,
             blob_cache,
             root_seed,
-            network_keys_receiver,
             next_epoch_committee_receiver,
             cached_announcement: Mutex::new(None),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
             next_sequence_number: std::sync::atomic::AtomicU64::new(0),
-            per_key_signals_sent: Mutex::new(HashSet::new()),
         }
     }
 
@@ -221,10 +209,6 @@ impl MpcDataAnnouncementSender {
 
             if let Err(err) = self.send_epoch_ready_signal().await {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
-            }
-
-            if let Err(err) = self.send_pending_per_key_signals().await {
-                warn!(error=?err, "failed to send NetworkKeyDKGReadySignal batch; will retry");
             }
 
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -485,51 +469,6 @@ impl MpcDataAnnouncementSender {
         );
         Ok(())
     }
-
-    async fn send_pending_per_key_signals(&self) -> DwalletMPCResult<()> {
-        let epoch_store = self.epoch_store()?;
-        let snapshot = self.network_keys_receiver.borrow().clone();
-        // For each network key, broadcast a per-key readiness
-        // signal. These signals are currently recorded by
-        // `record_network_key_dkg_ready_signal` but don't feed
-        // the freeze tally (epoch-wide signal is the only freeze
-        // trigger) or session kickoff (which gates only on the
-        // freeze itself). They're kept on the wire so a future
-        // per-key kickoff gate or operator dashboard can
-        // consume them without a separate rollout. We always
-        // signal — chain-side key state can lag, suppressing
-        // would deadlock that future consumer.
-        let candidates: Vec<ObjectID> = snapshot.keys().copied().collect();
-        for key_id in candidates {
-            {
-                let sent = self.per_key_signals_sent.lock().unwrap();
-                if sent.contains(&key_id) {
-                    continue;
-                }
-            }
-            let tx = build_network_key_dkg_ready_signal_transaction(
-                self.authority,
-                key_id,
-                self.epoch_id,
-            );
-            if let Err(err) = self
-                .consensus_adapter
-                .submit_to_consensus(&[tx], &epoch_store)
-                .await
-            {
-                error!(error=?err, ?key_id, "failed to submit NetworkKeyDKGReadySignal");
-                continue;
-            }
-            self.per_key_signals_sent.lock().unwrap().insert(key_id);
-            info!(
-                epoch = self.epoch_id,
-                ?key_id,
-                "submitted NetworkKeyDKGReadySignal"
-            );
-        }
-        debug!(target: "mpc_data_announcement", epoch = self.epoch_id, "tick");
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -539,6 +478,7 @@ mod tests {
     use fastcrypto::traits::KeyPair;
     use ika_network::mpc_artifacts::InMemoryBlobStore;
     use ika_types::messages_consensus::ConsensusTransaction;
+    use std::collections::HashMap;
 
     struct NoopAdapter;
     #[async_trait::async_trait]
@@ -557,7 +497,6 @@ mod tests {
         let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         std::mem::forget(dir); // keep the DB path alive for the test
         let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual);
-        let (_tx, rx) = tokio::sync::watch::channel(Arc::new(HashMap::new()));
         // Minimal next-epoch committee; the idempotency test never
         // reads it (it exercises `cached_or_build_announcement`).
         // `Committee::new` validates the member pubkey, so use a real
@@ -583,7 +522,6 @@ mod tests {
             Arc::new(NoopAdapter),
             blob_cache,
             RootSeed::new([4; 32]),
-            rx,
             next_rx,
         )
     }

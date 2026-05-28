@@ -388,22 +388,8 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// frozen — i.e., a stake-quorum of `EpochMpcDataReadySignal`s
     /// has been observed in consensus order this epoch. Network DKG
     /// and reconfiguration session kickoff defers until this is
-    /// `true`. `NetworkKeyDKGReadySignal` is recorded for future use
-    /// but does NOT trigger the freeze.
+    /// `true`.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
-
-    /// Whether stake-quorum of `NetworkKeyDKGReadySignal`s have been
-    /// observed for `network_key_id` this epoch.
-    ///
-    /// **Currently unused by production kickoff logic.** Validators
-    /// broadcast per-key ready signals and the receive side records
-    /// them in `network_key_dkg_ready_signals`, but no production
-    /// code path reads this method to gate network DKG session
-    /// start — that gate is `is_mpc_data_frozen()` alone.
-    /// Per-key state is kept on the trait so a future kickoff gate
-    /// (or operator dashboard) can consume it without a separate
-    /// protocol rollout.
-    fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool>;
 
     /// Reflects the per-epoch `protocol_config` flag that gates
     /// the entire off-chain validator-metadata pipeline. When
@@ -721,19 +707,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
         let tables = self.tables()?;
         Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
-    }
-
-    fn has_network_key_dkg_ready_quorum(&self, network_key_id: &ObjectID) -> IkaResult<bool> {
-        let tables = self.tables()?;
-        let committee = self.committee();
-        let total_stake: u64 = tables
-            .network_key_dkg_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .filter_map(|((key_id, authority), _)| (&key_id == network_key_id).then_some(authority))
-            .map(|authority| committee.weight(&authority))
-            .sum();
-        Ok(total_stake >= committee.quorum_threshold())
     }
 
     fn off_chain_validator_metadata_enabled(&self) -> bool {
@@ -1120,17 +1093,6 @@ pub struct AuthorityEpochTables {
     /// `network_dkg_output_digests`. Per-epoch (not perpetual)
     /// because a key's reconfig output is by definition per-epoch.
     pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
-
-    /// Per-key, per-authority "I'm ready to DKG this network key"
-    /// vote. Counterpart to `epoch_mpc_data_ready_signals`, keyed
-    /// by `(network_key_id, authority)` so quorum is per key. The
-    /// first time *any* set of signals (epoch-wide or per-key)
-    /// reaches the committee's quorum threshold, the epoch-wide
-    /// `frozen_validator_mpc_data_input_set` is snapshotted exactly
-    /// once. Per-key signals after the first epoch-wide freeze are
-    /// still recorded (so DKG kickoff can wait on the per-key
-    /// quorum), but don't re-freeze.
-    pub(crate) network_key_dkg_ready_signals: DBMap<(ObjectID, AuthorityName), ()>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -2710,46 +2672,6 @@ impl AuthorityPerEpochStore {
         Ok(())
     }
 
-    /// Records a `NetworkKeyDKGReadySignal`. Idempotent —
-    /// re-broadcasts from the same authority for the same
-    /// `network_key_id` are dropped.
-    ///
-    /// **Recorded but not yet consumed.** This signal is kept in
-    /// the `network_key_dkg_ready_signals` table for a future
-    /// per-key kickoff gate or operator dashboard, but no
-    /// production code reads `has_network_key_dkg_ready_quorum`
-    /// today — the session-kickoff gate uses `is_mpc_data_frozen`
-    /// alone. See the trait method's docstring.
-    ///
-    /// Does NOT trigger the `mpc_data` freeze. The freeze is
-    /// gated only on `EpochMpcDataReadySignal` quorum — see the
-    /// docstring on `freeze_mpc_data_if_first` for why.
-    pub fn record_network_key_dkg_ready_signal(
-        &self,
-        signal: &ika_types::validator_metadata::NetworkKeyDKGReadySignal,
-    ) -> IkaResult {
-        if !self
-            .protocol_config()
-            .off_chain_validator_metadata_enabled()
-        {
-            return Ok(());
-        }
-        let current_epoch = self.epoch();
-        if signal.epoch != current_epoch {
-            warn!(
-                signal_epoch = signal.epoch,
-                current_epoch, "network key dkg ready signal epoch mismatch — dropping"
-            );
-            return Ok(());
-        }
-        let tables = self.tables()?;
-        let key = (signal.network_key_id, signal.authority);
-        if tables.network_key_dkg_ready_signals.contains_key(&key)? {
-            return Ok(());
-        }
-        tables.network_key_dkg_ready_signals.insert(&key, &())?;
-        Ok(())
-    }
 
     /// Computes the per-announcer attestation tally and snapshots
     /// the frozen working set + excluded set. Idempotent on a
@@ -2767,9 +2689,7 @@ impl AuthorityPerEpochStore {
     /// deterministic and stake-quorum-attested: a malicious
     /// announcer who withheld their blob from honest peers can't
     /// be smuggled into the working set, even if they signed a
-    /// valid announcement digest. Per-key
-    /// `NetworkKeyDKGReadySignal`s do NOT trigger freeze (see the
-    /// docstring on `record_network_key_dkg_ready_signal`).
+    /// valid announcement digest.
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
@@ -3203,18 +3123,6 @@ impl AuthorityPerEpochStore {
                 if transaction.sender_authority() != signal.authority {
                     warn!(
                         "EpochMpcDataReadySignal authority {} does not match its author from consensus {}",
-                        signal.authority, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal),
-                ..
-            }) => {
-                if transaction.sender_authority() != signal.authority {
-                    warn!(
-                        "NetworkKeyDKGReadySignal authority {} does not match its author from consensus {}",
                         signal.authority, transaction.certificate_author_index
                     );
                     return None;
@@ -3766,13 +3674,6 @@ impl AuthorityPerEpochStore {
                 ..
             }) => {
                 self.record_epoch_mpc_data_ready_signal(signal)?;
-                Ok(ConsensusCertificateResult::ConsensusMessage)
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal),
-                ..
-            }) => {
-                self.record_network_key_dkg_ready_signal(signal)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -4620,33 +4521,6 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected.get(&key_a), Some(&[0x11; 32]));
         assert_eq!(collected.get(&key_b), Some(&[0x22; 32]));
-    }
-
-    #[tokio::test]
-    async fn network_key_dkg_ready_signals_table_scoped_by_key_and_authority() {
-        // The (key_id, authority) composite key keeps per-key
-        // quorums independent. Same authority signaling readiness
-        // for two different keys must produce two distinct entries.
-        let tables = create_tables();
-        let key_a = ObjectID::random();
-        let key_b = ObjectID::random();
-        let authority = AuthorityName::default();
-        tables
-            .network_key_dkg_ready_signals
-            .insert(&(key_a, authority), &())
-            .unwrap();
-        tables
-            .network_key_dkg_ready_signals
-            .insert(&(key_b, authority), &())
-            .unwrap();
-        // Replays are no-ops.
-        tables
-            .network_key_dkg_ready_signals
-            .insert(&(key_a, authority), &())
-            .unwrap();
-
-        let count = tables.network_key_dkg_ready_signals.safe_iter().count();
-        assert_eq!(count, 2);
     }
 
     #[tokio::test]

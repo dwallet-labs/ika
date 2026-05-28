@@ -15,7 +15,6 @@ use crate::committee::EpochId;
 use crate::crypto::AuthorityName;
 use fastcrypto::ed25519::Ed25519Signature;
 use serde::{Deserialize, Serialize};
-use sui_types::base_types::ObjectID;
 
 /// What a validator announces over consensus: its identity, the
 /// epoch it's announcing for, a timestamp (the version for the
@@ -104,27 +103,6 @@ pub struct EpochMpcDataReadySignal {
     /// on emit) so the BCS bytes are canonical and identical
     /// across honest validators with the same view.
     pub validated_peers: Vec<AuthorityName>,
-}
-
-/// Per-network-key counterpart to `EpochMpcDataReadySignal`:
-/// "I'm ready to participate in network DKG for `network_key_id`
-/// this epoch."
-///
-/// Only `EpochMpcDataReadySignal` triggers the epoch-wide
-/// `frozen_validator_mpc_data_input_set` freeze. This per-key
-/// variant is currently recorded for future per-key DKG kickoff
-/// logic but does NOT feed the freeze tally — early test runs
-/// showed that letting per-key quorum drive the freeze excluded
-/// late mpc_data announcers, so the freeze gate is gated only on
-/// epoch-wide signals.
-///
-/// Authentication: consensus authority binding (sender ==
-/// `authority`); no payload signature.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct NetworkKeyDKGReadySignal {
-    pub authority: AuthorityName,
-    pub network_key_id: ObjectID,
-    pub epoch: EpochId,
 }
 
 #[cfg(test)]

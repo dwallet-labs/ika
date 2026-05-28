@@ -1635,7 +1635,6 @@ impl IkaNode {
                         Arc::new(components.consensus_adapter.clone()),
                         blob_cache,
                         root_seed_kp.root_seed().clone(),
-                        sui_data_receivers.network_keys_receiver.clone(),
                         sui_data_receivers.next_epoch_committee_receiver.clone(),
                     );
                 let sender = Arc::new(sender);

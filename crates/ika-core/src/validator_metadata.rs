@@ -9,8 +9,7 @@
 //!    served over P2P); `sign_validator_mpc_data_announcement` builds
 //!    the wire-ready `SignedValidatorMpcDataAnnouncement`; helpers
 //!    construct the per-epoch consensus transactions
-//!    (`EpochMpcDataReadySignal`, `NetworkKeyDKGReadySignal`,
-//!    `HandoffSignature`).
+//!    (`EpochMpcDataReadySignal`, `HandoffSignature`).
 //! 2. **Consensus-side pure verifiers** — `verify_joiner_announcement`
 //!    (returns a `Verdict` for a joiner's announcement, verifying its
 //!    Ed25519 consensus-key signature against the installed
@@ -653,23 +652,6 @@ pub fn default_handoff_items_builders(
     )))]
 }
 
-/// Builds the `ConsensusTransaction` that wraps a
-/// `NetworkKeyDKGReadySignal`. Per-network-key counterpart to
-/// `build_epoch_mpc_data_ready_signal_transaction`. Authentication
-/// is the consensus authority binding (sender == authority); no
-/// payload signature.
-pub fn build_network_key_dkg_ready_signal_transaction(
-    authority: AuthorityName,
-    network_key_id: sui_types::base_types::ObjectID,
-    epoch: EpochId,
-) -> ConsensusTransaction {
-    let signal = ika_types::validator_metadata::NetworkKeyDKGReadySignal {
-        authority,
-        network_key_id,
-        epoch,
-    };
-    ConsensusTransaction::new_network_key_dkg_ready_signal(signal)
-}
 
 /// Assembled validator-key bundles needed to build a `Committee`
 /// off-chain. `class_groups` is required for every authority in the

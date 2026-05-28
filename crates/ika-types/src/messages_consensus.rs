@@ -19,7 +19,7 @@ use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
 use crate::validator_metadata::{
-    EpochMpcDataReadySignal, NetworkKeyDKGReadySignal, SignedValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement,
     ValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
@@ -122,14 +122,6 @@ pub enum ConsensusTransactionKey {
         AuthorityName,
         u64, /* epoch */
         u64, /* sequence_number */
-    ),
-    /// A validator's per-network-key "I'm ready to DKG this key"
-    /// vote. Keyed by signer + network_key_id + epoch (one vote per
-    /// validator per key per epoch).
-    NetworkKeyDKGReadySignal(
-        AuthorityName,
-        sui_types::base_types::ObjectID, /* network_key_id */
-        u64,                             /* epoch */
     ),
     /// V2 of `EndOfPublish`, keyed only by `AuthorityName` (like V1).
     /// V1 and V2 are *distinct* keys (different enum variants), so
@@ -269,15 +261,6 @@ impl Debug for ConsensusTransactionKey {
                     seq
                 )
             }
-            ConsensusTransactionKey::NetworkKeyDKGReadySignal(authority, key_id, epoch) => {
-                write!(
-                    f,
-                    "NetworkKeyDKGReadySignal({:?}, key={:?}, epoch={})",
-                    authority.concise(),
-                    key_id,
-                    epoch
-                )
-            }
             ConsensusTransactionKey::EndOfPublishV2(authority) => {
                 write!(f, "EndOfPublishV2({:?})", authority.concise())
             }
@@ -371,7 +354,6 @@ pub enum ConsensusTransactionKind {
     RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
     HandoffSignature(Box<HandoffSignatureMessage>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
-    NetworkKeyDKGReadySignal(NetworkKeyDKGReadySignal),
     /// V2 of `EndOfPublish` that bundles the validator's signed
     /// handoff attestation into the same consensus message.
     ///
@@ -675,17 +657,6 @@ impl ConsensusTransaction {
         }
     }
 
-    pub fn new_network_key_dkg_ready_signal(signal: NetworkKeyDKGReadySignal) -> Self {
-        let mut hasher = DefaultHasher::new();
-        signal.authority.hash(&mut hasher);
-        signal.network_key_id.hash(&mut hasher);
-        signal.epoch.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal),
-        }
-    }
 
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])
@@ -776,13 +747,6 @@ impl ConsensusTransaction {
                     signal.authority,
                     signal.epoch,
                     signal.sequence_number,
-                )
-            }
-            ConsensusTransactionKind::NetworkKeyDKGReadySignal(signal) => {
-                ConsensusTransactionKey::NetworkKeyDKGReadySignal(
-                    signal.authority,
-                    signal.network_key_id,
-                    signal.epoch,
                 )
             }
             ConsensusTransactionKind::EndOfPublishV2 { authority, .. } => {
