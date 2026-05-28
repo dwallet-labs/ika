@@ -56,7 +56,7 @@ pub enum IntentScope {
     DWalletCheckpointMessage = 1, // Used for an authority signature on a checkpoint.
     SystemCheckpointMessage = 2, // Used for an authority signature on a system checkpoint message.
     DiscoveryPeers = 3,    // Used for reporting peer addresses in discovery.
-    ValidatorMpcDataAnnouncement = 4, // Used for a validator's BLS signature on a `ValidatorMpcDataAnnouncement`.
+    ValidatorMpcDataAnnouncement = 4, // Used for a joiner's Ed25519 (consensus-key) signature on a relayed `ValidatorMpcDataAnnouncement`.
     HandoffAttestation = 5, // Used for a validator's Ed25519 (consensus-key) signature on a `HandoffAttestation`.
 }
 

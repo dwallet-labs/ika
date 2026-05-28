@@ -16,9 +16,11 @@ use super::ValidatorMetadataClient;
 
 /// Wrapped by a joining validator (not yet in the consensus committee)
 /// to ask a current-committee peer to relay their `mpc_data`
-/// announcement into consensus. The peer verifies the signature
-/// against the `PendingActiveSet` before relaying; for transport
-/// here the wire format is just the signed announcement.
+/// announcement into consensus. The peer verifies the joiner's
+/// Ed25519 consensus-key signature against the installed
+/// `JoinerPubkeyProvider` (next-epoch committee consensus pubkeys)
+/// before relaying; for transport here the wire format is just the
+/// signed announcement.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmitMpcDataAnnouncementRequest {
     pub announcement: SignedValidatorMpcDataAnnouncement,
@@ -39,9 +41,10 @@ pub enum SubmitMpcDataAnnouncementResponse {
 /// before that, the server holds `None` and rejects requests.
 ///
 /// Implementations are responsible for:
-/// - verifying the announcement against the `PendingActiveSet`
-///   (the relay is joiner-only; current-committee validators
-///   submit their own announcements directly via consensus),
+/// - verifying the joiner's Ed25519 consensus-key signature against
+///   the installed `JoinerPubkeyProvider` (next-epoch committee
+///   consensus pubkeys) — the relay is joiner-only; current-committee
+///   validators submit their own announcements directly via consensus,
 /// - bouncing duplicates by the latest-by-timestamp rule,
 /// - submitting the resulting `ConsensusTransaction` via the adapter.
 #[async_trait::async_trait]

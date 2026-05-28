@@ -1849,32 +1849,17 @@ impl AuthorityPerEpochStore {
         Ok(())
     }
 
-    /// Verifies and stores a `SignedValidatorMpcDataAnnouncement`
-    /// received via consensus.
-    ///
-    /// Rules:
-    /// 1. `announcement.validator == auth_sig.authority` (sanity).
-    /// 2. For current-epoch announcements (`auth_sig.epoch ==
-    ///    current_epoch`), the BLS sig is verified against
-    ///    `self.committee()` — only current-committee members can
-    ///    announce for this epoch.
-    /// 3. Latest-by-timestamp: the stored entry for a given
-    ///    `validator` is only replaced when the incoming
-    ///    announcement has a strictly newer `timestamp_ms`. Replays
-    ///    and stale duplicates are dropped silently.
-    ///
-    /// Cross-epoch (next-epoch joiner) announcements
-    /// (`auth_sig.epoch == current_epoch + 1`) verify against the
-    /// `PendingActiveSet` via the installed
-    /// `joiner_pubkey_provider`; everything else is logged and
-    /// dropped so a buggy or malicious relayer can't smuggle in
-    /// unverified state.
     /// Record a current-committee validator's self-submitted
     /// announcement. The consensus block author was already verified
     /// to equal `announcement.validator` in
     /// `verify_consensus_transaction`, so there's no payload
     /// signature to check here — only that the announcement is for
-    /// the current epoch.
+    /// the current epoch. Latest-by-timestamp: a stored entry is
+    /// replaced only by a strictly newer `timestamp_ms` (see
+    /// `insert_validator_mpc_data_announcement`); replays and stale
+    /// duplicates drop silently. Next-epoch joiner announcements take
+    /// the separate `record_relayed_validator_mpc_data_announcement`
+    /// path, which verifies the joiner's Ed25519 signature.
     pub fn record_validator_mpc_data_announcement(
         &self,
         announcement: &ValidatorMpcDataAnnouncement,

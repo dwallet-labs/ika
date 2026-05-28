@@ -12,8 +12,9 @@
 //!    (`EpochMpcDataReadySignal`, `NetworkKeyDKGReadySignal`,
 //!    `HandoffSignature`).
 //! 2. **Consensus-side pure verifiers** — `verify_joiner_announcement`
-//!    (returns `Verdict` for a joiner's announcement against the
-//!    PendingActiveSet), `verify_peer_blob_for_relay` (hash + decode
+//!    (returns a `Verdict` for a joiner's announcement, verifying its
+//!    Ed25519 consensus-key signature against the installed
+//!    `JoinerPubkeyProvider`), `verify_peer_blob_for_relay` (hash + decode
 //!    a peer-served blob before storing/relaying),
 //!    `canonicalize_ready_signal_peers` (dedup + committee-filter +
 //!    quorum-coverage floor for incoming ready signals),
@@ -675,9 +676,13 @@ pub fn build_network_key_dkg_ready_signal_transaction(
 /// working set (the strict gate). The three PVSS halves are
 /// opportunistic per-validator: present only when the validator
 /// published under the post-PR-#1707 shape
-/// (`network_encryption_key_version == 3`). At protocol_version
-/// `<= 4`, validators publish the bare class-groups shape and the
-/// three PVSS maps come back empty — matching the chain-fallback's
+/// (`network_encryption_key_version == 3`).
+///
+/// Under v4 the off-chain producer (`derive_mpc_data_blob`) always
+/// emits that full shape, so all three PVSS maps are populated for
+/// off-chain-assembled committees. The maps come back empty only for
+/// legacy / mixed-shape validators read via the chain fallback
+/// (mainnet-v1.1.8 bare class-groups shape) — matching the
 /// `filter_map` semantics in `sui_syncer::new_committee`.
 #[derive(Debug)]
 pub struct OffChainCommitteeBundles {

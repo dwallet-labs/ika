@@ -2,18 +2,26 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! Producer-side task that drives the off-chain validator-metadata
-//! flow at epoch start:
+//! flow during an epoch:
 //! 1. Derives the local class-groups mpc_data blob from the root
 //!    seed (matches the canonical BCS encoding `derive_mpc_data_blob`
-//!    produces).
-//! 2. Persists the blob into perpetual `mpc_artifact_blobs` so
-//!    peers can fetch by hash via the existing `GetMpcDataBlob` RPC.
-//! 3. Signs + submits a `ValidatorMpcDataAnnouncement` via
-//!    consensus.
-//! 4. Submits an `EpochMpcDataReadySignal` once its own
-//!    announcement is in (which triggers the freeze on quorum).
-//! 5. For every known network key currently in
-//!    `AwaitingNetworkDKG`, submits a `NetworkKeyDKGReadySignal`.
+//!    produces) and write-through-caches it via `BlobCache` (perpetual
+//!    `mpc_artifact_blobs` + the in-memory store backing the
+//!    `GetMpcDataBlob` RPC), so peers can fetch it by hash.
+//! 2. Submits a bare (unsigned) `ValidatorMpcDataAnnouncement` for
+//!    itself — a current-committee validator is authenticated by the
+//!    consensus block author, so no payload signature is needed
+//!    (only joiners sign; that path lives in
+//!    `joiner_announcement_sender`). Re-submits the same idempotent
+//!    announcement each tick until it's confirmed in the per-epoch
+//!    table (submit != sequenced).
+//! 3. Once the announcement is confirmed AND local blob coverage
+//!    meets stake quorum AND `ready_to_finalize` holds (the
+//!    next-epoch committee is published and all its members are
+//!    locally validated, or the 3/4-epoch deadline elapsed), submits
+//!    an `EpochMpcDataReadySignal` (the first quorum of which freezes
+//!    the input set). Re-emits with an incremented `sequence_number`
+//!    as `validated_peers` grows, until `is_mpc_data_frozen()`.
 //!
 //! Without this task running, no validator would broadcast its
 //! mpc_data — leaving `frozen_validator_mpc_data_input_set` empty

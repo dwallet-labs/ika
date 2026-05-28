@@ -131,12 +131,15 @@ pub enum ConsensusTransactionKey {
         sui_types::base_types::ObjectID, /* network_key_id */
         u64,                             /* epoch */
     ),
-    /// V2 of `EndOfPublish` — same identity key as V1
-    /// (`AuthorityName`) so V1 and V2 from the same authority
-    /// dedupe correctly across an upgrade boundary. The bundled
-    /// handoff signature is identified separately by its own
-    /// `HandoffSignature(authority, epoch)` key on the consumer
-    /// side after extraction.
+    /// V2 of `EndOfPublish`, keyed only by `AuthorityName` (like V1).
+    /// V1 and V2 are *distinct* keys (different enum variants), so
+    /// they do not dedupe against each other — but they never need
+    /// to: the `off_chain_validator_metadata` flag makes emission
+    /// mutually exclusive (the standalone V1 sender exits when the
+    /// flag is on, and V2 is emitted only then), so a given authority
+    /// submits exactly one form per epoch. The bundled handoff
+    /// signature inside V2 is not separately keyed; the consumer
+    /// routes it through the handoff aggregator after extraction.
     EndOfPublishV2(AuthorityName),
 }
 

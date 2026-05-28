@@ -24,7 +24,7 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Version 1: Original baseline.
 // Version 2: network_encryption_key_version = 2.
 // Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
-// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions off;
+// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
 //            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
 //            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
