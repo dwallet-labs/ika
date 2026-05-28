@@ -55,13 +55,34 @@ use sui_types::base_types::ObjectID;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
+/// Outcome of the ready-signal emit gate ([`decide_ready_to_finalize`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadyToFinalize {
+    /// Don't emit yet — keep waiting (V_{e+1} unpublished, or not all
+    /// of its members validated, and the deadline hasn't passed).
+    NotYet,
+    /// Emit: the next-epoch committee is published and every member's
+    /// blob is locally validated, so a freeze triggered by these
+    /// signals captures all of them.
+    Ready,
+    /// Emit because the epoch-clock deadline elapsed, but some
+    /// next-epoch members were NOT locally validated. They will be
+    /// excluded from this validator's `validated_peers` and risk
+    /// being dropped from the frozen set / next committee's
+    /// class-groups map — i.e. blob propagation is too slow for the
+    /// epoch length. The missing members are surfaced for an operator
+    /// warning + metric.
+    ReadyViaDeadlineMissing(Vec<AuthorityName>),
+}
+
 /// Pure decision for the ready-signal emit gate (see
 /// `MpcDataAnnouncementSender::ready_to_finalize`). Extracted so the
 /// joiner-inclusion timing rule is unit-testable without an epoch
-/// store. Emit once either the epoch-clock deadline has passed
-/// (liveness backstop) or the next-epoch committee is published and
+/// store. Emit once either the next-epoch committee is published and
 /// every one of its members is locally validated (so a freeze
-/// triggered by these signals captures the joiners).
+/// triggered by these signals captures the joiners), or the
+/// epoch-clock deadline has passed (liveness backstop) — the latter
+/// reports any still-missing members so the caller can warn.
 fn decide_ready_to_finalize(
     now_ms: u64,
     deadline_ms: u64,
@@ -69,16 +90,27 @@ fn decide_ready_to_finalize(
     expected_next_epoch: u64,
     next_members: &[AuthorityName],
     validated_peers: &[AuthorityName],
-) -> bool {
-    if now_ms >= deadline_ms {
-        return true;
-    }
-    if next_committee_epoch != expected_next_epoch {
-        // V_{e+1} not published yet — keep waiting.
-        return false;
-    }
+) -> ReadyToFinalize {
     let validated: HashSet<&AuthorityName> = validated_peers.iter().collect();
-    next_members.iter().all(|name| validated.contains(name))
+    let next_published = next_committee_epoch == expected_next_epoch;
+    let missing: Vec<AuthorityName> = if next_published {
+        next_members
+            .iter()
+            .filter(|name| !validated.contains(name))
+            .copied()
+            .collect()
+    } else {
+        // V_{e+1} not published yet — treat the whole (unknown) set
+        // as missing for deadline-reporting purposes.
+        Vec::new()
+    };
+    if next_published && missing.is_empty() {
+        return ReadyToFinalize::Ready;
+    }
+    if now_ms >= deadline_ms {
+        return ReadyToFinalize::ReadyViaDeadlineMissing(missing);
+    }
+    ReadyToFinalize::NotYet
 }
 
 /// Per-epoch producer task that broadcasts this validator's
@@ -303,18 +335,19 @@ impl MpcDataAnnouncementSender {
     }
 
     /// Whether it's time to emit the ready signal — i.e. the freeze
-    /// is allowed to capture our attestation set. True once either:
+    /// is allowed to capture our attestation set. Ready once either:
     /// - the next-epoch committee is published AND every one of its
     ///   members' blobs is locally validated (so a freeze triggered
     ///   by these signals includes the joiners), or
     /// - the epoch-clock deadline (3/4 of the epoch) has passed —
     ///   liveness backstop so a never-announcing joiner can't stall
-    ///   the freeze forever.
+    ///   the freeze forever (the still-missing members are surfaced
+    ///   so the caller can warn + record a metric).
     fn ready_to_finalize(
         &self,
         epoch_store: &AuthorityPerEpochStore,
         validated_peers: &[AuthorityName],
-    ) -> bool {
+    ) -> ReadyToFinalize {
         use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
         let epoch_start = epoch_store.epoch_start_state();
         let deadline = epoch_start
@@ -383,13 +416,34 @@ impl MpcDataAnnouncementSender {
         // The deadline (wall-clock) only affects WHEN each validator
         // emits; the freeze snapshot itself is still computed
         // deterministically at the consensus-ordered quorum point.
-        if !self.ready_to_finalize(&epoch_store, &validated_peers) {
-            debug!(
-                epoch = self.epoch_id,
-                "deferring EpochMpcDataReadySignal: \
-                 next-epoch committee not yet fully validated"
-            );
-            return Ok(());
+        match self.ready_to_finalize(&epoch_store, &validated_peers) {
+            ReadyToFinalize::NotYet => {
+                debug!(
+                    epoch = self.epoch_id,
+                    "deferring EpochMpcDataReadySignal: \
+                     next-epoch committee not yet fully validated"
+                );
+                return Ok(());
+            }
+            ReadyToFinalize::Ready => {}
+            ReadyToFinalize::ReadyViaDeadlineMissing(missing) => {
+                // Liveness backstop fired: we're emitting without
+                // having validated every next-epoch member. Those
+                // members risk exclusion from the frozen set / next
+                // committee's class-groups map — blob propagation is
+                // too slow for the epoch length. Surface loudly so
+                // operators can lengthen the epoch or investigate the
+                // slow joiner(s).
+                warn!(
+                    epoch = self.epoch_id,
+                    missing_count = missing.len(),
+                    ?missing,
+                    "emitting EpochMpcDataReadySignal at the freeze deadline with \
+                     unvalidated next-epoch members — they may be excluded from the \
+                     next committee's working set (blob propagation slower than the \
+                     epoch length)"
+                );
+            }
         }
         // Re-emit policy: emit if we've never emitted (count = 0)
         // OR the validated set has grown since the last emission.
@@ -549,50 +603,40 @@ mod tests {
         let joiner = name(3);
         // Before V_{e+1} is published (next epoch shows current=5,
         // not 6): not ready, even with everything validated.
-        assert!(!decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b]));
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 5, 6, &[a, b], &[a, b]),
+            ReadyToFinalize::NotYet
+        );
         // V_{e+1} published (epoch 6) but the joiner isn't validated
         // yet: not ready.
-        assert!(!decide_ready_to_finalize(
-            100,
-            1000,
-            6,
-            6,
-            &[a, b, joiner],
-            &[a, b]
-        ));
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b]),
+            ReadyToFinalize::NotYet
+        );
         // V_{e+1} published AND all its members validated: ready.
-        assert!(decide_ready_to_finalize(
-            100,
-            1000,
-            6,
-            6,
-            &[a, b, joiner],
-            &[a, b, joiner]
-        ));
+        assert_eq!(
+            decide_ready_to_finalize(100, 1000, 6, 6, &[a, b, joiner], &[a, b, joiner]),
+            ReadyToFinalize::Ready
+        );
     }
 
     #[test]
-    fn ready_to_finalize_deadline_forces_emit() {
+    fn ready_to_finalize_deadline_forces_emit_and_reports_missing() {
         let a = name(1);
         let joiner = name(3);
-        // Past the deadline: emit regardless of next-committee state
-        // or joiner validation (liveness backstop).
-        assert!(decide_ready_to_finalize(
-            1000,
-            1000,
-            5,
-            6,
-            &[a, joiner],
-            &[a]
-        ));
-        assert!(decide_ready_to_finalize(
-            2000,
-            1000,
-            6,
-            6,
-            &[a, joiner],
-            &[a]
-        ));
+        // Past the deadline, V_{e+1} not yet published: emit via the
+        // backstop (no members known to report missing).
+        assert_eq!(
+            decide_ready_to_finalize(1000, 1000, 5, 6, &[a, joiner], &[a]),
+            ReadyToFinalize::ReadyViaDeadlineMissing(vec![])
+        );
+        // Past the deadline, V_{e+1} published but the joiner never
+        // got validated: emit via the backstop AND report the joiner
+        // as missing so the producer warns + records a metric.
+        assert_eq!(
+            decide_ready_to_finalize(2000, 1000, 6, 6, &[a, joiner], &[a]),
+            ReadyToFinalize::ReadyViaDeadlineMissing(vec![joiner])
+        );
     }
 
     #[tokio::test]
