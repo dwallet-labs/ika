@@ -33,6 +33,7 @@ pub mod system_checkpoints;
 
 pub mod dwallet_mpc;
 pub mod epoch_tasks;
+pub mod handoff_cert;
 pub mod noa_checkpoints;
 pub mod sui_connector;
 pub mod validator_metadata;
