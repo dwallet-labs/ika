@@ -1679,7 +1679,7 @@ impl IkaNode {
             // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
             // instead of silently dropping them.
             let joiner_pubkey_updater_handle = if off_chain_metadata_enabled {
-                let updater = ika_core::epoch_tasks::joiner_pubkey_provider_updater::JoinerPubkeyProviderUpdater::new(
+                let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_next_epoch_committee(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         sui_client.clone(),
@@ -1742,7 +1742,7 @@ impl IkaNode {
             // `HandoffSignatureMessage`s (otherwise every one drops
             // as `UnknownSigner`).
             let consensus_pubkey_updater_handle = if off_chain_metadata_enabled {
-                let updater = ika_core::sui_connector::consensus_pubkey_provider_updater::ConsensusPubkeyProviderUpdater::new(
+                let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_active_committee(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         sui_client.clone(),

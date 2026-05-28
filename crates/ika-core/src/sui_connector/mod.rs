@@ -34,8 +34,8 @@ use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::info;
 
-pub mod consensus_pubkey_provider_updater;
 pub mod metrics;
+pub mod pubkey_provider_updater;
 mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
