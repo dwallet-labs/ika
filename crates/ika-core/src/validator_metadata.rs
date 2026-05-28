@@ -2319,21 +2319,38 @@ mod tests {
         let cert = agg.certified().expect("certified").clone();
 
         // Joiner verifies against the prior committee (which is
-        // `committee` in this fixture) and the same pubkey set the
-        // cert pinned. Should pass.
-        verify_joiner_bootstrap_cert(&cert, &committee, &provider, next_pubkeys.iter().copied())
+        // `committee` in this fixture), the prior epoch the cert
+        // attests (7), and the same pubkey set the cert pinned.
+        // Should pass.
+        verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, next_pubkeys.iter().copied())
             .expect("verify");
 
         // Joiner expects a different committee than what's pinned →
         // refuse, even though signatures are individually valid.
         let wrong_pubkeys = vec![names[2], names[3]];
-        let err = verify_joiner_bootstrap_cert(&cert, &committee, &provider, wrong_pubkeys)
+        let err = verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, wrong_pubkeys)
             .expect_err("should mismatch");
         let msg = format!("{:?}", err);
         assert!(
             msg.contains("next_committee_pubkey_set_hash mismatch"),
             "unexpected error: {msg}"
         );
+
+        // Joiner expects to anchor to a different prior epoch than
+        // the cert attests → refuse before the committee/hash checks,
+        // even though the cert is otherwise valid. This stops a real
+        // cert for epoch 7 from being accepted by a joiner that
+        // believes it's anchoring to, say, epoch 9.
+        let err = verify_joiner_bootstrap_cert(
+            &cert,
+            9,
+            &committee,
+            &provider,
+            next_pubkeys.iter().copied(),
+        )
+        .expect_err("epoch mismatch must be rejected");
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("epoch mismatch"), "unexpected error: {msg}");
     }
 
     #[test]

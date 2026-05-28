@@ -304,12 +304,27 @@ pub fn process_handoff_signature(
 ///   match what the joiner expects for the committee they're joining
 ///   into. This binding is what stops a malicious peer from serving
 ///   a real cert for the wrong committee.
+/// - The cert's `attestation.epoch` must equal `expected_prior_epoch`
+///   (the epoch the joiner believes it's anchoring to). The epoch is
+///   signature-bound inside the attestation, so a forged epoch can't
+///   pass verification — but a *real* cert for a different epoch must
+///   not be accepted just because the caller happened to pass a
+///   matching committee. Binding it explicitly keeps the
+///   cross-epoch anchor unambiguous.
 pub fn verify_joiner_bootstrap_cert(
     cert: &CertifiedHandoffAttestation,
+    expected_prior_epoch: EpochId,
     prior_committee: &Committee,
     prior_consensus_pubkeys: &dyn ConsensusPubkeyProvider,
     expected_next_committee_pubkeys: impl IntoIterator<Item = AuthorityName>,
 ) -> IkaResult<()> {
+    if cert.attestation.epoch != expected_prior_epoch {
+        return Err(IkaError::Unknown(format!(
+            "handoff cert epoch mismatch: cert attests epoch {} but joiner expected \
+             prior epoch {expected_prior_epoch}",
+            cert.attestation.epoch
+        )));
+    }
     let expected_hash = hash_next_committee_pubkey_set(expected_next_committee_pubkeys);
     if cert.attestation.next_committee_pubkey_set_hash != expected_hash {
         return Err(IkaError::Unknown(format!(
