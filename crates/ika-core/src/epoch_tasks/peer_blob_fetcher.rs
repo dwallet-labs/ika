@@ -108,7 +108,7 @@ impl PeerBlobFetcher {
                 return;
             };
             for entry in tables.validator_mpc_data_announcements.safe_iter() {
-                let Ok((authority, signed)) = entry else {
+                let Ok((authority, announcement)) = entry else {
                     continue;
                 };
                 if authority == self.own_authority {
@@ -116,7 +116,7 @@ impl PeerBlobFetcher {
                     // the blob into both stores at submission time.
                     continue;
                 }
-                let digest = signed.announcement.blob_hash;
+                let digest = announcement.blob_hash;
                 // Already hold the blob (either store)? Nothing to
                 // fetch. The cache's read-through `get` means a
                 // perpetual-only blob is still servable to peers
