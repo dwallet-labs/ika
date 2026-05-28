@@ -23,14 +23,14 @@
 use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
-use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
 use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, build_network_key_dkg_ready_signal_transaction,
     derive_mpc_data_blob, now_ms, sign_validator_mpc_data_announcement,
 };
 use dwallet_rng::RootSeed;
-use ika_network::mpc_artifacts::{InMemoryBlobStore, mpc_data_blob_hash};
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::committee::EpochId;
 use ika_types::crypto::{AuthorityKeyPair, AuthorityName};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -52,12 +52,11 @@ pub struct MpcDataAnnouncementSender {
     epoch_id: EpochId,
     authority: AuthorityName,
     consensus_adapter: Arc<dyn SubmitToConsensus>,
-    perpetual_tables: Arc<AuthorityPerpetualTables>,
-    /// In-memory blob cache backing the local Anemo
-    /// `GetMpcDataBlob` server. We mirror our own blob into it on
-    /// submit so peers asking us for it via P2P get an immediate hit
-    /// without a node restart.
-    in_memory_blob_store: Arc<InMemoryBlobStore>,
+    /// Write-through cache for the validator's own mpc_data blob:
+    /// one `insert` persists to perpetual AND mirrors into the
+    /// in-memory store backing the local Anemo `GetMpcDataBlob`
+    /// server, so peers can fetch it over P2P without a restart.
+    blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
     bls_keypair: Arc<AuthorityKeyPair>,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -96,8 +95,7 @@ impl MpcDataAnnouncementSender {
         epoch_id: EpochId,
         authority: AuthorityName,
         consensus_adapter: Arc<dyn SubmitToConsensus>,
-        perpetual_tables: Arc<AuthorityPerpetualTables>,
-        in_memory_blob_store: Arc<InMemoryBlobStore>,
+        blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
         bls_keypair: Arc<AuthorityKeyPair>,
         network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -107,8 +105,7 @@ impl MpcDataAnnouncementSender {
             epoch_id,
             authority,
             consensus_adapter,
-            perpetual_tables,
-            in_memory_blob_store,
+            blob_cache,
             root_seed,
             bls_keypair,
             network_keys_receiver,
@@ -165,23 +162,13 @@ impl MpcDataAnnouncementSender {
         let epoch_store = self.epoch_store()?;
         let blob = derive_mpc_data_blob(&self.root_seed).map_err(DwalletMPCError::IkaError)?;
         let digest = mpc_data_blob_hash(&blob);
-        if let Err(e) = self
-            .perpetual_tables
-            .insert_mpc_artifact_blob(digest, &blob)
-        {
-            // Persist failure isn't fatal — the announcement still
-            // goes through, but peers won't be able to fetch our
-            // blob until the next restart hydrates it (or until
-            // the producer-side caching path writes the same digest
-            // again on a future DKG / reconfig output we produce).
+        // Write-through: persists to perpetual AND mirrors into the
+        // in-memory store backing the Anemo server in one call. A
+        // persist failure isn't fatal to the announcement, but peers
+        // won't be able to fetch our blob until it's re-persisted.
+        if let Err(e) = self.blob_cache.insert(digest, blob.clone()) {
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
-        // Mirror into the in-memory cache backing the local
-        // `GetMpcDataBlob` Anemo server. The cache is hydrated only
-        // at node startup, so without this insert peers asking for
-        // our blob during this epoch's first run would miss until
-        // the next restart.
-        self.in_memory_blob_store.insert(digest, blob.clone());
         let timestamp_ms = now_ms().map_err(DwalletMPCError::IkaError)?;
         let signed = sign_validator_mpc_data_announcement(
             self.authority,

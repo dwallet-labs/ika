@@ -15,6 +15,7 @@ use tokio::sync::watch::Receiver;
 use tracing::debug;
 
 pub mod authority;
+pub mod blob_cache;
 pub mod consensus_adapter;
 pub mod consensus_handler;
 pub mod consensus_manager;

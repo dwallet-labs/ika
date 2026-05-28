@@ -798,8 +798,17 @@ impl IkaNode {
             }
         }
         let mpc_announcement_relay = ika_network::mpc_artifacts::AnnouncementRelayHandle::new();
-        let validator_metadata_server = ika_network::mpc_artifacts::build_server(
+        // Serve through a read-through BlobCache: the in-memory hot
+        // cache first, durable perpetual on a miss. The fallback lets
+        // the server return blobs written only to perpetual (e.g. a
+        // network DKG / reconfiguration output cached by the per-epoch
+        // store) without waiting for a restart to re-hydrate.
+        let mpc_blob_cache = ika_core::blob_cache::BlobCache::new(
             mpc_data_blob_store.clone(),
+            perpetual_tables.clone(),
+        );
+        let validator_metadata_server = ika_network::mpc_artifacts::build_server(
+            mpc_blob_cache,
             mpc_announcement_relay.clone(),
             perpetual_tables.clone(),
         );
@@ -1510,13 +1519,16 @@ impl IkaNode {
                 && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
             {
                 let bls_keypair = Arc::new(self.config.protocol_key_pair().copy());
+                let blob_cache = ika_core::blob_cache::BlobCache::new(
+                    self.mpc_data_blob_store.clone(),
+                    self.state.perpetual_tables(),
+                );
                 let sender = ika_core::epoch_tasks::mpc_data_announcement_sender::MpcDataAnnouncementSender::new(
                         Arc::downgrade(&cur_epoch_store),
                         cur_epoch_store.epoch(),
                         cur_epoch_store.name,
                         Arc::new(components.consensus_adapter.clone()),
-                        self.state.perpetual_tables(),
-                        self.mpc_data_blob_store.clone(),
+                        blob_cache,
                         root_seed_kp.root_seed().clone(),
                         bls_keypair,
                         sui_data_receivers.network_keys_receiver.clone(),
@@ -1538,12 +1550,15 @@ impl IkaNode {
                 let authority_names_to_peer_ids = cur_epoch_store
                     .epoch_start_state()
                     .get_authority_names_to_peer_ids();
+                let blob_cache = ika_core::blob_cache::BlobCache::new(
+                    self.mpc_data_blob_store.clone(),
+                    self.state.perpetual_tables(),
+                );
                 let fetcher = ika_core::epoch_tasks::peer_blob_fetcher::PeerBlobFetcher::new(
                     Arc::downgrade(&cur_epoch_store),
                     cur_epoch_store.epoch(),
                     cur_epoch_store.name,
-                    self.state.perpetual_tables(),
-                    self.mpc_data_blob_store.clone(),
+                    blob_cache,
                     self.p2p_network.clone(),
                     authority_names_to_peer_ids,
                 );

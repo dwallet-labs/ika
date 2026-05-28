@@ -36,9 +36,9 @@
 //! every honest receiver into a relay.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
-use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+use crate::blob_cache::BlobCache;
 use anemo::{Network, PeerId};
-use ika_network::mpc_artifacts::{InMemoryBlobStore, fetch_blob};
+use ika_network::mpc_artifacts::fetch_blob;
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
 use rand::seq::SliceRandom;
@@ -52,8 +52,7 @@ pub struct PeerBlobFetcher {
     epoch_store: Weak<AuthorityPerEpochStore>,
     epoch_id: EpochId,
     own_authority: AuthorityName,
-    perpetual_tables: Arc<AuthorityPerpetualTables>,
-    in_memory_blob_store: Arc<InMemoryBlobStore>,
+    blob_cache: Arc<BlobCache>,
     p2p_network: Network,
     authority_names_to_peer_ids: HashMap<AuthorityName, PeerId>,
 }
@@ -63,8 +62,7 @@ impl PeerBlobFetcher {
         epoch_store: Weak<AuthorityPerEpochStore>,
         epoch_id: EpochId,
         own_authority: AuthorityName,
-        perpetual_tables: Arc<AuthorityPerpetualTables>,
-        in_memory_blob_store: Arc<InMemoryBlobStore>,
+        blob_cache: Arc<BlobCache>,
         p2p_network: Network,
         authority_names_to_peer_ids: HashMap<AuthorityName, PeerId>,
     ) -> Self {
@@ -72,8 +70,7 @@ impl PeerBlobFetcher {
             epoch_store,
             epoch_id,
             own_authority,
-            perpetual_tables,
-            in_memory_blob_store,
+            blob_cache,
             p2p_network,
             authority_names_to_peer_ids,
         }
@@ -120,20 +117,11 @@ impl PeerBlobFetcher {
                     continue;
                 }
                 let digest = signed.announcement.blob_hash;
-                // If we have the blob in perpetual storage, we're
-                // done fetching it. But we also want the in-memory
-                // store backing the local Anemo server to have it,
-                // so peers asking us for the blob get a hit. After
-                // a restart, perpetual is populated by hydration
-                // but the in-memory store starts empty until the
-                // hydration pass runs — and even after hydration,
-                // any blob inserted by a code path that bypasses
-                // the in-memory mirror (e.g. a future caller) would
-                // leave us serving misses. Backfill on the spot.
-                if let Ok(Some(bytes)) = self.perpetual_tables.get_mpc_artifact_blob(&digest) {
-                    if !self.in_memory_blob_store.contains(&digest) {
-                        self.in_memory_blob_store.insert(digest, bytes);
-                    }
+                // Already hold the blob (either store)? Nothing to
+                // fetch. The cache's read-through `get` means a
+                // perpetual-only blob is still servable to peers
+                // without an explicit in-memory backfill here.
+                if self.blob_cache.contains(&digest) {
                     continue;
                 }
                 out.push((authority, digest));
@@ -229,19 +217,18 @@ impl PeerBlobFetcher {
                                 continue;
                             }
                         }
-                        if let Err(e) = self
-                            .perpetual_tables
-                            .insert_mpc_artifact_blob(digest, &bytes)
-                        {
+                        // Write-through: durable perpetual + in-memory
+                        // mirror in one call, so the blob is both
+                        // restart-safe and immediately P2P-servable.
+                        if let Err(e) = self.blob_cache.insert(digest, bytes) {
                             warn!(
                                 error = ?e,
                                 ?announcer,
                                 ?candidate_authority,
-                                "peer blob fetcher: perpetual insert failed; trying next peer"
+                                "peer blob fetcher: cache insert failed; trying next peer"
                             );
                             continue;
                         }
-                        self.in_memory_blob_store.insert(digest, bytes);
                         info!(
                             ?announcer,
                             served_by = ?candidate_authority,
