@@ -87,7 +87,6 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::NOAObservation(..)
                 | ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(..)
-                | ConsensusTransactionKind::HandoffSignature(..)
                 | ConsensusTransactionKind::EpochMpcDataReadySignal(..)
                 | ConsensusTransactionKind::EndOfPublishV2 { .. } => {}
                 ConsensusTransactionKind::SystemCheckpointSignature(signature) => {

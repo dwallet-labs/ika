@@ -107,10 +107,6 @@ pub enum ConsensusTransactionKey {
         u64, /* epoch */
         u64, /* timestamp_ms */
     ),
-    /// A per-validator Ed25519 signature on the outgoing-committee
-    /// handoff attestation, keyed by signer + epoch (one signature
-    /// per validator per epoch handoff).
-    HandoffSignature(AuthorityName, u64 /* epoch */),
     /// A validator's "I'm ready for this epoch's MPC sessions" vote,
     /// keyed by signer + epoch + sequence_number. The sequence
     /// number lets a signer re-emit with a wider `validated_peers`
@@ -243,14 +239,6 @@ impl Debug for ConsensusTransactionKey {
                     ts
                 )
             }
-            ConsensusTransactionKey::HandoffSignature(authority, epoch) => {
-                write!(
-                    f,
-                    "HandoffSignature({:?}, epoch={})",
-                    authority.concise(),
-                    epoch
-                )
-            }
             ConsensusTransactionKey::EpochMpcDataReadySignal(authority, epoch, seq) => {
                 write!(
                     f,
@@ -351,7 +339,6 @@ pub enum ConsensusTransactionKind {
     /// consensus-key signature, verified against the joiner's
     /// next-epoch consensus pubkey before the relay forwards it.
     RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
-    HandoffSignature(Box<HandoffSignatureMessage>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
     /// V2 of `EndOfPublish` that bundles the validator's signed
     /// handoff attestation into the same consensus message.
@@ -369,15 +356,14 @@ pub enum ConsensusTransactionKind {
     ///    semantics as `EndOfPublish(authority)` for epoch-advance
     ///    accounting.
     /// 2. Extract `handoff_signature` and route through the existing
-    ///    `record_handoff_signature` aggregator. No separate
-    ///    `HandoffSignature` consensus message is sent in V2.
+    ///    `record_handoff_signature` aggregator.
     ///
-    /// Coupling the two into a single consensus message ensures the
-    /// handoff signature is observed at exactly the consensus point
-    /// where EndOfPublish fires — eliminating the V1 race where the
-    /// separate `HandoffSignature` could arrive out of order relative
-    /// to `EndOfPublish` and lead to inconsistent aggregator state
-    /// across the committee.
+    /// Bundling the handoff signature into the EndOfPublish message
+    /// (rather than sending it as its own consensus transaction)
+    /// ensures it is observed at exactly the consensus point where
+    /// EndOfPublish fires — a standalone handoff message could arrive
+    /// out of order relative to `EndOfPublish` and lead to inconsistent
+    /// aggregator state across the committee.
     EndOfPublishV2 {
         authority: AuthorityName,
         handoff_signature: Box<HandoffSignatureMessage>,
@@ -634,17 +620,6 @@ impl ConsensusTransaction {
         }
     }
 
-    pub fn new_handoff_signature(message: HandoffSignatureMessage) -> Self {
-        let mut hasher = DefaultHasher::new();
-        message.attestation.hash(&mut hasher);
-        message.signer.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::HandoffSignature(Box::new(message)),
-        }
-    }
-
     pub fn new_epoch_mpc_data_ready_signal(signal: EpochMpcDataReadySignal) -> Self {
         let mut hasher = DefaultHasher::new();
         signal.authority.hash(&mut hasher);
@@ -736,9 +711,6 @@ impl ConsensusTransaction {
                     signed.announcement.epoch,
                     signed.announcement.timestamp_ms,
                 )
-            }
-            ConsensusTransactionKind::HandoffSignature(message) => {
-                ConsensusTransactionKey::HandoffSignature(message.signer, message.attestation.epoch)
             }
             ConsensusTransactionKind::EpochMpcDataReadySignal(signal) => {
                 ConsensusTransactionKey::EpochMpcDataReadySignal(

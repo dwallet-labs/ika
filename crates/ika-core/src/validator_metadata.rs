@@ -9,7 +9,7 @@
 //!    served over P2P); `sign_validator_mpc_data_announcement` builds
 //!    the wire-ready `SignedValidatorMpcDataAnnouncement`; helpers
 //!    construct the per-epoch consensus transactions
-//!    (`EpochMpcDataReadySignal`, `HandoffSignature`).
+//!    (`EpochMpcDataReadySignal`).
 //! 2. **Consensus-side pure verifiers** — `verify_joiner_announcement`
 //!    (returns a `Verdict` for a joiner's announcement, verifying its
 //!    Ed25519 consensus-key signature against the installed
@@ -37,7 +37,7 @@ use fastcrypto::traits::{Signer, VerifyingKey};
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::{IkaError, IkaResult};
-use ika_types::handoff::{HandoffItemKey, HandoffSignatureMessage};
+use ika_types::handoff::HandoffItemKey;
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
@@ -606,12 +606,6 @@ pub fn compute_handoff_items(
     }
     items.sort_by(|left, right| left.0.cmp(&right.0));
     items
-}
-
-/// Wraps a signed `HandoffSignatureMessage` in a `ConsensusTransaction`
-/// ready for submission via the consensus adapter.
-pub fn build_handoff_signature_transaction(msg: HandoffSignatureMessage) -> ConsensusTransaction {
-    ConsensusTransaction::new_handoff_signature(msg)
 }
 
 /// Per-feature contributor that produces its slice of items for the

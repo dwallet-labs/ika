@@ -2274,9 +2274,8 @@ impl AuthorityPerEpochStore {
     /// accept incoming peer signatures matching it (otherwise they'd
     /// be rejected with `AttestationMismatch`).
     ///
-    /// Returns just the signed message — caller decides whether to
-    /// wrap it as a standalone V1 `HandoffSignature` consensus tx or
-    /// bundle it into an `EndOfPublishV2`.
+    /// Returns just the signed message — the caller bundles it into
+    /// an `EndOfPublishV2` consensus transaction.
     pub fn build_local_signed_handoff_message(
         &self,
         attestation: ika_types::handoff::HandoffAttestation,
@@ -2288,18 +2287,6 @@ impl AuthorityPerEpochStore {
             self.name,
             consensus_keypair,
         ))
-    }
-
-    /// Builds the per-validator signed handoff message and wraps it
-    /// in a V1 `HandoffSignature` consensus transaction ready for
-    /// submission.
-    pub fn build_local_handoff_signature_transaction(
-        &self,
-        attestation: ika_types::handoff::HandoffAttestation,
-        consensus_keypair: &fastcrypto::ed25519::Ed25519KeyPair,
-    ) -> IkaResult<ika_types::messages_consensus::ConsensusTransaction> {
-        let msg = self.build_local_signed_handoff_message(attestation, consensus_keypair)?;
-        Ok(crate::validator_metadata::build_handoff_signature_transaction(msg))
     }
 
     /// Records an incoming `HandoffSignatureMessage` from consensus.
@@ -3133,18 +3120,6 @@ impl AuthorityPerEpochStore {
                 let _ = signed;
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::HandoffSignature(message),
-                ..
-            }) => {
-                if transaction.sender_authority() != message.signer {
-                    warn!(
-                        "HandoffSignature signer {} does not match its author from consensus {}",
-                        message.signer, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
                 ..
             }) => {
@@ -3679,22 +3654,6 @@ impl AuthorityPerEpochStore {
                 ..
             }) => {
                 self.record_relayed_validator_mpc_data_announcement(signed)?;
-                Ok(ConsensusCertificateResult::ConsensusMessage)
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::HandoffSignature(message),
-                ..
-            }) => {
-                // Cert (if quorum just crossed) is intentionally
-                // not handled here; perpetual-persist plumbing
-                // lives inside `record_handoff_signature` itself
-                // (it writes the cert into perpetual storage on
-                // the `Certified` outcome). Dropping the return
-                // value here is safe — the next ordered signature
-                // crossing quorum mints the same cert again, and
-                // restart-replay rebuilds the aggregator from
-                // persisted signatures.
-                let _ = self.record_handoff_signature(message)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
