@@ -1118,10 +1118,6 @@ impl StaticNetworkKeyBlobSource {
     pub fn insert_dkg(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
         self.dkg.insert(key_id, bytes);
     }
-
-    pub fn insert_reconfig(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
-        self.reconfig.insert(key_id, bytes);
-    }
 }
 
 impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {

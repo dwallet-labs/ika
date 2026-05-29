@@ -1929,16 +1929,10 @@ impl AuthorityPerEpochStore {
 
     /// Install the source of truth for next-epoch joiner registration.
     /// Repeated calls swap the active provider atomically; the
-    /// previous provider is dropped. A `None` install (via
-    /// [`AuthorityPerEpochStore::clear_joiner_pubkey_provider`])
-    /// returns to the default behavior of dropping joiner
-    /// announcements.
+    /// previous provider is dropped. Until a provider is installed the
+    /// store defaults to dropping joiner announcements.
     pub fn install_joiner_pubkey_provider(&self, provider: Box<dyn JoinerPubkeyProvider>) {
         self.joiner_pubkey_provider.store(Some(Arc::new(provider)));
-    }
-
-    pub fn clear_joiner_pubkey_provider(&self) {
-        self.joiner_pubkey_provider.store(None);
     }
 
     /// Currently-installed joiner pubkey provider, or `None` if
@@ -1954,10 +1948,6 @@ impl AuthorityPerEpochStore {
     pub fn install_consensus_pubkey_provider(&self, provider: Box<dyn ConsensusPubkeyProvider>) {
         self.consensus_pubkey_provider
             .store(Some(Arc::new(provider)));
-    }
-
-    pub fn clear_consensus_pubkey_provider(&self) {
-        self.consensus_pubkey_provider.store(None);
     }
 
     /// Install the locally-computed expected handoff attestation
@@ -2021,22 +2011,6 @@ impl AuthorityPerEpochStore {
             }
         }
         Ok(())
-    }
-
-    pub fn clear_expected_handoff_attestation(&self) {
-        self.expected_handoff_attestation.store(None);
-        *self.handoff_aggregator.lock() = None;
-        // Also drop the pre-install buffer: those peer signatures
-        // were attesting to a specific expected attestation that
-        // we've now cleared. If the caller re-installs a different
-        // attestation later, replaying these against it would
-        // surface as `AttestationMismatch` for every entry. Empty
-        // the buffer here so the slate is consistent with what
-        // `install_expected_handoff_attestation` will replay
-        // (only DB-persisted signatures get replayed under a
-        // freshly-installed attestation; in-memory pending must
-        // be re-broadcast by peers).
-        self.pending_handoff_signatures.lock().clear();
     }
 
     /// Install the perpetual-tables handle used to persist a fresh
