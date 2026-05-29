@@ -55,6 +55,59 @@ async fn test_joiner_added_at_epoch_2() {
     wait_for_node_epoch(&joiner.node_handle, 2).await;
 }
 
+/// F4-1 explicit check: a joiner that registers mid-epoch must land
+/// in the *frozen* mpc_data input set, and therefore in the next
+/// committee's off-chain-assembled `class_groups_public_keys_and_proofs`
+/// map. The ready-signal emit gate (`decide_ready_to_finalize`) delays
+/// the freeze until the next-epoch committee is published and all its
+/// members are locally validated (or the epoch-clock deadline), which
+/// is precisely what lets a joiner — who can only announce after
+/// `V_{e+1}` is published — be captured by the freeze. Reaching epoch 2
+/// already implies the swap succeeded; this asserts the *mechanism*
+/// (joiner present in the committee's class-groups map), so a
+/// regression that silently dropped joiners from the frozen set would
+/// fail here even if the cluster limped to the next epoch.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_joiner_lands_in_next_committee_class_groups() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(20_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    cluster.wait_for_epoch(1).await;
+    let joiner = cluster
+        .add_joiner_validator()
+        .await
+        .expect("add_joiner_validator failed");
+    let joiner_name = joiner.authority_name();
+
+    cluster.wait_for_epoch(2).await;
+    wait_for_node_epoch(&joiner.node_handle, 2).await;
+
+    // Read the epoch-2 committee from the joiner's own node and assert
+    // its class-groups material is present — i.e. the freeze captured
+    // the joiner and the off-chain assembler resolved its mpc_data.
+    let in_class_groups = joiner.node_handle.with(|node| {
+        let epoch_store = node.state().epoch_store_for_testing();
+        let committee = epoch_store.committee();
+        assert_eq!(committee.epoch(), 2, "joiner node should be at epoch 2");
+        committee
+            .class_groups_public_keys_and_proofs
+            .contains_key(&joiner_name)
+    });
+    assert!(
+        in_class_groups,
+        "joiner {joiner_name:?} must appear in epoch-2 committee \
+         class_groups_public_keys_and_proofs (F4-1: freeze must capture \
+         the mid-epoch joiner)"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_validator_removed_at_epoch_2() {
     telemetry_subscribers::init_for_testing();
