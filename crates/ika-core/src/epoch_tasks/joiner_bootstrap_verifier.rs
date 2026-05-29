@@ -97,8 +97,20 @@ pub struct BootstrapRetryConfig {
 pub enum BootstrapOutcome {
     /// A fetched cert verified against the prior committee.
     Verified,
-    /// No peer served a cert that verified within the attempt budget.
-    Unverified,
+    /// No peer served *any* cert within the attempt budget. Benign:
+    /// the `E-1` committee may simply not have distributed the cert
+    /// yet (propagation lag). Treated as non-fatal — the anchor is
+    /// merely unconfirmed, not contradicted.
+    Unavailable,
+    /// Peers served one or more certs but **none** verified against the
+    /// prior committee within the budget. Because every peer is tried
+    /// each round, a single malicious peer cannot cause this — one
+    /// honest peer's valid cert would have verified. Persistent
+    /// rejection therefore signals a genuine trust-anchor mismatch:
+    /// either this joiner's view of the prior committee is wrong, or
+    /// every reachable peer is serving a cert for the wrong committee.
+    /// This is the actionable fail-closed signal.
+    Rejected,
 }
 
 pub struct JoinerBootstrapVerifier {
@@ -125,17 +137,27 @@ impl JoinerBootstrapVerifier {
     }
 
     /// Fetch + verify with retry. Returns once a candidate verifies, or
-    /// after exhausting the attempt budget. Does NOT halt the validator
-    /// on failure — a missing/unverifiable cert is surfaced as an
-    /// `error!` for operators rather than bricking a node whose peers
-    /// may not have distributed the cert yet. (Fail-closed enforcement
-    /// — refusing to participate until verified — is a deliberate
-    /// follow-up; this wiring establishes the verified anchor and makes
-    /// tampering observable.)
+    /// after exhausting the attempt budget — classifying failure into
+    /// [`BootstrapOutcome::Unavailable`] (no peer served a cert; benign
+    /// propagation lag) vs [`BootstrapOutcome::Rejected`] (peers served
+    /// certs but none verified; a genuine trust-anchor mismatch and the
+    /// actionable fail-closed signal).
+    ///
+    /// The verifier itself does not abort the process: it tries every
+    /// peer each round, so an honest peer's valid cert always wins over
+    /// a single malicious one, and a hard self-halt on a possibly-
+    /// transient miss would be a worse failure mode (one slow/eclipsed
+    /// joiner bricking itself) than operating on a loudly-flagged
+    /// unconfirmed anchor. `Rejected` is the precise enforcement hook:
+    /// it cannot be triggered by a single bad peer, so a policy that
+    /// refuses participation on `Rejected` can be layered on top
+    /// without that single-peer DoS risk.
     pub async fn run(self) -> BootstrapOutcome {
+        let mut saw_candidate = false;
         for attempt in 0..self.config.max_attempts {
             let candidates = self.source.fetch_candidates(self.prior_epoch).await;
             for cert in &candidates {
+                saw_candidate = true;
                 match (self.verify)(cert) {
                     Ok(()) => {
                         info!(
@@ -158,14 +180,27 @@ impl JoinerBootstrapVerifier {
                 tokio::time::sleep(self.config.retry_interval).await;
             }
         }
-        error!(
-            prior_epoch = self.prior_epoch,
-            max_attempts = self.config.max_attempts,
-            "joiner could not fetch + verify a handoff cert for the prior epoch — \
-             its cross-epoch off-chain trust anchor is unconfirmed (peers may not \
-             have distributed the cert, or a verification mismatch occurred)"
-        );
-        BootstrapOutcome::Unverified
+        if saw_candidate {
+            error!(
+                prior_epoch = self.prior_epoch,
+                max_attempts = self.config.max_attempts,
+                "joiner fetched handoff cert(s) for the prior epoch but NONE verified \
+                 against the prior committee — cross-epoch trust anchor REJECTED. A \
+                 single bad peer cannot cause this, so this signals a wrong \
+                 prior-committee view or peers serving certs for the wrong committee; \
+                 operators should investigate before trusting this validator"
+            );
+            BootstrapOutcome::Rejected
+        } else {
+            warn!(
+                prior_epoch = self.prior_epoch,
+                max_attempts = self.config.max_attempts,
+                "joiner could not fetch any handoff cert for the prior epoch within the \
+                 attempt budget — cross-epoch trust anchor unconfirmed (peers may not \
+                 have distributed it yet). Non-fatal; relying on later propagation"
+            );
+            BootstrapOutcome::Unavailable
+        }
     }
 }
 
@@ -262,10 +297,24 @@ mod tests {
     #[test]
     fn rejects_bad_candidates_and_keeps_trying() {
         // Every round serves a candidate, but verification always
-        // fails (e.g. wrong committee). Exhaust the budget Unverified.
+        // fails (e.g. wrong committee). Exhausting the budget having
+        // *seen* certs that none verified is `Rejected` — the
+        // fail-closed signal, distinct from never seeing a cert.
         let verify: CertVerifier = Arc::new(|_cert| Err(IkaError::Unknown("nope".into())));
         let (outcome, calls) = run_loop(vec![vec![dummy_cert(6)]], verify, 4);
-        assert_eq!(outcome, BootstrapOutcome::Unverified);
+        assert_eq!(outcome, BootstrapOutcome::Rejected);
+        assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn no_cert_served_is_unavailable_not_rejected() {
+        // Every round is empty (no peer has the cert yet). Exhausting
+        // the budget without ever seeing a candidate is `Unavailable`
+        // (benign propagation lag), NOT `Rejected` — the joiner never
+        // observed a contradicting cert.
+        let verify: CertVerifier = Arc::new(|_cert| Ok(()));
+        let (outcome, calls) = run_loop(vec![vec![]], verify, 4);
+        assert_eq!(outcome, BootstrapOutcome::Unavailable);
         assert_eq!(calls, 4);
     }
 

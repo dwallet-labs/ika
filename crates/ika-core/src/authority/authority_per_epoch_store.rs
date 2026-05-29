@@ -2087,8 +2087,13 @@ impl AuthorityPerEpochStore {
     /// `cache_network_reconfiguration_output`. Computes the
     /// Blake2b256 digest of `output_bytes`, writes the digest into
     /// the appropriate per-epoch table, and writes the blob into
-    /// perpetual `mpc_artifact_blobs` so peers can serve it by
-    /// digest. Both writes are idempotent on byte-identical inputs.
+    /// perpetual `mpc_artifact_blobs` so the local node can resolve
+    /// the bytes by digest in later epochs (via `EpochStoreBlobSource`,
+    /// which reads perpetual directly). Unlike validator `mpc_data`
+    /// blobs, these network-key outputs are resolved locally — never
+    /// fetched peer-to-peer — so they intentionally do NOT go through
+    /// the `BlobCache` write-through into the in-memory P2P serve store.
+    /// Both writes are idempotent on byte-identical inputs.
     fn cache_protocol_output(
         &self,
         kind: ProtocolOutputKind,
@@ -2113,7 +2118,7 @@ impl AuthorityPerEpochStore {
                 warn!(
                     error = ?e,
                     ?dwallet_network_encryption_key_id,
-                    "failed to persist protocol output blob — cached digest may not be servable by P2P"
+                    "failed to persist protocol output blob — cross-epoch local resolution may miss the bytes"
                 );
             }
             // Mirror the per-epoch `key_id -> digest` into perpetual so
