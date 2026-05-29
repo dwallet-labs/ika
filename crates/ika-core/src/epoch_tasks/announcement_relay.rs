@@ -22,8 +22,12 @@
 //!    `ConsensusTransaction::new_validator_mpc_data_announcement`.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use crate::blob_cache::BlobCache;
 use crate::consensus_adapter::SubmitToConsensus;
-use crate::validator_metadata::{JoinerAnnouncementVerdict, verify_joiner_announcement};
+use crate::validator_metadata::{
+    JoinerAnnouncementVerdict, PeerBlobVerdict, verify_joiner_announcement,
+    verify_peer_blob_for_relay,
+};
 use ika_network::mpc_artifacts::AnnouncementRelay;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
@@ -32,23 +36,30 @@ use std::sync::{Arc, Weak};
 pub struct ConsensusBackedAnnouncementRelay {
     epoch_store: Weak<AuthorityPerEpochStore>,
     consensus_adapter: Arc<dyn SubmitToConsensus>,
+    blob_cache: Arc<BlobCache>,
 }
 
 impl ConsensusBackedAnnouncementRelay {
     pub fn new(
         epoch_store: Weak<AuthorityPerEpochStore>,
         consensus_adapter: Arc<dyn SubmitToConsensus>,
+        blob_cache: Arc<BlobCache>,
     ) -> Self {
         Self {
             epoch_store,
             consensus_adapter,
+            blob_cache,
         }
     }
 }
 
 #[async_trait::async_trait]
 impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
-    async fn relay(&self, announcement: SignedValidatorMpcDataAnnouncement) -> Result<(), String> {
+    async fn relay(
+        &self,
+        announcement: SignedValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+    ) -> Result<(), String> {
         let Some(epoch_store) = self.epoch_store.upgrade() else {
             return Err("epoch ended".to_string());
         };
@@ -73,6 +84,26 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
                 return Err(format!("joiner verify rejected: {verdict:?}"));
             }
         }
+        // Cache the pushed blob write-through. The joiner isn't in our
+        // peer set, so neither we nor the rest of the committee can
+        // fetch its `mpc_data` back from it — pushing it on the relay
+        // is the only path. Verify it commits to the signed digest and
+        // decodes to valid mpc_data before trusting it (the joiner's
+        // signature binds `blob_hash`, so a hash mismatch is a
+        // protocol violation; hash-matching-but-undecodable bytes
+        // would poison our serve cache, so refuse both). Once cached,
+        // the in-memory mirror lets the rest of the committee resolve
+        // the joiner via the existing content-addressed P2P fetch.
+        let digest = announcement.announcement.blob_hash;
+        match verify_peer_blob_for_relay(&blob, &digest) {
+            PeerBlobVerdict::Accept => {}
+            verdict => {
+                return Err(format!("joiner blob rejected: {verdict:?}"));
+            }
+        }
+        self.blob_cache
+            .insert(digest, blob)
+            .map_err(|e| format!("cache joiner blob failed: {e}"))?;
         let tx = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(announcement);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)

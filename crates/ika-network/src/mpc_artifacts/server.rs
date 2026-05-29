@@ -52,7 +52,7 @@ where
         &self,
         request: Request<SubmitMpcDataAnnouncementRequest>,
     ) -> Result<Response<SubmitMpcDataAnnouncementResponse>, Status> {
-        let SubmitMpcDataAnnouncementRequest { announcement } = request.into_inner();
+        let SubmitMpcDataAnnouncementRequest { announcement, blob } = request.into_inner();
         let Some(relay) = self.relay.current() else {
             // Not yet armed — joiners get told to retry. We
             // explicitly do NOT return a transport error here; an
@@ -61,7 +61,7 @@ where
                 reason: "relay not installed".to_string(),
             }));
         };
-        match relay.relay(announcement).await {
+        match relay.relay(announcement, blob).await {
             Ok(()) => Ok(Response::new(SubmitMpcDataAnnouncementResponse::Accepted)),
             Err(reason) => Ok(Response::new(SubmitMpcDataAnnouncementResponse::Rejected {
                 reason,

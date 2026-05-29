@@ -45,7 +45,7 @@ use ika_types::validator_metadata::{
 };
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // The handoff-attestation cert subsystem lives in `crate::handoff_cert`.
 // Re-exported here so existing `crate::validator_metadata::*` paths and
@@ -56,6 +56,28 @@ pub use crate::handoff_cert::{
     hash_next_committee_pubkey_set, process_handoff_signature, sign_handoff_attestation,
     verify_certified_handoff_attestation, verify_handoff_signature, verify_joiner_bootstrap_cert,
 };
+
+/// Poll/retry cadence for a per-epoch convergence loop, scaled to the
+/// epoch length.
+///
+/// The off-chain joiner-integration loops (chain-committee sync, joiner
+/// fan-out retry, pubkey-provider refresh, peer blob fetch, ready-signal
+/// re-emit) must all converge inside the freeze window — between
+/// mid-epoch, when `V_{e+1}` is published (`epoch_duration / 2`), and the
+/// freeze deadline (`3 * epoch_duration / 4`) — a quarter of the epoch. A
+/// fixed wall-clock cadence is fine for a production-length epoch but is
+/// far too coarse for a short (test) epoch, where a quarter-epoch is only
+/// seconds and a single 10s poll already overruns the window. Scale the
+/// cadence to ~1% of the epoch, never slower than `production_default` and
+/// never faster than a 100ms floor. For production epochs (hours) this is
+/// a no-op: `production_default` always wins.
+pub fn epoch_scaled_poll_interval(
+    epoch_duration_ms: u64,
+    production_default: Duration,
+) -> Duration {
+    Duration::from_millis(epoch_duration_ms / 100)
+        .clamp(Duration::from_millis(100), production_default)
+}
 
 /// Resolves a next-epoch joiner's Ed25519 **consensus** public key
 /// so a relayer can verify the joiner's signature over its
@@ -658,7 +680,6 @@ pub fn default_handoff_items_builders(
         epoch_store,
     )))]
 }
-
 
 /// Assembled validator-key bundles needed to build a `Committee`
 /// off-chain. `class_groups` is required for every authority in the
@@ -2322,8 +2343,14 @@ mod tests {
         // `committee` in this fixture), the prior epoch the cert
         // attests (7), and the same pubkey set the cert pinned.
         // Should pass.
-        verify_joiner_bootstrap_cert(&cert, 7, &committee, &provider, next_pubkeys.iter().copied())
-            .expect("verify");
+        verify_joiner_bootstrap_cert(
+            &cert,
+            7,
+            &committee,
+            &provider,
+            next_pubkeys.iter().copied(),
+        )
+        .expect("verify");
 
         // Joiner expects a different committee than what's pinned →
         // refuse, even though signatures are individually valid.

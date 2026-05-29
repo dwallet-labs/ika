@@ -193,16 +193,23 @@ impl MpcDataAnnouncementSender {
         // Off-chain feature gate. Read once at epoch start — the
         // protocol config is fixed for the epoch, so we don't need
         // to recheck on every loop tick.
-        if let Some(epoch_store) = self.epoch_store.upgrade()
-            && !epoch_store
+        let mut poll_interval = Duration::from_secs(2);
+        if let Some(epoch_store) = self.epoch_store.upgrade() {
+            use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+            if !epoch_store
                 .protocol_config()
                 .off_chain_validator_metadata_enabled()
-        {
-            info!(
-                epoch = self.epoch_id,
-                "off-chain validator metadata disabled by protocol config; task exiting"
+            {
+                info!(
+                    epoch = self.epoch_id,
+                    "off-chain validator metadata disabled by protocol config; task exiting"
+                );
+                return;
+            }
+            poll_interval = crate::validator_metadata::epoch_scaled_poll_interval(
+                epoch_store.epoch_start_state().epoch_duration_ms(),
+                poll_interval,
             );
-            return;
         }
         loop {
             // (Re-)submit our announcement until it's confirmed in
@@ -216,7 +223,7 @@ impl MpcDataAnnouncementSender {
                 warn!(error=?err, "failed to send EpochMpcDataReadySignal; will retry");
             }
 
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(poll_interval).await;
         }
     }
 

@@ -19,8 +19,7 @@ use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
 };
 use crate::validator_metadata::{
-    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement,
-    ValidatorMpcDataAnnouncement,
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;
@@ -656,7 +655,6 @@ impl ConsensusTransaction {
             kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
         }
     }
-
 
     pub fn get_tracking_id(&self) -> u64 {
         (&self.tracking_id[..])

@@ -283,12 +283,20 @@ where
             >,
         >,
     ) {
+        let mut poll_interval = Duration::from_secs(10);
         loop {
-            time::sleep(Duration::from_secs(10)).await;
+            time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
                 warn!("System object not available, retrying...");
                 continue;
             };
+            // Observe a newly-published `V_{e+1}` promptly enough that a
+            // joiner can fan its mpc_data out inside the freeze window in
+            // short (test) epochs; a no-op at production epoch lengths.
+            poll_interval = crate::validator_metadata::epoch_scaled_poll_interval(
+                system_inner.epoch_duration_ms(),
+                Duration::from_secs(10),
+            );
             let SystemInner::V1(system_inner) = system_inner;
             let Some(new_next_bls_committee) = system_inner.get_ika_next_epoch_committee() else {
                 debug!("ika next epoch active committee not found, retrying...");
@@ -663,8 +671,7 @@ where
                                  will retry next tick"
                             );
                         } else {
-                            last_fetched_network_keys
-                                .insert(key_id, (current_epoch, merged_state));
+                            last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));
                         }
                     }
                     Err(err) => {

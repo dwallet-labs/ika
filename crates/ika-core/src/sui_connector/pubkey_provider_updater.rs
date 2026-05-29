@@ -47,8 +47,7 @@ type MemberSelector = fn(&SystemInnerV1) -> Vec<ObjectID>;
 
 /// Installs the assembled `AuthorityName -> consensus pubkey` map on
 /// the epoch store, behind the appropriate provider slot.
-type ProviderInstaller =
-    fn(&AuthorityPerEpochStore, Vec<(AuthorityName, Ed25519PublicKey)>);
+type ProviderInstaller = fn(&AuthorityPerEpochStore, Vec<(AuthorityName, Ed25519PublicKey)>);
 
 fn select_active_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
     system_inner
@@ -73,19 +72,17 @@ fn install_consensus_provider(
     epoch_store: &AuthorityPerEpochStore,
     entries: Vec<(AuthorityName, Ed25519PublicKey)>,
 ) {
-    epoch_store
-        .install_consensus_pubkey_provider(Box::new(StaticConsensusPubkeyProvider::from_iter(
-            entries,
-        )));
+    epoch_store.install_consensus_pubkey_provider(Box::new(
+        StaticConsensusPubkeyProvider::from_iter(entries),
+    ));
 }
 
 fn install_joiner_provider(
     epoch_store: &AuthorityPerEpochStore,
     entries: Vec<(AuthorityName, Ed25519PublicKey)>,
 ) {
-    epoch_store.install_joiner_pubkey_provider(Box::new(StaticJoinerPubkeyProvider::from_iter(
-        entries,
-    )));
+    epoch_store
+        .install_joiner_pubkey_provider(Box::new(StaticJoinerPubkeyProvider::from_iter(entries)));
 }
 
 pub struct PubkeyProviderUpdater<C> {
@@ -159,23 +156,30 @@ where
     }
 
     pub async fn run(self: Arc<Self>) {
-        if let Some(epoch_store) = self.epoch_store.upgrade()
-            && !epoch_store
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+        let mut poll_interval = Duration::from_secs(5);
+        if let Some(epoch_store) = self.epoch_store.upgrade() {
+            if !epoch_store
                 .protocol_config()
                 .off_chain_validator_metadata_enabled()
-        {
-            info!(
-                epoch = self.epoch_id,
-                label = self.label,
-                "off-chain validator metadata disabled; pubkey updater exiting"
+            {
+                info!(
+                    epoch = self.epoch_id,
+                    label = self.label,
+                    "off-chain validator metadata disabled; pubkey updater exiting"
+                );
+                return;
+            }
+            poll_interval = crate::validator_metadata::epoch_scaled_poll_interval(
+                epoch_store.epoch_start_state().epoch_duration_ms(),
+                poll_interval,
             );
-            return;
         }
         loop {
             if let Err(err) = self.refresh().await {
                 warn!(error=?err, label = self.label, "pubkey provider refresh failed; will retry");
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(poll_interval).await;
         }
     }
 

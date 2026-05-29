@@ -57,6 +57,7 @@ pub trait AnnouncementFanout: Send + Sync {
     async fn fan_out(
         &self,
         announcement: &SignedValidatorMpcDataAnnouncement,
+        blob: &[u8],
     ) -> Vec<(PeerId, FanoutOutcome)>;
 }
 
@@ -77,21 +78,27 @@ impl AnnouncementFanout for P2pAnnouncementFanout {
     async fn fan_out(
         &self,
         announcement: &SignedValidatorMpcDataAnnouncement,
+        blob: &[u8],
     ) -> Vec<(PeerId, FanoutOutcome)> {
-        submit_announcement_to_committee(&self.network, &self.peers, announcement.clone())
-            .await
-            .into_iter()
-            .map(|(peer_id, result)| {
-                let outcome = match result {
-                    Ok(SubmitMpcDataAnnouncementResponse::Accepted) => FanoutOutcome::Accepted,
-                    Ok(SubmitMpcDataAnnouncementResponse::Rejected { reason }) => {
-                        FanoutOutcome::Rejected(reason)
-                    }
-                    Err(e) => FanoutOutcome::TransportError(e.to_string()),
-                };
-                (peer_id, outcome)
-            })
-            .collect()
+        submit_announcement_to_committee(
+            &self.network,
+            &self.peers,
+            announcement.clone(),
+            blob.to_vec(),
+        )
+        .await
+        .into_iter()
+        .map(|(peer_id, result)| {
+            let outcome = match result {
+                Ok(SubmitMpcDataAnnouncementResponse::Accepted) => FanoutOutcome::Accepted,
+                Ok(SubmitMpcDataAnnouncementResponse::Rejected { reason }) => {
+                    FanoutOutcome::Rejected(reason)
+                }
+                Err(e) => FanoutOutcome::TransportError(e.to_string()),
+            };
+            (peer_id, outcome)
+        })
+        .collect()
     }
 }
 
@@ -143,22 +150,22 @@ impl JoinerAnnouncementSender {
     /// then fan it out with retry until enough distinct peers accept
     /// or the attempt budget is exhausted.
     pub async fn run(self) {
-        let signed = match self.build_signed_announcement() {
-            Ok(signed) => signed,
+        let (signed, blob) = match self.build_signed_announcement() {
+            Ok(built) => built,
             Err(e) => {
                 warn!(error = %e, "joiner announcement sender: failed to build announcement; not fanning out");
                 return;
             }
         };
-        self.run_fanout_loop(&signed).await;
+        self.run_fanout_loop(&signed, &blob).await;
     }
 
     /// The retry loop, factored out of `run` so it can be unit-tested
     /// without deriving/persisting a real blob.
-    async fn run_fanout_loop(&self, signed: &SignedValidatorMpcDataAnnouncement) {
+    async fn run_fanout_loop(&self, signed: &SignedValidatorMpcDataAnnouncement, blob: &[u8]) {
         let mut accepted_peers: HashSet<PeerId> = HashSet::new();
         for attempt in 0..self.config.max_attempts {
-            let outcomes = self.fanout.fan_out(signed).await;
+            let outcomes = self.fanout.fan_out(signed, blob).await;
             for (peer_id, outcome) in outcomes {
                 match outcome {
                     FanoutOutcome::Accepted => {
@@ -197,24 +204,29 @@ impl JoinerAnnouncementSender {
         );
     }
 
-    fn build_signed_announcement(&self) -> anyhow::Result<SignedValidatorMpcDataAnnouncement> {
+    fn build_signed_announcement(
+        &self,
+    ) -> anyhow::Result<(SignedValidatorMpcDataAnnouncement, Vec<u8>)> {
         let blob = derive_mpc_data_blob(&self.root_seed)
             .map_err(|e| anyhow::anyhow!("derive mpc_data blob: {e}"))?;
         let digest = mpc_data_blob_hash(&blob);
-        // Persist our own blob locally so once we relay the digest,
-        // current-committee peers can fetch the bytes from us via P2P.
-        if let Err(e) = self.blob_cache.insert(digest, blob) {
+        // Persist our own blob locally, and push it on the fan-out
+        // (returned here): the joiner isn't in the current committee's
+        // peer set, so relayers can't fetch the bytes back from us —
+        // they cache what we push and serve it onward.
+        if let Err(e) = self.blob_cache.insert(digest, blob.clone()) {
             warn!(error = ?e, "joiner: failed to persist own mpc_data blob; peers can't fetch it");
         }
         let timestamp_ms = now_ms().map_err(|e| anyhow::anyhow!("now_ms: {e}"))?;
-        sign_validator_mpc_data_announcement(
+        let signed = sign_validator_mpc_data_announcement(
             self.authority,
             self.next_epoch,
             timestamp_ms,
             digest,
             &self.consensus_keypair,
         )
-        .map_err(|e| anyhow::anyhow!("sign announcement: {e}"))
+        .map_err(|e| anyhow::anyhow!("sign announcement: {e}"))?;
+        Ok((signed, blob))
     }
 }
 
@@ -267,6 +279,7 @@ mod tests {
         async fn fan_out(
             &self,
             _announcement: &SignedValidatorMpcDataAnnouncement,
+            _blob: &[u8],
         ) -> Vec<(PeerId, FanoutOutcome)> {
             let mut calls = self.calls.lock();
             let idx = (*calls).min(self.script.len().saturating_sub(1));
@@ -300,7 +313,7 @@ mod tests {
                 max_attempts,
             },
         };
-        sender.run_fanout_loop(&dummy_signed()).await;
+        sender.run_fanout_loop(&dummy_signed(), &[]).await;
         *fanout.calls.lock()
     }
 

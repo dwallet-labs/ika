@@ -700,8 +700,9 @@ impl IkaNode {
         // off-chain assembly), not the assembled one — otherwise the
         // joiner can't learn it's a joiner until after the freeze has
         // already excluded it (see the channel's doc on SuiDataReceivers).
-        let joiner_next_committee_receiver =
-            sui_data_receivers.chain_next_epoch_committee_receiver.clone();
+        let joiner_next_committee_receiver = sui_data_receivers
+            .chain_next_epoch_committee_receiver
+            .clone();
         spawn_monitored_task!(async move {
             Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver).await;
         });
@@ -797,11 +798,16 @@ impl IkaNode {
                                 // relayer's JoinerPubkeyProvider picks
                                 // up the just-published next committee.
                                 // A coarse retry burns most of the
-                                // freeze window; 3s lands the
-                                // announcement as soon as relayers are
-                                // ready. max_attempts keeps the same
-                                // ~5min bound (100 * 3s).
-                                retry_interval: Duration::from_secs(3),
+                                // freeze window, so scale the cadence to
+                                // the epoch length (a no-op at
+                                // production epoch lengths; compressed in
+                                // short test epochs). max_attempts keeps
+                                // a generous bound across the window.
+                                retry_interval:
+                                    ika_core::validator_metadata::epoch_scaled_poll_interval(
+                                        epoch_store.epoch_start_state().epoch_duration_ms(),
+                                        Duration::from_secs(3),
+                                    ),
                                 max_attempts: 100,
                             },
                         );
@@ -1704,101 +1710,98 @@ impl IkaNode {
             // and verify it (epoch-bound, prior committee, next-committee
             // pubkey-set hash). Surfaces a tampered/wrong bootstrap; does
             // not halt on failure.
-            let joiner_bootstrap_handle = if off_chain_metadata_enabled
-                && cur_epoch_store.epoch() >= 1
-            {
-                use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
-                    BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
-                    P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
-                };
-                use ika_core::validator_metadata::{
-                    StaticConsensusPubkeyProvider, verify_joiner_bootstrap_cert,
-                };
-                use ika_types::sui::epoch_start_system::{
-                    EpochStartSystemTrait, EpochStartValidatorInfoTrait,
-                };
-                let current_epoch = cur_epoch_store.epoch();
-                let prior_epoch = current_epoch - 1;
-                let self_name = cur_epoch_store.name;
-                let prior_committee = self
-                    .state
-                    .committee_store()
-                    .get_committee(&prior_epoch)
-                    .ok()
-                    .flatten();
-                match prior_committee {
-                    // Only a true joiner (absent from the prior
-                    // committee) needs to anchor; continuing validators
-                    // already trust their chain.
-                    Some(prior_committee)
-                        if !prior_committee.authority_exists(&self_name) =>
-                    {
-                        // Consensus pubkeys are fixed at registration,
-                        // so the current epoch's active-validator set
-                        // supplies the (still-registered) prior-committee
-                        // signers' keys.
-                        let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
-                            cur_epoch_store
+            let joiner_bootstrap_handle =
+                if off_chain_metadata_enabled && cur_epoch_store.epoch() >= 1 {
+                    use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
+                        BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
+                        P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
+                    };
+                    use ika_core::validator_metadata::{
+                        StaticConsensusPubkeyProvider, verify_joiner_bootstrap_cert,
+                    };
+                    use ika_types::sui::epoch_start_system::{
+                        EpochStartSystemTrait, EpochStartValidatorInfoTrait,
+                    };
+                    let current_epoch = cur_epoch_store.epoch();
+                    let prior_epoch = current_epoch - 1;
+                    let self_name = cur_epoch_store.name;
+                    let prior_committee = self
+                        .state
+                        .committee_store()
+                        .get_committee(&prior_epoch)
+                        .ok()
+                        .flatten();
+                    match prior_committee {
+                        // Only a true joiner (absent from the prior
+                        // committee) needs to anchor; continuing validators
+                        // already trust their chain.
+                        Some(prior_committee) if !prior_committee.authority_exists(&self_name) => {
+                            // Consensus pubkeys are fixed at registration,
+                            // so the current epoch's active-validator set
+                            // supplies the (still-registered) prior-committee
+                            // signers' keys.
+                            let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
+                                cur_epoch_store
+                                    .epoch_start_state()
+                                    .get_ika_validators()
+                                    .into_iter()
+                                    .map(|v| (v.authority_name(), v.get_consensus_pubkey())),
+                            ));
+                            let expected_next: Vec<_> = cur_epoch_store
+                                .committee()
+                                .voting_rights
+                                .iter()
+                                .map(|(name, _)| *name)
+                                .collect();
+                            let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
                                 .epoch_start_state()
-                                .get_ika_validators()
-                                .into_iter()
-                                .map(|v| (v.authority_name(), v.get_consensus_pubkey())),
-                        ));
-                        let expected_next: Vec<_> = cur_epoch_store
-                            .committee()
-                            .voting_rights
-                            .iter()
-                            .map(|(name, _)| *name)
-                            .collect();
-                        let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
-                            .epoch_start_state()
-                            .get_authority_names_to_peer_ids()
-                            .into_values()
-                            .collect();
-                        let verify: CertVerifier = Arc::new(move |cert| {
-                            verify_joiner_bootstrap_cert(
-                                cert,
+                                .get_authority_names_to_peer_ids()
+                                .into_values()
+                                .collect();
+                            let verify: CertVerifier = Arc::new(move |cert| {
+                                verify_joiner_bootstrap_cert(
+                                    cert,
+                                    prior_epoch,
+                                    &prior_committee,
+                                    provider.as_ref(),
+                                    expected_next.iter().copied(),
+                                )
+                            });
+                            let source = Arc::new(P2pHandoffCertSource::new(
+                                self.p2p_network.clone(),
+                                peer_ids,
+                            ));
+                            let verifier = JoinerBootstrapVerifier::new(
                                 prior_epoch,
-                                &prior_committee,
-                                provider.as_ref(),
-                                expected_next.iter().copied(),
-                            )
-                        });
-                        let source = Arc::new(P2pHandoffCertSource::new(
-                            self.p2p_network.clone(),
-                            peer_ids,
-                        ));
-                        let verifier = JoinerBootstrapVerifier::new(
-                            prior_epoch,
-                            source,
-                            verify,
-                            BootstrapRetryConfig {
-                                retry_interval: Duration::from_secs(10),
-                                max_attempts: 30,
-                            },
-                        );
-                        info!(
-                            current_epoch,
-                            prior_epoch,
-                            "this node joined at the epoch boundary; verifying its \
+                                source,
+                                verify,
+                                BootstrapRetryConfig {
+                                    retry_interval: Duration::from_secs(10),
+                                    max_attempts: 30,
+                                },
+                            );
+                            info!(
+                                current_epoch,
+                                prior_epoch,
+                                "this node joined at the epoch boundary; verifying its \
                              bootstrap handoff cert"
-                        );
-                        Some(tokio::spawn(async move {
-                            verifier.run().await;
-                        }))
+                            );
+                            Some(tokio::spawn(async move {
+                                verifier.run().await;
+                            }))
+                        }
+                        Some(_) => None, // continuing validator — no bootstrap needed
+                        None => {
+                            warn_bootstrap_inputs_unavailable(
+                                prior_epoch,
+                                "prior committee not in committee store",
+                            );
+                            None
+                        }
                     }
-                    Some(_) => None, // continuing validator — no bootstrap needed
-                    None => {
-                        warn_bootstrap_inputs_unavailable(
-                            prior_epoch,
-                            "prior committee not in committee store",
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
 
             // Installs a `JoinerPubkeyProvider` derived from the
             // next-epoch committee so the per-epoch store accepts
@@ -1857,6 +1860,10 @@ impl IkaNode {
                         ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
                             Arc::downgrade(&cur_epoch_store),
                             Arc::new(components.consensus_adapter.clone()),
+                            ika_core::blob_cache::BlobCache::new(
+                                self.mpc_data_blob_store.clone(),
+                                self.state.perpetual_tables(),
+                            ),
                         ),
                     ));
                 }

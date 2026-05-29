@@ -64,45 +64,39 @@ async fn test_joiner_added_at_epoch_2() {
 /// is precisely what lets a joiner — who can only announce after
 /// `V_{e+1}` is published — be captured by the freeze.
 ///
-/// `#[ignore]` — runnable on demand, not in CI. This test did its
-/// job: it caught a real F4-1 deadlock — the joiner watcher + freeze
+/// This test caught a real F4-1 deadlock — the joiner watcher + freeze
 /// emit-gate both keyed off the *assembled* committee, which can't
-/// include a joiner until after the freeze excludes it. That's fixed
-/// (the chain next-epoch-committee channel), and the logs confirm the
-/// joiner now fans its mpc_data out, which it never did before.
+/// include a joiner until after the freeze excludes it. Fixed by the
+/// chain next-epoch-committee channel, after which the joiner fans its
+/// mpc_data out (it never did before).
 ///
-/// Why it's still ignored: reliably landing the joiner in the freeze
-/// requires the integration path (observe chain committee → fan out →
-/// relay accept once the relayer's JoinerPubkeyProvider refreshes →
-/// consensus → peer blob fetch + decode-validate → re-emit) to
-/// complete within the freeze window, which closes at the 3/4-epoch
-/// deadline. In production (≈24h epochs → a multi-hour window) there's
-/// ample time. In a bounded test epoch the window is tens of seconds
-/// and the path crosses several poll cadences, so the joiner usually
-/// misses and is excluded — making this assertion flaky-by-timing
-/// rather than wrong.
-///
-/// It is NOT a correctness regression: when the joiner misses the
-/// deadline it is excluded, yielding exactly the baseline committee —
-/// `test_joiner_added_at_epoch_2` (no class-groups assertion) passes
-/// on this same code, and reconfiguration completes (the transient
-/// "failed to create session" logs during the freeze-hold window are
-/// retried, not fatal). Un-ignore once the integration path is fast
-/// enough to fit a test-length epoch (or the test runs against a
-/// production-length epoch on stable infra).
-#[ignore = "joiner-in-frozen-set timing + reconfiguration-with-integrated-joiner need a stable env to validate; tracked as follow-up"]
+/// The integration path (observe the chain committee → fan out → relay
+/// accept once the relayer's JoinerPubkeyProvider refreshes → consensus
+/// → peer blob fetch + decode-validate → re-emit) must complete inside
+/// the freeze window — between mid-epoch, when `V_{e+1}` is published
+/// (`epoch_duration / 2`, see `sui_executor::run_epoch_switch`), and the
+/// freeze deadline (`3 * epoch_duration / 4`) — a quarter of the epoch.
+/// The default multi-second poll cadences fit a production-length epoch
+/// but overrun that window in a short test epoch; `epoch_scaled_poll_interval`
+/// scales every cadence on this path to ~1% of the epoch (a no-op at
+/// production epoch lengths), so the path fits a bounded test epoch.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_joiner_lands_in_next_committee_class_groups() {
     telemetry_subscribers::init_for_testing();
 
-    // Longer epoch than the other joiner tests on purpose: F4-1 holds
-    // the freeze open only until 3/4 of the epoch (the deadline). A
-    // mid-epoch joiner must, within that window, be observed in the
-    // chain next-epoch committee, fan its mpc_data out, get relayed
-    // into consensus, and be decode-validated by a quorum — a path
-    // that crosses several poll cadences. A short epoch's deadline
-    // fires before that completes (excluding the joiner); a 120s epoch
-    // gives the ~30s window the path needs.
+    // The joiner has to clear TWO windows inside epoch 1, both keyed off
+    // mid-epoch (`epoch/2`, when `process_mid_epoch` selects `V_{e+1}`):
+    //   1. Registration `[join → epoch/2]`: finish its class-groups
+    //      keygen (a fixed, multi-second cost) and land `add_validator`
+    //      on-chain so it's selected into `V_{e+1}`. This is gated by
+    //      crypto/tx time, NOT by poll cadence, so it needs absolute
+    //      wall-clock — a 60s epoch (30s window) is too tight.
+    //   2. Freeze `[epoch/2 → 3·epoch/4]`: fan out → relay → fetch →
+    //      decode-validate → re-emit, so the freeze captures its
+    //      mpc_data. `epoch_scaled_poll_interval` shrinks this path's
+    //      cadences to fit the window.
+    // 120s gives a 60s registration window and a 30s freeze window —
+    // both comfortable.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(120_000)
@@ -119,7 +113,19 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     let joiner_name = joiner.authority_name();
 
     cluster.wait_for_epoch(2).await;
-    wait_for_node_epoch(&joiner.node_handle, 2).await;
+    // Fail fast instead of hanging: an excluded joiner never enters the
+    // epoch-2 working set, so it would never reach epoch 2. The cluster
+    // is already at epoch 2 here, so an in-committee joiner reaches it
+    // promptly.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        wait_for_node_epoch(&joiner.node_handle, 2),
+    )
+    .await
+    .expect(
+        "joiner did not reach epoch 2 within 60s of the cluster — \
+         likely excluded from the freeze (its mpc_data never propagated)",
+    );
 
     // Read the epoch-2 committee from the joiner's own node and assert
     // its class-groups material is present — i.e. the freeze captured

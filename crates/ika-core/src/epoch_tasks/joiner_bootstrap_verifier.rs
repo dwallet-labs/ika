@@ -59,10 +59,13 @@ impl P2pHandoffCertSource {
 #[async_trait::async_trait]
 impl HandoffCertSource for P2pHandoffCertSource {
     async fn fetch_candidates(&self, prior_epoch: EpochId) -> Vec<CertifiedHandoffAttestation> {
-        let futures = self.peers.iter().map(|peer_id| {
-            let peer_id = *peer_id;
-            async move { fetch_certified_handoff_attestation(&self.network, peer_id, prior_epoch).await }
-        });
+        let futures =
+            self.peers.iter().map(|peer_id| {
+                let peer_id = *peer_id;
+                async move {
+                    fetch_certified_handoff_attestation(&self.network, peer_id, prior_epoch).await
+                }
+            });
         futures::future::join_all(futures)
             .await
             .into_iter()
@@ -200,7 +203,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl HandoffCertSource for ScriptedSource {
-        async fn fetch_candidates(&self, _prior_epoch: EpochId) -> Vec<CertifiedHandoffAttestation> {
+        async fn fetch_candidates(
+            &self,
+            _prior_epoch: EpochId,
+        ) -> Vec<CertifiedHandoffAttestation> {
             let mut calls = self.calls.lock();
             let idx = (*calls).min(self.rounds.len().saturating_sub(1));
             *calls += 1;
@@ -257,8 +263,7 @@ mod tests {
     fn rejects_bad_candidates_and_keeps_trying() {
         // Every round serves a candidate, but verification always
         // fails (e.g. wrong committee). Exhaust the budget Unverified.
-        let verify: CertVerifier =
-            Arc::new(|_cert| Err(IkaError::Unknown("nope".into())));
+        let verify: CertVerifier = Arc::new(|_cert| Err(IkaError::Unknown("nope".into())));
         let (outcome, calls) = run_loop(vec![vec![dummy_cert(6)]], verify, 4);
         assert_eq!(outcome, BootstrapOutcome::Unverified);
         assert_eq!(calls, 4);

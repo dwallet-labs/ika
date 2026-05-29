@@ -2586,6 +2586,23 @@ impl AuthorityPerEpochStore {
         let tables = self.tables()?;
         let existing = tables.epoch_mpc_data_ready_signals.get(&signal.authority)?;
         let committee = self.committee();
+        // Next-epoch joiners are legitimate attestation targets but
+        // have weight 0 in the *current* committee, so a plain
+        // current-committee filter would strip them from the recorded
+        // signal — and the freeze partition (which decides NEXT-epoch
+        // membership) would then never see them attested and exclude
+        // them. A joiner that has announced has a signed announcement
+        // in this table, ordered before any ready signal that attests
+        // it (the emitter only attests a peer after validating its
+        // announced blob, which consensus sequences first). So treat
+        // announcers as valid targets too. Garbage padding (neither
+        // committee nor announcer) is still dropped.
+        let announced: BTreeSet<AuthorityName> = tables
+            .validator_mpc_data_announcements
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(authority, _)| authority)
+            .collect();
         // Canonicalize via the pure helper — handles dedup +
         // committee filter + quorum-coverage floor in one place
         // so the byzantine-resistance properties are unit-testable
@@ -2593,7 +2610,19 @@ impl AuthorityPerEpochStore {
         // `validator_metadata::canonicalize_ready_signal_peers`.
         let (outcome, diagnostics) = crate::validator_metadata::canonicalize_ready_signal_peers(
             &signal.validated_peers,
-            |peer| committee.weight(peer),
+            |peer| {
+                let weight = committee.weight(peer);
+                // Keep announcer joiners (current weight 0) as valid
+                // targets with a minimal synthetic weight — negligible
+                // against the current-committee quorum floor (so it
+                // can't let an under-covered signal pass), but enough
+                // to survive the drop-if-zero filter.
+                if weight > 0 || announced.contains(peer) {
+                    weight.max(1)
+                } else {
+                    0
+                }
+            },
             committee.quorum_threshold(),
         );
         let canonical_peers = match outcome {
@@ -2671,7 +2700,6 @@ impl AuthorityPerEpochStore {
         }
         Ok(())
     }
-
 
     /// Computes the per-announcer attestation tally and snapshots
     /// the frozen working set + excluded set. Idempotent on a

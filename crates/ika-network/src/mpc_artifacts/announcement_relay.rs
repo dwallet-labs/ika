@@ -19,11 +19,20 @@ use super::ValidatorMetadataClient;
 /// announcement into consensus. The peer verifies the joiner's
 /// Ed25519 consensus-key signature against the installed
 /// `JoinerPubkeyProvider` (next-epoch committee consensus pubkeys)
-/// before relaying; for transport here the wire format is just the
-/// signed announcement.
+/// before relaying.
+///
+/// The joiner pushes its `mpc_data` blob bytes alongside the signed
+/// announcement: the joiner is not in the current committee's peer
+/// set, so a relayer can't dial back to fetch the blob, and no other
+/// current-committee peer holds it either. Pushing it here lets the
+/// relayer cache + serve the bytes (the rest of the committee then
+/// resolves them via the existing content-addressed P2P fetch). The
+/// relayer verifies the bytes hash to `announcement.announcement.blob_hash`
+/// before trusting them.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubmitMpcDataAnnouncementRequest {
     pub announcement: SignedValidatorMpcDataAnnouncement,
+    pub blob: Vec<u8>,
 }
 
 /// Result of a relay attempt. `Accepted` means the relayer queued the
@@ -49,7 +58,11 @@ pub enum SubmitMpcDataAnnouncementResponse {
 /// - submitting the resulting `ConsensusTransaction` via the adapter.
 #[async_trait::async_trait]
 pub trait AnnouncementRelay: Send + Sync + 'static {
-    async fn relay(&self, announcement: SignedValidatorMpcDataAnnouncement) -> Result<(), String>;
+    async fn relay(
+        &self,
+        announcement: SignedValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+    ) -> Result<(), String>;
 }
 
 /// Late-bindable holder for the announcement relay. The Anemo server
@@ -91,13 +104,14 @@ pub async fn submit_announcement_to_peer(
     network: &Network,
     peer_id: PeerId,
     announcement: SignedValidatorMpcDataAnnouncement,
+    blob: Vec<u8>,
 ) -> anyhow::Result<SubmitMpcDataAnnouncementResponse> {
     let peer = network
         .peer(peer_id)
         .ok_or_else(|| anyhow::anyhow!("peer not connected: {peer_id}"))?;
     let mut client = ValidatorMetadataClient::new(peer);
     let response = client
-        .submit_mpc_data_announcement(SubmitMpcDataAnnouncementRequest { announcement })
+        .submit_mpc_data_announcement(SubmitMpcDataAnnouncementRequest { announcement, blob })
         .await
         .map_err(|status| anyhow::anyhow!("submit_mpc_data_announcement failed: {status:?}"))?;
     Ok(response.into_inner())
@@ -112,12 +126,14 @@ pub async fn submit_announcement_to_committee(
     network: &Network,
     peers: &[PeerId],
     announcement: SignedValidatorMpcDataAnnouncement,
+    blob: Vec<u8>,
 ) -> Vec<(PeerId, anyhow::Result<SubmitMpcDataAnnouncementResponse>)> {
     let futures = peers.iter().map(|peer_id| {
         let peer_id = *peer_id;
         let announcement = announcement.clone();
+        let blob = blob.clone();
         async move {
-            let result = submit_announcement_to_peer(network, peer_id, announcement).await;
+            let result = submit_announcement_to_peer(network, peer_id, announcement, blob).await;
             (peer_id, result)
         }
     });
@@ -138,7 +154,11 @@ mod tests {
         struct StubRelay;
         #[async_trait::async_trait]
         impl AnnouncementRelay for StubRelay {
-            async fn relay(&self, _: SignedValidatorMpcDataAnnouncement) -> Result<(), String> {
+            async fn relay(
+                &self,
+                _: SignedValidatorMpcDataAnnouncement,
+                _: Vec<u8>,
+            ) -> Result<(), String> {
                 Ok(())
             }
         }
@@ -162,7 +182,11 @@ mod tests {
         struct DropCounter(Arc<AtomicU32>);
         #[async_trait::async_trait]
         impl AnnouncementRelay for DropCounter {
-            async fn relay(&self, _: SignedValidatorMpcDataAnnouncement) -> Result<(), String> {
+            async fn relay(
+                &self,
+                _: SignedValidatorMpcDataAnnouncement,
+                _: Vec<u8>,
+            ) -> Result<(), String> {
                 Ok(())
             }
         }
