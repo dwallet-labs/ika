@@ -538,6 +538,8 @@ impl IkaNode {
 
         let sui_connector_metrics = SuiConnectorMetrics::new(&registry_service.default_registry());
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
+            watch::channel::<Committee>(committee.clone());
+        let (chain_next_committee_sender, chain_next_epoch_committee_receiver) =
             watch::channel::<Committee>(committee);
         let (new_requests_sender, new_requests_receiver) =
             broadcast::channel(EVENTS_CHANNEL_BUFFER_SIZE);
@@ -566,6 +568,7 @@ impl IkaNode {
             sui_connector_metrics,
             mode,
             next_epoch_committee_sender,
+            chain_next_committee_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
@@ -613,6 +616,7 @@ impl IkaNode {
             network_keys_receiver,
             new_requests_receiver,
             next_epoch_committee_receiver,
+            chain_next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
             uncompleted_requests_receiver,
@@ -692,8 +696,12 @@ impl IkaNode {
         // because it must fire mid-epoch when `V_{e+1}` is published,
         // not at the epoch boundary.
         let joiner_node = node.clone();
+        // Use the CHAIN next-epoch committee (published before the
+        // off-chain assembly), not the assembled one — otherwise the
+        // joiner can't learn it's a joiner until after the freeze has
+        // already excluded it (see the channel's doc on SuiDataReceivers).
         let joiner_next_committee_receiver =
-            sui_data_receivers.next_epoch_committee_receiver.clone();
+            sui_data_receivers.chain_next_epoch_committee_receiver.clone();
         spawn_monitored_task!(async move {
             Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver).await;
         });
@@ -1635,7 +1643,11 @@ impl IkaNode {
                         Arc::new(components.consensus_adapter.clone()),
                         blob_cache,
                         root_seed_kp.root_seed().clone(),
-                        sui_data_receivers.next_epoch_committee_receiver.clone(),
+                        // Chain next-epoch committee (pre-assembly) for
+                        // the freeze emit-gate — so the freeze waits for
+                        // joiners that the assembled committee can't yet
+                        // include (see SuiDataReceivers doc).
+                        sui_data_receivers.chain_next_epoch_committee_receiver.clone(),
                     );
                 let sender = Arc::new(sender);
                 Some(tokio::spawn(async move {

@@ -71,9 +71,17 @@ async fn test_joiner_added_at_epoch_2() {
 async fn test_joiner_lands_in_next_committee_class_groups() {
     telemetry_subscribers::init_for_testing();
 
+    // Longer epoch than the other joiner tests on purpose: F4-1 holds
+    // the freeze open only until 3/4 of the epoch (the deadline). A
+    // mid-epoch joiner must, within that window, be observed in the
+    // chain next-epoch committee, fan its mpc_data out, get relayed
+    // into consensus, and be decode-validated by a quorum — a path
+    // that crosses several poll cadences. A short epoch's deadline
+    // fires before that completes (excluding the joiner); a 120s epoch
+    // gives the ~30s window the path needs.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(20_000)
+        .with_epoch_duration_ms(120_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .build()
         .await

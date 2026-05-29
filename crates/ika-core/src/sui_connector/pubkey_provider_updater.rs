@@ -17,8 +17,12 @@
 //!   `JoinerPubkeyProvider`, used by the relay path
 //!   (`verify_joiner_announcement`) to verify a joiner's signature.
 //!
-//! The consensus pubkey is fixed at validator registration, so the
-//! fetch cadence is slow (15s) and the task retries on transport
+//! The consensus pubkey is fixed at validator registration, but the
+//! *membership* (esp. the next-epoch committee) changes mid-epoch at
+//! reconfiguration, and the provider must reflect a newly-published
+//! next committee promptly — otherwise a joiner's relayed announcement
+//! is rejected as `UnregisteredJoiner` until the next poll. So the
+//! fetch cadence is modest (5s) and the task retries on transport
 //! failure rather than aborting. Without a provider installed, the
 //! corresponding verification drops every message (handoff sigs as
 //! `UnknownSigner`; relayed announcements as `UnregisteredJoiner`).
@@ -171,7 +175,7 @@ where
             if let Err(err) = self.refresh().await {
                 warn!(error=?err, label = self.label, "pubkey provider refresh failed; will retry");
             }
-            tokio::time::sleep(Duration::from_secs(15)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
 

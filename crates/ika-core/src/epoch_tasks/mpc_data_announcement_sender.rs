@@ -122,12 +122,17 @@ pub struct MpcDataAnnouncementSender {
     /// server, so peers can fetch it over P2P without a restart.
     blob_cache: Arc<BlobCache>,
     root_seed: RootSeed,
-    /// Next-epoch committee snapshot. The ready-signal emit gate
-    /// waits until `V_{e+1}` is published and all its members are
-    /// locally validated (or an epoch-clock deadline) before
-    /// signalling — so the freeze, which fires on the first quorum
-    /// of ready signals, includes next-epoch joiners (who can only
-    /// announce after `V_{e+1}` is published, mid-epoch).
+    /// CHAIN view of the next-epoch committee (members + stake),
+    /// published as soon as Sui selects it — *before* the off-chain
+    /// class-groups assembly. The ready-signal emit gate waits until
+    /// `V_{e+1}` is published here and all its members are locally
+    /// validated (or an epoch-clock deadline) before signalling — so
+    /// the freeze, which fires on the first quorum of ready signals,
+    /// includes next-epoch joiners. Must be the chain committee, NOT
+    /// the assembled one: the assembled committee can't `Complete`
+    /// until the joiner's mpc_data is in, and the joiner only learns
+    /// it's a joiner from this same signal — gating on the assembled
+    /// committee would deadlock and the freeze would exclude the joiner.
     next_epoch_committee_receiver: Receiver<Committee>,
     /// The announcement we've built for this epoch, cached after the
     /// first derivation. Re-sends reuse the SAME (validator, epoch,

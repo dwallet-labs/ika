@@ -84,6 +84,7 @@ impl SuiConnectorService {
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         mode: NodeMode,
         next_epoch_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<Committee>,
         new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
@@ -133,6 +134,7 @@ impl SuiConnectorService {
         .run(
             Duration::from_secs(2),
             next_epoch_committee_sender,
+            chain_next_committee_sender,
             mode,
             system_object_receiver,
             dwallet_coordinator_receiver,

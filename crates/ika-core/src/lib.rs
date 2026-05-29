@@ -46,6 +46,14 @@ pub struct SuiDataReceivers {
     pub network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     pub new_requests_receiver: broadcast::Receiver<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_receiver: Receiver<Committee>,
+    /// Chain view of the next-epoch committee (members + stake, no
+    /// class-groups), published as soon as Sui selects it — before
+    /// the off-chain class-groups assembly. The joiner watcher and the
+    /// mpc_data producer's freeze emit-gate consume this (not the
+    /// assembled committee) to avoid a deadlock where the assembly
+    /// can't complete until a joiner announces and the joiner can't
+    /// learn it's a joiner until the assembly publishes.
+    pub chain_next_epoch_committee_receiver: Receiver<Committee>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
     pub uncompleted_requests_receiver: Receiver<(Vec<DWalletSessionRequest>, EpochId)>,
@@ -57,6 +65,7 @@ impl Clone for SuiDataReceivers {
             network_keys_receiver: self.network_keys_receiver.clone(),
             new_requests_receiver: self.new_requests_receiver.resubscribe(),
             next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
+            chain_next_epoch_committee_receiver: self.chain_next_epoch_committee_receiver.clone(),
             last_session_to_complete_in_current_epoch_receiver: self
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
@@ -106,6 +115,9 @@ impl SuiDataReceivers {
             SuiDataReceivers {
                 network_keys_receiver,
                 new_requests_receiver: new_events_receiver,
+                // Tests don't exercise the chain-vs-assembled cycle-break;
+                // reuse the same committee channel for the chain receiver.
+                chain_next_epoch_committee_receiver: next_epoch_committee_receiver.clone(),
                 next_epoch_committee_receiver,
                 last_session_to_complete_in_current_epoch_receiver,
                 end_of_publish_receiver,

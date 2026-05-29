@@ -60,6 +60,7 @@ where
         self,
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<Committee>,
         mode: NodeMode,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
@@ -101,6 +102,7 @@ where
                 sui_client_clone.clone(),
                 system_object_receiver.clone(),
                 next_epoch_committee_sender.clone(),
+                chain_next_committee_sender.clone(),
                 class_groups_source.clone(),
             ));
             info!("Starting end of publish sync task");
@@ -274,6 +276,7 @@ where
         sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<Committee>,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
@@ -293,6 +296,33 @@ where
             };
 
             let new_next_committee = system_inner.read_bls_committee(&new_next_bls_committee);
+
+            // Publish the CHAIN view of the next-epoch committee
+            // (members + stake, no class-groups) as soon as Sui has it
+            // — independent of the off-chain class-groups assembly
+            // below. The off-chain assembly can't `Complete` for a
+            // committee containing a not-yet-announced joiner, and the
+            // joiner only learns it's a joiner (to fan out its mpc_data)
+            // from this signal — so gating the joiner watcher / freeze
+            // emit-gate on the *assembled* committee would deadlock
+            // (assembled-needs-joiner-mpc_data ↔ joiner-fanout-needs-
+            // assembled). This chain signal breaks that cycle. It
+            // carries only membership + stake (empty class-groups maps)
+            // — all the freeze emit-gate and joiner watcher read.
+            let chain_committee = Committee::new(
+                system_inner.epoch() + 1,
+                new_next_committee
+                    .iter()
+                    .map(|(_, (name, stake))| (*name, *stake))
+                    .collect(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+                new_next_bls_committee.quorum_threshold,
+                new_next_bls_committee.validity_threshold,
+            );
+            let _ = chain_next_committee_sender.send(chain_committee);
 
             let off_chain_on = ProtocolConfig::get_for_version(
                 ProtocolVersion::new(system_inner.protocol_version()),
