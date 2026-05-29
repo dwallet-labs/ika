@@ -791,8 +791,18 @@ impl IkaNode {
                             fanout,
                             JoinerFanoutConfig {
                                 min_accepts,
-                                retry_interval: Duration::from_secs(10),
-                                max_attempts: 30,
+                                // Retry briskly: the common early
+                                // rejection is `UnregisteredJoiner`
+                                // during the brief window before each
+                                // relayer's JoinerPubkeyProvider picks
+                                // up the just-published next committee.
+                                // A coarse retry burns most of the
+                                // freeze window; 3s lands the
+                                // announcement as soon as relayers are
+                                // ready. max_attempts keeps the same
+                                // ~5min bound (100 * 3s).
+                                retry_interval: Duration::from_secs(3),
+                                max_attempts: 100,
                             },
                         );
                         info!(
