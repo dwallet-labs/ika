@@ -25,7 +25,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -206,10 +206,36 @@ impl HandoffSignatureSender {
         if !self.snapshot_ready_for_signing() {
             return Ok(());
         }
+        // Sign against the consensus-deterministic epoch-E committee:
+        // the next committee intersected with the frozen mpc_data set.
+        // This is exactly the membership the joiner verifier observes —
+        // the assembled committee post-freeze drops any chain member
+        // not in the frozen set — but computing it by intersection here
+        // removes the pre-vs-post-freeze ambiguity of the local
+        // watch-channel view. A joiner that announced is present in the
+        // pre-freeze assembled committee and absent from the frozen set,
+        // so without this two signers reading different convergence
+        // states would hash different member sets and cross-reject as
+        // `AttestationMismatch`. The frozen set is consensus-ordered, so
+        // every signer derives the SAME membership. In the non-churn
+        // case (no member straddling the freeze) the intersection is a
+        // no-op. Empty frozen set ⇒ the freeze hasn't fired and the
+        // deterministic membership isn't established yet — defer (EOP is
+        // itself gated on the freeze, so this converges within a tick).
+        let frozen_set: HashSet<AuthorityName> = epoch_store
+            .get_frozen_validator_mpc_data_input_set()
+            .map_err(DwalletMPCError::IkaError)?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        if frozen_set.is_empty() {
+            return Ok(());
+        }
         let next_committee_pubkeys: Vec<AuthorityName> = next_committee
             .voting_rights
             .iter()
             .map(|(name, _)| *name)
+            .filter(|name| frozen_set.contains(name))
             .collect();
         // Hydrate the local digest cache from the chain-canonical
         // output bytes BEFORE building the attestation. Reading

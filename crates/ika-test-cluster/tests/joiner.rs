@@ -756,8 +756,28 @@ async fn test_real_network_churn_over_10_epochs() {
     // assertions are intentionally relaxed because the cert can
     // fail to certify when validators disagree on the
     // next-committee view at EndOfPublish (surfacing as
-    // `AttestationMismatch` rejections) — a known limitation
-    // under churn that needs separate investigation.
+    // `AttestationMismatch` rejections).
+    //
+    // Root cause (investigated): the `HandoffAttestation`'s
+    // `next_committee_pubkey_set_hash` is computed by each signer
+    // from its LOCAL `next_epoch_committee_receiver` (the off-chain
+    // *assembled* committee), via `build_local_handoff_attestation`.
+    // The network-key-output digests in `items` were already made
+    // consensus-deterministic (hydrated from chain in
+    // `HandoffSignatureSender::send`), but the committee *membership*
+    // is not: under churn a joiner that announced is present in the
+    // pre-freeze assembled committee and absent from the post-freeze
+    // one (it was excluded by the freeze), so signers that sign at
+    // different convergence points hash different member sets and
+    // cross-reject. This is addressed in `HandoffSignatureSender::send`,
+    // which derives the attestation's committee membership
+    // deterministically — the next committee intersected with the
+    // consensus-ordered frozen mpc_data set (= the final epoch-E
+    // committee the joiner verifier observes) — instead of the racy
+    // local watch-channel value. The intersection is a no-op outside
+    // churn, so it can't regress the steady state. The aggregate
+    // assertion below is kept (rather than a per-cycle one) until the
+    // per-cycle cert rate under churn is verified on stable infra.
     let mut total_certs_seen = 0usize;
     for handle in cluster.swarm.validator_node_handles() {
         let certs = cluster.handoff_cert_epochs_for_node(&handle);
