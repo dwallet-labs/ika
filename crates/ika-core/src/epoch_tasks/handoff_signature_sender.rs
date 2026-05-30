@@ -219,23 +219,26 @@ impl HandoffSignatureSender {
         // `AttestationMismatch`. The frozen set is consensus-ordered, so
         // every signer derives the SAME membership. In the non-churn
         // case (no member straddling the freeze) the intersection is a
-        // no-op. Empty frozen set ⇒ the freeze hasn't fired and the
-        // deterministic membership isn't established yet — defer (EOP is
-        // itself gated on the freeze, so this converges within a tick).
+        // no-op.
+        //
+        // CRITICAL: never block on this. The EndOfPublish vote is
+        // bundled into the same `EndOfPublishV2` message we build below,
+        // so withholding the message to wait for the freeze would stall
+        // reconfiguration. If the frozen set is empty (freeze not yet
+        // fired in our local view), fall back to the full next committee
+        // — the pre-existing behavior — rather than an empty set; the
+        // determinism benefit applies once the freeze has populated it.
         let frozen_set: HashSet<AuthorityName> = epoch_store
             .get_frozen_validator_mpc_data_input_set()
             .map_err(DwalletMPCError::IkaError)?
             .into_iter()
             .map(|(name, _)| name)
             .collect();
-        if frozen_set.is_empty() {
-            return Ok(());
-        }
         let next_committee_pubkeys: Vec<AuthorityName> = next_committee
             .voting_rights
             .iter()
             .map(|(name, _)| *name)
-            .filter(|name| frozen_set.contains(name))
+            .filter(|name| frozen_set.is_empty() || frozen_set.contains(name))
             .collect();
         // Hydrate the local digest cache from the chain-canonical
         // output bytes BEFORE building the attestation. Reading
