@@ -763,9 +763,156 @@ _(empty — to be filled as user raises them)_
 
 ## Feature 5 — Pubkey providers
 
-_(pending walkthrough)_
+Two flavors of `Trait { fn …pubkey(name) -> Option<Ed25519PublicKey> }`,
+fed by a single generic `PubkeyProviderUpdater<C>` after `2f7e6537a7`:
+
+- `ConsensusPubkeyProvider` (in `handoff_cert.rs:102`) — active-
+  committee Ed25519 consensus keys for handoff-sig verification.
+- `JoinerPubkeyProvider` (in `validator_metadata.rs:94`) — next-
+  epoch-committee Ed25519 consensus keys for joiner-announcement
+  relay verification.
+
+The unified updater
+(`crates/ika-core/src/sui_connector/pubkey_provider_updater.rs`)
+polls Sui every 5s (epoch-scaled), reads the chain-side committee
+membership (`active_committee.members` or `next_epoch_committee.members`),
+fetches `validator_info` for each member, calls `ValidatorInfo::verify()`
+(self-consistency on bytes), and installs the
+`AuthorityName -> consensus_pubkey` map via `ArcSwapOption`. Dedup
+via base64-serialized `last_installed` cache.
 
 ### Concerns
+
+- **Per-epoch updater doesn't gate on the on-chain epoch field.**
+  `select_active_committee` reads `system_inner.validator_set.active_committee.members`
+  with no consistency check against `self.epoch_id`. If the OLD
+  updater (for epoch e) is still alive past the epoch boundary
+  and Sui has rolled forward — `active_committee` is now V_{e+1},
+  not V_e — the updater would install V_{e+1}'s consensus keys on
+  epoch e's still-live store. Handoff signatures from V_e
+  validators no longer in V_{e+1} would then fail as
+  `UnknownSigner` at epoch e's store.
+
+  Correctness depends entirely on timely abort of the previous
+  updater + drop of the previous `cur_epoch_store`. The
+  `Weak<AuthorityPerEpochStore>` only saves us when the store has
+  been dropped; nothing protects us during the window where the
+  old store is still live but the on-chain active committee has
+  moved on.
+
+  **Fix:** add an epoch consistency check in `refresh()`:
+  ```rust
+  // After: let SystemInner::V1(system_inner) = system_inner;
+  if system_inner.epoch != self.epoch_id {
+      // Stale — either we lagged Sui (shouldn't happen on a
+      // per-epoch task) or Sui has rolled past our epoch (the
+      // previous-epoch task is about to be aborted).
+      return Ok(());
+  }
+  ```
+  Defense in depth — the abort-driven scoping is correct, but a
+  loaded race needs a belt and suspenders.
+
+- **Refresh loop spins forever when `Weak::upgrade()` fails.**
+  At `pubkey_provider_updater.rs:186–189`, `refresh()` returns
+  `Ok(())` when the epoch store has been dropped. The loop sleeps
+  `poll_interval`, then calls `refresh()` again, which trivially
+  returns. The task only exits via external `JoinHandle::abort()`.
+  If the abort is missed or delayed (e.g. a code-path forgets to
+  collect the handle), the task spins indefinitely doing nothing
+  useful — minor resource leak, observable only as accumulated
+  Tokio-task count over very long uptimes.
+
+  **Fix:** exit the loop when `Weak::upgrade()` fails:
+  ```rust
+  if self.epoch_store.upgrade().is_none() {
+      info!(epoch = self.epoch_id, label = self.label,
+            "epoch store dropped; pubkey updater exiting");
+      return;
+  }
+  ```
+  Two extra lines; structural correctness instead of relying on
+  the caller. (Same pattern shows up in other epoch-scoped tasks
+  per F3-2's scope check — worth a sweep.)
+
+- **`from_iter` silently overwrites on duplicate `AuthorityName`.**
+  `StaticConsensusPubkeyProvider::from_iter` and `StaticJoinerPubkeyProvider::from_iter`
+  both build a `BTreeMap` via `into_iter().collect()`. If two
+  `validator_info` entries resolve to the same `AuthorityName`
+  (`(&verified.protocol_pubkey).into()`) — extremely unlikely
+  given on-chain uniqueness enforcement on the protocol pubkey,
+  but not formally impossible — the last entry wins silently. A
+  byzantine Sui state (e.g. via a hypothetical Move-level bug)
+  could produce a duplicate, and the off-chain pipeline would
+  install a stable but arbitrary choice.
+
+  **Fix:** debug-assert (or full-error) on duplicate keys during
+  construction. `BTreeMap::insert` returns the old value on
+  collision — easy to check.
+
+- **`JoinerPubkeyProvider` uses current `consensus_pubkey`, not
+  `next_epoch_consensus_pubkey`.** A joiner's `validator_info` on
+  chain has both `consensus_pubkey` (in use this epoch — for
+  candidates pre-activation, this is what they registered at
+  candidacy time) and `next_epoch_consensus_pubkey` (an optional
+  rotation that applies at the next epoch boundary). The updater
+  installs `verified.consensus_pubkey`, and `JoinerAnnouncementSender`
+  signs with the local consensus keypair (which matches the
+  candidate-time registration). If a joiner has set
+  `next_epoch_consensus_pubkey != consensus_pubkey` *and* their
+  local keypair has been rotated to match, the relayer's check
+  (against on-chain `consensus_pubkey`) rejects every fan-out as
+  `InvalidSignature`.
+
+  Whether this is a real bug depends on (a) whether Sui's
+  `request_set_next_epoch_consensus_pubkey` flow lets a candidate
+  rotate before joining and (b) whether the operator playbook
+  encourages it. If "no" to either, defer; if "yes" to both, the
+  fix is to use `next_epoch_consensus_pubkey.unwrap_or(consensus_pubkey)`
+  when populating the `JoinerPubkeyProvider`.
+
+- **Dedup uses base64 of pubkey bytes.** `last_installed` stores
+  `BTreeMap<AuthorityName, Vec<u8>>` of base64-encoded pubkeys.
+  This works because `Ed25519PublicKey` doesn't impl `Eq`/`Hash`
+  directly. Simpler: `as_bytes()` produces the canonical 32-byte
+  representation already, no encode/decode needed. Pure cleanup.
+
+- **Race: install lands at the same instant a downstream consumer
+  reads.** `ArcSwapOption::store` is atomic, but downstream call
+  sites like `verify_handoff_signature` do
+  `provider.consensus_pubkey(signer)` and may run between the
+  *old* install and the *new* one. If a signer was in the old
+  committee but not the new one (committee shrinks mid-epoch —
+  shouldn't happen, but in principle), they'd get
+  `UnknownSigner`. Not a real concern in normal operation
+  (committee is fixed per-epoch), but worth knowing that the
+  arc-swap semantics expose every read to whatever was installed
+  at the moment of the read.
+
+- **Polling cadence is 5s default; `epoch_scaled_poll_interval`
+  scales down to 1% of epoch.** For a 24h production epoch, 1%
+  is 14.4 min ≫ 5s → clamped to 5s. So the active-committee
+  provider is refreshed every 5s in production. The active
+  committee doesn't change mid-epoch, so this is effectively a
+  "watchdog" pattern — most refreshes are no-ops dedup'd against
+  `last_installed`. Acceptable cost; not a concern, just an
+  observation that the *active* committee polling could plausibly
+  be a one-shot install with a re-poll on Sui-side error. The
+  *next-epoch* committee polling needs to keep running because
+  it can change mid-epoch (joiner registers late).
+
+### Open questions raised during walkthrough
+
+- **`ValidatorInfo::verify()` is structural only.** It validates
+  byte lengths, Multiaddr parsability, and that the consensus
+  pubkey isn't equal to the network pubkey. It does NOT validate
+  that the on-chain `consensus_pubkey` was set by the actual
+  validator (no proof-of-possession check). On-chain Move logic
+  must enforce this via the registration path. Worth confirming
+  Sui-side enforcement is sufficient — particularly for
+  candidate-stage rotations.
+
+---
 
 ---
 
@@ -774,6 +921,8 @@ _(pending walkthrough)_
 _(pending walkthrough)_
 
 ### Concerns
+
+_(empty — to be filled during walkthrough)_
 
 ---
 
