@@ -43,7 +43,9 @@ use ika_config::node_config_metrics::NodeConfigMetrics;
 use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
-use ika_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use ika_core::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
@@ -168,8 +170,10 @@ use ika_core::system_checkpoints::{
     SendSystemCheckpointToStateSync, SubmitSystemCheckpointToConsensus, SystemCheckpointMetrics,
     SystemCheckpointService, SystemCheckpointStore,
 };
+use ika_network::mpc_artifacts::{fetch_blob, mpc_data_blob_hash};
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
+use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 #[cfg(msim)]
 use simulator::*;
@@ -1714,7 +1718,7 @@ impl IkaNode {
                 && cur_epoch_store.epoch() >= 1
             {
                 use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
-                    BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
+                    BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
                 };
                 use ika_core::validator_metadata::{
@@ -1766,7 +1770,7 @@ impl IkaNode {
                         });
                         let source = Arc::new(P2pHandoffCertSource::new(
                             self.p2p_network.clone(),
-                            peer_ids,
+                            peer_ids.clone(),
                         ));
                         let verifier = JoinerBootstrapVerifier::new(
                             prior_epoch,
@@ -1783,8 +1787,26 @@ impl IkaNode {
                             "this node joined at the epoch boundary; verifying its \
                              bootstrap handoff cert"
                         );
+                        let fetch_network = self.p2p_network.clone();
+                        let fetch_store = cur_epoch_store.clone();
                         Some(tokio::spawn(async move {
-                            verifier.run().await;
+                            match verifier.run().await {
+                                BootstrapOutcome::Verified(cert) => {
+                                    install_joiner_network_key_outputs(
+                                        &cert,
+                                        &fetch_network,
+                                        &peer_ids,
+                                        &fetch_store,
+                                    )
+                                    .await;
+                                }
+                                // Rejected / Unavailable are logged inside
+                                // `run()`. The joiner still receives the
+                                // outputs via the existing
+                                // ConsensusNetworkKeyData path until that
+                                // path is removed.
+                                _ => {}
+                            }
                         }))
                     }
                     Some(_) => None, // continuing validator — no bootstrap needed
@@ -2169,6 +2191,66 @@ impl IkaNode {
         self.sim_state
             .sim_safe_mode_expected
             .store(new_value, Ordering::Relaxed);
+    }
+}
+
+/// A freshly-active joiner never computed this epoch's network-key
+/// outputs — it wasn't in the committee that produced them, so it
+/// *receives* them. After its bootstrap cert verifies, fetch each DKG /
+/// reconfiguration output the cert certifies from current-committee
+/// peers (by the cert's item digest), verify the returned bytes against
+/// that digest (the serving peer is untrusted and `fetch_blob` does not
+/// check), and cache it locally so the node can instantiate the key.
+/// Best-effort and idempotent — a content-addressed re-cache is a no-op.
+async fn install_joiner_network_key_outputs(
+    cert: &CertifiedHandoffAttestation,
+    network: &Network,
+    peers: &[PeerId],
+    epoch_store: &Arc<AuthorityPerEpochStore>,
+) {
+    for (item_key, expected_digest) in &cert.attestation.items {
+        let (key_id, is_reconfiguration) = match item_key {
+            HandoffItemKey::NetworkDkgOutput { key_id } => (*key_id, false),
+            HandoffItemKey::NetworkReconfigurationOutput { key_id } => (*key_id, true),
+            HandoffItemKey::ValidatorMpcData { .. } => continue,
+        };
+        let mut verified_bytes = None;
+        for peer in peers {
+            match fetch_blob(network, *peer, *expected_digest).await {
+                Ok(Some(bytes)) => {
+                    // `fetch_blob` trusts the serving peer; the network-key
+                    // output digest is `Blake2b256`, identical to
+                    // `mpc_data_blob_hash`, so re-derive and match against
+                    // the cert's item digest before accepting the bytes.
+                    if &mpc_data_blob_hash(&bytes) == expected_digest {
+                        verified_bytes = Some(bytes);
+                        break;
+                    }
+                    warn!(
+                        ?key_id,
+                        ?peer,
+                        "network-key output blob from peer did not match the cert digest; ignoring"
+                    );
+                }
+                Ok(None) => {}
+                Err(e) => debug!(?key_id, error = %e, "network-key output fetch transport error"),
+            }
+        }
+        let Some(bytes) = verified_bytes else {
+            warn!(
+                ?key_id,
+                "joiner could not fetch a cert-matching network-key output from any peer"
+            );
+            continue;
+        };
+        let cached = if is_reconfiguration {
+            epoch_store.cache_network_reconfiguration_output(key_id, &bytes)
+        } else {
+            epoch_store.cache_network_dkg_output(key_id, &bytes)
+        };
+        if let Err(e) = cached {
+            warn!(?key_id, error = ?e, "failed to cache fetched joiner network-key output");
+        }
     }
 }
 

@@ -93,10 +93,15 @@ pub struct BootstrapRetryConfig {
 }
 
 /// Result of the bootstrap verification loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapOutcome {
-    /// A fetched cert verified against the prior committee.
-    Verified,
+    /// A fetched cert verified against the prior committee. Carries the
+    /// verified cert so the joiner can fetch and locally cache the
+    /// network-key (DKG + reconfiguration) outputs it certifies — the
+    /// joiner never computed them (it wasn't in the producing
+    /// committee), so it receives them, verified against these cert
+    /// item digests by content-addressing.
+    Verified(Box<CertifiedHandoffAttestation>),
     /// No peer served *any* cert within the attempt budget. Benign:
     /// the `E-1` committee may simply not have distributed the cert
     /// yet (propagation lag). Treated as non-fatal — the anchor is
@@ -165,7 +170,7 @@ impl JoinerBootstrapVerifier {
                             attempt,
                             "joiner bootstrap handoff cert verified against prior committee"
                         );
-                        return BootstrapOutcome::Verified;
+                        return BootstrapOutcome::Verified(Box::new(cert.clone()));
                     }
                     Err(e) => {
                         debug!(
@@ -280,7 +285,7 @@ mod tests {
         // Round 1: one candidate that verifies → stop immediately.
         let verify: CertVerifier = Arc::new(|_cert| Ok(()));
         let (outcome, calls) = run_loop(vec![vec![dummy_cert(6)]], verify, 5);
-        assert_eq!(outcome, BootstrapOutcome::Verified);
+        assert!(matches!(outcome, BootstrapOutcome::Verified(_)));
         assert_eq!(calls, 1);
     }
 
@@ -290,7 +295,7 @@ mod tests {
         let verify: CertVerifier = Arc::new(|_cert| Ok(()));
         let rounds = vec![vec![], vec![], vec![dummy_cert(6)]];
         let (outcome, calls) = run_loop(rounds, verify, 5);
-        assert_eq!(outcome, BootstrapOutcome::Verified);
+        assert!(matches!(outcome, BootstrapOutcome::Verified(_)));
         assert_eq!(calls, 3);
     }
 
@@ -336,7 +341,7 @@ mod tests {
         });
         let bad = dummy_cert(99);
         let (outcome, calls) = run_loop(vec![vec![bad, good]], verify, 3);
-        assert_eq!(outcome, BootstrapOutcome::Verified);
+        assert!(matches!(outcome, BootstrapOutcome::Verified(_)));
         assert_eq!(calls, 1);
     }
 }
