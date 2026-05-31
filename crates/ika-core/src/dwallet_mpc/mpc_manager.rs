@@ -174,6 +174,14 @@ pub(crate) struct DWalletMPCManager {
     /// (typically the reconfig output flipping)" — only the latter
     /// needs a re-instantiation pass.
     last_instantiated_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    /// The last network-key data whose instantiation FAILED to decrypt
+    /// this validator's share (e.g. the validator isn't in that output's
+    /// committee yet — a joiner mid-fold-in, or a departing validator).
+    /// The decryption is deterministic, so re-running it on identical
+    /// bytes every service tick only burns class-groups crypto; this
+    /// snapshot suppresses the retry until the bytes change (the output
+    /// that carries this validator's share arrives).
+    last_failed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
@@ -319,6 +327,7 @@ impl DWalletMPCManager {
             sent_presign_sequence_numbers: HashSet::new(),
             agreed_network_key_data: HashMap::new(),
             last_instantiated_network_key_data: HashMap::new(),
+            last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
@@ -1495,7 +1504,20 @@ impl DWalletMPCManager {
                     return true;
                 }
                 match self.last_instantiated_network_key_data.get(key_id) {
-                    None => true,
+                    // Never instantiated this key. Attempt it — unless we
+                    // already failed to decrypt these exact bytes. The
+                    // decryption is deterministic, so identical bytes
+                    // would fail identically; retry only once the bytes
+                    // change (the output carrying our share arrives).
+                    None => match self.last_failed_network_key_data.get(key_id) {
+                        None => true,
+                        Some(failed) => {
+                            failed.network_dkg_public_output != key_data.network_dkg_public_output
+                                || failed.current_reconfiguration_public_output
+                                    != key_data.current_reconfiguration_public_output
+                                || failed.state != key_data.state
+                        }
+                    },
                     Some(prev) => {
                         prev.network_dkg_public_output != key_data.network_dkg_public_output
                             || prev.current_reconfiguration_public_output
@@ -1510,7 +1532,11 @@ impl DWalletMPCManager {
         let mut new_key_ids = Vec::new();
 
         for (key_id, key_data) in keys_to_instantiate {
-            info!(key_id=?key_id, "Instantiating agreed network key from consensus-voted data");
+            info!(key_id=?key_id, "Instantiating agreed network key");
+            // Retained for the failure path (the bytes are moved into
+            // instantiation below) so we can record what failed and skip
+            // re-attempting identical bytes next tick.
+            let attempted = key_data.clone();
 
             let res =
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
@@ -1531,13 +1557,20 @@ impl DWalletMPCManager {
                         );
                         continue;
                     }
-                    info!(key_id=?key_id, "Updating network key from consensus-voted data");
+                    info!(key_id=?key_id, "Updating network key");
                     if let Err(e) = self
                         .network_keys
                         .update_network_key(key_id, &key, &self.access_structure)
                         .await
                     {
-                        error!(error=?e, key_id=?key_id, "Failed to update network key from consensus-voted data");
+                        // Expected during churn: this validator can't yet
+                        // decrypt its share from this output (not in its
+                        // committee yet — a joiner mid-fold-in, or a
+                        // departing validator). Record the bytes so the
+                        // deterministic decryption isn't re-run on them
+                        // every tick; it retries when the bytes change.
+                        warn!(error=?e, key_id=?key_id, "could not decrypt share for network key from this output yet; will retry when its bytes change");
+                        self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
                         // Mirror the consensus-voted **DKG** output bytes
                         // into the local digest caches so validators that
@@ -1580,15 +1613,18 @@ impl DWalletMPCManager {
                             self.last_instantiated_network_key_data
                                 .insert(key_id, key_data);
                         }
+                        // Succeeded — drop any prior failure record.
+                        self.last_failed_network_key_data.remove(&key_id);
                         new_key_ids.push(key_id);
                     }
                 }
                 Err(err) => {
-                    error!(
+                    warn!(
                         error=?err,
                         key_id=?key_id,
-                        "Failed to instantiate network key from consensus-voted data"
+                        "could not instantiate network key from this output yet; will retry when its bytes change"
                     );
+                    self.last_failed_network_key_data.insert(key_id, attempted);
                 }
             }
         }
