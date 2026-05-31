@@ -31,8 +31,11 @@ use crate::dwallet_checkpoints::{
 };
 use crate::validator_metadata::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
-    HandoffSignatureVerdict, JoinerAnnouncementVerdict, JoinerPubkeyProvider, NetworkKeyBlobSource,
+    HandoffSignatureVerdict, JoinerAnnouncementVerdict, JoinerPubkeyProvider,
+    MAX_PENDING_RELAYED_JOINER_ANNOUNCEMENTS, NetworkKeyBlobSource,
+    PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL, PendingRelayedJoinerAnnouncement,
     build_handoff_attestation, hash_next_committee_pubkey_set, process_handoff_signature,
+    push_buffered_joiner_announcement, reevaluate_buffered_joiner_announcements,
     sign_handoff_attestation, verify_handoff_signature, verify_joiner_announcement,
 };
 
@@ -837,6 +840,20 @@ pub struct AuthorityPerEpochStore {
     pending_handoff_signatures:
         parking_lot::Mutex<Vec<ika_types::handoff::HandoffSignatureMessage>>,
 
+    /// Buffer of relayed next-epoch joiner announcements received via
+    /// consensus while this validator's `JoinerPubkeyProvider` was
+    /// absent or lagged the next-epoch committee (so the joiner's
+    /// signature couldn't be verified yet). Consensus dedup never
+    /// redelivers a dropped relay, so without this buffer a joiner
+    /// whose announcement raced ahead of our provider install would be
+    /// missing from our next-committee assembly. Re-evaluated against
+    /// the provider in `install_joiner_pubkey_provider`. The next-epoch
+    /// committee isn't known here, so it can't be bounded by membership
+    /// the way `pending_handoff_signatures` is — bounded instead by a
+    /// hard cap + TTL with last-write-wins per joiner; the per-epoch
+    /// store lifecycle drops it at epoch end.
+    pending_relayed_joiner_announcements: parking_lot::Mutex<Vec<PendingRelayedJoinerAnnouncement>>,
+
     /// In-memory stake-weighted accumulator over verified handoff
     /// signatures. Rebuilt from `handoff_signatures` + the installed
     /// expected attestation on first use after install; recreated
@@ -1533,6 +1550,7 @@ impl AuthorityPerEpochStore {
             consensus_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
+            pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
         });
@@ -1869,17 +1887,26 @@ impl AuthorityPerEpochStore {
         }
         let next_epoch = self.epoch().saturating_add(1);
         let Some(provider) = self.joiner_pubkey_provider.load_full() else {
-            warn!(
-                validator = ?signed.announcement.validator,
-                "no joiner pubkey provider installed — dropping relayed announcement"
-            );
+            // Provider not installed yet — buffer and re-evaluate on
+            // install, rather than drop a relay consensus won't
+            // redeliver.
+            self.buffer_relayed_joiner_announcement(signed);
             return Ok(());
         };
         match verify_joiner_announcement(signed, provider.as_ref().as_ref(), next_epoch) {
             JoinerAnnouncementVerdict::Accept => {}
-            verdict @ (JoinerAnnouncementVerdict::UnregisteredJoiner
-            | JoinerAnnouncementVerdict::InvalidSignature
+            JoinerAnnouncementVerdict::UnregisteredJoiner => {
+                // The installed provider predates this joiner's
+                // registration (a next-epoch committee snapshot that
+                // hasn't caught up). Buffer; the next provider install
+                // re-evaluates it.
+                self.buffer_relayed_joiner_announcement(signed);
+                return Ok(());
+            }
+            verdict @ (JoinerAnnouncementVerdict::InvalidSignature
             | JoinerAnnouncementVerdict::InconsistentEnvelope) => {
+                // Genuinely bad (bad signature / wrong epoch) —
+                // re-evaluation can't rescue these, so drop.
                 warn!(
                     ?verdict,
                     authority = ?signed.announcement.validator,
@@ -1889,6 +1916,26 @@ impl AuthorityPerEpochStore {
             }
         }
         self.insert_validator_mpc_data_announcement(&signed.announcement)
+    }
+
+    /// Buffers a relayed joiner announcement whose signature can't be
+    /// verified yet (provider absent or lagging the next-epoch
+    /// committee), to be re-evaluated when a provider installs.
+    fn buffer_relayed_joiner_announcement(&self, signed: &SignedValidatorMpcDataAnnouncement) {
+        let mut buffer = self.pending_relayed_joiner_announcements.lock();
+        push_buffered_joiner_announcement(
+            &mut buffer,
+            signed,
+            Instant::now(),
+            PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL,
+            MAX_PENDING_RELAYED_JOINER_ANNOUNCEMENTS,
+        );
+        debug!(
+            validator = ?signed.announcement.validator,
+            pending_len = buffer.len(),
+            "buffered relayed joiner announcement (provider absent or lagging); \
+             will re-evaluate on provider install"
+        );
     }
 
     /// Shared tail of both record paths: reject the sentinel
@@ -1941,7 +1988,37 @@ impl AuthorityPerEpochStore {
     /// previous provider is dropped. Until a provider is installed the
     /// store defaults to dropping joiner announcements.
     pub fn install_joiner_pubkey_provider(&self, provider: Box<dyn JoinerPubkeyProvider>) {
-        self.joiner_pubkey_provider.store(Some(Arc::new(provider)));
+        let provider = Arc::new(provider);
+        self.joiner_pubkey_provider.store(Some(provider.clone()));
+        // A freshly-installed provider may now resolve joiners whose
+        // relayed announcements we buffered while it was absent or
+        // lagging — re-evaluate and apply the ones that now verify.
+        let next_epoch = self.epoch().saturating_add(1);
+        let to_apply = {
+            let mut buffer = self.pending_relayed_joiner_announcements.lock();
+            reevaluate_buffered_joiner_announcements(
+                &mut buffer,
+                provider.as_ref().as_ref(),
+                next_epoch,
+                Instant::now(),
+                PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL,
+            )
+        };
+        for announcement in &to_apply {
+            if let Err(e) = self.insert_validator_mpc_data_announcement(announcement) {
+                warn!(
+                    error = ?e,
+                    validator = ?announcement.validator,
+                    "failed to apply buffered relayed joiner announcement on provider install"
+                );
+            }
+        }
+        if !to_apply.is_empty() {
+            debug!(
+                applied = to_apply.len(),
+                "applied buffered relayed joiner announcements on provider install"
+            );
+        }
     }
 
     /// Currently-installed joiner pubkey provider, or `None` if

@@ -46,6 +46,7 @@ use ika_types::validator_metadata::{
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time::Instant;
 
 // The handoff-attestation cert subsystem lives in `crate::handoff_cert`.
 // Re-exported here so existing `crate::validator_metadata::*` paths and
@@ -184,6 +185,95 @@ pub fn verify_joiner_announcement(
         Ok(()) => JoinerAnnouncementVerdict::Accept,
         Err(_) => JoinerAnnouncementVerdict::InvalidSignature,
     }
+}
+
+/// Hard cap on buffered relayed joiner announcements (see
+/// `push_buffered_joiner_announcement`). The next-epoch committee
+/// size is bounded by the protocol's validator limit; this is
+/// generous headroom so honest joiners are never evicted, while still
+/// bounding memory if a byzantine relayer spams distinct fake joiner
+/// names (which can't be filtered by membership here — the provider
+/// that knows the next-epoch committee is exactly what's missing).
+pub const MAX_PENDING_RELAYED_JOINER_ANNOUNCEMENTS: usize = 1024;
+
+/// TTL for a buffered relayed joiner announcement. The
+/// `JoinerPubkeyProvider` installs within seconds of the next-epoch
+/// committee being published, so a minutes-scale TTL evicts entries
+/// for joiners that never register without dropping ones merely
+/// waiting on a provider catch-up.
+pub const PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL: Duration = Duration::from_secs(300);
+
+/// A relayed next-epoch joiner announcement held until this
+/// validator's `JoinerPubkeyProvider` can verify it. Buffered when
+/// the provider is absent or hasn't caught up to the next-epoch
+/// committee yet, and re-evaluated on provider install — consensus
+/// dedup never redelivers a dropped relay, so without the buffer a
+/// joiner whose announcement raced ahead of our provider install
+/// would be missing from our next-committee assembly.
+#[derive(Clone, Debug)]
+pub struct PendingRelayedJoinerAnnouncement {
+    pub signed: SignedValidatorMpcDataAnnouncement,
+    pub buffered_at: Instant,
+}
+
+/// Inserts `signed` into a pending-relayed-joiner buffer. Evicts
+/// TTL-expired entries and any prior entry for the same joiner
+/// (last-write-wins), then enforces `max` by dropping the oldest
+/// entry on overflow. Bounded by `max` + `ttl` rather than by
+/// committee membership because the next-epoch committee isn't known
+/// at buffer time.
+pub fn push_buffered_joiner_announcement(
+    buffer: &mut Vec<PendingRelayedJoinerAnnouncement>,
+    signed: &SignedValidatorMpcDataAnnouncement,
+    now: Instant,
+    ttl: Duration,
+    max: usize,
+) {
+    buffer.retain(|pending| {
+        now.duration_since(pending.buffered_at) < ttl
+            && pending.signed.announcement.validator != signed.announcement.validator
+    });
+    buffer.push(PendingRelayedJoinerAnnouncement {
+        signed: signed.clone(),
+        buffered_at: now,
+    });
+    if buffer.len() > max {
+        // Oldest-first: entries are pushed in arrival order, so index
+        // 0 is the oldest. Only one push per call, so one removal
+        // restores the cap.
+        buffer.remove(0);
+    }
+}
+
+/// Re-evaluates buffered relayed joiner announcements against a
+/// freshly-installed `provider` at time `now`. Returns the
+/// announcements that now verify (`Accept`) for the caller to apply,
+/// and retains in `buffer` only those still unresolved
+/// (`UnregisteredJoiner`) and within `ttl`. Expired and genuinely-bad
+/// (`InvalidSignature` / `InconsistentEnvelope`) entries are dropped.
+pub fn reevaluate_buffered_joiner_announcements(
+    buffer: &mut Vec<PendingRelayedJoinerAnnouncement>,
+    provider: &dyn JoinerPubkeyProvider,
+    expected_epoch: EpochId,
+    now: Instant,
+    ttl: Duration,
+) -> Vec<ValidatorMpcDataAnnouncement> {
+    let mut to_apply = Vec::new();
+    buffer.retain(|pending| {
+        if now.duration_since(pending.buffered_at) >= ttl {
+            return false;
+        }
+        match verify_joiner_announcement(&pending.signed, provider, expected_epoch) {
+            JoinerAnnouncementVerdict::Accept => {
+                to_apply.push(pending.signed.announcement.clone());
+                false
+            }
+            JoinerAnnouncementVerdict::UnregisteredJoiner => true,
+            JoinerAnnouncementVerdict::InvalidSignature
+            | JoinerAnnouncementVerdict::InconsistentEnvelope => false,
+        }
+    });
+    to_apply
 }
 
 /// Derives the canonical MPC data blob (BCS-encoded
@@ -1222,6 +1312,124 @@ mod tests {
     ) -> SignedValidatorMpcDataAnnouncement {
         sign_validator_mpc_data_announcement(name, target_epoch, 42_000, blob_hash, consensus_kp)
             .expect("non-zero timestamp signs successfully")
+    }
+
+    #[test]
+    fn buffered_joiner_push_dedups_evicts_and_caps() {
+        let bls = random_committee_key_pairs_of_size(3);
+        let names: Vec<AuthorityName> = bls.iter().map(name_of).collect();
+        let ckps = make_consensus_keys(3);
+        let ttl = Duration::from_secs(300);
+        let t0 = Instant::now();
+        let signed: Vec<_> = (0..3)
+            .map(|i| build_signed_for_epoch(names[i], &ckps[i], 7, [i as u8; 32]))
+            .collect();
+
+        // Distinct joiners accumulate; re-buffering the same joiner is a
+        // last-write-wins no-op on the count.
+        let mut buffer = Vec::new();
+        push_buffered_joiner_announcement(&mut buffer, &signed[0], t0, ttl, 8);
+        push_buffered_joiner_announcement(&mut buffer, &signed[1], t0, ttl, 8);
+        push_buffered_joiner_announcement(&mut buffer, &signed[0], t0, ttl, 8);
+        assert_eq!(buffer.len(), 2);
+
+        // A push past the TTL evicts the stale entries first.
+        let later = t0 + ttl + Duration::from_secs(1);
+        push_buffered_joiner_announcement(&mut buffer, &signed[2], later, ttl, 8);
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer[0].signed.announcement.validator, names[2]);
+
+        // Hard cap: oldest-first eviction once over `max`.
+        let mut capped = Vec::new();
+        for i in 0..3 {
+            push_buffered_joiner_announcement(&mut capped, &signed[i], t0, ttl, 2);
+        }
+        assert_eq!(capped.len(), 2);
+        let present: Vec<_> = capped
+            .iter()
+            .map(|p| p.signed.announcement.validator)
+            .collect();
+        assert!(
+            !present.contains(&names[0]),
+            "oldest entry evicted by the cap"
+        );
+        assert!(present.contains(&names[1]) && present.contains(&names[2]));
+    }
+
+    #[test]
+    fn reevaluate_buffered_joiner_applies_keeps_and_drops() {
+        let bls = random_committee_key_pairs_of_size(4);
+        let names: Vec<AuthorityName> = bls.iter().map(name_of).collect();
+        let ckps = make_consensus_keys(4);
+        let next_epoch: EpochId = 7;
+        let ttl = Duration::from_secs(300);
+        let t0 = Instant::now();
+
+        let s_accept = build_signed_for_epoch(names[0], &ckps[0], next_epoch, [0x00; 32]);
+        let s_unregistered = build_signed_for_epoch(names[1], &ckps[1], next_epoch, [0x01; 32]);
+        let s_wrong_epoch = build_signed_for_epoch(names[2], &ckps[2], next_epoch + 1, [0x02; 32]);
+        let s_bad_sig = build_signed_for_epoch(names[3], &ckps[3], next_epoch, [0x03; 32]);
+        let mut buffer = vec![
+            PendingRelayedJoinerAnnouncement {
+                signed: s_accept,
+                buffered_at: t0,
+            },
+            PendingRelayedJoinerAnnouncement {
+                signed: s_unregistered,
+                buffered_at: t0,
+            },
+            PendingRelayedJoinerAnnouncement {
+                signed: s_wrong_epoch,
+                buffered_at: t0,
+            },
+            PendingRelayedJoinerAnnouncement {
+                signed: s_bad_sig,
+                buffered_at: t0,
+            },
+        ];
+
+        // Provider knows names[0] correctly and names[3] under the WRONG
+        // key (→ InvalidSignature); it doesn't know names[1] or names[2].
+        let provider = StaticJoinerPubkeyProvider::from_iter([
+            (names[0], ckps[0].public().clone()),
+            (names[3], ckps[0].public().clone()),
+        ]);
+
+        let to_apply =
+            reevaluate_buffered_joiner_announcements(&mut buffer, &provider, next_epoch, t0, ttl);
+
+        // Only the valid + known joiner is applied.
+        assert_eq!(to_apply.len(), 1);
+        assert_eq!(to_apply[0].validator, names[0]);
+        // Only the still-unresolved (UnregisteredJoiner) entry is kept;
+        // the wrong-epoch and bad-signature entries are dropped.
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer[0].signed.announcement.validator, names[1]);
+    }
+
+    #[test]
+    fn reevaluate_buffered_joiner_drops_expired() {
+        let bls = random_committee_key_pairs_of_size(1);
+        let names: Vec<AuthorityName> = bls.iter().map(name_of).collect();
+        let ckps = make_consensus_keys(1);
+        let next_epoch: EpochId = 7;
+        let ttl = Duration::from_secs(300);
+        let t0 = Instant::now();
+        let signed = build_signed_for_epoch(names[0], &ckps[0], next_epoch, [0x00; 32]);
+        let mut buffer = vec![PendingRelayedJoinerAnnouncement {
+            signed,
+            buffered_at: t0,
+        }];
+
+        // Even though the provider would accept it, the entry is past
+        // its TTL → dropped, never applied.
+        let provider =
+            StaticJoinerPubkeyProvider::from_iter([(names[0], ckps[0].public().clone())]);
+        let now = t0 + ttl + Duration::from_secs(1);
+        let to_apply =
+            reevaluate_buffered_joiner_announcements(&mut buffer, &provider, next_epoch, now, ttl);
+        assert!(to_apply.is_empty());
+        assert!(buffer.is_empty());
     }
 
     #[test]
