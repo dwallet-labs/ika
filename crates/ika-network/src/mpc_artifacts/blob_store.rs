@@ -6,7 +6,7 @@
 use anemo::{Network, PeerId};
 use fastcrypto::hash::{Blake2b256, HashFunction};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
 use super::ValidatorMetadataClient;
@@ -29,40 +29,102 @@ pub trait MpcDataBlobStorage: Send + Sync + 'static {
     fn insert_blob(&self, blob_hash: [u8; 32], blob: Vec<u8>);
 }
 
+/// Default byte cap for the in-memory serve cache. Generous enough to
+/// hold a few epochs of `mpc_data` + network-key output blobs; eviction
+/// only bounds RAM, never availability (see [`InMemoryBlobStore`]).
+const DEFAULT_MAX_BYTES: usize = 512 * 1024 * 1024;
+
 /// In-memory content-addressed cache of MPC data blobs. Producer
 /// pre-populates with their own blob on announce; consumers populate
 /// as they fetch from peers. Hydrated from `AuthorityPerpetualTables`
 /// at node startup so cross-restart serves don't need a chain refresh.
-#[derive(Default)]
+///
+/// Bounded by a total-bytes cap with **FIFO** eviction of the
+/// oldest-inserted blobs. Every blob cached here is also written to the
+/// durable perpetual table (the only insert path is `BlobCache`'s
+/// write-through), and the serving `BlobCache::get` reads through to
+/// perpetual on an in-memory miss — so eviction is purely a RAM bound
+/// and never makes a blob unservable. FIFO (not LRU) is deliberate:
+/// `get` stays a cheap read-lock on the server hot path, where LRU
+/// would force a write-lock to record recency.
 pub struct InMemoryBlobStore {
-    blobs: RwLock<HashMap<[u8; 32], Vec<u8>>>,
+    inner: RwLock<BlobStoreInner>,
+}
+
+struct BlobStoreInner {
+    blobs: HashMap<[u8; 32], Vec<u8>>,
+    /// Insertion order, for FIFO eviction. `get` does not touch this,
+    /// keeping reads off the write lock.
+    insertion_order: VecDeque<[u8; 32]>,
+    total_bytes: usize,
+    max_bytes: usize,
+}
+
+impl BlobStoreInner {
+    fn insert(&mut self, blob_hash: [u8; 32], blob: Vec<u8>) {
+        // Content-addressed: a digest we already hold maps to identical
+        // bytes, so re-inserting must be a no-op — otherwise it would
+        // double-count bytes and push a duplicate eviction entry.
+        if self.blobs.contains_key(&blob_hash) {
+            return;
+        }
+        self.total_bytes = self.total_bytes.saturating_add(blob.len());
+        self.blobs.insert(blob_hash, blob);
+        self.insertion_order.push_back(blob_hash);
+        // Evict oldest-first until back under the cap, but always keep
+        // the just-inserted blob (`len() > 1`): a single blob larger
+        // than the whole cap is still servable, and evicting it
+        // immediately would make the insert pointless. Evicted blobs
+        // remain available via the perpetual read-through fallback.
+        while self.total_bytes > self.max_bytes && self.insertion_order.len() > 1 {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            if let Some(evicted) = self.blobs.remove(&oldest) {
+                self.total_bytes = self.total_bytes.saturating_sub(evicted.len());
+            }
+        }
+    }
 }
 
 impl InMemoryBlobStore {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Self::with_max_bytes(DEFAULT_MAX_BYTES)
+    }
+
+    /// Construct with an explicit byte cap (used by tests to exercise
+    /// eviction without allocating the default's worth of blobs).
+    pub fn with_max_bytes(max_bytes: usize) -> Arc<Self> {
+        Arc::new(Self {
+            inner: RwLock::new(BlobStoreInner {
+                blobs: HashMap::new(),
+                insertion_order: VecDeque::new(),
+                total_bytes: 0,
+                max_bytes,
+            }),
+        })
     }
 
     pub fn insert(&self, blob_hash: [u8; 32], blob: Vec<u8>) {
-        self.blobs.write().unwrap().insert(blob_hash, blob);
+        self.inner.write().unwrap().insert(blob_hash, blob);
     }
 
     pub fn contains(&self, blob_hash: &[u8; 32]) -> bool {
-        self.blobs.read().unwrap().contains_key(blob_hash)
+        self.inner.read().unwrap().blobs.contains_key(blob_hash)
     }
 
     pub fn len(&self) -> usize {
-        self.blobs.read().unwrap().len()
+        self.inner.read().unwrap().blobs.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.blobs.read().unwrap().is_empty()
+        self.inner.read().unwrap().blobs.is_empty()
     }
 }
 
 impl MpcDataBlobStorage for InMemoryBlobStore {
     fn get(&self, blob_hash: &[u8; 32]) -> Option<Vec<u8>> {
-        self.blobs.read().unwrap().get(blob_hash).cloned()
+        self.inner.read().unwrap().blobs.get(blob_hash).cloned()
     }
 
     fn insert_blob(&self, blob_hash: [u8; 32], blob: Vec<u8>) {
@@ -112,6 +174,61 @@ mod tests {
         assert!(store.contains(&hash));
         assert_eq!(store.get(&hash).as_ref(), Some(&bytes));
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn fifo_evicts_oldest_when_over_byte_cap() {
+        // Cap holds ~2 of the 100-byte blobs below.
+        let store = InMemoryBlobStore::with_max_bytes(250);
+        let make = |n: u8| {
+            let bytes = vec![n; 100];
+            (mpc_data_blob_hash(&bytes), bytes)
+        };
+        let (h1, b1) = make(1);
+        let (h2, b2) = make(2);
+        let (h3, b3) = make(3);
+        store.insert(h1, b1);
+        store.insert(h2, b2);
+        assert_eq!(store.len(), 2);
+        // Third insert pushes total to 300 > 250 → evict the oldest (h1).
+        store.insert(h3, b3.clone());
+        assert_eq!(store.len(), 2);
+        assert!(!store.contains(&h1), "oldest should be evicted");
+        assert!(store.contains(&h2));
+        assert!(store.contains(&h3));
+        assert_eq!(store.get(&h3).as_ref(), Some(&b3));
+    }
+
+    #[test]
+    fn duplicate_insert_is_noop_and_does_not_double_count() {
+        // Cap holds exactly two 100-byte blobs.
+        let store = InMemoryBlobStore::with_max_bytes(200);
+        let make = |n: u8| {
+            let bytes = vec![n; 100];
+            (mpc_data_blob_hash(&bytes), bytes)
+        };
+        let (h1, b1) = make(1);
+        let (h2, b2) = make(2);
+        store.insert(h1, b1.clone());
+        // Re-insert h1 (content-addressed no-op): must not double-count
+        // bytes, else inserting h2 would spuriously evict h1.
+        store.insert(h1, b1);
+        store.insert(h2, b2);
+        assert_eq!(store.len(), 2);
+        assert!(store.contains(&h1));
+        assert!(store.contains(&h2));
+    }
+
+    #[test]
+    fn single_blob_larger_than_cap_is_kept() {
+        let store = InMemoryBlobStore::with_max_bytes(50);
+        let bytes = vec![7u8; 100];
+        let hash = mpc_data_blob_hash(&bytes);
+        store.insert(hash, bytes.clone());
+        // Over cap, but evicting the only/just-inserted blob would make
+        // the insert pointless — it stays and is servable.
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.get(&hash).as_ref(), Some(&bytes));
     }
 
     #[test]
