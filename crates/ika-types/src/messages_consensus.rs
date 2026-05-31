@@ -8,9 +8,9 @@ use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use crate::messages_dwallet_mpc::{
-    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
-    IdleStatusUpdate, SessionIdentifier, SuiChainObservationUpdate,
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, DWalletInternalMPCOutput,
+    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
+    SessionIdentifier, SuiChainObservationUpdate,
 };
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
@@ -79,8 +79,6 @@ pub enum ConsensusTransactionKey {
     SuiChainObservationUpdate(AuthorityName, [u8; 32]),
     /// A global presign request, keyed by authority + session_sequence_number.
     GlobalPresignRequest(AuthorityName, u64),
-    /// Network encryption key data, keyed by authority + key_id.
-    NetworkKeyData(AuthorityName, ObjectID),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
     /// A current-committee validator's self-submitted MPC data
@@ -210,9 +208,6 @@ impl Debug for ConsensusTransactionKey {
                     seq
                 )
             }
-            ConsensusTransactionKey::NetworkKeyData(authority, key_id) => {
-                write!(f, "NetworkKeyData({:?}, {:?})", authority.concise(), key_id)
-            }
             ConsensusTransactionKey::NOAObservation(authority, nonce) => {
                 write!(
                     f,
@@ -328,7 +323,6 @@ pub enum ConsensusTransactionKind {
     IdleStatusUpdate(IdleStatusUpdate),
     SuiChainObservationUpdate(SuiChainObservationUpdate),
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
-    NetworkKeyData(ConsensusNetworkKeyData),
     NOAObservation(ConsensusNOAObservation),
     /// Self-submission by a current-committee validator: the bare
     /// announcement, no payload signature (the consensus block
@@ -553,24 +547,6 @@ impl ConsensusTransaction {
         }
     }
 
-    /// Create a new consensus transaction for network encryption key data.
-    pub fn new_network_key_data(
-        authority: AuthorityName,
-        key_data: crate::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
-    ) -> Self {
-        let mut hasher = DefaultHasher::new();
-        authority.hash(&mut hasher);
-        key_data.id.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::NetworkKeyData(ConsensusNetworkKeyData {
-                authority,
-                key_data,
-            }),
-        }
-    }
-
     /// Create a new consensus transaction for an NOA checkpoint observation.
     pub fn new_noa_observation(
         authority: AuthorityName,
@@ -691,9 +667,6 @@ impl ConsensusTransaction {
                     msg.authority,
                     msg.request.session_sequence_number,
                 )
-            }
-            ConsensusTransactionKind::NetworkKeyData(msg) => {
-                ConsensusTransactionKey::NetworkKeyData(msg.authority, msg.key_data.id)
             }
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)

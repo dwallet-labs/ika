@@ -48,8 +48,8 @@ use ika_types::message::{
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    DWalletNetworkEncryptionKeyState, GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier,
-    SessionType, SuiChainObservationUpdate, UserSecretKeyShareEventType,
+    GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier, SessionType,
+    SuiChainObservationUpdate, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
@@ -79,36 +79,6 @@ const FIVE_KILO_BYTES: usize = 5 * 1024;
 
 pub const NETWORK_OWNED_ADDRESS_SIGN_CHANNEL_CAPACITY: usize = 1024;
 
-/// Fingerprint the *content* of a `DWalletNetworkEncryptionKeyData`
-/// that downstream consumers actually depend on: the DKG output
-/// bytes, the latest reconfig output bytes, and the state. We
-/// deliberately exclude `current_epoch` from the fingerprint
-/// because that field changes every epoch boundary by design,
-/// and re-broadcasting on an epoch tick (when the underlying
-/// bytes are unchanged) would force downstream
-/// `instantiate_agreed_keys_from_voted_data` to redo the per-curve
-/// decrypt + key-share regeneration in `update_network_key` — a
-/// ~30s crypto pass that can starve other concurrent MPC work
-/// (notably an in-flight network-key DKG for a *different* key).
-/// Including only the content fields means we re-broadcast iff
-/// the data downstream consumers care about has actually changed.
-fn network_key_data_fingerprint(
-    data: &ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
-) -> [u8; 32] {
-    use fastcrypto::hash::{Blake2b256, HashFunction};
-    let mut hasher = Blake2b256::default();
-    hasher.update(&data.network_dkg_public_output);
-    hasher.update(&data.current_reconfiguration_public_output);
-    let state_tag: u8 = match data.state {
-        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG => 0,
-        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::NetworkDKGCompleted => 1,
-        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration => 2,
-        ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted => 3,
-    };
-    hasher.update([state_tag]);
-    hasher.finalize().into()
-}
-
 pub struct DWalletMPCService {
     last_read_consensus_round: Option<Round>,
     pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
@@ -134,17 +104,6 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
-    /// Per-key fingerprint of the last `DWalletNetworkEncryptionKeyData`
-    /// shape this validator submitted via `ConsensusNetworkKeyData`.
-    /// We re-broadcast when the chain-derived (off-chain-overlaid)
-    /// bytes change — typically once per epoch as reconfig output
-    /// flips — so validators that didn't reach `Finalize` locally for
-    /// a given reconfig can pick up the updated bytes via consensus.
-    /// Without this, the receiver-side `agreed_network_key_data` map
-    /// stays pinned at the first quorum (the DKG output) and reconfig
-    /// state never propagates to lagging validators in v4 off_chain
-    /// mode.
-    sent_network_key_data_fingerprints: HashMap<ObjectID, [u8; 32]>,
     /// Receiver for network-owned-address sign requests.
     network_owned_address_sign_requests_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
@@ -256,7 +215,6 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
-            sent_network_key_data_fingerprints: HashMap::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
             submitted_noa_sign_messages: HashSet::new(),
@@ -334,7 +292,6 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
-            sent_network_key_data_fingerprints: HashMap::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
@@ -603,55 +560,6 @@ impl DWalletMPCService {
         // Only include presign requests that haven't been sent yet.
         let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
 
-        // Read raw key data from the Sui watch channel and filter to
-        // keys whose chain-derived shape is *new to consensus* — either
-        // we've never broadcast it, or the bytes have changed since we
-        // last did (typically the reconfig output flipping each epoch).
-        // The fingerprint comparison fires re-broadcast on real content
-        // change, not on every poll, so a stable epoch doesn't spam
-        // consensus.
-        //
-        // Skip keys still in `AwaitingNetworkDKG`: their data hasn't
-        // been computed yet, so there's nothing to vote on.
-        //
-        // Scoped to ensure the RwLockReadGuard is dropped before any
-        // `.await`.
-        let new_key_data: Vec<_> = {
-            let all_key_data = self.sui_data_requests.network_keys_receiver.borrow();
-            all_key_data
-                .values()
-                .filter(|data| {
-                    !matches!(
-                        &data.state,
-                        DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
-                    )
-                })
-                .filter(|data| {
-                    // In v4 off_chain mode, validators that haven't
-                    // locally `Finalize`'d a key's DKG/reconfig have
-                    // empty bytes in their `network_keys_receiver`
-                    // snapshot (the chain blob read is skipped and the
-                    // local overlay has nothing to return yet).
-                    // Broadcasting with empty bytes would split the
-                    // receiver-side vote tally between "real-content"
-                    // and "empty-content" buckets and prevent quorum
-                    // on either — so just don't broadcast yet, and
-                    // wait for the next service-loop tick after the
-                    // P2P fetcher or local `Finalize` populates the
-                    // bytes.
-                    !data.network_dkg_public_output.is_empty()
-                })
-                .filter(|data| {
-                    let fingerprint = network_key_data_fingerprint(data);
-                    self.sent_network_key_data_fingerprints
-                        .get(&data.id)
-                        .copied()
-                        != Some(fingerprint)
-                })
-                .cloned()
-                .collect()
-        };
-
         // FIXME(noa-checkpoints): Without a real SuiChainObservation, the entire NOA
         // checkpoint flow is non-functional — messages buffer indefinitely because
         // `current_agreed_sui_chain_context` never becomes Some. Wire up SuiSyncer.
@@ -660,13 +568,11 @@ impl DWalletMPCService {
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
-        let has_new_key_data = !new_key_data.is_empty();
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
 
         if !has_unsent_requests
             && !idle_status_changed
-            && !has_new_key_data
             && !observation_changed
             && !has_noa_observations
         {
@@ -717,25 +623,6 @@ impl DWalletMPCService {
                 .await
             {
                 error!(error = ?e, consensus_round, "Failed to submit presign request");
-            }
-        }
-
-        // One message per network key whose data has changed since
-        // our last broadcast (or which we've never broadcast). The
-        // fingerprint records what we just sent so we don't re-send
-        // identical bytes on the next service-loop tick.
-        for key_data in &new_key_data {
-            let fingerprint = network_key_data_fingerprint(key_data);
-            let tx = ConsensusTransaction::new_network_key_data(self.name, key_data.clone());
-            if let Err(e) = self
-                .dwallet_submit_to_consensus
-                .submit_to_consensus(&[tx])
-                .await
-            {
-                error!(error = ?e, consensus_round, "Failed to submit network key data");
-            } else {
-                self.sent_network_key_data_fingerprints
-                    .insert(key_data.id, fingerprint);
             }
         }
 
@@ -1122,28 +1009,6 @@ impl DWalletMPCService {
                 }
             };
 
-            let network_key_data_messages = match self
-                .epoch_store
-                .next_network_key_data(self.last_read_consensus_round)
-            {
-                Ok(Some((round, msgs))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "network key data consensus round mismatch"
-                        );
-                        panic!("network key data consensus round mismatch");
-                    }
-                    msgs
-                }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load network key data from the local DB");
-                    panic!("failed to load network key data from the local DB");
-                }
-            };
-
             let noa_observation_messages = match self
                 .epoch_store
                 .next_noa_observation(self.last_read_consensus_round)
@@ -1204,10 +1069,6 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_presign_request_messages(consensus_round, presign_request_messages);
 
-            // 1c. Handle network key data messages.
-            self.dwallet_mpc_manager
-                .handle_network_key_data_messages(consensus_round, network_key_data_messages);
-
             // 1d. Handle NOA observation messages.
             let (newly_finalized_tx_refs, newly_failed_tx_refs) = self
                 .dwallet_mpc_manager
@@ -1263,10 +1124,9 @@ impl DWalletMPCService {
             // 1f. Adopt this validator's own locally-observed network-key
             // outputs into the instantiation set, verified against the
             // prior epoch's handoff cert (the cross-epoch agreement that
-            // replaces the ConsensusNetworkKeyData vote). Sourced from the
+            // gates which keys may be instantiated). Sourced from the
             // overlay but cert-digest-gated, so a stale/wrong local value
-            // is skipped. Additive alongside the vote below until
-            // churn-verified; the vote + broadcast are then removed.
+            // is skipped.
             // Cheap Arc clone; the borrow guard is dropped before the
             // instantiation await below.
             let overlay_snapshot = self

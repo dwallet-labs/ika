@@ -83,7 +83,6 @@ impl IkaTxValidator {
                 | ConsensusTransactionKind::IdleStatusUpdate(..)
                 | ConsensusTransactionKind::SuiChainObservationUpdate(..)
                 | ConsensusTransactionKind::GlobalPresignRequest(..)
-                | ConsensusTransactionKind::NetworkKeyData(..)
                 | ConsensusTransactionKind::NOAObservation(..)
                 | ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..)
                 | ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(..)

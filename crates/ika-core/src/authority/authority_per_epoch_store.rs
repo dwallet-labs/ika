@@ -67,8 +67,8 @@ use ika_types::messages_dwallet_checkpoint::{
 };
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
-    ConsensusNetworkKeyData, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    IdleStatusUpdate, IkaNetworkConfig, SessionIdentifier, SuiChainObservationUpdate,
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
+    IkaNetworkConfig, SessionIdentifier, SuiChainObservationUpdate,
 };
 use ika_types::messages_system_checkpoints::{
     SystemCheckpointMessage, SystemCheckpointMessageKind, SystemCheckpointSequenceNumber,
@@ -310,12 +310,6 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         last_consensus_round: Option<Round>,
     ) -> IkaResult<Option<(Round, Vec<ConsensusGlobalPresignRequest>)>>;
 
-    /// Returns the next network key data after the given consensus round.
-    fn next_network_key_data(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNetworkKeyData>)>>;
-
     /// Returns the next NOA observations after the given consensus round.
     fn next_noa_observation(
         &self,
@@ -388,8 +382,7 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     /// node holds it (crossed quorum locally, or the bootstrap anchor
     /// fetched + persisted it). The network-key instantiation path reads
     /// the prior epoch's cert as the cross-epoch agreement on the output
-    /// digests it inherits — the record that replaces the
-    /// `ConsensusNetworkKeyData` vote.
+    /// digests it inherits.
     fn get_certified_handoff_attestation(
         &self,
         epoch: EpochId,
@@ -597,21 +590,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         let tables = self.tables()?;
         let mut iter = tables
             .global_presign_requests
-            .safe_iter_with_bounds(last_consensus_round, None);
-        if last_consensus_round.is_none() {
-            Ok(iter.next().transpose()?)
-        } else {
-            Ok(iter.nth(1).transpose()?)
-        }
-    }
-
-    fn next_network_key_data(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNetworkKeyData>)>> {
-        let tables = self.tables()?;
-        let mut iter = tables
-            .network_key_data_messages
             .safe_iter_with_bounds(last_consensus_round, None);
         if last_consensus_round.is_none() {
             Ok(iter.next().transpose()?)
@@ -1017,10 +995,6 @@ pub struct AuthorityEpochTables {
     /// Global presign requests by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
     global_presign_requests: DBMap<Round, Vec<ConsensusGlobalPresignRequest>>,
-
-    /// Network key data messages by consensus round.
-    #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
-    network_key_data_messages: DBMap<Round, Vec<ConsensusNetworkKeyData>>,
 
     /// NOA checkpoint observations by consensus round.
     #[default_options_override_fn = "internal_sessions_status_updates_table_default_config"]
@@ -3130,18 +3104,6 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NetworkKeyData(msg),
-                ..
-            }) => {
-                if transaction.sender_authority() != msg.authority {
-                    warn!(
-                        "NetworkKeyData authority {} does not match its author from consensus {}",
-                        msg.authority, transaction.certificate_author_index
-                    );
-                    return None;
-                }
-            }
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::NOAObservation(msg),
                 ..
             }) => {
@@ -3460,7 +3422,6 @@ impl AuthorityPerEpochStore {
             transactions,
         ));
         output.set_global_presign_requests(Self::filter_global_presign_requests(transactions));
-        output.set_network_key_data(Self::filter_network_key_data(transactions));
         output.set_noa_observations(Self::filter_noa_observations(transactions));
 
         authority_metrics
@@ -3611,27 +3572,6 @@ impl AuthorityPerEpochStore {
             .collect()
     }
 
-    fn filter_network_key_data(
-        transactions: &[VerifiedSequencedConsensusTransaction],
-    ) -> Vec<ConsensusNetworkKeyData> {
-        transactions
-            .iter()
-            .filter_map(|transaction| {
-                let VerifiedSequencedConsensusTransaction(SequencedConsensusTransaction {
-                    transaction,
-                    ..
-                }) = transaction;
-                match transaction {
-                    SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                        kind: ConsensusTransactionKind::NetworkKeyData(msg),
-                        ..
-                    }) => Some(msg.clone()),
-                    _ => None,
-                }
-            })
-            .collect()
-    }
-
     fn filter_noa_observations(
         transactions: &[VerifiedSequencedConsensusTransaction],
     ) -> Vec<ConsensusNOAObservation> {
@@ -3696,10 +3636,6 @@ impl AuthorityPerEpochStore {
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::GlobalPresignRequest(..),
-                ..
-            }) => Ok(ConsensusCertificateResult::ConsensusMessage),
-            SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::NetworkKeyData(..),
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
@@ -4123,7 +4059,6 @@ pub(crate) struct ConsensusCommitOutput {
     idle_status_updates: Vec<IdleStatusUpdate>,
     sui_chain_observation_updates: Vec<SuiChainObservationUpdate>,
     global_presign_requests: Vec<ConsensusGlobalPresignRequest>,
-    network_key_data: Vec<ConsensusNetworkKeyData>,
     noa_observations: Vec<ConsensusNOAObservation>,
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
@@ -4169,10 +4104,6 @@ impl ConsensusCommitOutput {
         new_value: Vec<ConsensusGlobalPresignRequest>,
     ) {
         self.global_presign_requests = new_value;
-    }
-
-    pub(crate) fn set_network_key_data(&mut self, new_value: Vec<ConsensusNetworkKeyData>) {
-        self.network_key_data = new_value;
     }
 
     pub(crate) fn set_noa_observations(&mut self, new_value: Vec<ConsensusNOAObservation>) {
@@ -4244,10 +4175,6 @@ impl ConsensusCommitOutput {
         batch.insert_batch(
             &tables.global_presign_requests,
             [(self.consensus_round, self.global_presign_requests)],
-        )?;
-        batch.insert_batch(
-            &tables.network_key_data_messages,
-            [(self.consensus_round, self.network_key_data)],
         )?;
         batch.insert_batch(
             &tables.noa_observations,

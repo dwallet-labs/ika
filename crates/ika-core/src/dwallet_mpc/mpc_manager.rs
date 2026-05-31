@@ -36,12 +36,11 @@ use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::handoff::HandoffItemKey;
 use ika_types::messages_dwallet_mpc::{
-    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
-    SuiChainObservationUpdate,
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
+    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyData, GlobalPresignRequest, IdleStatusUpdate,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier, SessionType, SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -163,10 +162,6 @@ pub(crate) struct DWalletMPCManager {
     /// When we receive our own status update back from consensus, we mark those requests as sent.
     /// This prevents sending the same request multiple times.
     sent_presign_sequence_numbers: HashSet<u64>,
-
-    /// Per-key voting: maps each key ID to a map from data values to the set of parties that voted for that data.
-    network_key_data_votes:
-        HashMap<ObjectID, HashMap<DWalletNetworkEncryptionKeyData, HashSet<PartyID>>>,
 
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
@@ -322,7 +317,6 @@ impl DWalletMPCManager {
             completed_presign_sequence_numbers: HashSet::new(),
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
-            network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
             last_instantiated_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
@@ -541,19 +535,14 @@ impl DWalletMPCManager {
         agreed_presign_requests
     }
 
-    /// Handle network key data messages. Performs quorum voting per key.
-    /// Updates `agreed_network_key_data` in place.
     /// Adopt this validator's locally-observed network-key outputs into
-    /// the instantiation set, verified against the prior epoch's handoff
-    /// cert — the cross-epoch agreement that replaces the
-    /// `ConsensusNetworkKeyData` vote. The cert (persisted by the
-    /// bootstrap anchor) pins the DKG + reconfiguration output digests
-    /// the current epoch inherits; a local overlay output whose digest
-    /// matches is the agreed value and is adopted, while a stale/wrong
-    /// one (the lagging-snapshot hazard the vote filtered via
-    /// byte-identical-quorum) fails the digest match and is skipped.
-    /// Runs alongside the vote for now; the vote + broadcast are removed
-    /// once this path is churn-verified.
+    /// the instantiation set (`agreed_network_key_data`), verified
+    /// against the prior epoch's handoff cert — the cross-epoch
+    /// agreement that gates which keys may be instantiated. The cert
+    /// (persisted by the bootstrap anchor) pins the DKG + reconfiguration
+    /// output digests the current epoch inherits; a local overlay output
+    /// whose digest matches is the agreed value and is adopted, while a
+    /// stale/wrong one fails the digest match and is skipped.
     pub fn adopt_cert_verified_keys(
         &mut self,
         overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
@@ -568,7 +557,7 @@ impl DWalletMPCManager {
         {
             Ok(Some(cert)) => cert,
             // Anchor not available yet — the bootstrap fetch may still be
-            // in flight; the vote path covers instantiation until then.
+            // in flight; nothing to adopt until it lands.
             Ok(None) => return,
             Err(e) => {
                 warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
@@ -600,8 +589,8 @@ impl DWalletMPCManager {
             }
             // When a reconfiguration output is present it must match the
             // cert's pinned current-epoch digest. (A key past DKG but
-            // before its first reconfiguration has none; the vote path
-            // still covers that pre-first-cert window.)
+            // before its first reconfiguration has none; only its DKG
+            // digest is checked in that pre-first-cert window.)
             if !data.current_reconfiguration_public_output.is_empty()
                 && reconfiguration_digests.get(key_id)
                     != Some(&mpc_data_blob_hash(
@@ -611,82 +600,6 @@ impl DWalletMPCManager {
                 continue;
             }
             self.agreed_network_key_data.insert(*key_id, data.clone());
-        }
-    }
-
-    pub fn handle_network_key_data_messages(
-        &mut self,
-        consensus_round: u64,
-        messages: Vec<ConsensusNetworkKeyData>,
-    ) {
-        for msg in messages {
-            let sender_authority = msg.authority;
-            let key_data = msg.key_data;
-
-            let Ok(sender_party_id) =
-                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
-            else {
-                error!(
-                    sender_authority=?sender_authority,
-                    consensus_round,
-                    should_never_happen = true,
-                    "got network key data for an authority without party ID",
-                );
-                continue;
-            };
-
-            let key_id = key_data.id;
-
-            // Compare only the *content* fields (DKG output bytes,
-            // latest reconfig output bytes, state) — see the matching
-            // fingerprint in `dwallet_mpc_service::network_key_data_fingerprint`
-            // for the rationale. `current_epoch` flips every epoch
-            // boundary by design even when the underlying bytes are
-            // unchanged, and we don't want that to look like an update
-            // (it would force a wasteful `update_network_key` pass
-            // that re-decrypts the key shares).
-            if self
-                .agreed_network_key_data
-                .get(&key_id)
-                .is_some_and(|agreed| {
-                    agreed.network_dkg_public_output == key_data.network_dkg_public_output
-                        && agreed.current_reconfiguration_public_output
-                            == key_data.current_reconfiguration_public_output
-                        && agreed.state == key_data.state
-                })
-            {
-                continue;
-            }
-
-            // Add this party's vote for this specific key data.
-            let parties = self
-                .network_key_data_votes
-                .entry(key_id)
-                .or_default()
-                .entry(key_data.clone())
-                .or_default();
-            parties.insert(sender_party_id);
-
-            // Check if the parties that voted for this data form an authorized subset.
-            if self.access_structure.is_authorized_subset(parties).is_ok() {
-                let was_update = self
-                    .agreed_network_key_data
-                    .insert(key_id, key_data)
-                    .is_some();
-                info!(
-                    ?key_id,
-                    consensus_round,
-                    updated = was_update,
-                    "Network key data has been agreed upon"
-                );
-                // Clear stale per-content vote buckets for this key —
-                // the new agreement supersedes them, and keeping them
-                // around would let an obsolete content keep matching
-                // quorum on future votes.
-                if was_update {
-                    self.network_key_data_votes.remove(&key_id);
-                }
-            }
         }
     }
 
@@ -1551,10 +1464,12 @@ impl DWalletMPCManager {
             .filter(|(key_id, key_data)| {
                 // Filter to: first instantiation OR the *content*
                 // (DKG output, reconfig output, state) has moved
-                // since we last instantiated. Excludes the
-                // per-epoch `current_epoch` field for the same
-                // reason the sender's fingerprint does — see
-                // `dwallet_mpc_service::network_key_data_fingerprint`.
+                // since we last instantiated. Excludes the per-epoch
+                // `current_epoch` field, which flips every epoch
+                // boundary even when the underlying bytes are
+                // unchanged and would otherwise force a wasteful
+                // `update_network_key` pass that re-decrypts the key
+                // shares.
                 if !self
                     .network_keys
                     .network_encryption_keys

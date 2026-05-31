@@ -1829,8 +1829,7 @@ impl IkaNode {
                                 }
                                 // Rejected / Unavailable are logged inside
                                 // `run()`. Outputs still arrive via the
-                                // existing ConsensusNetworkKeyData path
-                                // until that path is removed.
+                                // cert-verified local instantiation path.
                                 _ => {}
                             }
                         }))
