@@ -382,12 +382,12 @@ impl ConsensusTransaction {
     }
 
     /// V2 of [`Self::new_end_of_publish`] — bundles the validator's
-    /// signed handoff attestation alongside the EndOfPublish.
-    /// Producers emit this instead of V1 + a separate
-    /// `HandoffSignature` consensus tx when the
-    /// `off_chain_validator_metadata` protocol flag is on; the
-    /// consumer side splits the message back into its two parts and
-    /// routes each through the existing v1 processing paths.
+    /// signed handoff attestation alongside its EndOfPublish vote in a
+    /// single consensus message, so the two always arrive together and
+    /// can't be reordered at peers. Producers emit this in place of
+    /// plain V1 when the `off_chain_validator_metadata` protocol flag
+    /// is on; the consumer side splits the message back into its two
+    /// parts and routes each through the existing v1 processing paths.
     pub fn new_end_of_publish_v2(
         authority: AuthorityName,
         handoff_signature: HandoffSignatureMessage,

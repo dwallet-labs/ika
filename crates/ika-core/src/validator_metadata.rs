@@ -53,8 +53,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub use crate::handoff_cert::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
     HandoffSignatureVerdict, StaticConsensusPubkeyProvider, build_handoff_attestation,
-    hash_next_committee_pubkey_set, process_handoff_signature, sign_handoff_attestation,
-    verify_certified_handoff_attestation, verify_handoff_signature, verify_joiner_bootstrap_cert,
+    hash_next_committee_pubkey_set, next_committee_pubkey_set, process_handoff_signature,
+    sign_handoff_attestation, verify_certified_handoff_attestation, verify_handoff_signature,
+    verify_joiner_bootstrap_cert,
 };
 
 /// Poll/retry cadence for a per-epoch convergence loop, scaled to the
@@ -69,14 +70,27 @@ pub use crate::handoff_cert::{
 /// far too coarse for a short (test) epoch, where a quarter-epoch is only
 /// seconds and a single 10s poll already overruns the window. Scale the
 /// cadence to ~1% of the epoch, never slower than `production_default` and
-/// never faster than a 100ms floor. For production epochs (hours) this is
+/// never faster than a 2s floor. For production epochs (hours) this is
 /// a no-op: `production_default` always wins.
+///
+/// The floor matters a great deal: several of these loops do real work
+/// per tick — the pubkey-provider refresh issues two Sui RPCs
+/// (`get_system_inner` + `get_validators_info_by_ids`) and the peer-blob
+/// fetcher issues Anemo fetches. At a very short test epoch a sub-second
+/// cadence turns the committee into an RPC/fetch storm against the
+/// localnet (e.g. a 15s epoch → 150ms → ~13 RPC-pairs/s/provider ×
+/// providers × validators), which starves the very propagation these
+/// loops exist to drive and stalls reconfiguration under churn. A 2s
+/// floor keeps the per-tick cost sane while still converging well within
+/// the freeze window of any production-length epoch (the only epoch
+/// length at which joiner integration is actually expected to complete)
+/// and the 120s integration test's quarter-epoch (30s) window.
 pub fn epoch_scaled_poll_interval(
     epoch_duration_ms: u64,
     production_default: Duration,
 ) -> Duration {
     Duration::from_millis(epoch_duration_ms / 100)
-        .clamp(Duration::from_millis(100), production_default)
+        .clamp(Duration::from_millis(2000), production_default)
 }
 
 /// Resolves a next-epoch joiner's Ed25519 **consensus** public key
@@ -213,10 +227,11 @@ pub enum CanonicalizeReadySignalOutcome {
     BelowQuorumCoverage { attested_stake: u64, quorum: u64 },
 }
 
-/// Outcome of dropping non-committee names during canonicalize.
-/// Surfaced from the helper so callers can decide whether to log
-/// — a non-empty `dropped` set with same-sized `dropped` is
-/// usually a byzantine padding attempt and worth a `warn!`.
+/// Byzantine-resistance diagnostics surfaced from
+/// `canonicalize_ready_signal_peers` so callers can decide whether
+/// to `warn!`. A non-empty `non_committee_dropped` or a non-zero
+/// `duplicates_collapsed` is usually a byzantine padding attempt —
+/// honest emitters send a deduped, committee-only peer set.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CanonicalizeReadySignalDiagnostics {
     /// Names that appeared in the inbound `validated_peers` but
@@ -1447,6 +1462,40 @@ mod tests {
         with_dup.push(names[0]);
         let h3 = hash_next_committee_pubkey_set(with_dup);
         assert_eq!(h1, h3);
+    }
+
+    #[test]
+    fn next_committee_pubkey_set_is_full_membership_and_must_not_be_frozen_filtered() {
+        // Regression guard for the producer/joiner hash asymmetry: the
+        // handoff cert's `next_committee_pubkey_set_hash` must be over the
+        // FULL committee membership. The freeze excludes a straddling
+        // member's class-groups from *assembly* but NOT from committee
+        // membership, so the joiner installs (and hashes) the full
+        // committee. Both the producer and the joiner derive the set
+        // through `next_committee_pubkey_set`, so they cannot drift.
+        let (committee, names, _kps, _provider) = build_quorum_test_fixture(4);
+
+        // The helper returns every seated member — it must NOT narrow the
+        // set by any frozen mpc_data subset.
+        let set = next_committee_pubkey_set(&committee);
+        assert_eq!(set.len(), names.len());
+        assert!(names.iter().all(|name| set.contains(name)));
+
+        // What the producer hashes equals what the joiner reconstructs
+        // from the same committee.
+        assert_eq!(
+            hash_next_committee_pubkey_set(next_committee_pubkey_set(&committee)),
+            hash_next_committee_pubkey_set(names.iter().copied()),
+        );
+
+        // The removed `∩ frozen` filter (dropping a straddling but
+        // still-seated member) WOULD have diverged from the joiner's
+        // full-committee hash — this is exactly the cross-rejection C1.
+        let frozen_filtered: Vec<AuthorityName> = names[..names.len() - 1].to_vec();
+        assert_ne!(
+            hash_next_committee_pubkey_set(next_committee_pubkey_set(&committee)),
+            hash_next_committee_pubkey_set(frozen_filtered),
+        );
     }
 
     #[test]

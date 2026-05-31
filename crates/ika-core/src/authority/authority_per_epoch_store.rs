@@ -31,9 +31,9 @@ use crate::dwallet_checkpoints::{
 };
 use crate::validator_metadata::{
     ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
-    JoinerAnnouncementVerdict, JoinerPubkeyProvider, NetworkKeyBlobSource,
+    HandoffSignatureVerdict, JoinerAnnouncementVerdict, JoinerPubkeyProvider, NetworkKeyBlobSource,
     build_handoff_attestation, hash_next_committee_pubkey_set, process_handoff_signature,
-    sign_handoff_attestation, verify_joiner_announcement,
+    sign_handoff_attestation, verify_handoff_signature, verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -1974,14 +1974,41 @@ impl AuthorityPerEpochStore {
             return Ok(());
         }
         let mut aggregator = HandoffAggregator::new(self.committee.clone(), attestation.clone());
-        // Replay persisted signatures into the fresh aggregator.
-        // They were verified once already on the way into the DB;
-        // re-inserting trusts that (no provider re-verification
-        // needed here). Order doesn't matter — the aggregator is
-        // stake-weighted.
+        // Replay persisted signatures into the fresh aggregator,
+        // re-verifying each against the attestation being installed.
+        // The persisted `(signer, signature)` rows were verified
+        // against whatever was `expected` when they landed; if this
+        // install carries a DIFFERENT attestation (the function
+        // supports re-installing — e.g. a fresh hydration changed the
+        // items), those rows endorse the old bytes and must not count
+        // toward the new cert. Re-verification keeps the restart path
+        // correct (same attestation ⇒ rows re-verify and are kept)
+        // while dropping stale rows on a mid-epoch change. If no
+        // consensus-pubkey provider is installed yet (early startup)
+        // fall back to trusting the persist-time verification. Order
+        // doesn't matter — the aggregator is stake-weighted.
+        let provider = self.consensus_pubkey_provider.load_full();
         let tables = self.tables()?;
         for entry in tables.handoff_signatures.safe_iter() {
             let (signer, signature) = entry?;
+            if let Some(provider) = provider.as_ref() {
+                let msg = ika_types::handoff::HandoffSignatureMessage {
+                    attestation: attestation.clone(),
+                    signer,
+                    signature: signature.clone(),
+                };
+                if verify_handoff_signature(&msg, &attestation, provider.as_ref().as_ref())
+                    != HandoffSignatureVerdict::Accept
+                {
+                    warn!(
+                        signer = ?signer,
+                        epoch = attestation.epoch,
+                        "persisted handoff signature no longer verifies against the \
+                         installed attestation — dropping on replay"
+                    );
+                    continue;
+                }
+            }
             aggregator.insert_verified(signer, signature);
         }
         *guard = Some(aggregator);

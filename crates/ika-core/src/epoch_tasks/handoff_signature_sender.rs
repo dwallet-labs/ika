@@ -16,16 +16,15 @@ use crate::authority::authority_per_epoch_store::{
     AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
 };
 use crate::consensus_adapter::SubmitToConsensus;
-use crate::validator_metadata::HandoffItemsBuilder;
+use crate::validator_metadata::{HandoffItemsBuilder, next_committee_pubkey_set};
 use fastcrypto::ed25519::Ed25519KeyPair;
 use ika_types::committee::Committee;
-use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -132,11 +131,15 @@ impl HandoffSignatureSender {
         })
     }
 
-    /// For each network encryption key that has finished its
-    /// initial DKG or current-epoch reconfiguration on chain,
-    /// re-cache the canonical output bytes into the per-epoch
-    /// digest tables. Idempotent — re-caching with the same bytes
-    /// keeps the same digest (the cache layer is content-addressed).
+    /// For each network encryption key that has finished its initial
+    /// DKG, re-cache the canonical DKG output bytes into the per-epoch
+    /// digest table. Idempotent — re-caching the same bytes keeps the
+    /// same digest (the cache layer is content-addressed). The DKG
+    /// output is a one-time stable value, so caching it from the
+    /// (possibly-lagging) `network_keys_receiver` snapshot can't diverge
+    /// across the committee. The per-epoch reconfiguration output is
+    /// intentionally left to its consensus-ordered sources — see the
+    /// note in the loop body.
     fn hydrate_protocol_output_digests_from_chain(
         &self,
         epoch_store: &Arc<AuthorityPerEpochStore>,
@@ -161,28 +164,19 @@ impl HandoffSignatureSender {
                     "failed to hydrate network DKG digest from chain bytes"
                 );
             }
-            // Reconfig output: present once the key reaches
-            // `NetworkReconfigurationCompleted` for the current epoch.
-            // The chain field carries the LATEST reconfig output, so
-            // hydrating from it gives us the same value every
-            // validator sees on chain — making the resulting handoff
-            // item deterministic across the committee.
-            if !data.current_reconfiguration_public_output.is_empty()
-                && matches!(
-                    data.state,
-                    DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-                )
-                && let Err(e) = epoch_store.cache_network_reconfiguration_output(
-                    *key_id,
-                    &data.current_reconfiguration_public_output,
-                )
-            {
-                warn!(
-                    error = ?e,
-                    key_id = ?key_id,
-                    "failed to hydrate network reconfiguration digest from chain bytes"
-                );
-            }
+            // NOTE: the current-epoch *reconfiguration* output is
+            // deliberately NOT hydrated here. Unlike the one-time DKG
+            // output, it is a per-epoch consensus-ordered outcome, and
+            // this `network_keys_receiver` snapshot is a non-consensus
+            // watch channel that can lag a round behind. Hydrating it
+            // would overwrite the consensus-voted reconfiguration digest
+            // — already mirrored into the per-epoch cache by
+            // `mpc_manager` (from `agreed_network_key_data`) and written
+            // by the local reconfiguration MPC in `dwallet_mpc_service`,
+            // both deterministic — with a possibly-stale value, so two
+            // signers would hash different `NetworkReconfigurationOutput`
+            // digests and cross-reject as `AttestationMismatch`. We let
+            // the consensus-voted value in the cache stand.
         }
     }
 
@@ -206,40 +200,19 @@ impl HandoffSignatureSender {
         if !self.snapshot_ready_for_signing() {
             return Ok(());
         }
-        // Sign against the consensus-deterministic epoch-E committee:
-        // the next committee intersected with the frozen mpc_data set.
-        // This is exactly the membership the joiner verifier observes —
-        // the assembled committee post-freeze drops any chain member
-        // not in the frozen set — but computing it by intersection here
-        // removes the pre-vs-post-freeze ambiguity of the local
-        // watch-channel view. A joiner that announced is present in the
-        // pre-freeze assembled committee and absent from the frozen set,
-        // so without this two signers reading different convergence
-        // states would hash different member sets and cross-reject as
-        // `AttestationMismatch`. The frozen set is consensus-ordered, so
-        // every signer derives the SAME membership. In the non-churn
-        // case (no member straddling the freeze) the intersection is a
-        // no-op.
-        //
-        // CRITICAL: never block on this. The EndOfPublish vote is
-        // bundled into the same `EndOfPublishV2` message we build below,
-        // so withholding the message to wait for the freeze would stall
-        // reconfiguration. If the frozen set is empty (freeze not yet
-        // fired in our local view), fall back to the full next committee
-        // — the pre-existing behavior — rather than an empty set; the
-        // determinism benefit applies once the freeze has populated it.
-        let frozen_set: HashSet<AuthorityName> = epoch_store
-            .get_frozen_validator_mpc_data_input_set()
-            .map_err(DwalletMPCError::IkaError)?
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        let next_committee_pubkeys: Vec<AuthorityName> = next_committee
-            .voting_rights
-            .iter()
-            .map(|(name, _)| *name)
-            .filter(|name| frozen_set.is_empty() || frozen_set.contains(name))
-            .collect();
+        // Hash the FULL next-committee membership — the identical set
+        // the joiner verifier reconstructs, both via
+        // `next_committee_pubkey_set`. Membership is chain-deterministic:
+        // `new_committee` seats every chain member regardless of the
+        // freeze (the freeze only filters which members' class-groups are
+        // *assembled*, not who sits on the committee), so every signer
+        // derives the same set and the joiner reproduces it from the
+        // committee it installs. Do NOT narrow this by the frozen
+        // mpc_data set: a still-seated member the freeze excluded from
+        // assembly is present in the joiner's committee, so narrowing here
+        // makes the cert structurally unverifiable by the very joiner it
+        // certifies whenever the freeze excludes a seated member.
+        let next_committee_pubkeys = next_committee_pubkey_set(&next_committee);
         // Hydrate the local digest cache from the chain-canonical
         // output bytes BEFORE building the attestation. Reading
         // from chain (via the `network_keys_receiver` published by

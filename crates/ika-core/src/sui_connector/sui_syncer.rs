@@ -644,31 +644,44 @@ where
                             None => key_full_data,
                         };
                         // Under off-chain mode the chain copy carries
-                        // empty blob bytes; the overlay above fills
-                        // them from the local producer cache. Every
-                        // fetched key is past `AwaitingNetworkDKG`, so
-                        // a non-empty `network_dkg_public_output` is
-                        // the invariant for a usable entry. If it's
-                        // still empty — the blob source wasn't
-                        // installed yet (startup race) or this
-                        // validator hasn't cached its DKG output yet —
-                        // publish the partial value to the channel but
-                        // do NOT record it in `last_fetched_network_keys`,
-                        // so a later tick re-merges once the overlay
-                        // has the bytes. Without this, the
-                        // `(epoch, state)` cache key would pin the
-                        // empty blobs for the rest of the epoch.
-                        let overlay_incomplete =
-                            off_chain_on && merged.network_dkg_public_output.is_empty();
+                        // empty blob bytes; the overlay above fills them
+                        // from the local producer cache. A usable entry
+                        // needs every blob its chain state implies: a
+                        // non-empty `network_dkg_public_output` for every
+                        // fetched key (all are past `AwaitingNetworkDKG`),
+                        // AND — once the key reaches
+                        // `NetworkReconfigurationCompleted` — a non-empty
+                        // `current_reconfiguration_public_output` too. If
+                        // either required blob is still empty (the blob
+                        // source wasn't installed yet, or this validator's
+                        // own MPC hasn't cached the output yet) publish
+                        // the partial value to the channel but do NOT
+                        // record it in `last_fetched_network_keys`, so a
+                        // later tick re-merges once the overlay has the
+                        // bytes. Without this the `(epoch, state)` cache
+                        // key pins the empty blob for the rest of the
+                        // epoch — and for the reconfiguration output that
+                        // permanently withholds this validator's
+                        // EndOfPublish vote (`snapshot_ready_for_signing`
+                        // requires a non-empty reconfiguration output),
+                        // stalling reconfiguration.
+                        let reconfiguration_output_missing =
+                            matches!(
+                                merged.state,
+                                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
+                            ) && merged.current_reconfiguration_public_output.is_empty();
+                        let overlay_incomplete = off_chain_on
+                            && (merged.network_dkg_public_output.is_empty()
+                                || reconfiguration_output_missing);
                         let merged_state = merged.state.clone();
                         all_fetched_network_keys_data.insert(key_id, merged);
                         if overlay_incomplete {
                             warn!(
                                 key = ?key_id,
                                 current_epoch,
-                                "off-chain network-key overlay has no DKG output yet \
-                                 (blob source not installed or output not cached); \
-                                 will retry next tick"
+                                "off-chain network-key overlay missing a required output \
+                                 (DKG or reconfiguration) — blob source not installed or \
+                                 output not cached yet; will retry next tick"
                             );
                         } else {
                             last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));

@@ -48,6 +48,30 @@ pub fn build_handoff_attestation(
     })
 }
 
+/// The canonical next-committee pubkey set that BOTH the handoff
+/// producer (`HandoffSignatureSender`) and the joiner verifier
+/// (`verify_joiner_bootstrap_cert`) hash into
+/// `HandoffAttestation.next_committee_pubkey_set_hash`: the full
+/// committee membership (`voting_rights`).
+///
+/// Deriving the set through this one helper on both sides is what
+/// guarantees the producer's attestation and the joiner's `expected`
+/// stay reproducible from each other. The membership is
+/// chain-deterministic — every signer's assembled next committee and
+/// every joiner's installed committee carry the identical
+/// `voting_rights` — so a signer must NOT narrow it by the frozen
+/// mpc_data set: the freeze filters which members' *class-groups* are
+/// assembled, not who sits on the committee. Narrowing it is exactly
+/// what made honest certs unverifiable by the joiners they certify
+/// whenever the freeze excluded a still-seated member.
+pub fn next_committee_pubkey_set(committee: &Committee) -> Vec<AuthorityName> {
+    committee
+        .voting_rights
+        .iter()
+        .map(|(name, _)| *name)
+        .collect()
+}
+
 /// Blake2b256 digest of the next committee's BLS pubkey set. Pubkeys
 /// are deduplicated and sorted strictly ascending before BCS encoding,
 /// so callers don't need to normalize beforehand. This is the value

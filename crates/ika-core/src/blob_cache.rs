@@ -119,10 +119,10 @@ mod tests {
 
     #[tokio::test]
     async fn get_reads_through_to_perpetual_on_memory_miss() {
-        // Simulate the F2-2 scenario: a blob is written to perpetual
-        // only (e.g. a DKG output cached by the per-epoch store,
-        // which never touched the in-memory mirror). The server must
-        // still serve it — read-through covers it without a restart.
+        // A blob written to perpetual only (e.g. a DKG output cached
+        // by the per-epoch store, which never touched the in-memory
+        // mirror). The server must still serve it — read-through
+        // covers it without a restart.
         let (cache, _dir) = test_cache();
         let bytes = b"perpetual-only protocol output".to_vec();
         let digest = mpc_data_blob_hash(&bytes);
