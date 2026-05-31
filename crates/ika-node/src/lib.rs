@@ -1803,6 +1803,7 @@ impl IkaNode {
                         let fetch_network = self.p2p_network.clone();
                         let fetch_store = cur_epoch_store.clone();
                         let cert_perpetual = perpetual.clone();
+                        let fail_closed_shutdown = self.shutdown_channel_tx.clone();
                         Some(tokio::spawn(async move {
                             match verifier.run().await {
                                 BootstrapOutcome::Verified(cert) => {
@@ -1827,10 +1828,34 @@ impl IkaNode {
                                     )
                                     .await;
                                 }
-                                // Rejected / Unavailable are logged inside
-                                // `run()`. Outputs still arrive via the
-                                // cert-verified local instantiation path.
-                                _ => {}
+                                BootstrapOutcome::Rejected => {
+                                    // Fail-closed: peers served certs but
+                                    // NONE verified against the prior
+                                    // committee — a genuine cross-epoch
+                                    // trust-anchor mismatch (a wrong
+                                    // prior-committee view, or every
+                                    // reachable peer serving certs for the
+                                    // wrong committee — a possible eclipse).
+                                    // A single bad peer can't cause this
+                                    // (every peer is tried each round), so
+                                    // refuse to participate on a broken
+                                    // anchor: halt the node so an operator
+                                    // investigates instead of silently
+                                    // limping without a verified handoff.
+                                    error!(
+                                        prior_epoch,
+                                        "cross-epoch bootstrap trust anchor REJECTED — \
+                                         halting the node (fail-closed). Investigate a wrong \
+                                         prior-committee view or peers serving certs for the \
+                                         wrong committee (possible eclipse)."
+                                    );
+                                    let _ = fail_closed_shutdown.send(None);
+                                }
+                                // Benign: no peer served a cert within the
+                                // attempt budget (propagation lag) — already
+                                // logged inside `run()`; the anchor is merely
+                                // unconfirmed, not contradicted.
+                                BootstrapOutcome::Unavailable => {}
                             }
                         }))
                     }
