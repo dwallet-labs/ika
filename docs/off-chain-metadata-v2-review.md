@@ -918,11 +918,188 @@ via base64-serialized `last_installed` cache.
 
 ## Feature 6 — Off-chain consumption / overlay in `sui_syncer`
 
-_(pending walkthrough)_
+Three intertwined overlay paths in
+`crates/ika-core/src/sui_connector/sui_syncer.rs`:
+
+- `sync_dwallet_network_keys` (line 517): chain reads only the
+  lightweight `DWalletNetworkEncryptionKeyData` metadata; the two
+  large blobs (`network_dkg_public_output`,
+  `current_reconfiguration_public_output`) come from the local
+  producer cache via `NetworkKeyBlobSource`. Empty-blob caching
+  guard (per `95a3f5c6fb`) avoids pinning empties.
+- `sync_next_committee` (line 275): publishes the *chain* view of
+  V_{e+1} on `chain_next_committee_sender` (membership-only,
+  empty class-groups maps) AS SOON AS Sui reports it, breaking
+  the freeze-vs-assembly deadlock (`fd3e0fd313`). Then tries
+  off-chain class-groups assembly via
+  `EpochStoreClassGroupsSource::try_assemble_class_groups`; under
+  v4 there is NO chain fallback for class-groups.
+- The off-chain assembler reads the *frozen* set post-freeze, the
+  *live* announcement table pre-freeze, via the pure helper
+  `decide_assembly_inputs`.
 
 ### Concerns
 
-_(empty — to be filled during walkthrough)_
+- **`chain_next_committee_sender` publishes a `Committee` with
+  empty class-groups maps via `Default::default()` — a footgun.**
+  At `sui_syncer.rs:320–333`, the chain committee is built with
+  `Committee::new(... Default::default(), Default::default(),
+  Default::default(), Default::default(), ...)` for the four
+  class-groups/PVSS HashMaps. Any downstream consumer that reads
+  off the *wrong channel* — i.e. consumes `chain_committee` for
+  reconfig MPC instead of just for membership/threshold gating —
+  silently gets empty class-groups maps and drops every share.
+
+  The distinction "chain committee = membership only, assembled
+  committee = full crypto" is enforced *by channel selection*,
+  not by type. Any future call site reading the chain channel
+  is one mistake away from a silent reconfig failure.
+
+  **Fix:** introduce a separate `CommitteeMembership` type for
+  the chain channel — `{ epoch, members, stake, quorum_threshold,
+  validity_threshold }`, no class-groups fields. The two
+  consumers of the chain channel today (freeze emit-gate via
+  `decide_ready_to_finalize`; joiner watcher in
+  `monitor_joiner_announcements`) only need membership +
+  thresholds. Type-level separation makes "use the chain
+  committee for crypto" a compile error.
+
+- **No escalation when off-chain assembly NEVER converges.**
+  `sync_next_committee` returns `OffChainAssemblyIncomplete`
+  under v4 and just `continue`s on the next tick. There's no
+  bounded-attempt budget, no escalation to `error!`, no halt.
+  Pathological cases that produce permanent incompleteness —
+  e.g. `EverythingExcluded` (every V_{e+1} member was excluded
+  by the freeze partition) — would spin forever logging
+  `warn!`s without any clear signal that the network is wedged.
+
+  **Fix:** distinguish transient incompleteness ("waiting for
+  P2P to converge") from permanent incompleteness
+  (`AssemblyInputDecision::EverythingExcluded` — the freeze
+  decided no one is attested). Permanent incompleteness should
+  log `error!` and ideally trigger a metric/alert. The pure
+  `decide_assembly_inputs` already returns `EverythingExcluded`
+  as a typed enum variant; just surface it to the outer loop.
+
+- **`sync_dwallet_network_keys` publishes incomplete entries to
+  the channel during the overlay-not-ready window.** At line
+  662–675, `overlay_incomplete = off_chain_on && merged.network_dkg_public_output.is_empty()`
+  correctly skips updating the `last_fetched_network_keys`
+  cache, so the next tick re-merges. But the merged value
+  (with empty `network_dkg_public_output`) IS inserted into
+  `all_fetched_network_keys_data` and sent on the channel on
+  line 688 unconditionally. Downstream consumers see a transient
+  entry whose blob is empty.
+
+  Whether this matters depends on consumer behavior. Likely
+  benign if consumers also check for empty blobs, but if any
+  consumer does `data.network_dkg_public_output[0]` or BCS-decodes
+  the bytes, they panic / drop / corrupt. Worth a sweep of
+  consumers.
+
+  **Fix:** filter out empty-blob entries before sending, OR
+  send only when ALL fetched entries are complete (atomic
+  publish). The latter is harder during startup; the former
+  is a one-line change.
+
+  ```rust
+  // Before sending: filter incomplete entries
+  let publishable: HashMap<_, _> = all_fetched_network_keys_data
+      .iter()
+      .filter(|(_, data)| !data.network_dkg_public_output.is_empty())
+      .map(|(k, v)| (*k, v.clone()))
+      .collect();
+  if let Err(err) = network_keys_sender.send(Arc::new(publishable)) { ... }
+  ```
+
+- **No backoff on persistent chain RPC failure.**
+  `sync_dwallet_network_keys` loops with `sleep(5s)` and retries
+  the whole loop body on any error. `sync_next_committee` uses
+  `epoch_scaled_poll_interval` but the same pattern: on error,
+  `continue`. If `sui_client.get_dwallet_mpc_network_keys` or
+  `get_validators_info_by_ids` fail persistently (chain RPC
+  down), the loops burn CPU at 5–10s cadence forever logging
+  identical errors.
+
+  **Fix:** exponential backoff on consecutive errors, capped
+  at e.g. 5 minutes, reset on success. Standard pattern for
+  RPC-driven polling.
+
+- **`Committee::new(epoch, ...)` for the chain committee uses
+  `system_inner.epoch() + 1` without validating that this is
+  exactly one ahead of the current epoch.** Looks correct on
+  first read, but the per-epoch sync_next_committee task is
+  long-lived (not respawned per epoch). If Sui rolls forward two
+  epochs in a single poll window — unlikely but not impossible —
+  the chain_committee for `epoch e+1` could be published when the
+  current epoch is now `e+1`, not `e`. The downstream consumers
+  expect the chain committee to represent the *next* epoch
+  relative to *their* current view. A two-epoch jump would
+  publish a "next" committee that's actually the current one.
+
+  **Fix:** dedup the chain_committee channel against
+  `last_published_epoch`, AND surface the epoch field in the
+  consumer so consumers can sanity-check `chain_committee.epoch
+  == self.epoch + 1`.
+
+- **`assemble_committee_class_groups_off_chain` handles empty
+  input via `saw_any` — but `assembly_pairs` is computed *after*
+  `decide_assembly_inputs` already filtered.** So
+  `EpochStoreClassGroupsSource::try_assemble_class_groups` is
+  fine because `decide_assembly_inputs` returns `EverythingExcluded`
+  before the assembler sees an empty list. But any FUTURE caller
+  that bypasses `decide_assembly_inputs` and passes raw input
+  must rely on `saw_any` for safety. Defense in depth is good
+  here; just noting that the two-layer safety is load-bearing.
+
+- **The `state` part of the `last_fetched_network_keys` cache
+  key is `DWalletNetworkEncryptionKeyState`, an enum with
+  variant-associated data.** Comment at line 528–535 explains
+  that `state` is part of the cache key because chain-side state
+  transitions within an epoch (e.g. `NetworkReconfigurationStarted`
+  → `Completed`) change the blobs. Reasonable. But: `PartialEq`
+  on enum variants with associated data compares the data too.
+  If a state variant carries e.g. a `started_at_timestamp` that
+  changes on every chain object refresh (without a "real" state
+  transition), every poll would refetch. Probably not the case
+  in practice, but worth a one-line spot-check that the state
+  enum doesn't carry mutable-but-meaningless data.
+
+- **`EpochStoreClassGroupsSource` reads `get_frozen_validator_mpc_data_input_set`
+  and `get_epoch_excluded_validators` separately — non-atomic.**
+  If a freeze fires between the two reads, the frozen set is
+  populated but excluded is still empty (or vice versa, depending
+  on the freeze code's write order). The pure helper
+  `decide_assembly_inputs` would then read mismatched state.
+
+  Practically: the freeze writes both sets at once via a single
+  `freeze_mpc_data_if_first` call (per F4 review). If the
+  underlying RocksDB write is in a single batch, atomicity holds.
+  If not, the two reads could span the freeze instant.
+
+  **Fix:** add a single `get_freeze_snapshot()` getter that
+  returns `(frozen, excluded)` from a single locked read. The
+  current two-step pattern is correct only by virtue of the
+  freeze writer's atomicity, which isn't visible here.
+
+- **The per-key `(epoch, state)` cache key resets across
+  validators on restart.** Restarting a validator wipes the
+  in-memory `last_fetched_network_keys` cache. The next poll
+  refetches every key, calls the overlay, and republishes the
+  channel. Fine for correctness; just observe that startup is
+  always a full refetch — not a concern, but explains the
+  cold-start cost.
+
+### Open questions raised during walkthrough
+
+- **No protocol-config gating on the chain-committee channel
+  publish.** The chain committee is sent unconditionally
+  regardless of `off_chain_validator_metadata_enabled()`. The
+  consumers (freeze emit-gate, joiner watcher) ARE gated on
+  off-chain mode, so this is harmless — but the channel could
+  be hot under v3 too, where nothing consumes it. Either gate
+  the publish on `off_chain_on` or document that the publish
+  is intentional-cheap-no-op under v3.
 
 ---
 
