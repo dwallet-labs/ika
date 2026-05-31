@@ -1260,7 +1260,26 @@ impl DWalletMPCService {
                 }
             }
 
-            // 2. Instantiate any agreed keys we don't have yet, from consensus-voted data.
+            // 1f. Adopt this validator's own locally-observed network-key
+            // outputs into the instantiation set, verified against the
+            // prior epoch's handoff cert (the cross-epoch agreement that
+            // replaces the ConsensusNetworkKeyData vote). Sourced from the
+            // overlay but cert-digest-gated, so a stale/wrong local value
+            // is skipped. Additive alongside the vote below until
+            // churn-verified; the vote + broadcast are then removed.
+            // Cheap Arc clone; the borrow guard is dropped before the
+            // instantiation await below.
+            let overlay_snapshot = self
+                .sui_data_requests
+                .network_keys_receiver
+                .borrow()
+                .clone();
+            self.dwallet_mpc_manager
+                .adopt_cert_verified_keys(&overlay_snapshot);
+
+            // 2. Instantiate any agreed keys we don't have yet (from
+            // consensus-voted data and/or the cert-verified local outputs
+            // adopted above).
             let new_key_ids = self
                 .dwallet_mpc_manager
                 .instantiate_agreed_keys_from_voted_data()

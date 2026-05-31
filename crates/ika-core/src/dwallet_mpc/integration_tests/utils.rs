@@ -448,6 +448,16 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(())
     }
 
+    fn get_certified_handoff_attestation(
+        &self,
+        _epoch: sui_types::base_types::EpochId,
+    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
+        // Testing impl: no persisted certs; the cert-verified
+        // instantiation path is a no-op and tests exercise the
+        // consensus-voted path.
+        Ok(None)
+    }
+
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
         // Testing impl: report frozen so the session-kickoff gate
         // doesn't block tests that never produce the actual freeze

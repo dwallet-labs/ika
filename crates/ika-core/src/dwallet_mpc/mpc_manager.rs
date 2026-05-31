@@ -28,11 +28,13 @@ use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use hex;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::handoff::HandoffItemKey;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
     Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
@@ -541,6 +543,77 @@ impl DWalletMPCManager {
 
     /// Handle network key data messages. Performs quorum voting per key.
     /// Updates `agreed_network_key_data` in place.
+    /// Adopt this validator's locally-observed network-key outputs into
+    /// the instantiation set, verified against the prior epoch's handoff
+    /// cert — the cross-epoch agreement that replaces the
+    /// `ConsensusNetworkKeyData` vote. The cert (persisted by the
+    /// bootstrap anchor) pins the DKG + reconfiguration output digests
+    /// the current epoch inherits; a local overlay output whose digest
+    /// matches is the agreed value and is adopted, while a stale/wrong
+    /// one (the lagging-snapshot hazard the vote filtered via
+    /// byte-identical-quorum) fails the digest match and is skipped.
+    /// Runs alongside the vote for now; the vote + broadcast are removed
+    /// once this path is churn-verified.
+    pub fn adopt_cert_verified_keys(
+        &mut self,
+        overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    ) {
+        let Some(prior_epoch) = self.epoch_id.checked_sub(1) else {
+            // Genesis epoch has no prior handoff cert (initial-DKG path).
+            return;
+        };
+        let cert = match self
+            .epoch_store
+            .get_certified_handoff_attestation(prior_epoch)
+        {
+            Ok(Some(cert)) => cert,
+            // Anchor not available yet — the bootstrap fetch may still be
+            // in flight; the vote path covers instantiation until then.
+            Ok(None) => return,
+            Err(e) => {
+                warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
+                return;
+            }
+        };
+        let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
+        let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
+        for (item, digest) in &cert.attestation.items {
+            match item {
+                HandoffItemKey::NetworkDkgOutput { key_id } => {
+                    dkg_digests.insert(*key_id, *digest);
+                }
+                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                    reconfiguration_digests.insert(*key_id, *digest);
+                }
+                HandoffItemKey::ValidatorMpcData { .. } => {}
+            }
+        }
+        for (key_id, data) in overlay {
+            if data.network_dkg_public_output.is_empty() {
+                continue; // nothing computed/fetched locally yet
+            }
+            // The DKG output is one-time and stable; it must match the
+            // cert's pinned digest.
+            if dkg_digests.get(key_id) != Some(&mpc_data_blob_hash(&data.network_dkg_public_output))
+            {
+                continue;
+            }
+            // When a reconfiguration output is present it must match the
+            // cert's pinned current-epoch digest. (A key past DKG but
+            // before its first reconfiguration has none; the vote path
+            // still covers that pre-first-cert window.)
+            if !data.current_reconfiguration_public_output.is_empty()
+                && reconfiguration_digests.get(key_id)
+                    != Some(&mpc_data_blob_hash(
+                        &data.current_reconfiguration_public_output,
+                    ))
+            {
+                continue;
+            }
+            self.agreed_network_key_data.insert(*key_id, data.clone());
+        }
+    }
+
     pub fn handle_network_key_data_messages(
         &mut self,
         consensus_round: u64,

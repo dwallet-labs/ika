@@ -384,6 +384,17 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
         output_bytes: &[u8],
     ) -> IkaResult<()>;
 
+    /// Returns the certified handoff attestation for `epoch` if this
+    /// node holds it (crossed quorum locally, or the bootstrap anchor
+    /// fetched + persisted it). The network-key instantiation path reads
+    /// the prior epoch's cert as the cross-epoch agreement on the output
+    /// digests it inherits — the record that replaces the
+    /// `ConsensusNetworkKeyData` vote.
+    fn get_certified_handoff_attestation(
+        &self,
+        epoch: EpochId,
+    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>>;
+
     /// Returns whether the epoch-wide `mpc_data` input set has been
     /// frozen — i.e., a stake-quorum of `EpochMpcDataReadySignal`s
     /// has been observed in consensus order this epoch. Network DKG
@@ -702,6 +713,16 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
             dwallet_network_encryption_key_id,
             output_bytes,
         )
+    }
+
+    fn get_certified_handoff_attestation(
+        &self,
+        epoch: EpochId,
+    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
+        match self.perpetual_tables_for_handoff_load_full() {
+            Some(perpetual) => perpetual.get_certified_handoff_attestation(epoch),
+            None => Ok(None),
+        }
     }
 
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
