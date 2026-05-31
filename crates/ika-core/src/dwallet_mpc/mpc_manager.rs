@@ -536,68 +536,85 @@ impl DWalletMPCManager {
     }
 
     /// Adopt this validator's locally-observed network-key outputs into
-    /// the instantiation set (`agreed_network_key_data`), verified
-    /// against the prior epoch's handoff cert — the cross-epoch
-    /// agreement that gates which keys may be instantiated. The cert
-    /// (persisted by the bootstrap anchor) pins the DKG + reconfiguration
-    /// output digests the current epoch inherits; a local overlay output
-    /// whose digest matches is the agreed value and is adopted, while a
-    /// stale/wrong one fails the digest match and is skipped.
+    /// the instantiation set (`agreed_network_key_data`), gated by the
+    /// prior epoch's handoff cert — the cross-epoch agreement on which
+    /// outputs the current epoch inherits, replacing the consensus vote.
+    ///
+    /// - A **reconfigured** key (it carries a current-epoch
+    ///   reconfiguration output) is adopted only when both its stable DKG
+    ///   digest and its epoch-specific reconfiguration digest match the
+    ///   prior cert. A stale/wrong local value (the lagging-snapshot
+    ///   hazard the vote filtered via byte-identical-quorum) fails the
+    ///   match and is skipped; so does any key when the cert isn't
+    ///   available yet (the bootstrap anchor may still be fetching it).
+    /// - A key still in its **initial-DKG state** (no reconfiguration has
+    ///   run yet — the genesis network key, or one created this epoch) is
+    ///   adopted from its local DKG output directly: the DKG output is a
+    ///   one-time deterministic computation (byte-identical across the
+    ///   committee), and no prior cert can pin a key produced after it.
+    ///   THIS epoch's handoff then certifies it for peers joining at E+1.
+    ///   If a cert does happen to pin the key's DKG digest, the match is
+    ///   still required as a consistency check.
     pub fn adopt_cert_verified_keys(
         &mut self,
         overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
     ) {
-        let Some(prior_epoch) = self.epoch_id.checked_sub(1) else {
-            // Genesis epoch has no prior handoff cert (initial-DKG path).
-            return;
-        };
-        let cert = match self
-            .epoch_store
-            .get_certified_handoff_attestation(prior_epoch)
-        {
-            Ok(Some(cert)) => cert,
-            // Anchor not available yet — the bootstrap fetch may still be
-            // in flight; nothing to adopt until it lands.
-            Ok(None) => return,
-            Err(e) => {
-                warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
-                return;
+        let cert = self.epoch_id.checked_sub(1).and_then(|prior_epoch| {
+            match self
+                .epoch_store
+                .get_certified_handoff_attestation(prior_epoch)
+            {
+                Ok(cert) => cert,
+                Err(e) => {
+                    warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
+                    None
+                }
             }
-        };
+        });
         let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
-        for (item, digest) in &cert.attestation.items {
-            match item {
-                HandoffItemKey::NetworkDkgOutput { key_id } => {
-                    dkg_digests.insert(*key_id, *digest);
+        if let Some(cert) = &cert {
+            for (item, digest) in &cert.attestation.items {
+                match item {
+                    HandoffItemKey::NetworkDkgOutput { key_id } => {
+                        dkg_digests.insert(*key_id, *digest);
+                    }
+                    HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                        reconfiguration_digests.insert(*key_id, *digest);
+                    }
+                    HandoffItemKey::ValidatorMpcData { .. } => {}
                 }
-                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                    reconfiguration_digests.insert(*key_id, *digest);
-                }
-                HandoffItemKey::ValidatorMpcData { .. } => {}
             }
         }
         for (key_id, data) in overlay {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
             }
-            // The DKG output is one-time and stable; it must match the
-            // cert's pinned digest.
-            if dkg_digests.get(key_id) != Some(&mpc_data_blob_hash(&data.network_dkg_public_output))
-            {
-                continue;
-            }
-            // When a reconfiguration output is present it must match the
-            // cert's pinned current-epoch digest. (A key past DKG but
-            // before its first reconfiguration has none; only its DKG
-            // digest is checked in that pre-first-cert window.)
-            if !data.current_reconfiguration_public_output.is_empty()
-                && reconfiguration_digests.get(key_id)
+            let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
+            if data.current_reconfiguration_public_output.is_empty() {
+                // Initial-DKG state: adopt the deterministic local DKG
+                // output. Require the match only if a cert pins it.
+                if let Some(cert_dkg) = dkg_digests.get(key_id)
+                    && *cert_dkg != local_dkg_digest
+                {
+                    continue;
+                }
+            } else {
+                // Reconfigured key: both the stable DKG digest and the
+                // epoch-specific reconfiguration digest must match the
+                // prior cert. With no cert the maps are empty, so the
+                // match fails and the key is skipped until the anchor
+                // lands.
+                if dkg_digests.get(key_id) != Some(&local_dkg_digest) {
+                    continue;
+                }
+                if reconfiguration_digests.get(key_id)
                     != Some(&mpc_data_blob_hash(
                         &data.current_reconfiguration_public_output,
                     ))
-            {
-                continue;
+                {
+                    continue;
+                }
             }
             self.agreed_network_key_data.insert(*key_id, data.clone());
         }
