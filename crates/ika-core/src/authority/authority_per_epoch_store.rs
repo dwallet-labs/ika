@@ -1811,6 +1811,19 @@ impl AuthorityPerEpochStore {
         Ok(())
     }
 
+    /// Whether `authority`'s EndOfPublish vote has been sequenced and
+    /// recorded in this epoch's durable table. The handoff signature
+    /// sender uses this to confirm its own `EndOfPublishV2` actually
+    /// landed before it stops re-submitting: a successful
+    /// `submit_to_consensus` only means the tx was handed to the
+    /// background submitter, which can still fail to sequence at the
+    /// epoch boundary (exactly when `EndOfPublishV2` fires) or on crash.
+    /// Restart-safe — the table is reloaded into the in-memory
+    /// aggregator at epoch-store construction.
+    pub fn has_recorded_end_of_publish_vote(&self, authority: &AuthorityName) -> IkaResult<bool> {
+        Ok(self.tables()?.end_of_publish.get(authority)?.is_some())
+    }
+
     /// Record a current-committee validator's self-submitted
     /// announcement. The consensus block author was already verified
     /// to equal `announcement.validator` in

@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 //! Per-epoch task that emits this validator's signed
-//! `HandoffSignatureMessage` exactly once, when the local
-//! `EndOfPublish` signal asserts the current epoch.
+//! `HandoffSignatureMessage` (bundled into `EndOfPublishV2`) once the
+//! local `EndOfPublish` signal asserts the current epoch, re-submitting
+//! the idempotent bundle until it is confirmed sequenced — a successful
+//! `submit_to_consensus` only hands the tx to a background submitter
+//! that can still fail to sequence at the epoch boundary or on crash.
 //!
 //! Decoupled from `EndOfPublishSender` so the handoff cert is its
 //! own protocol step — the two used to share a task by accident of
@@ -25,7 +28,6 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
@@ -48,7 +50,6 @@ pub struct HandoffSignatureSender {
     /// digest when EndOfPublish fires.
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     builders: Vec<Arc<dyn HandoffItemsBuilder>>,
-    sent: AtomicBool,
 }
 
 impl HandoffSignatureSender {
@@ -72,7 +73,6 @@ impl HandoffSignatureSender {
             next_epoch_committee_receiver,
             network_keys_receiver,
             builders,
-            sent: AtomicBool::new(false),
         }
     }
 
@@ -89,8 +89,11 @@ impl HandoffSignatureSender {
             return;
         }
         loop {
+            // `send` self-gates on confirmation (re-submits the
+            // idempotent bundle until our EndOfPublishV2 is recorded),
+            // so the loop just drives it each tick once EndOfPublish has
+            // fired for this epoch.
             if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id)
-                && !self.sent.load(Ordering::Acquire)
                 && let Err(err) = self.send().await
             {
                 warn!(error=?err, "failed to send handoff signature; will retry");
@@ -183,22 +186,41 @@ impl HandoffSignatureSender {
             }
             // NOTE: the current-epoch *reconfiguration* output is
             // deliberately NOT hydrated here. Unlike the one-time DKG
-            // output, it is a per-epoch consensus-ordered outcome, and
-            // this `network_keys_receiver` snapshot is a non-consensus
-            // watch channel that can lag a round behind. Hydrating it
-            // would overwrite the consensus-voted reconfiguration digest
-            // — already mirrored into the per-epoch cache by
-            // `mpc_manager` (from `agreed_network_key_data`) and written
-            // by the local reconfiguration MPC in `dwallet_mpc_service`,
-            // both deterministic — with a possibly-stale value, so two
-            // signers would hash different `NetworkReconfigurationOutput`
-            // digests and cross-reject as `AttestationMismatch`. We let
-            // the consensus-voted value in the cache stand.
+            // output, it is epoch-specific, and this
+            // `network_keys_receiver` snapshot is a non-consensus watch
+            // channel that can surface the *prior* epoch's output (via
+            // the perpetual mirror) a round behind. The per-epoch
+            // reconfiguration digest is written solely by this
+            // validator's local reconfiguration MPC in
+            // `dwallet_mpc_service` (deterministic, current-epoch), and
+            // both the handoff items builder and
+            // `snapshot_ready_for_signing` read it from the current-epoch
+            // table (`get_network_reconfiguration_output_digests_current_epoch`).
+            // Hydrating from the lagging snapshot would overwrite that
+            // current value with a possibly-stale one, so two signers
+            // would hash different `NetworkReconfigurationOutput` digests
+            // and cross-reject as `AttestationMismatch`.
         }
     }
 
     async fn send(&self) -> DwalletMPCResult<()> {
         let epoch_store = self.epoch_store()?;
+        // Confirmation-based gate (mirrors `MpcDataAnnouncementSender`):
+        // stop once our `EndOfPublishV2` has actually sequenced — i.e.
+        // our EndOfPublish vote is recorded in this epoch's durable
+        // table. A successful `submit_to_consensus` only hands the tx to
+        // a background submitter that can still fail to sequence at the
+        // epoch boundary (exactly when `EndOfPublishV2` fires) or on
+        // crash; the old one-shot `sent` flag then silently dropped this
+        // validator's EOP vote + handoff signature for the whole epoch.
+        // The `EndOfPublishV2` consensus key is `(authority)`, so
+        // re-submitting the idempotent bundle dedups instead of stacking.
+        if epoch_store
+            .has_recorded_end_of_publish_vote(&epoch_store.name)
+            .map_err(DwalletMPCError::IkaError)?
+        {
+            return Ok(());
+        }
         let next_committee = self.next_epoch_committee_receiver.borrow().clone();
         if next_committee.epoch() != self.epoch_id + 1 {
             // Committee sync task hasn't caught up with the next
@@ -258,8 +280,10 @@ impl HandoffSignatureSender {
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
-        self.sent.store(true, Ordering::Release);
-        info!(epoch = self.epoch_id, "submitted local handoff signature");
+        info!(
+            epoch = self.epoch_id,
+            "submitted local handoff signature (will re-submit until confirmed)"
+        );
         Ok(())
     }
 }
