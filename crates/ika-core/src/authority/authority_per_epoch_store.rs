@@ -841,8 +841,9 @@ pub struct AuthorityPerEpochStore {
     /// signatures. Rebuilt from `handoff_signatures` + the installed
     /// expected attestation on first use after install; recreated
     /// when the installed attestation changes. Yields a
-    /// `CertifiedHandoffAttestation` once stake crosses quorum;
-    /// further inserts are no-ops (one-shot semantics).
+    /// `CertifiedHandoffAttestation` once stake crosses quorum and
+    /// keeps enriching it with each later signer (slack for departed
+    /// signers); a replayed signature is a no-op.
     handoff_aggregator: parking_lot::Mutex<Option<HandoffAggregator>>,
 
     /// Perpetual storage handle used to persist a fresh
@@ -2340,8 +2341,9 @@ impl AuthorityPerEpochStore {
     ///
     /// On `Accept` (after an attestation is installed), persists
     /// the per-signer signature into `handoff_signatures`, drives
-    /// the in-memory aggregator, and — if quorum was just crossed —
-    /// writes the freshly-minted cert to perpetual storage.
+    /// the in-memory aggregator, and — once at quorum — writes the
+    /// cert to perpetual storage, re-persisting the enriched cert as
+    /// each later signer adds slack.
     ///
     /// Returns whether the bundled `EndOfPublishV2` EndOfPublish vote
     /// should be counted: `true` when the signature is accepted,

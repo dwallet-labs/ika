@@ -1721,6 +1721,7 @@ impl IkaNode {
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
                 };
+                use ika_core::sui_connector::pubkey_provider_updater::fetch_previous_committee_consensus_pubkeys;
                 use ika_core::validator_metadata::{
                     StaticConsensusPubkeyProvider, next_committee_pubkey_set,
                     verify_joiner_bootstrap_cert,
@@ -1754,45 +1755,23 @@ impl IkaNode {
                     // Don't already hold the anchor — fetch + verify it.
                     Some(prior_committee) if !already_have_cert => {
                         let is_joiner = !prior_committee.authority_exists(&self_name);
-                        // Consensus pubkeys are fixed at registration,
-                        // so the current epoch's active-validator set
-                        // supplies the (still-registered) prior-committee
-                        // signers' keys.
-                        let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
-                            cur_epoch_store
-                                .epoch_start_state()
-                                .get_ika_validators()
-                                .into_iter()
-                                .map(|v| (v.authority_name(), v.get_consensus_pubkey())),
-                        ));
+                        // Consensus pubkeys are fixed at registration, so
+                        // the current epoch's active-validator set supplies
+                        // the continuing prior-committee signers' keys.
+                        // Members that have since departed the active set
+                        // are resolved from chain inside the task below.
+                        let current_consensus_pubkeys: Vec<_> = cur_epoch_store
+                            .epoch_start_state()
+                            .get_ika_validators()
+                            .into_iter()
+                            .map(|v| (v.authority_name(), v.get_consensus_pubkey()))
+                            .collect();
                         let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
                         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
                             .epoch_start_state()
                             .get_authority_names_to_peer_ids()
                             .into_values()
                             .collect();
-                        let verify: CertVerifier = Arc::new(move |cert| {
-                            verify_joiner_bootstrap_cert(
-                                cert,
-                                prior_epoch,
-                                &prior_committee,
-                                provider.as_ref(),
-                                expected_next.iter().copied(),
-                            )
-                        });
-                        let source = Arc::new(P2pHandoffCertSource::new(
-                            self.p2p_network.clone(),
-                            peer_ids.clone(),
-                        ));
-                        let verifier = JoinerBootstrapVerifier::new(
-                            prior_epoch,
-                            source,
-                            verify,
-                            BootstrapRetryConfig {
-                                retry_interval: Duration::from_secs(10),
-                                max_attempts: 30,
-                            },
-                        );
                         info!(
                             current_epoch,
                             prior_epoch,
@@ -1801,10 +1780,58 @@ impl IkaNode {
                              (not held locally; fetching + verifying from peers)"
                         );
                         let fetch_network = self.p2p_network.clone();
+                        let source_network = self.p2p_network.clone();
                         let fetch_store = cur_epoch_store.clone();
                         let cert_perpetual = perpetual.clone();
                         let fail_closed_shutdown = self.shutdown_channel_tx.clone();
+                        let bootstrap_sui_client = sui_client.clone();
                         Some(tokio::spawn(async move {
+                            // Resolve the prior committee's consensus
+                            // pubkeys for cert verification. Continuing
+                            // members come from the current active set
+                            // (already in hand); members that departed the
+                            // active set since signing are chain-read by
+                            // object id (their StakingPool persists), so a
+                            // valid cert isn't wrongly Rejected under churn.
+                            // Best-effort: on RPC failure proceed with the
+                            // current set and let the retry loop re-attempt.
+                            let mut consensus_pubkeys = current_consensus_pubkeys;
+                            match fetch_previous_committee_consensus_pubkeys(&bootstrap_sui_client)
+                                .await
+                            {
+                                Ok(prior) => consensus_pubkeys.extend(prior),
+                                Err(e) => warn!(
+                                    error = ?e,
+                                    prior_epoch,
+                                    "failed to chain-read prior-committee consensus pubkeys; \
+                                     proceeding with the current active set only"
+                                ),
+                            }
+                            let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
+                                consensus_pubkeys,
+                            ));
+                            let verify: CertVerifier = Arc::new(move |cert| {
+                                verify_joiner_bootstrap_cert(
+                                    cert,
+                                    prior_epoch,
+                                    &prior_committee,
+                                    provider.as_ref(),
+                                    expected_next.iter().copied(),
+                                )
+                            });
+                            let source = Arc::new(P2pHandoffCertSource::new(
+                                source_network,
+                                peer_ids.clone(),
+                            ));
+                            let verifier = JoinerBootstrapVerifier::new(
+                                prior_epoch,
+                                source,
+                                verify,
+                                BootstrapRetryConfig {
+                                    retry_interval: Duration::from_secs(10),
+                                    max_attempts: 30,
+                                },
+                            );
                             match verifier.run().await {
                                 BootstrapOutcome::Verified(cert) => {
                                     // Persist the verified anchor so

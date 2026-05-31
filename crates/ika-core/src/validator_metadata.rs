@@ -1673,18 +1673,23 @@ mod tests {
         }
         assert!(agg.certified().is_none());
 
-        // Third insert crosses quorum → cert returned, and from then
-        // on it stays the same.
+        // Third insert crosses quorum → cert returned with 3 sigs.
         let msg = sign_handoff_attestation(att.clone(), names[2], &consensus_kps[2]);
         let cert = agg.insert_verified(names[2], msg.signature).cloned();
         let cert = cert.expect("crossed quorum");
         assert_eq!(cert.attestation, att);
         assert_eq!(cert.signatures.len(), 3);
 
-        // Fourth insert post-cert is a no-op.
+        // Fourth insert (a new signer) past quorum enriches the cert
+        // with an extra signature of slack.
         let msg = sign_handoff_attestation(att.clone(), names[3], &consensus_kps[3]);
-        assert!(agg.insert_verified(names[3], msg.signature).is_none());
-        assert_eq!(agg.certified().unwrap().signatures.len(), 3);
+        let enriched_len = agg
+            .insert_verified(names[3], msg.signature)
+            .expect("a new post-quorum signer enriches the cert")
+            .signatures
+            .len();
+        assert_eq!(enriched_len, 4);
+        assert_eq!(agg.certified().unwrap().signatures.len(), 4);
     }
 
     #[test]
@@ -1760,8 +1765,18 @@ mod tests {
             }
             other => panic!("expected Certified, got {other:?}"),
         }
-        // Fourth, post-cert: aggregator is one-shot, so just Recorded.
+        // Fourth, post-quorum: a new signer enriches the cert with an
+        // extra signature (slack so a later-departed signer can be
+        // dropped at verification while a quorum still validates).
         let msg = sign_handoff_attestation(att.clone(), names[3], &consensus_kps[3]);
+        match process_handoff_signature(&msg, &att, &provider, &mut agg) {
+            HandoffSignatureRecordOutcome::Certified(cert) => {
+                assert_eq!(cert.signatures.len(), 4);
+            }
+            other => panic!("expected an enriched Certified, got {other:?}"),
+        }
+        // A replay of an already-counted signer adds no stake and does
+        // not re-emit the cert.
         assert_eq!(
             process_handoff_signature(&msg, &att, &provider, &mut agg),
             HandoffSignatureRecordOutcome::Recorded
@@ -2430,6 +2445,91 @@ mod tests {
         .expect_err("epoch mismatch must be rejected");
         let msg = format!("{:?}", err);
         assert!(msg.contains("epoch mismatch"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn verify_certified_handoff_skips_unresolvable_signer_then_checks_quorum() {
+        // size=4 → quorum_threshold q=3, equal stake 1 each. A real cert
+        // carries ~quorum signatures (the aggregator one-shots on the
+        // quorum cross), so here the cert holds exactly names[0..3].
+        let (committee, names, consensus_kps, full_provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(
+            7,
+            hash_next_committee_pubkey_set(names.iter().copied()),
+            vec![],
+        )
+        .expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        for i in 0..3 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            agg.insert_verified(names[i], msg.signature);
+        }
+        let cert = agg.certified().expect("certified").clone();
+
+        // Every signer resolvable → verifies.
+        verify_certified_handoff_attestation(&cert, &committee, &full_provider)
+            .expect("all signer pubkeys resolvable");
+
+        // One signer has departed since signing: the provider can no
+        // longer resolve names[0]. The fix skips that signature instead
+        // of failing the whole cert at the first unresolvable signer —
+        // but because the cert carried exactly quorum, the remaining
+        // verifiable stake (2) is below quorum (3), so it degrades to a
+        // clean below-quorum rejection (not a hard "no consensus pubkey"
+        // error). Tolerating an actual departure needs the signers'
+        // pubkeys resolved from a trusted source (chain) — see follow-up.
+        let provider_missing_a_signer = StaticConsensusPubkeyProvider::from_iter(
+            (1..4).map(|i| (names[i], consensus_kps[i].public().clone())),
+        );
+        let err =
+            verify_certified_handoff_attestation(&cert, &committee, &provider_missing_a_signer)
+                .expect_err("an unresolvable signer drops the exactly-quorum cert below quorum");
+        assert!(
+            format!("{err:?}").contains("below quorum"),
+            "expected a graceful below-quorum rejection, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn enriched_cert_tolerates_a_departed_signer_via_slack() {
+        // size=4 → quorum q=3. The aggregator keeps collecting past
+        // quorum, so feeding all four signatures yields a cert with one
+        // signature of slack beyond quorum.
+        let (committee, names, consensus_kps, full_provider) = build_quorum_test_fixture(4);
+        let att = build_handoff_attestation(
+            7,
+            hash_next_committee_pubkey_set(names.iter().copied()),
+            vec![],
+        )
+        .expect("build");
+        let mut agg = HandoffAggregator::new(committee.clone(), att.clone());
+        let mut cert = None;
+        for i in 0..4 {
+            let msg = sign_handoff_attestation(att.clone(), names[i], &consensus_kps[i]);
+            if let Some(c) = agg.insert_verified(names[i], msg.signature) {
+                cert = Some(c.clone());
+            }
+        }
+        let cert = cert.expect("certified");
+        assert_eq!(
+            cert.signatures.len(),
+            4,
+            "cert collected all four signatures"
+        );
+
+        // All resolvable → verifies.
+        verify_certified_handoff_attestation(&cert, &committee, &full_provider)
+            .expect("all signer pubkeys resolvable");
+
+        // One signer has departed (unresolvable): the extra signature
+        // absorbs it — the remaining 3 verifiable signatures still meet
+        // quorum (3), so the cert verifies. This is the slack that a
+        // bare-quorum cert lacks.
+        let provider_missing_one = StaticConsensusPubkeyProvider::from_iter(
+            (1..4).map(|i| (names[i], consensus_kps[i].public().clone())),
+        );
+        verify_certified_handoff_attestation(&cert, &committee, &provider_missing_one)
+            .expect("the extra signature provides slack to drop one departed signer");
     }
 
     #[test]

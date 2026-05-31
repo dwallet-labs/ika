@@ -22,6 +22,7 @@ use ika_types::handoff::{
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
+use tracing::debug;
 
 /// Builds a `HandoffAttestation` from a (possibly unsorted) list of
 /// items. Items are sorted strictly ascending by `HandoffItemKey`
@@ -197,8 +198,11 @@ pub fn verify_handoff_signature(
 
 /// Accumulates per-signer handoff signatures for a fixed attestation
 /// and emits a `CertifiedHandoffAttestation` once stake reaches the
-/// committee's quorum threshold. Aggregation is one-shot — once
-/// certified, subsequent inserts are ignored.
+/// committee's quorum threshold. It keeps collecting past quorum (up
+/// to the full committee), enriching the cert with each new signer so
+/// the cert carries slack — a signer that departs before a future
+/// joiner verifies the cert can then be dropped while a quorum of the
+/// rest still validates the handoff.
 ///
 /// Ed25519 doesn't aggregate, so the cert is a list of
 /// `(signer, signature)` pairs rather than a single aggregate sig.
@@ -231,18 +235,26 @@ impl HandoffAggregator {
 
     /// Inserts a signature. Caller is responsible for having already
     /// run `verify_handoff_signature` against this validator's
-    /// expected attestation — `insert_verified` trusts that. Returns
-    /// `Some(cert)` the *first* time the running stake crosses the
-    /// committee's quorum threshold; subsequent calls return `None`
-    /// (and don't mutate `self.certified`).
+    /// expected attestation — `insert_verified` trusts that.
+    ///
+    /// Returns `Some(cert)` whenever this insert produces *or enriches*
+    /// the certified attestation: the first time the running stake
+    /// crosses quorum, and on every later insert of a new signer (which
+    /// appends that signature to the cert). Returns `None` when the
+    /// insert doesn't advance the cert — a non-member, a
+    /// replayed/replacement signature for a signer already counted, or
+    /// stake still below quorum.
+    ///
+    /// Collecting past quorum (up to the full committee) is deliberate:
+    /// the extra signatures give the cert slack, so a signer that
+    /// departs before a future joiner verifies the cert can be dropped
+    /// at verification while a quorum of the remaining signers still
+    /// validates the handoff.
     pub fn insert_verified(
         &mut self,
         signer: AuthorityName,
         signature: Ed25519Signature,
     ) -> Option<&CertifiedHandoffAttestation> {
-        if self.certified.is_some() {
-            return None;
-        }
         let weight = self.committee.weight(&signer);
         if weight == 0 {
             // Not a member of the committee that's signing this
@@ -257,29 +269,32 @@ impl HandoffAggregator {
             return None;
         }
         self.accumulated_stake = self.accumulated_stake.saturating_add(weight);
-        if self.accumulated_stake >= self.committee.quorum_threshold() {
-            let signatures = self
-                .signatures
-                .iter()
-                .map(|(name, sig)| (*name, sig.clone()))
-                .collect();
-            self.certified = Some(CertifiedHandoffAttestation {
-                attestation: self.attestation.clone(),
-                signatures,
-            });
-            self.certified.as_ref()
-        } else {
-            None
+        if self.accumulated_stake < self.committee.quorum_threshold() {
+            return None;
         }
+        // At or past quorum: (re)build the cert with every signature
+        // collected so far, so each new signer enriches the cert (and
+        // the caller re-persists the richer cert).
+        let signatures = self
+            .signatures
+            .iter()
+            .map(|(name, sig)| (*name, sig.clone()))
+            .collect();
+        self.certified = Some(CertifiedHandoffAttestation {
+            attestation: self.attestation.clone(),
+            signatures,
+        });
+        self.certified.as_ref()
     }
 }
 
 /// Outcome of pushing one `HandoffSignatureMessage` through the
 /// per-epoch record path. `Recorded` means the signature verified
-/// and was added to the aggregator without crossing quorum; the
-/// caller should persist it. `Certified` is `Recorded` plus the
-/// freshly-minted cert (also persist the signature *and* the cert).
-/// Anything else is a non-fatal rejection — drop the message.
+/// and was added to the aggregator but didn't advance the cert (still
+/// below quorum, or a replay); the caller should persist it.
+/// `Certified` is `Recorded` plus the cert produced or enriched by
+/// this insert (also persist the signature *and* (re-)persist the
+/// cert). Anything else is a non-fatal rejection — drop the message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandoffSignatureRecordOutcome {
     Recorded,
@@ -289,11 +304,11 @@ pub enum HandoffSignatureRecordOutcome {
 
 /// Pure helper that runs a single incoming `HandoffSignatureMessage`
 /// through `verify_handoff_signature` and, on `Accept`, inserts it
-/// into `aggregator`. Returns `Recorded` for under-quorum inserts
-/// and `Certified(cert)` the first time the aggregator crosses
-/// quorum. Subsequent calls after certification yield `Recorded`
-/// without mutating `aggregator.certified` (the aggregator's
-/// `insert_verified` enforces one-shot semantics).
+/// into `aggregator`. Returns `Recorded` for under-quorum inserts and
+/// `Certified(cert)` once the aggregator is at quorum — both the
+/// quorum-crossing insert and every later new-signer insert, which
+/// enriches the cert with an extra signature for the caller to
+/// re-persist. A replayed/replacement signature yields `Recorded`.
 pub fn process_handoff_signature(
     msg: &HandoffSignatureMessage,
     expected: &HandoffAttestation,
@@ -393,9 +408,26 @@ pub fn verify_certified_handoff_attestation(
                 "signer {signer:?} is not a member of the verifying committee"
             )));
         }
-        let pubkey = provider.consensus_pubkey(signer).ok_or_else(|| {
-            IkaError::Unknown(format!("no consensus pubkey for handoff signer {signer:?}"))
-        })?;
+        let Some(pubkey) = provider.consensus_pubkey(signer) else {
+            // Genuine prior-committee member (weight > 0, above) whose
+            // consensus pubkey is no longer resolvable: it has fully
+            // departed since signing, so its registration left the
+            // current active-validator set — the only pubkey source (a
+            // local epoch-start config is single-valued, and continuing
+            // peers have the same gap). Skip its signature instead of
+            // failing the whole cert: a quorum of the still-resolvable
+            // signers can still validate the handoff. Under extreme
+            // churn (a quorum departs in a single epoch) the accumulated
+            // stake falls short and the cert is rejected below —
+            // correctly, since too few signers are verifiable to anchor
+            // cross-epoch trust.
+            debug!(
+                ?signer,
+                "prior-committee handoff signer pubkey unresolvable (departed since signing); \
+                 skipping its signature"
+            );
+            continue;
+        };
         pubkey
             .verify(&bytes, signature)
             .map_err(|e| IkaError::InvalidSignature {

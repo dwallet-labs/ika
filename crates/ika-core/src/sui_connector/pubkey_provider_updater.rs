@@ -68,6 +68,49 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
         .unwrap_or_default()
 }
 
+/// Fetches the **previous** committee's `AuthorityName -> Ed25519
+/// consensus pubkey` pairs from chain.
+///
+/// Reads the prior-committee member ids from
+/// `validator_set.previous_committee` and resolves each member's
+/// `StakingPool.validator_info` by object id. Resolving by object id is
+/// what lets this recover signers that have *departed* the active set
+/// since they signed the handoff cert: their StakingPool object still
+/// exists on chain (only the active-committee membership dropped them),
+/// so a bootstrapping validator can verify their handoff signatures even
+/// though the current active-validator set no longer carries their keys.
+pub async fn fetch_previous_committee_consensus_pubkeys<C: SuiClientInner>(
+    sui_client: &SuiClient<C>,
+) -> anyhow::Result<Vec<(AuthorityName, Ed25519PublicKey)>> {
+    let (_, system_inner) = sui_client
+        .get_system_inner()
+        .await
+        .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
+    let SystemInner::V1(system_inner) = system_inner;
+    let validator_ids: Vec<ObjectID> = system_inner
+        .validator_set
+        .previous_committee
+        .members
+        .iter()
+        .map(|m| m.validator_id)
+        .collect();
+    if validator_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
+    staking_pools
+        .iter()
+        .map(|pool| {
+            let verified = pool
+                .validator_info
+                .verify()
+                .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+            let name: AuthorityName = (&verified.protocol_pubkey).into();
+            Ok((name, verified.consensus_pubkey.clone()))
+        })
+        .collect()
+}
+
 fn install_consensus_provider(
     epoch_store: &AuthorityPerEpochStore,
     entries: Vec<(AuthorityName, Ed25519PublicKey)>,
