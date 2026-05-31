@@ -1737,11 +1737,23 @@ impl IkaNode {
                     .get_committee(&prior_epoch)
                     .ok()
                     .flatten();
+                let perpetual = self.state.perpetual_tables();
+                // Every validator anchors the new epoch on the prior
+                // epoch's handoff cert. A continuing validator that
+                // crossed quorum already persisted it during E-1; anyone
+                // missing it (a joiner, or a continuing validator that
+                // didn't observe quorum) fetches + verifies + persists it
+                // here, so the cross-epoch trust anchor is locally
+                // available for network-key instantiation.
+                let already_have_cert = perpetual
+                    .get_certified_handoff_attestation(prior_epoch)
+                    .ok()
+                    .flatten()
+                    .is_some();
                 match prior_committee {
-                    // Only a true joiner (absent from the prior
-                    // committee) needs to anchor; continuing validators
-                    // already trust their chain.
-                    Some(prior_committee) if !prior_committee.authority_exists(&self_name) => {
+                    // Don't already hold the anchor — fetch + verify it.
+                    Some(prior_committee) if !already_have_cert => {
+                        let is_joiner = !prior_committee.authority_exists(&self_name);
                         // Consensus pubkeys are fixed at registration,
                         // so the current epoch's active-validator set
                         // supplies the (still-registered) prior-committee
@@ -1784,14 +1796,29 @@ impl IkaNode {
                         info!(
                             current_epoch,
                             prior_epoch,
-                            "this node joined at the epoch boundary; verifying its \
-                             bootstrap handoff cert"
+                            is_joiner,
+                            "anchoring the new epoch on the prior-epoch handoff cert \
+                             (not held locally; fetching + verifying from peers)"
                         );
                         let fetch_network = self.p2p_network.clone();
                         let fetch_store = cur_epoch_store.clone();
+                        let cert_perpetual = perpetual.clone();
                         Some(tokio::spawn(async move {
                             match verifier.run().await {
                                 BootstrapOutcome::Verified(cert) => {
+                                    // Persist the verified anchor so
+                                    // network-key instantiation can read
+                                    // it locally and this node can serve
+                                    // it to peers still fetching.
+                                    if let Err(e) = cert_perpetual
+                                        .insert_certified_handoff_attestation(prior_epoch, &cert)
+                                    {
+                                        warn!(
+                                            error = ?e,
+                                            prior_epoch,
+                                            "failed to persist bootstrap handoff cert"
+                                        );
+                                    }
                                     install_joiner_network_key_outputs(
                                         &cert,
                                         &fetch_network,
@@ -1801,15 +1828,16 @@ impl IkaNode {
                                     .await;
                                 }
                                 // Rejected / Unavailable are logged inside
-                                // `run()`. The joiner still receives the
-                                // outputs via the existing
-                                // ConsensusNetworkKeyData path until that
-                                // path is removed.
+                                // `run()`. Outputs still arrive via the
+                                // existing ConsensusNetworkKeyData path
+                                // until that path is removed.
                                 _ => {}
                             }
                         }))
                     }
-                    Some(_) => None, // continuing validator — no bootstrap needed
+                    // Already hold the prior-epoch cert in perpetual
+                    // (crossed quorum during E-1) — anchor satisfied.
+                    Some(_) => None,
                     None => {
                         warn_bootstrap_inputs_unavailable(
                             prior_epoch,
