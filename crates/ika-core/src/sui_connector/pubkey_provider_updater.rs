@@ -236,6 +236,15 @@ where
             .await
             .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
         let SystemInner::V1(system_inner) = system_inner;
+        // This updater serves a single epoch (`self.epoch_id`). If the
+        // chain has already advanced past it — the epoch store hasn't
+        // dropped yet, so the `Weak` upgrade above still succeeded — the
+        // committees read here belong to a later epoch; installing them
+        // onto this epoch's store would clobber it with the wrong keys.
+        // Skip; the next epoch's own updater installs its committees.
+        if system_inner.epoch != self.epoch_id {
+            return Ok(());
+        }
         let validator_ids = (self.select_members)(&system_inner);
         if validator_ids.is_empty() {
             // Nothing to install yet (e.g. next-epoch committee not
