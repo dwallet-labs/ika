@@ -534,9 +534,22 @@ async fn test_user_sessions_across_multiple_epochs() {
 async fn test_real_network_churn_over_10_epochs() {
     telemetry_subscribers::init_for_testing();
 
+    // 120s epochs — the same value the single-transition joiner
+    // integration test uses. The freeze window is a quarter-epoch: the
+    // off-chain mpc_data blobs must propagate over consensus and be
+    // attested by a ready-signal quorum before the freeze (at 3/4 epoch)
+    // snapshots the input set, or the snapshot is incomplete and the
+    // reconfiguration MPC can't form a session for the next committee.
+    // Propagation is consensus-bound, so under load (a busy dev box, or
+    // sustained churn with a fresh joiner plus a departing original every
+    // cycle contending on reconfiguration MPC) a short epoch's window
+    // races propagation and the transition stalls non-deterministically.
+    // A 120s epoch gives a 90s window that comfortably absorbs that.
+    // Each transition is MPC-bound (minutes of wall time) regardless of
+    // epoch length, so the longer epoch costs little extra wall time.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(15_000)
+        .with_epoch_duration_ms(120_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .build()
         .await

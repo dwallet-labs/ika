@@ -93,6 +93,54 @@ impl JoinerHandle {
     }
 }
 
+/// Retry a transaction-submitting expression on transient Sui
+/// object-version contention.
+///
+/// During the churn test the owned objects the joiner-add path consumes
+/// advance version continuously under concurrent submission — the IKA
+/// supply coin (`stake_ika` splits from it, and the per-cycle user DKG
+/// also pays from it) and the freshly-resolved validator cap. A tx built
+/// against a just-superseded version is rejected by Sui as
+/// "non-retriable" for that exact version even though rebuilding against
+/// the current version succeeds, so each retry re-evaluates `$submit`,
+/// which re-resolves its object refs via `get_object_ref`. Same
+/// retriable conditions and backoff as the inline retry in
+/// `register_user_encryption_key` / `request_user_dwallet_dkg`.
+macro_rules! retry_on_object_contention {
+    ($label:expr, $submit:expr) => {{
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut out = None;
+        for attempt in 0..10 {
+            match $submit {
+                Ok(value) => {
+                    out = Some(value);
+                    break;
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let is_retriable_contention = msg.contains("unavailable for consumption")
+                        || msg.contains("Transaction needs to be rebuilt")
+                        || msg.contains("already locked by a different transaction");
+                    tracing::warn!(
+                        attempt,
+                        is_retriable_contention,
+                        "{} tx failed: {e}",
+                        $label
+                    );
+                    if !is_retriable_contention {
+                        return Err(anyhow::anyhow!("{} tx failed: {e}", $label));
+                    }
+                    last_err = Some(anyhow::anyhow!("{} tx failed: {e}", $label));
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+        out.ok_or_else(|| {
+            last_err.unwrap_or_else(|| anyhow::anyhow!("{}: out of retries", $label))
+        })?
+    }};
+}
+
 impl IkaTestCluster {
     pub fn builder() -> IkaTestClusterBuilder {
         IkaTestClusterBuilder::new()
@@ -165,42 +213,51 @@ impl IkaTestCluster {
             .await;
 
         let metadata = joiner_init.to_validator_info();
-        let (validator_id, validator_cap_id) = request_add_validator_candidate(
-            joiner_address,
-            self.test_cluster.wallet_mut(),
-            &metadata,
-            self.packages.ika_system_package_id,
-            self.packages.ika_common_package_id,
-            self.system.ika_system_object_id,
-            self.system.init_system_shared_version,
-        )
-        .await?;
+        let (validator_id, validator_cap_id) = retry_on_object_contention!(
+            "request_add_validator_candidate",
+            request_add_validator_candidate(
+                joiner_address,
+                self.test_cluster.wallet_mut(),
+                &metadata,
+                self.packages.ika_system_package_id,
+                self.packages.ika_common_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+            )
+            .await
+        );
 
         // Publisher stakes `MIN_VALIDATOR_JOINING_STAKE_INKU` into the
         // joiner's pool so `request_add_validator` doesn't abort with
         // insufficient-stake.
-        stake_ika(
-            self.publisher_address,
-            self.test_cluster.wallet_mut(),
-            self.packages.ika_system_package_id,
-            self.system.ika_system_object_id,
-            self.system.init_system_shared_version,
-            self.packages.ika_supply_id,
-            vec![validator_id],
-        )
-        .await?;
+        retry_on_object_contention!(
+            "stake_ika",
+            stake_ika(
+                self.publisher_address,
+                self.test_cluster.wallet_mut(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                self.packages.ika_supply_id,
+                vec![validator_id],
+            )
+            .await
+        );
 
         let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
-        request_add_validator(
-            joiner_address,
-            self.test_cluster.wallet_mut(),
-            client,
-            self.packages.ika_system_package_id,
-            self.system.ika_system_object_id,
-            self.system.init_system_shared_version,
-            validator_cap_id,
-        )
-        .await?;
+        retry_on_object_contention!(
+            "request_add_validator",
+            request_add_validator(
+                joiner_address,
+                self.test_cluster.wallet_mut(),
+                client.clone(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                validator_cap_id,
+            )
+            .await
+        );
 
         let validator_config = ValidatorConfigBuilder::new().build(
             &joiner_init,
@@ -241,16 +298,20 @@ impl IkaTestCluster {
                 .public(),
         );
         let client = SuiClientBuilder::default().build(&self.sui_rpc_url).await?;
-        request_remove_validator(
-            validator_address,
-            self.test_cluster.wallet_mut(),
-            client,
-            self.packages.ika_system_package_id,
-            self.system.ika_system_object_id,
-            self.system.init_system_shared_version,
-            validator_cap_id,
-        )
-        .await
+        retry_on_object_contention!(
+            "request_remove_validator",
+            request_remove_validator(
+                validator_address,
+                self.test_cluster.wallet_mut(),
+                client.clone(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                validator_cap_id,
+            )
+            .await
+        );
+        Ok(())
     }
 
     /// Poll the chain until at least one `DWalletNetworkEncryptionKey`
