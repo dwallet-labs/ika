@@ -2341,17 +2341,22 @@ impl AuthorityPerEpochStore {
     /// On `Accept` (after an attestation is installed), persists
     /// the per-signer signature into `handoff_signatures`, drives
     /// the in-memory aggregator, and — if quorum was just crossed —
-    /// writes the freshly-minted cert to perpetual storage and
-    /// returns it to the caller for further fan-out.
+    /// writes the freshly-minted cert to perpetual storage.
+    ///
+    /// Returns whether the bundled `EndOfPublishV2` EndOfPublish vote
+    /// should be counted: `true` when the signature is accepted,
+    /// buffered (not yet verifiable), or certifies quorum; `false` only
+    /// when it *verifiably* fails (`AttestationMismatch` / bad sig), so a
+    /// content-mismatched bundle is rejected atomically.
     pub fn record_handoff_signature(
         &self,
         msg: &ika_types::handoff::HandoffSignatureMessage,
-    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
+    ) -> IkaResult<bool> {
         if !self
             .protocol_config()
             .off_chain_validator_metadata_enabled()
         {
-            return Ok(None);
+            return Ok(true);
         }
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
             // No expected attestation yet — this validator hasn't
@@ -2373,7 +2378,7 @@ impl AuthorityPerEpochStore {
                     signer = ?msg.signer,
                     "non-committee handoff signature — dropping before buffer insert"
                 );
-                return Ok(None);
+                return Ok(true);
             }
             let mut pending = self.pending_handoff_signatures.lock();
             // Per-signer dedup: a peer re-broadcasting the same V2
@@ -2388,14 +2393,14 @@ impl AuthorityPerEpochStore {
                 pending_len = pending.len(),
                 "buffering peer handoff signature until expected attestation installs"
             );
-            return Ok(None);
+            return Ok(true);
         };
         let Some(provider) = self.consensus_pubkey_provider.load_full() else {
             debug!(
                 signer = ?msg.signer,
                 "no consensus pubkey provider installed — dropping handoff signature"
             );
-            return Ok(None);
+            return Ok(true);
         };
         let mut guard = self.handoff_aggregator.lock();
         let Some(aggregator) = guard.as_mut() else {
@@ -2403,7 +2408,7 @@ impl AuthorityPerEpochStore {
             // when `expected_handoff_attestation` is set, but bail
             // safely rather than panic.
             warn!("expected handoff attestation set but aggregator missing — dropping");
-            return Ok(None);
+            return Ok(true);
         };
         let outcome = process_handoff_signature(
             msg,
@@ -2416,7 +2421,7 @@ impl AuthorityPerEpochStore {
                 self.tables()?
                     .handoff_signatures
                     .insert(&msg.signer, &msg.signature)?;
-                Ok(None)
+                Ok(true)
             }
             HandoffSignatureRecordOutcome::Certified(cert) => {
                 self.tables()?
@@ -2438,7 +2443,7 @@ impl AuthorityPerEpochStore {
                         "perpetual tables not installed; handoff cert not persisted"
                     );
                 }
-                Ok(Some(cert))
+                Ok(true)
             }
             HandoffSignatureRecordOutcome::Rejected(verdict) => {
                 if matches!(
@@ -2480,7 +2485,7 @@ impl AuthorityPerEpochStore {
                 } else {
                     warn!(?verdict, signer = ?msg.signer, "handoff signature rejected");
                 }
-                Ok(None)
+                Ok(false)
             }
         }
     }
@@ -3717,15 +3722,25 @@ impl AuthorityPerEpochStore {
                 ..
             }) => {
                 // V2 bundles the signed handoff attestation with the
-                // EndOfPublish vote. Process the bundled handoff
-                // through the V1 aggregator path first, then fall
-                // into the shared EOP epoch-advance accounting. The
-                // cert (if quorum just crossed) is intentionally
-                // dropped here — the perpetual-persist drain is
-                // driven by `record_handoff_signature`'s outcome
-                // elsewhere.
-                let _ = self.record_handoff_signature(handoff_signature)?;
-                self.process_end_of_publish_vote(authority)
+                // EndOfPublish vote. Process the bundled handoff first
+                // (it persists the cert internally on quorum), then —
+                // only if the signature didn't *verifiably* fail —
+                // fall into the shared EOP epoch-advance accounting.
+                // A content-mismatched / bad signature rejects the
+                // whole bundle: the EndOfPublish vote is NOT counted,
+                // so "observed together" becomes "processed together".
+                // A merely-buffered (not-yet-verifiable) signature
+                // returns `true` and the vote still counts.
+                if self.record_handoff_signature(handoff_signature)? {
+                    self.process_end_of_publish_vote(authority)
+                } else {
+                    warn!(
+                        ?authority,
+                        "EndOfPublishV2 bundled handoff signature failed verification — \
+                         rejecting the bundle; its EndOfPublish vote is not counted"
+                    );
+                    Ok(ConsensusCertificateResult::ConsensusMessage)
+                }
             }
         }
     }
