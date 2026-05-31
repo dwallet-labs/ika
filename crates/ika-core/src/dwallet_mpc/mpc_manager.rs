@@ -547,13 +547,13 @@ impl DWalletMPCManager {
     /// Adopt this validator's locally-observed network-key outputs into
     /// the instantiation set (`agreed_network_key_data`), gated by the
     /// prior epoch's handoff cert — the cross-epoch agreement on which
-    /// outputs the current epoch inherits, replacing the consensus vote.
+    /// outputs the current epoch inherits, replacing the now-removed consensus vote.
     ///
     /// - A **reconfigured** key (it carries a current-epoch
     ///   reconfiguration output) is adopted only when both its stable DKG
     ///   digest and its epoch-specific reconfiguration digest match the
     ///   prior cert. A stale/wrong local value (the lagging-snapshot
-    ///   hazard the vote filtered via byte-identical-quorum) fails the
+    ///   hazard the now-removed vote filtered via byte-identical-quorum) fails the
     ///   match and is skipped; so does any key when the cert isn't
     ///   available yet (the bootstrap anchor may still be fetching it).
     /// - A key still in its **initial-DKG state** (no reconfiguration has
@@ -1472,7 +1472,7 @@ impl DWalletMPCManager {
         false
     }
 
-    /// Instantiates agreed network keys from consensus-voted data.
+    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
     /// For each key in `agreed_network_key_data` either (a) not yet
     /// loaded locally, or (b) loaded but with a stale shape compared
     /// to the latest agreed bytes (typically the reconfig output
@@ -1572,7 +1572,7 @@ impl DWalletMPCManager {
                         warn!(error=?e, key_id=?key_id, "could not decrypt share for network key from this output yet; will retry when its bytes change");
                         self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
-                        // Mirror the consensus-voted **DKG** output bytes
+                        // Mirror the adopted **DKG** output bytes
                         // into the local digest caches so validators that
                         // didn't reach `Finalize` locally still hold the
                         // stable, one-time DKG digest and can build the
@@ -1581,7 +1581,7 @@ impl DWalletMPCManager {
                         // The reconfiguration output is deliberately NOT
                         // mirrored here. It is epoch-specific, and
                         // `agreed_network_key_data` can still carry the
-                        // *prior* epoch's output (the vote lags the local
+                        // *prior* epoch's output (the adopted overlay can lag the local
                         // computation), so mirroring it would race the
                         // local current value and corrupt the handoff
                         // `NetworkReconfigurationOutput` digest — the
@@ -1603,7 +1603,7 @@ impl DWalletMPCManager {
                                 warn!(
                                     error = ?e,
                                     ?key_id,
-                                    "failed to cache DKG output digest from consensus-voted data"
+                                    "failed to cache DKG output digest from adopted data"
                                 );
                             }
                             // Snapshot the data we just instantiated so

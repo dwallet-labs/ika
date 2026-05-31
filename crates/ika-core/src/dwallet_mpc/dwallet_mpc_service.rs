@@ -1137,9 +1137,9 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .adopt_cert_verified_keys(&overlay_snapshot);
 
-            // 2. Instantiate any agreed keys we don't have yet (from
-            // consensus-voted data and/or the cert-verified local outputs
-            // adopted above).
+            // 2. Instantiate any keys we don't have yet, from the
+            // cert-verified local outputs adopted above (the consensus
+            // vote that previously fed this set has been removed).
             let new_key_ids = self
                 .dwallet_mpc_manager
                 .instantiate_agreed_keys_from_voted_data()
