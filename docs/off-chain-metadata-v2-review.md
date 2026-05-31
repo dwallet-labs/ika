@@ -783,6 +783,13 @@ via base64-serialized `last_installed` cache.
 
 ### Concerns
 
+_(empty — to be filled as user raises them)_
+
+### Author candidate concerns (raised by walkthrough, awaiting review)
+
+> These are MY candidate flags from walking the code, not verdicts.
+> Accept / reject / refine as you go through them.
+
 - **Per-epoch updater doesn't gate on the on-chain epoch field.**
   `select_active_committee` reads `system_inner.validator_set.active_committee.members`
   with no consistency check against `self.epoch_id`. If the OLD
@@ -939,6 +946,13 @@ Three intertwined overlay paths in
   `decide_assembly_inputs`.
 
 ### Concerns
+
+_(empty — to be filled as user raises them)_
+
+### Author candidate concerns (raised by walkthrough, awaiting review)
+
+> These are MY candidate flags from walking the code, not verdicts.
+> Accept / reject / refine as you go through them.
 
 - **`chain_next_committee_sender` publishes a `Committee` with
   empty class-groups maps via `Default::default()` — a footgun.**
@@ -1129,6 +1143,15 @@ Extracted into `crates/ika-core/src/handoff_cert.rs` (per
   current-committee peers and verifies it.
 
 ### Concerns
+
+_(empty — to be filled as user raises them)_
+
+### Author candidate concerns (raised by walkthrough, awaiting review)
+
+> These are MY candidate flags from walking the code, not verdicts.
+> Accept / reject / refine as you go through them. The `sent` atomic
+> one (first item) is the one I'd flag highest-priority for your
+> attention — looks like a real bug, not a debatable design call.
 
 - **`HandoffSignatureSender::sent: AtomicBool` is the SAME bug
   pattern as the pre-`ee385e39c4` mpc_data_announcement_sender.**
