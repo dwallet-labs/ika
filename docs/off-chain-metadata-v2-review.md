@@ -1105,9 +1105,244 @@ Three intertwined overlay paths in
 
 ## Feature 7 — Handoff attestation
 
-_(pending walkthrough)_
+Extracted into `crates/ika-core/src/handoff_cert.rs` (per
+`7ecfa690cb`). The subsystem is now:
+
+- **Build**: `build_handoff_attestation` — sort items by
+  `HandoffItemKey`, reject duplicates, return canonical struct.
+  Items contributed by `HandoffItemsBuilder` impls (one per
+  domain: validator-mpc_data, network-key DKG outputs,
+  reconfiguration outputs).
+- **Sign**: `sign_handoff_attestation` — Ed25519 sign with the
+  validator's consensus keypair (not BLS, per the off-chain-
+  pipeline convention).
+- **Verify**: `verify_handoff_signature` (per-message) +
+  `verify_certified_handoff_attestation` (full cert) +
+  `verify_joiner_bootstrap_cert` (joiner-side, epoch-bound).
+- **Aggregate**: `HandoffAggregator` — one-shot accumulation,
+  emits `CertifiedHandoffAttestation` on quorum cross.
+- **Produce locally**: `HandoffSignatureSender` —
+  per-epoch task that emits this validator's signed handoff in
+  the *bundled* `EndOfPublishV2` message.
+- **Consume on joiner**: `JoinerBootstrapVerifier` — per-epoch
+  task on true joiners that fetches the prior-epoch cert from
+  current-committee peers and verifies it.
 
 ### Concerns
+
+- **`HandoffSignatureSender::sent: AtomicBool` is the SAME bug
+  pattern as the pre-`ee385e39c4` mpc_data_announcement_sender.**
+  `crates/ika-core/src/epoch_tasks/handoff_signature_sender.rs:52`
+  + `:271`. On line 268–271:
+  ```rust
+  self.consensus_adapter
+      .submit_to_consensus(&[tx], &epoch_store)
+      .await?;
+  self.sent.store(true, Ordering::Release);
+  ```
+  `submit_to_consensus` returns `Ok` as soon as the transaction
+  is handed to the background submit task — which can still fail
+  to sequence (abandoned at epoch boundary, lost on crash, durable
+  pending-tx persistence is commented out per `ee385e39c4`'s
+  rationale). The one-shot `sent` flag then prevents any retry,
+  so a dropped EOPV2 silently never lands.
+
+  This is **the same bug** that was fixed in
+  `mpc_data_announcement_sender.rs` by replacing the atomic with
+  confirmation-based retry (`announcement_confirmed()` checks
+  our entry in the per-epoch table). The fix wasn't propagated
+  to the handoff sender. The blast radius is more limited
+  because EOPV2's chain-side equivalent (the actual
+  `system_inner.epoch` advancing) provides a hard guarantee
+  that we'll eventually need to move past this — but a dropped
+  EOPV2 means *this* validator's EndOfPublish vote is silently
+  lost for the rest of the epoch.
+
+  **Fix:** mirror the `mpc_data_announcement_sender` pattern.
+  Replace `sent: AtomicBool` with a confirmation check — e.g.
+  `epoch_store.has_local_end_of_publish_v2_recorded()` —
+  re-checked each tick. Loop retries until our own message
+  appears in consensus delivery (i.e., our submission was
+  sequenced + recorded), then no-ops. The cached attestation
+  reuses the same `(attestation, signature)` so consensus
+  dedups on a stable key.
+
+- **`HandoffSignatureSender::send` falls back to raw assembled
+  committee when frozen set is empty (per `34f880b124`).** The
+  rationale is non-blocking emission of the bundled EOPV2 vote —
+  correct trade-off (stalling reconfig is worse than a
+  non-aggregating handoff sig). But the silent fallback to
+  `frozen_set.is_empty() ⇒ no filter` means: under a chronic
+  "freeze not yet fired locally before EOP" situation, the
+  handoff sigs from this validator will be deterministically
+  different from peers whose freeze did fire, producing
+  cross-`AttestationMismatch` rejections.
+
+  This is operator-invisible today. The 10-epoch churn test
+  comment (`joiner.rs:756–783`) acknowledges
+  `AttestationMismatch` under churn is a known limitation, and
+  the aggregate assertion `total_certs_seen > 0` is loose
+  enough to not catch it.
+
+  **Recommendation:** surface "EOPV2 emitted before local freeze"
+  as a metric/warning. If this fires in production, the operator
+  knows to investigate why their local freeze is lagging
+  consensus. Without a metric, this is silent flapping.
+
+- **`verify_certified_handoff_attestation` does O(committee_size)
+  individual Ed25519 verifies per joiner bootstrap.** At
+  `handoff_cert.rs:347–389`, the loop iterates `cert.signatures`
+  and verifies each against its claimed signer's consensus
+  pubkey. On a committee of ~100 this is ~100 × 75µs ≈ 7.5ms per
+  cert. Acceptable in isolation, but every joiner bootstrap runs
+  `verify_joiner_bootstrap_cert` which calls this. Combined with
+  the F3-4 concern (BLS aggregation would be a single verify),
+  the operational cost vs design simplicity trade-off is more
+  visible here than in the announcement path.
+
+- **Prior-committee consensus pubkey availability under high
+  churn.** Per the `7a278375b4` commit:
+  > the prior-committee signers' consensus pubkeys are sourced
+  > from the current epoch's active-validator set (consensus
+  > keys are fixed at registration, so continuing signers' keys
+  > are present)
+
+  This breaks for FULLY departed prior-committee signers — they
+  may have signed the prior epoch's cert but are not in the
+  current epoch's active set. `consensus_pubkey(departed_signer)`
+  returns `None`, and `verify_certified_handoff_attestation`
+  fails with `no consensus pubkey for handoff signer`.
+
+  If the cert's signers are a quorum of the prior committee but
+  a significant fraction of those signers have since departed,
+  the cert can't verify on the joiner — not because the cert is
+  bad, but because the joiner can't resolve the signers'
+  pubkeys. The joiner's bootstrap returns `Rejected` for a
+  *valid* cert.
+
+  This is a real high-churn correctness issue. The fix paths:
+  1. Query Sui historical state for departed validators'
+     `StakingPool.validator_info`. Non-trivial — depends on Sui
+     storage retention policy.
+  2. Have current-committee peers serve the prior-committee
+     pubkeys via Anemo alongside the cert (one extra field on
+     the cert response, or a separate RPC). Most reliable.
+  3. Persist prior committee's pubkeys in our own perpetual
+     store so a continuing validator can serve them after the
+     signer left.
+
+  Option 2 is the cleanest. Worth a follow-up.
+
+- **`JoinerBootstrapVerifier` outcome enforcement is fail-OPEN
+  for both `Unavailable` and `Rejected`.** Per
+  `joiner_bootstrap_verifier.rs:155–204`, neither outcome
+  aborts the joiner. `Unavailable` is benign (warn-and-
+  continue); `Rejected` is logged at `error!` but still
+  continues. The commit message for `7a278375b4` explicitly
+  says fail-closed enforcement is a deliberate follow-up.
+
+  Until that follow-up lands, a joiner whose prior-committee
+  view is being attacked (every reachable peer is serving
+  certs for the wrong committee, indicating eclipse) joins the
+  committee anyway. Cross-epoch trust is observably broken but
+  not enforced.
+
+  **Recommendation:** prioritize the fail-closed follow-up.
+  The current `Rejected` path is the most security-relevant
+  outcome and it's silently ignored.
+
+- **Single-hop only verification by design.** Per
+  `verify_joiner_bootstrap_cert` doc: "Anchoring trust to the
+  prior committee is sufficient because that committee was
+  reached through some earlier handoff chain that this joiner
+  either already trusts (steady-state) or doesn't (initial
+  sync — caller's job)." This is a clean separation, but it
+  means initial-sync trust establishment is **out of scope**
+  for this PR. A bootstrapping joiner needs an out-of-band way
+  to trust the prior committee (e.g., genesis fingerprint, or
+  syncing forward from an earlier committee). Today this is
+  implicit; documenting it explicitly in the JoinerBootstrap
+  module doc would help future operators.
+
+- **`HandoffAggregator::insert_verified` replaces existing
+  signatures.** Line 228–234: "Replaced an existing signature
+  for the same signer — don't double-count their stake.
+  (Replacement is tolerated for resilience: a flaky signer
+  could re-submit a fresher signature.)" This means a
+  byzantine signer can submit DIFFERENT signatures over time;
+  the aggregator silently keeps the LAST one. If the cert
+  certifies before the byzantine signer's last submit, the
+  cert has the early sig; if after, the late one. Probably
+  fine — the cert is one-shot post-certification — but a
+  defensive `debug!` on replacement would be cheap diagnostics.
+
+- **`HandoffAggregator` doesn't cap signature count.** If
+  somehow more signatures than committee-size arrive (e.g.
+  byzantine peers spamming distinct names that hit
+  `committee.weight == 0` and get rejected — the `== 0`
+  weight-check pre-filters), no unbounded growth here.
+  Verified at `:222–227`. Good defense.
+
+- **`build_handoff_attestation` rejects duplicate keys but
+  `HandoffItemsBuilder` impls are responsible for their own
+  disjointness.** If two builders produce overlapping
+  `HandoffItemKey` ranges (e.g., both contribute
+  `NetworkDkgOutput(key_id)`), `build_handoff_attestation`
+  returns an error and the handoff for this epoch is wedged.
+  No defense beyond "register builders carefully".
+
+  **Fix:** the `HandoffItemKey` enum could be split into per-
+  builder sub-enums (each builder owns a distinct top-level
+  variant). Today there's no compile-time enforcement that
+  builders don't overlap.
+
+- **`hydrate_protocol_output_digests_from_chain` is called
+  before `build_local_handoff_attestation`** at signing time.
+  This is the fix for the original local-MPC-cache-race per
+  `8b7dbc1704` ("Cache DKG/reconfig output digests from
+  consensus-voted data"). Re-caching with the same canonical
+  bytes is a no-op for the digest, so this is idempotent.
+  Good.
+
+  But: it's also called every time `send()` retries (which is
+  every 1s after EOP). Idempotent so harmless, but a
+  per-second `cache_protocol_output` call per network key is
+  visible in metrics. If the snapshot is stable, this loop is
+  doing wasted work. Minor.
+
+- **`snapshot_ready_for_signing` requires ALL keys to be in
+  `NetworkReconfigurationCompleted` state with non-empty
+  reconfig output.** What if a key is in
+  `NetworkDKGCompleted` (post-DKG but pre-first-reconfig)?
+  Specifically: in epoch 1, before any reconfig has happened,
+  is the state `NetworkDKGCompleted` or `NetworkReconfigurationCompleted`?
+
+  If it's `NetworkDKGCompleted`, then in epoch 1
+  `snapshot_ready_for_signing` returns `false` forever and we
+  never sign a handoff cert for epoch 1. That breaks epoch-2
+  joiner bootstrap (no cert for the anchor epoch). Worth a
+  spot-check that epoch 1's chain state correctly resolves to
+  `NetworkReconfigurationCompleted` by the time EOP fires.
+
+- **The `intent_msg` BCS encoding is computed on every
+  signature verify in the loop at `:352–356`.** Inside
+  `verify_certified_handoff_attestation`, the BCS-encoded
+  bytes are computed ONCE outside the loop. Good — verified.
+  Same for `verify_handoff_signature` (per-message). The
+  hot path is clean.
+
+### Open questions raised during walkthrough
+
+- **Persistence + replay safety:** how are pending handoff
+  signatures persisted across restart? The
+  `pending_handoff_signatures` buffer (from `2be3d94a99` #3 +
+  `cec2fc67cd`) — does it survive restart, or rebuild from
+  consensus replay? Worth one explicit verification step.
+- **`HandoffAggregator.signatures` is `BTreeMap<AuthorityName, Ed25519Signature>`,
+  which collects into `Vec` for the cert.** The
+  `Ed25519Signature` `Clone` may be expensive. Optional
+  micro-optimization: build the cert lazily on first
+  `certified()` query.
 
 ---
 
