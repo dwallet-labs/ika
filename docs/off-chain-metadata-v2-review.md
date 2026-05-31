@@ -1371,9 +1371,142 @@ _(empty — to be filled as user raises them)_
 
 ## Feature 8 — `EndOfPublishV2`
 
-_(pending walkthrough)_
+### Overview
+
+A new consensus message variant that **bundles** the validator's
+signed handoff attestation into the same consensus tx as its
+EndOfPublish vote, so peers observe both at exactly the same
+consensus point. Solves the original V1 race where a standalone
+`HandoffSignature` could arrive out-of-order with `EndOfPublish`,
+producing divergent aggregator states across the committee.
+
+**Wire shape** (`crates/ika-types/src/messages_consensus.rs:367`):
+```rust
+EndOfPublishV2 {
+    authority: AuthorityName,
+    handoff_signature: Box<HandoffSignatureMessage>,
+}
+```
+
+**Why a new variant rather than a field on V1:** the existing
+variant has shipped — older peers won't decode the extra field.
+A new variant is wire-additive; older peers reject it as unknown
+rather than mis-decoding.
+
+**Protocol-version routing:**
+- Under v3 (`off_chain_validator_metadata_enabled()` is false):
+  V1 is the only valid variant. V2 is dropped at consume
+  (`authority_per_epoch_store.rs:2990–2998`).
+- Under v4 (off-chain on): V2 is the only valid variant. V1 is
+  dropped at consume (`:2965–2974`).
+
+**Producer side** is split across two tasks:
+- `EndOfPublishSender` (`epoch_tasks/end_of_publish_sender.rs`)
+  emits standalone V1 — and exits early under v4 (line 48–58).
+- `HandoffSignatureSender` (`epoch_tasks/handoff_signature_sender.rs`)
+  owns V2 emission under v4 (line 267):
+  ```rust
+  let tx = ConsensusTransaction::new_end_of_publish_v2(epoch_store.name, signed);
+  ```
+
+**Consumer side** (`authority_per_epoch_store.rs:3686–3708`)
+splits the bundle back into its two parts:
+```rust
+let _ = self.record_handoff_signature(handoff_signature)?;
+self.process_end_of_publish_vote(authority)
+```
+The shared `process_end_of_publish_vote` is reused — V2 reuses
+the V1 vote-counting machinery.
+
+**Wire-binding rules** (`verify_consensus_transaction`,
+`:2976–3033`) enforce three invariants:
+1. `transaction.sender_authority() == authority` (consensus
+   author signed the EOP vote).
+2. `handoff_signature.signer == authority` (can't bundle
+   someone else's sig).
+3. `handoff_signature.attestation.epoch == self.epoch()` (no
+   stale-epoch bundling — without this, a peer could bundle a
+   stale-epoch attestation that `record_handoff_signature`
+   rejects as `AttestationMismatch` while still counting the
+   EOP vote).
+
+### Open questions for review
+
+- **V1 standalone EOP under v4 is dropped silently (just `warn!`).**
+  Is a misconfigured node emitting V1 under v4 a thing we want
+  to detect via metric/alert, or is `warn!` sufficient? Today a
+  v3 node that hasn't picked up the v4 upgrade would have its
+  EOP vote dropped — silently from the network's perspective,
+  visible only in its own logs.
+- **Same in reverse for V2 under v3.** A node that emitted V2
+  under v3 (somehow ahead of the protocol upgrade) gets dropped.
+- **The `EndOfPublishSender` and `HandoffSignatureSender` are
+  spawned UNCONDITIONALLY in node startup, but each exits at
+  task start based on the protocol flag.** Worth checking that
+  spawning a no-op task that immediately exits is benign (no
+  resource leak, no shutdown signal needed).
+- **The bundle's `Box<HandoffSignatureMessage>` is heap-allocated.**
+  Curious whether the boxing was a wire-size choice or just a
+  Rust-style preference (avoid making the enum variant large).
+- **Cross-validation between bundled `handoff_signature.attestation`
+  and the validator's own expected attestation.** The wire-binding
+  rule only checks the *epoch*, not the *content*. The aggregator
+  (`record_handoff_signature` → `process_handoff_signature`) is
+  what checks content match via `verify_handoff_signature`, and
+  on `AttestationMismatch` returns `Rejected` — but the EOP vote
+  still counts (per the V1 process flow). So a peer with a
+  content-mismatched bundle gets their EOP vote counted but their
+  handoff sig rejected. Is this the intended split, or should
+  the EOP vote also be rejected when the bundled sig doesn't
+  verify?
 
 ### Concerns
+
+_(empty — to be filled as user raises them)_
+
+### Author candidate concerns (raised by walkthrough, awaiting review)
+
+> These are MY candidate flags from walking the code, not verdicts.
+> Accept / reject / refine.
+
+- **Already covered in F7 but lands at this seam: the
+  `HandoffSignatureSender::sent: AtomicBool` one-shot means a
+  dropped V2 submit silently loses BOTH the EOP vote and the
+  handoff sig for this validator this epoch.** EOPV2's whole
+  value proposition is "they arrive together" — if the submit
+  drops, neither lands. Confirmation-based retry (per the
+  ee385e39c4 pattern for the announcement sender) was applied
+  to the announcement path but not here.
+- **EOP-vote-counted-on-mismatched-bundle (the cross-validation
+  question above).** If this is intentional — preserve liveness
+  by counting votes even when bundled handoff is bad — it should
+  be explicitly documented. Otherwise it looks like the bundle
+  guarantee ("they're observed together") is partial: they're
+  observed together but processed independently, with no atomic
+  "both succeed or both reject" semantics. The bundled-attestation-
+  epoch check (rule 3) gives us *some* atomicity (a wrong-epoch
+  bundle rejects the whole tx), but a wrong-*content* bundle
+  splits.
+- **Protocol-flag asymmetry between the producer's exit and the
+  consumer's drop.** Producer-side: `EndOfPublishSender` checks
+  `off_chain_validator_metadata_enabled()` at task start and
+  exits. Consumer-side: drops the WRONG variant at consume time.
+  Both reference the SAME flag, but on different `epoch_store`
+  instances at different points in time. During a protocol-flag
+  flip at an epoch boundary, is there a window where producer
+  thinks it's v3 but consumer is reading v4 (or vice versa)?
+  The flag is per-epoch, so this should be fine within an epoch,
+  but worth being explicit about that invariant.
+- **Both consume paths (V1 dropped under v4, V2 dropped under v3)
+  return `None` from `verify_consensus_transaction`, which
+  silently discards the message.** A dropped EOP vote means the
+  emitting validator's vote isn't counted toward quorum. If a
+  v3-misconfigured node is half the committee (e.g. during a
+  staged upgrade with mixed binaries), v4-correct nodes drop
+  their V1 EOPs, and quorum can't form. The protocol-version
+  upgrade dance (covered in F10) should handle this, but worth
+  verifying the upgrade gate is monotonic — once a quorum has
+  v4 enabled, the rest can't roll back.
 
 ---
 
