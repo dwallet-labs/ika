@@ -19,8 +19,8 @@
 //!    quorum-coverage floor for incoming ready signals),
 //!    `compute_freeze_partition` (frozen-vs-excluded tally from
 //!    recorded signals), `verify_certified_handoff_attestation`.
-//! 3. **Off-chain assembly** — `assemble_committee_class_groups_off_chain`
-//!    and the `OffChainCommitteeClassGroupsSource` /
+//! 3. **Off-chain assembly** — `assemble_committee_mpc_data_off_chain`
+//!    and the `OffChainCommitteeMpcDataSource` /
 //!    `NetworkKeyBlobSource` traits that let the per-epoch store
 //!    feed locally-cached blobs into committee construction.
 //!
@@ -196,7 +196,7 @@ pub fn verify_joiner_announcement(
 /// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
 /// `decode_validator_encryption_keys` accepts either shape (new or
 /// mainnet-v1.1.8 class-groups-only); using the new shape here is
-/// what lets the off-chain class-groups assembler resolve all four
+/// what lets the off-chain validator-mpc_data assembler resolve all four
 /// committee key sets on a v4 cluster and avoid the "0/N PVSS
 /// keys decoded" rejection during network DKG and reconfig.
 pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
@@ -741,7 +741,7 @@ pub struct OffChainCommitteeBundles {
 /// `Committee.class_groups_public_keys_and_proofs` directly and a
 /// missing entry silently drops that validator's share.
 #[derive(Debug)]
-pub enum OffChainClassGroupsAssembly {
+pub enum OffChainMpcDataAssembly {
     Complete(OffChainCommitteeBundles),
     Incomplete { missing: Vec<AuthorityName> },
 }
@@ -761,10 +761,10 @@ pub enum OffChainClassGroupsAssembly {
 ///
 /// `blob_lookup` returns the bytes (e.g. from perpetual
 /// `mpc_artifact_blobs`) for a given digest, or `None`.
-pub fn assemble_committee_class_groups_off_chain<F>(
+pub fn assemble_committee_mpc_data_off_chain<F>(
     announcements: impl IntoIterator<Item = (AuthorityName, [u8; 32])>,
     blob_lookup: F,
-) -> OffChainClassGroupsAssembly
+) -> OffChainMpcDataAssembly
 where
     F: Fn(&[u8; 32]) -> Option<Vec<u8>>,
 {
@@ -809,28 +809,28 @@ where
     // validator's share at reconfig MPC. Force the caller to handle
     // "no announcements yet" as `Incomplete` and retry.
     if !saw_any {
-        return OffChainClassGroupsAssembly::Incomplete {
+        return OffChainMpcDataAssembly::Incomplete {
             missing: Vec::new(),
         };
     }
     if missing.is_empty() {
-        OffChainClassGroupsAssembly::Complete(OffChainCommitteeBundles {
+        OffChainMpcDataAssembly::Complete(OffChainCommitteeBundles {
             class_groups,
             secp256k1_pvss,
             secp256r1_pvss,
             ristretto_pvss,
         })
     } else {
-        OffChainClassGroupsAssembly::Incomplete { missing }
+        OffChainMpcDataAssembly::Incomplete { missing }
     }
 }
 
-/// Pre-assembly decision for `EpochStoreClassGroupsSource`. Extracted
+/// Pre-assembly decision for `EpochStoreMpcDataSource`. Extracted
 /// as a pure helper so the post-freeze-vs-pre-freeze branching can be
 /// unit-tested without standing up an `AuthorityPerEpochStore`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssemblyInputDecision {
-    /// Ready to pass to `assemble_committee_class_groups_off_chain`.
+    /// Ready to pass to `assemble_committee_mpc_data_off_chain`.
     Pairs(Vec<(AuthorityName, [u8; 32])>),
     /// Pre-freeze: some non-excluded committee member's announcement
     /// hasn't been delivered yet. Caller returns `Incomplete` with
@@ -845,7 +845,7 @@ pub enum AssemblyInputDecision {
 }
 
 /// Decides which `(authority, digest)` pairs to feed into
-/// `assemble_committee_class_groups_off_chain` given the current
+/// `assemble_committee_mpc_data_off_chain` given the current
 /// epoch's freeze state. Post-freeze (`!frozen.is_empty()`), the
 /// frozen map is the single source of truth — anyone not in
 /// `frozen` is silently skipped, which is what prevents a single
@@ -986,11 +986,11 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
 /// upstream because reconfig MPC reads
 /// `Committee.class_groups_public_keys_and_proofs` directly and
 /// any silently-missing entry would drop that validator's share.
-pub trait OffChainCommitteeClassGroupsSource: Send + Sync + 'static {
-    fn try_assemble_class_groups(
+pub trait OffChainCommitteeMpcDataSource: Send + Sync + 'static {
+    fn try_assemble_mpc_data(
         &self,
         committee_authorities: &[AuthorityName],
-    ) -> OffChainClassGroupsAssembly;
+    ) -> OffChainMpcDataAssembly;
 }
 
 /// Adapter that lets the long-lived `SuiConnectorService` hold a
@@ -1031,25 +1031,25 @@ impl NetworkKeyBlobSource for EpochStoreBlobSource {
     }
 }
 
-/// Off-chain class-groups assembler backed by a per-epoch store +
+/// Off-chain validator-mpc_data assembler backed by a per-epoch store +
 /// the perpetual blob store. For each requested committee
 /// authority:
 /// 1. Read the validator's `mpc_data` announcement digest from the
 ///    per-epoch `validator_mpc_data_announcements` table.
 /// 2. Look the blob up by digest in perpetual `mpc_artifact_blobs`.
-/// 3. Decode and accumulate into the class-groups map.
+/// 3. Decode and accumulate into the committee mpc_data (class-groups + PVSS) maps.
 ///
 /// Any miss along the way produces `Incomplete` — partial maps
 /// are never returned because the consuming reconfig MPC would
 /// silently drop the share for any validator missing from the
 /// map.
-pub struct EpochStoreClassGroupsSource {
+pub struct EpochStoreMpcDataSource {
     epoch_store:
         std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
     perpetual: Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
 }
 
-impl EpochStoreClassGroupsSource {
+impl EpochStoreMpcDataSource {
     pub fn new(
         epoch_store: std::sync::Weak<
             crate::authority::authority_per_epoch_store::AuthorityPerEpochStore,
@@ -1063,15 +1063,15 @@ impl EpochStoreClassGroupsSource {
     }
 }
 
-impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
-    fn try_assemble_class_groups(
+impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
+    fn try_assemble_mpc_data(
         &self,
         committee_authorities: &[AuthorityName],
-    ) -> OffChainClassGroupsAssembly {
+    ) -> OffChainMpcDataAssembly {
         let Some(store) = self.epoch_store.upgrade() else {
             // Epoch ended underneath us — return Incomplete so the
             // caller retries or falls back per its own policy.
-            return OffChainClassGroupsAssembly::Incomplete {
+            return OffChainMpcDataAssembly::Incomplete {
                 missing: committee_authorities.to_vec(),
             };
         };
@@ -1090,20 +1090,20 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
             }) {
                 AssemblyInputDecision::Pairs(pairs) => pairs,
                 AssemblyInputDecision::AnnouncementMissing(missing) => {
-                    return OffChainClassGroupsAssembly::Incomplete { missing };
+                    return OffChainMpcDataAssembly::Incomplete { missing };
                 }
                 AssemblyInputDecision::EverythingExcluded => {
-                    return OffChainClassGroupsAssembly::Incomplete {
+                    return OffChainMpcDataAssembly::Incomplete {
                         missing: committee_authorities.to_vec(),
                     };
                 }
             };
         let perpetual = self.perpetual.clone();
         let assembly_pairs: Vec<_> = pairs.clone();
-        let result = assemble_committee_class_groups_off_chain(assembly_pairs, move |digest| {
+        let result = assemble_committee_mpc_data_off_chain(assembly_pairs, move |digest| {
             perpetual.get_mpc_artifact_blob(digest).ok().flatten()
         });
-        if let OffChainClassGroupsAssembly::Incomplete { ref missing } = result {
+        if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
             let blob_only_missing: Vec<_> = missing
                 .iter()
                 .filter(|m| pairs.iter().any(|(a, _)| a == *m))
@@ -1115,7 +1115,7 @@ impl OffChainCommitteeClassGroupsSource for EpochStoreClassGroupsSource {
                 announcement_present = pairs.len(),
                 blob_missing_in_perpetual = blob_only_missing.len(),
                 ?blob_only_missing,
-                "off-chain class-groups assembly incomplete; \
+                "off-chain validator-mpc_data assembly incomplete; \
                  waiting for P2P propagation to converge"
             );
         }
@@ -1959,7 +1959,7 @@ mod tests {
     }
 
     #[test]
-    fn assemble_committee_class_groups_off_chain_round_trip() {
+    fn assemble_committee_mpc_data_off_chain_round_trip() {
         // Two distinct seeds → two valid `VersionedMPCData::V1`
         // blobs. Stash them in an in-memory lookup keyed by their
         // hashes (matching the announcement digest contract), and
@@ -1981,12 +1981,12 @@ mod tests {
         store.insert(digest_a, blob_a);
         store.insert(digest_b, blob_b);
 
-        let outcome = assemble_committee_class_groups_off_chain(
-            [(name_a, digest_a), (name_b, digest_b)],
-            |d| store.get(d).cloned(),
-        );
+        let outcome =
+            assemble_committee_mpc_data_off_chain([(name_a, digest_a), (name_b, digest_b)], |d| {
+                store.get(d).cloned()
+            });
         match outcome {
-            OffChainClassGroupsAssembly::Complete(bundles) => {
+            OffChainMpcDataAssembly::Complete(bundles) => {
                 assert_eq!(bundles.class_groups.len(), 2);
                 assert!(bundles.class_groups.contains_key(&name_a));
                 assert!(bundles.class_groups.contains_key(&name_b));
@@ -1996,7 +1996,7 @@ mod tests {
     }
 
     #[test]
-    fn assemble_committee_class_groups_off_chain_reports_missing_blob() {
+    fn assemble_committee_mpc_data_off_chain_reports_missing_blob() {
         // One announcer's blob isn't in the store → Incomplete with
         // that announcer listed. The whole assembly must abort
         // (load-bearing rule: partial map is worse than no map).
@@ -2012,12 +2012,12 @@ mod tests {
             std::collections::HashMap::new();
         store.insert(digest_a, blob_a);
 
-        let outcome = assemble_committee_class_groups_off_chain(
-            [(name_a, digest_a), (name_b, digest_b)],
-            |d| store.get(d).cloned(),
-        );
+        let outcome =
+            assemble_committee_mpc_data_off_chain([(name_a, digest_a), (name_b, digest_b)], |d| {
+                store.get(d).cloned()
+            });
         match outcome {
-            OffChainClassGroupsAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing } => {
                 assert_eq!(missing, vec![name_b]);
             }
             other => panic!("expected Incomplete, got {other:?}"),
@@ -2213,13 +2213,12 @@ mod tests {
     /// returns `Incomplete` (with empty `missing`) so the caller's
     /// own context decides what to fill in.
     #[test]
-    fn assemble_committee_class_groups_off_chain_rejects_empty_input() {
+    fn assemble_committee_mpc_data_off_chain_rejects_empty_input() {
         let store: std::collections::HashMap<[u8; 32], Vec<u8>> = std::collections::HashMap::new();
-        let outcome = assemble_committee_class_groups_off_chain(std::iter::empty(), |d| {
-            store.get(d).cloned()
-        });
+        let outcome =
+            assemble_committee_mpc_data_off_chain(std::iter::empty(), |d| store.get(d).cloned());
         match outcome {
-            OffChainClassGroupsAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing } => {
                 assert!(
                     missing.is_empty(),
                     "pure helper has no committee context; missing is empty"
@@ -2230,7 +2229,7 @@ mod tests {
     }
 
     #[test]
-    fn assemble_committee_class_groups_off_chain_reports_corrupt_blob() {
+    fn assemble_committee_mpc_data_off_chain_reports_corrupt_blob() {
         // Digest resolves but the bytes don't decode as
         // `VersionedMPCData` → still Incomplete; that authority is
         // listed as missing.
@@ -2242,11 +2241,11 @@ mod tests {
             std::collections::HashMap::new();
         store.insert(bogus_digest, bogus_bytes);
 
-        let outcome = assemble_committee_class_groups_off_chain([(name, bogus_digest)], |d| {
+        let outcome = assemble_committee_mpc_data_off_chain([(name, bogus_digest)], |d| {
             store.get(d).cloned()
         });
         match outcome {
-            OffChainClassGroupsAssembly::Incomplete { missing } => {
+            OffChainMpcDataAssembly::Incomplete { missing } => {
                 assert_eq!(missing, vec![name]);
             }
             other => panic!("expected Incomplete, got {other:?}"),

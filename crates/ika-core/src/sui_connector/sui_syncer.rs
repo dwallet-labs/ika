@@ -77,7 +77,7 @@ where
         >,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         >,
     ) -> IkaResult<Vec<JoinHandle<()>>> {
@@ -279,7 +279,7 @@ where
         chain_next_committee_sender: Sender<Committee>,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         >,
     ) {
@@ -307,7 +307,7 @@ where
 
             // Publish the CHAIN view of the next-epoch committee
             // (members + stake, no class-groups) as soon as Sui has it
-            // — independent of the off-chain class-groups assembly
+            // — independent of the off-chain validator-mpc_data assembly
             // below. The off-chain assembly can't `Complete` for a
             // committee containing a not-yet-announced joiner, and the
             // joiner only learns it's a joiner (to fan out its mpc_data)
@@ -315,7 +315,7 @@ where
             // emit-gate on the *assembled* committee would deadlock
             // (assembled-needs-joiner-mpc_data ↔ joiner-fanout-needs-
             // assembled). This chain signal breaks that cycle. It
-            // carries only membership + stake (empty class-groups maps)
+            // carries only membership + stake (empty mpc_data crypto maps)
             // — all the freeze emit-gate and joiner watcher read.
             let chain_committee = Committee::new(
                 system_inner.epoch() + 1,
@@ -373,7 +373,7 @@ where
         read_next_epoch_class_groups_keys: bool,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         >,
         off_chain_on: bool,
@@ -392,15 +392,15 @@ where
         if let Some(source) = class_groups_source.load_full() {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
-            match source.try_assemble_class_groups(&authorities) {
-                crate::validator_metadata::OffChainClassGroupsAssembly::Complete(bundles) => {
+            match source.try_assemble_mpc_data(&authorities) {
+                crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
                     info!(
                         epoch,
                         members = bundles.class_groups.len(),
                         secp256k1_pvss = bundles.secp256k1_pvss.len(),
                         secp256r1_pvss = bundles.secp256r1_pvss.len(),
                         ristretto_pvss = bundles.ristretto_pvss.len(),
-                        "assembled committee class-groups off-chain"
+                        "assembled committee mpc_data off-chain"
                     );
                     return Ok(Committee::new(
                         epoch,
@@ -416,7 +416,7 @@ where
                         validity_threshold,
                     ));
                 }
-                crate::validator_metadata::OffChainClassGroupsAssembly::Incomplete { missing } => {
+                crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
                     if off_chain_on {
                         // Under v4 there is NO chain fallback. The
                         // off-chain pipeline (consensus
@@ -431,7 +431,7 @@ where
                             epoch,
                             missing = missing.len(),
                             ?missing,
-                            "off_chain mode: off-chain class-groups assembly incomplete; \
+                            "off_chain mode: off-chain validator-mpc_data assembly incomplete; \
                              no chain fallback — retrying on next sync tick"
                         );
                         return Err(DwalletMPCError::OffChainAssemblyIncomplete {
@@ -442,7 +442,7 @@ where
                         debug!(
                             epoch,
                             missing = missing.len(),
-                            "off-chain class-groups assembly incomplete; falling back to chain"
+                            "off-chain validator-mpc_data assembly incomplete; falling back to chain"
                         );
                     }
                 }

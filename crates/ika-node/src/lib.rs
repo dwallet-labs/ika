@@ -1679,7 +1679,7 @@ impl IkaNode {
 
             // Consumer-side fetcher: pulls peer validators' mpc_data
             // blobs from their Anemo `GetMpcDataBlob` endpoint and
-            // caches them locally so the off-chain class-groups
+            // caches them locally so the off-chain validator-mpc_data
             // assembler can resolve every committee member without a
             // chain read.
             let peer_blob_fetcher_handle = if off_chain_metadata_enabled {
@@ -1882,19 +1882,18 @@ impl IkaNode {
                         )),
                     ));
 
-                // Install the off-chain class-groups assembler so
+                // Install the off-chain validator-mpc_data assembler so
                 // `sync_next_committee` builds the next `Committee`'s
                 // class_groups_public_keys_and_proofs from validators'
                 // own `mpc_data` announcements + the perpetual blob
                 // store instead of refetching from chain. Falls back
                 // to chain when the off-chain set is `Incomplete`.
-                self.sui_connector_service
-                    .install_class_groups_source(Box::new(
-                        ika_core::validator_metadata::EpochStoreClassGroupsSource::new(
-                            Arc::downgrade(&cur_epoch_store),
-                            self.state.perpetual_tables(),
-                        ),
-                    ));
+                self.sui_connector_service.install_mpc_data_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreMpcDataSource::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        self.state.perpetual_tables(),
+                    ),
+                ));
 
                 // Install the joiner-announcement relay impl on the
                 // Anemo `SubmitMpcDataAnnouncement` server so a peer

@@ -63,15 +63,13 @@ pub struct SuiConnectorService {
     /// here disables the overlay; chain bytes flow through unchanged.
     network_key_blob_source:
         Arc<arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>>,
-    /// Late-bindable off-chain class-groups assembler. When
+    /// Late-bindable off-chain validator-mpc_data assembler. When
     /// installed and `Complete` for the next-epoch committee,
     /// `sync_next_committee` builds the `Committee` from this
     /// instead of from the on-chain mpc_data. `Incomplete` /
     /// `None` paths fall through to the existing chain-read.
     class_groups_source: Arc<
-        arc_swap::ArcSwapOption<
-            Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
-        >,
+        arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
     >,
 }
 
@@ -121,7 +119,7 @@ impl SuiConnectorService {
         > = Arc::new(arc_swap::ArcSwapOption::empty());
         let class_groups_source: Arc<
             arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
 
@@ -175,12 +173,12 @@ impl SuiConnectorService {
         self.network_key_blob_source.store(Some(Arc::new(source)));
     }
 
-    /// Installs the off-chain class-groups assembler the
+    /// Installs the off-chain validator-mpc_data assembler the
     /// next-committee sync uses before falling back to the chain
     /// `get_mpc_data_from_validators_pool` path.
-    pub fn install_class_groups_source(
+    pub fn install_mpc_data_source(
         &self,
-        source: Box<dyn crate::validator_metadata::OffChainCommitteeClassGroupsSource>,
+        source: Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
     ) {
         self.class_groups_source.store(Some(Arc::new(source)));
     }
