@@ -541,22 +541,6 @@ impl DWalletMPCManager {
 
     /// Handle network key data messages. Performs quorum voting per key.
     /// Updates `agreed_network_key_data` in place.
-    /// Adopt locally-observed, instantiable network-key data directly
-    /// into the instantiation set, bypassing the `ConsensusNetworkKeyData`
-    /// vote. The reconfiguration public output is canonically
-    /// deterministic (every honest validator computes byte-identical
-    /// bytes — that determinism is exactly what the handoff cert
-    /// certifies), so a validator can instantiate from its own overlay
-    /// view — its local MPC output, or for a joiner the cert-fetched +
-    /// digest-verified output — without the consensus round-trip. Runs
-    /// alongside the vote for now; the vote + broadcast are removed once
-    /// this path is churn-verified (see RECONFIG-UNIFICATION-PLAN.md).
-    pub fn adopt_local_network_key_data(&mut self, key_data: Vec<DWalletNetworkEncryptionKeyData>) {
-        for data in key_data {
-            self.agreed_network_key_data.insert(data.id, data);
-        }
-    }
-
     pub fn handle_network_key_data_messages(
         &mut self,
         consensus_round: u64,

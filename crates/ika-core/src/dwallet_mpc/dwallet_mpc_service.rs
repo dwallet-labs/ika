@@ -1260,33 +1260,6 @@ impl DWalletMPCService {
                 }
             }
 
-            // 1e. Adopt locally-observed instantiable network-key data
-            // directly from the overlay (chain metadata + local MPC
-            // outputs, or a joiner's cert-fetched+verified outputs),
-            // bypassing the ConsensusNetworkKeyData vote. The
-            // reconfiguration output is deterministic, so a validator can
-            // instantiate from its own view without the consensus
-            // round-trip. Additive alongside the vote above until
-            // churn-verified; the vote + broadcast are then removed.
-            let local_network_key_data: Vec<_> = {
-                let all = self.sui_data_requests.network_keys_receiver.borrow();
-                all.values()
-                    .filter(|d| {
-                        !matches!(
-                            d.state,
-                            DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
-                        ) && !d.network_dkg_public_output.is_empty()
-                            && (!matches!(
-                                d.state,
-                                DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-                            ) || !d.current_reconfiguration_public_output.is_empty())
-                    })
-                    .cloned()
-                    .collect()
-            };
-            self.dwallet_mpc_manager
-                .adopt_local_network_key_data(local_network_key_data);
-
             // 2. Instantiate any agreed keys we don't have yet, from consensus-voted data.
             let new_key_ids = self
                 .dwallet_mpc_manager
