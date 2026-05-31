@@ -446,6 +446,37 @@ where
                         );
                     }
                 }
+                crate::validator_metadata::OffChainMpcDataAssembly::EverythingExcluded => {
+                    if off_chain_on {
+                        // PERMANENT, not transient: the freeze excluded
+                        // EVERY requested committee member, so there is no
+                        // attested mpc_data to assemble from — the off-chain
+                        // assembly can never converge this epoch and
+                        // reconfiguration into it is WEDGED. Escalate to
+                        // `error!` (vs the transient `Incomplete` retry) so
+                        // an operator is alerted; the likely cause is no
+                        // next-committee member's announcement landing
+                        // before the freeze (joiner relay / propagation
+                        // failure, or a misfrozen set).
+                        error!(
+                            epoch,
+                            members = authorities.len(),
+                            "off_chain mode: off-chain validator-mpc_data assembly is \
+                             PERMANENTLY incomplete — the freeze excluded EVERY committee \
+                             member, so reconfiguration into this epoch is WEDGED (no attested \
+                             mpc_data). Investigate next-committee announcement propagation."
+                        );
+                        return Err(DwalletMPCError::OffChainAssemblyIncomplete {
+                            epoch,
+                            missing: authorities.len(),
+                        });
+                    } else {
+                        debug!(
+                            epoch,
+                            "off-chain assembly EverythingExcluded; falling back to chain"
+                        );
+                    }
+                }
             }
         }
 

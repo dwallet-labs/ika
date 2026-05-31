@@ -743,7 +743,17 @@ pub struct OffChainCommitteeBundles {
 #[derive(Debug)]
 pub enum OffChainMpcDataAssembly {
     Complete(OffChainCommitteeBundles),
-    Incomplete { missing: Vec<AuthorityName> },
+    Incomplete {
+        missing: Vec<AuthorityName>,
+    },
+    /// Permanent for this epoch: the freeze partition excluded EVERY
+    /// requested committee member, so there is no attested mpc_data to
+    /// assemble from — the off-chain assembly can never converge this
+    /// epoch and reconfiguration into it is wedged (e.g. no next-committee
+    /// member's announcement landed before the freeze). The consumer
+    /// escalates this to `error!` instead of retrying it as a transient
+    /// `Incomplete` miss.
+    EverythingExcluded,
 }
 
 /// Tries to assemble a committee's class-groups public-keys-and-
@@ -1093,9 +1103,7 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
                     return OffChainMpcDataAssembly::Incomplete { missing };
                 }
                 AssemblyInputDecision::EverythingExcluded => {
-                    return OffChainMpcDataAssembly::Incomplete {
-                        missing: committee_authorities.to_vec(),
-                    };
+                    return OffChainMpcDataAssembly::EverythingExcluded;
                 }
             };
         let perpetual = self.perpetual.clone();
