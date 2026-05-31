@@ -1534,20 +1534,26 @@ impl DWalletMPCManager {
                     {
                         error!(error=?e, key_id=?key_id, "Failed to update network key from consensus-voted data");
                     } else {
-                        // Mirror the consensus-voted output bytes
-                        // into the local digest caches (per-epoch +
-                        // perpetual). Validators that didn't reach
-                        // `Finalize` locally would otherwise skip
-                        // `cache_network_*_output` entirely; their
-                        // handoff items list would then omit the
-                        // `NetworkDkgOutput` / `NetworkReconfigurationOutput`
-                        // entry for this key and diverge from peers
-                        // who did `Finalize` — surfacing as
-                        // `AttestationMismatch` rejections at handoff
-                        // aggregation. The caches are content-addressed
-                        // so re-caching from a different ingestion
-                        // path (consensus-voted vs. local MPC) is a
-                        // no-op when the bytes are identical.
+                        // Mirror the consensus-voted **DKG** output bytes
+                        // into the local digest caches so validators that
+                        // didn't reach `Finalize` locally still hold the
+                        // stable, one-time DKG digest and can build the
+                        // `NetworkDkgOutput` handoff item.
+                        //
+                        // The reconfiguration output is deliberately NOT
+                        // mirrored here. It is epoch-specific, and
+                        // `agreed_network_key_data` can still carry the
+                        // *prior* epoch's output (the vote lags the local
+                        // computation), so mirroring it would race the
+                        // local current value and corrupt the handoff
+                        // `NetworkReconfigurationOutput` digest — the
+                        // stale-vs-current `AttestationMismatch`. The
+                        // handoff sources the reconfiguration digest from
+                        // the per-epoch local-MPC write only
+                        // (`get_network_reconfiguration_output_digests_current_epoch`);
+                        // a validator that didn't compute this epoch's
+                        // reconfiguration is excluded from that item by
+                        // design (the computing validators are a quorum).
                         let key_data = self.agreed_network_key_data.get(&key_id).cloned();
                         if let Some(key_data) = key_data {
                             if !key_data.network_dkg_public_output.is_empty()
@@ -1560,19 +1566,6 @@ impl DWalletMPCManager {
                                     error = ?e,
                                     ?key_id,
                                     "failed to cache DKG output digest from consensus-voted data"
-                                );
-                            }
-                            if !key_data.current_reconfiguration_public_output.is_empty()
-                                && let Err(e) =
-                                    self.epoch_store.cache_network_reconfiguration_output(
-                                        key_id,
-                                        &key_data.current_reconfiguration_public_output,
-                                    )
-                            {
-                                warn!(
-                                    error = ?e,
-                                    ?key_id,
-                                    "failed to cache reconfiguration output digest from consensus-voted data"
                                 );
                             }
                             // Snapshot the data we just instantiated so

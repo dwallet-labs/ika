@@ -107,9 +107,10 @@ impl HandoffSignatureSender {
 
     /// Returns true once the locally-cached `network_keys_receiver`
     /// snapshot shows every known network encryption key in the
-    /// terminal `NetworkReconfigurationCompleted` state with a
-    /// non-empty reconfiguration output. This is the same
-    /// post-condition the chain-side EndOfPublish gate checks
+    /// terminal `NetworkReconfigurationCompleted` state AND this
+    /// epoch's reconfiguration output has been computed locally
+    /// (present in the current-epoch per-epoch digest table). This is
+    /// the same post-condition the chain-side EndOfPublish gate checks
     /// (`all_network_encryption_keys_reconfiguration_completed`),
     /// re-validated against the local snapshot so we don't sign
     /// off a stale view that some peers have already moved past.
@@ -123,11 +124,27 @@ impl HandoffSignatureSender {
         if snapshot.is_empty() {
             return false;
         }
-        snapshot.iter().all(|(_, data)| {
+        // Gate the reconfiguration output on the *current-epoch* per-epoch
+        // cache (this validator's own locally-computed bytes), NOT the
+        // overlay snapshot. The overlay can surface the prior epoch's
+        // output via the perpetual mirror, which would let this validator
+        // sign a stale `NetworkReconfigurationOutput` digest that diverges
+        // from peers holding the current one. This also keeps the gate
+        // consistent with the handoff items builder, which sources the
+        // same current-epoch table.
+        let Some(epoch_store) = self.epoch_store.upgrade() else {
+            return false;
+        };
+        let Ok(reconfig_current) =
+            epoch_store.get_network_reconfiguration_output_digests_current_epoch()
+        else {
+            return false;
+        };
+        snapshot.iter().all(|(key_id, data)| {
             matches!(
                 data.state,
                 DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-            ) && !data.current_reconfiguration_public_output.is_empty()
+            ) && reconfig_current.contains_key(key_id)
         })
     }
 

@@ -2227,6 +2227,30 @@ impl AuthorityPerEpochStore {
         Ok(out)
     }
 
+    /// Returns the `key_id -> digest` map of reconfiguration outputs
+    /// cached **in the current epoch only** — the per-epoch table, with
+    /// no perpetual fallback. The handoff attestation MUST use this, not
+    /// the perpetual-merged [`Self::get_network_reconfiguration_output_digests`]:
+    /// the reconfiguration output is epoch-specific, and the perpetual
+    /// mirror holds the *prior* epoch's output until this epoch's is
+    /// computed locally. Certifying that stale value diverges from peers
+    /// who already hold the current one (the stale-vs-current
+    /// `AttestationMismatch`). A validator that hasn't locally computed
+    /// this epoch's reconfiguration simply has no entry here and is
+    /// correctly excluded from the `NetworkReconfigurationOutput` item.
+    pub fn get_network_reconfiguration_output_digests_current_epoch(
+        &self,
+    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
+        let tables = self.tables()?;
+        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
+            std::collections::BTreeMap::new();
+        for entry in tables.network_reconfiguration_output_digests.safe_iter() {
+            let (key_id, digest) = entry.map_err(IkaError::from)?;
+            out.insert(key_id, digest);
+        }
+        Ok(out)
+    }
+
     /// Looks up the cached blob for a given network key + protocol
     /// output kind. Returns `None` only when no digest exists for
     /// this key/kind in either the per-epoch table or the perpetual

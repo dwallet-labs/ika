@@ -673,7 +673,13 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
         let effective =
             store.get_effective_reconfig_input_set(next_committee_pubkeys.iter().copied())?;
         let dkg = store.get_network_dkg_output_digests()?;
-        let reconfig = store.get_network_reconfiguration_output_digests()?;
+        // Reconfiguration is epoch-specific: source it from the
+        // current-epoch table only, never the perpetual-merged getter
+        // (which would surface the prior epoch's output for a validator
+        // that hasn't computed this epoch's reconfiguration locally,
+        // diverging the attestation). DKG output is stable across epochs,
+        // so the perpetual-merged getter is correct for it.
+        let reconfig = store.get_network_reconfiguration_output_digests_current_epoch()?;
         Ok(compute_handoff_items(&effective, &dkg, &reconfig))
     }
 }
