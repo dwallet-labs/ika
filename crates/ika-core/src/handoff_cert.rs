@@ -395,6 +395,15 @@ pub fn verify_joiner_bootstrap_cert(
 /// claimed signer's consensus pubkey AND the summed stake reaches
 /// the committee's quorum threshold. Otherwise an `IkaError`
 /// describes the failure.
+///
+/// WARNING: this verifies *only* the signatures, committee membership,
+/// and quorum — it does NOT check the attestation's `epoch` or
+/// `next_committee_pubkey_set_hash`. Those bindings are what stop a
+/// real cert for the wrong epoch/committee from being accepted, and
+/// they live in the caller. Do not call this directly to validate a
+/// fetched cert; use `verify_joiner_bootstrap_cert`, which applies
+/// both bindings first. A direct caller MUST bind epoch +
+/// next-committee itself before trusting the result.
 pub fn verify_certified_handoff_attestation(
     cert: &CertifiedHandoffAttestation,
     committee: &Committee,

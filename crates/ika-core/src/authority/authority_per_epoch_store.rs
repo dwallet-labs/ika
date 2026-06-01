@@ -2207,6 +2207,15 @@ impl AuthorityPerEpochStore {
     /// fetched peer-to-peer — so they intentionally do NOT go through
     /// the `BlobCache` write-through into the in-memory P2P serve store.
     /// Both writes are idempotent on byte-identical inputs.
+    ///
+    /// DETERMINISM: this digest feeds the cross-epoch handoff
+    /// attestation, whose items a quorum of signers must byte-match.
+    /// That rests on `output_bytes` being a *canonical* encoding of the
+    /// protocol's public output — the same logical DKG / reconfiguration
+    /// result must serialize to identical bytes on every honest
+    /// validator. If the cryptography layer ever emitted a non-canonical
+    /// encoding of the same output, signers would hash different digests
+    /// and cross-reject as `AttestationMismatch` with no other symptom.
     fn cache_protocol_output(
         &self,
         kind: ProtocolOutputKind,
