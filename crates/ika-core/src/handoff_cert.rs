@@ -334,11 +334,23 @@ pub fn process_handoff_signature(
 /// that prior committee's on-chain validator info.
 ///
 /// The verification rule (per the handoff design memo):
-/// - One hop only. Joiners verify against `prior_committee`, not all
-///   the way back to genesis. Anchoring trust to the prior committee
-///   is sufficient because that committee was reached through some
-///   earlier handoff chain that this joiner either already trusts
-///   (steady-state) or doesn't (initial sync — caller's job).
+/// - One hop only. Joiners verify against `prior_committee`, never
+///   walking a chain of handoff certs back through E-2, E-3, … to
+///   genesis. This is sound because the prior committee's trust root
+///   is *Sui*, not an earlier handoff cert: `prior_committee` comes
+///   from the `committee_store` (filled by the reconfiguration
+///   handler) and the chain exposes the prior committee directly
+///   (`validator_set.previous_committee`), with its signer consensus
+///   pubkeys resolved from the members' still-on-chain StakingPools.
+///   So a joiner anchors on the chain-provided recent committee —
+///   already authenticated by Sui's consensus/checkpoints — rather
+///   than deriving trust in it from an older cert. A multi-epoch
+///   cert-chain walk would only matter if a joiner distrusted the
+///   on-chain recent committee but trusted an older one, which isn't
+///   a path this bootstrap takes. (The one real residual gap — a
+///   prior signer whose StakingPool was fully deleted — is a
+///   single-hop concern handled by the aggregator's slack + the
+///   skip-on-unresolvable rule in `verify_certified_handoff_attestation`.)
 /// - The cert's `attestation.next_committee_pubkey_set_hash` must
 ///   match what the joiner expects for the committee they're joining
 ///   into. This binding is what stops a malicious peer from serving
