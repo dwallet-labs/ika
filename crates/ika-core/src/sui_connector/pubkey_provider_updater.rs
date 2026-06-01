@@ -136,9 +136,9 @@ pub struct PubkeyProviderUpdater<C> {
     install: ProviderInstaller,
     label: &'static str,
     /// Cache of the last-installed `AuthorityName -> consensus_pubkey`
-    /// map (compared by serialized form) so we don't reinstall when
-    /// the source committee hasn't changed.
-    last_installed: parking_lot::Mutex<Option<BTreeMap<AuthorityName, Vec<u8>>>>,
+    /// map so we don't reinstall when the source committee hasn't
+    /// changed.
+    last_installed: parking_lot::Mutex<Option<BTreeMap<AuthorityName, Ed25519PublicKey>>>,
 }
 
 impl<C> PubkeyProviderUpdater<C>
@@ -219,6 +219,17 @@ where
             );
         }
         loop {
+            // Exit once the epoch store this updater serves has been
+            // dropped (the epoch advanced) — otherwise the task would
+            // spin forever re-polling for a store that no longer exists.
+            if self.epoch_store.upgrade().is_none() {
+                info!(
+                    epoch = self.epoch_id,
+                    label = self.label,
+                    "epoch store dropped; pubkey updater exiting"
+                );
+                return;
+            }
             if let Err(err) = self.refresh().await {
                 warn!(error=?err, label = self.label, "pubkey provider refresh failed; will retry");
             }
@@ -266,25 +277,18 @@ where
             consensus_keys_by_name.insert(name, verified.consensus_pubkey.clone());
         }
 
-        let serialized: BTreeMap<AuthorityName, Vec<u8>> = consensus_keys_by_name
-            .iter()
-            .map(|(name, pk)| {
-                use fastcrypto::traits::EncodeDecodeBase64;
-                (*name, pk.encode_base64().into_bytes())
-            })
-            .collect();
         {
             let last = self.last_installed.lock();
-            if last.as_ref() == Some(&serialized) {
+            if last.as_ref() == Some(&consensus_keys_by_name) {
                 return Ok(());
             }
         }
 
         let entries: Vec<(AuthorityName, Ed25519PublicKey)> =
-            consensus_keys_by_name.into_iter().collect();
+            consensus_keys_by_name.clone().into_iter().collect();
         let entry_count = entries.len();
         (self.install)(&epoch_store, entries);
-        *self.last_installed.lock() = Some(serialized);
+        *self.last_installed.lock() = Some(consensus_keys_by_name);
         info!(
             epoch = self.epoch_id,
             label = self.label,
