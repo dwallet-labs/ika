@@ -10,7 +10,9 @@ use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use ika_config::node::NodeMode;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
-use ika_types::committee::{Committee, EpochId, StakeUnit, decode_validator_encryption_keys};
+use ika_types::committee::{
+    Committee, CommitteeMembership, EpochId, StakeUnit, decode_validator_encryption_keys,
+};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaResult;
@@ -60,7 +62,7 @@ where
         self,
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
-        chain_next_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<CommitteeMembership>,
         mode: NodeMode,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
@@ -276,7 +278,7 @@ where
         sui_client: Arc<SuiClient<C>>,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
-        chain_next_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<CommitteeMembership>,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
@@ -317,19 +319,15 @@ where
             // assembled). This chain signal breaks that cycle. It
             // carries only membership + stake (empty mpc_data crypto maps)
             // — all the freeze emit-gate and joiner watcher read.
-            let chain_committee = Committee::new(
-                system_inner.epoch() + 1,
-                new_next_committee
+            let chain_committee = CommitteeMembership {
+                epoch: system_inner.epoch() + 1,
+                voting_rights: new_next_committee
                     .iter()
                     .map(|(_, (name, stake))| (*name, *stake))
                     .collect(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                new_next_bls_committee.quorum_threshold,
-                new_next_bls_committee.validity_threshold,
-            );
+                quorum_threshold: new_next_bls_committee.quorum_threshold,
+                validity_threshold: new_next_bls_committee.validity_threshold,
+            };
             let _ = chain_next_committee_sender.send(chain_committee);
 
             let off_chain_on = ProtocolConfig::get_for_version(

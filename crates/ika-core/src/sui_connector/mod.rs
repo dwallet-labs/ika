@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use futures::{StreamExt, future};
 use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
 use ika_sui_client::{SuiClient, SuiClientInner};
-use ika_types::committee::{Committee, EpochId};
+use ika_types::committee::{Committee, CommitteeMembership, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -82,7 +82,7 @@ impl SuiConnectorService {
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         mode: NodeMode,
         next_epoch_committee_sender: Sender<Committee>,
-        chain_next_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<CommitteeMembership>,
         new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,

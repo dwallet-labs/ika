@@ -71,7 +71,7 @@ use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
 use sui_types::base_types::EpochId;
 
-use ika_types::committee::Committee;
+use ika_types::committee::{Committee, CommitteeMembership};
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{AuthorityCapabilitiesV1, ConsensusTransaction};
@@ -544,7 +544,12 @@ impl IkaNode {
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
             watch::channel::<Committee>(committee.clone());
         let (chain_next_committee_sender, chain_next_epoch_committee_receiver) =
-            watch::channel::<Committee>(committee);
+            watch::channel(CommitteeMembership {
+                epoch: committee.epoch,
+                voting_rights: committee.voting_rights,
+                quorum_threshold: committee.quorum_threshold,
+                validity_threshold: committee.validity_threshold,
+            });
         let (new_requests_sender, new_requests_receiver) =
             broadcast::channel(EVENTS_CHANNEL_BUFFER_SIZE);
         let (end_of_publish_sender, end_of_publish_receiver) = watch::channel::<Option<u64>>(None);
@@ -736,7 +741,7 @@ impl IkaNode {
     async fn monitor_joiner_announcements(
         node: Arc<Self>,
         mut next_epoch_committee_receiver: tokio::sync::watch::Receiver<
-            ika_types::committee::Committee,
+            ika_types::committee::CommitteeMembership,
         >,
     ) {
         use ika_core::blob_cache::BlobCache;

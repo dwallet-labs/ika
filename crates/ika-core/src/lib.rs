@@ -5,7 +5,7 @@
 extern crate core;
 
 use dwallet_session_request::DWalletSessionRequest;
-use ika_types::committee::Committee;
+use ika_types::committee::{Committee, CommitteeMembership};
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ pub struct SuiDataReceivers {
     /// assembled committee) to avoid a deadlock where the assembly
     /// can't complete until a joiner announces and the joiner can't
     /// learn it's a joiner until the assembly publishes.
-    pub chain_next_epoch_committee_receiver: Receiver<Committee>,
+    pub chain_next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
     pub uncompleted_requests_receiver: Receiver<(Vec<DWalletSessionRequest>, EpochId)>,
@@ -81,6 +81,7 @@ pub struct SuiDataSenders {
         tokio::sync::watch::Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     pub new_events_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_sender: tokio::sync::watch::Sender<Committee>,
+    pub chain_next_epoch_committee_sender: tokio::sync::watch::Sender<CommitteeMembership>,
     pub last_session_to_complete_in_current_epoch_sender:
         tokio::sync::watch::Sender<(EpochId, u64)>,
     pub end_of_publish_sender: tokio::sync::watch::Sender<Option<u64>>,
@@ -96,6 +97,14 @@ impl SuiDataReceivers {
         let (new_events_sender, new_events_receiver) = broadcast::channel(100);
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
             tokio::sync::watch::channel(Committee::new_simple_test_committee().0);
+        let test_committee = Committee::new_simple_test_committee().0;
+        let (chain_next_epoch_committee_sender, chain_next_epoch_committee_receiver) =
+            tokio::sync::watch::channel(CommitteeMembership {
+                epoch: test_committee.epoch,
+                voting_rights: test_committee.voting_rights.clone(),
+                quorum_threshold: test_committee.quorum_threshold,
+                validity_threshold: test_committee.validity_threshold,
+            });
         let (
             last_session_to_complete_in_current_epoch_sender,
             last_session_to_complete_in_current_epoch_receiver,
@@ -107,6 +116,7 @@ impl SuiDataReceivers {
             network_keys_sender,
             new_events_sender,
             next_epoch_committee_sender,
+            chain_next_epoch_committee_sender,
             last_session_to_complete_in_current_epoch_sender,
             end_of_publish_sender,
             uncompleted_events_sender,
@@ -115,9 +125,7 @@ impl SuiDataReceivers {
             SuiDataReceivers {
                 network_keys_receiver,
                 new_requests_receiver: new_events_receiver,
-                // Tests don't exercise the chain-vs-assembled cycle-break;
-                // reuse the same committee channel for the chain receiver.
-                chain_next_epoch_committee_receiver: next_epoch_committee_receiver.clone(),
+                chain_next_epoch_committee_receiver,
                 next_epoch_committee_receiver,
                 last_session_to_complete_in_current_epoch_receiver,
                 end_of_publish_receiver,

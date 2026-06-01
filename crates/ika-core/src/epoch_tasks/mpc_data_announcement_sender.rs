@@ -38,7 +38,7 @@ use crate::validator_metadata::{
 };
 use dwallet_rng::RootSeed;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
-use ika_types::committee::{Committee, EpochId};
+use ika_types::committee::{CommitteeMembership, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -133,7 +133,7 @@ pub struct MpcDataAnnouncementSender {
     /// until the joiner's mpc_data is in, and the joiner only learns
     /// it's a joiner from this same signal — gating on the assembled
     /// committee would deadlock and the freeze would exclude the joiner.
-    next_epoch_committee_receiver: Receiver<Committee>,
+    next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     /// The announcement we've built for this epoch, cached after the
     /// first derivation. Re-sends reuse the SAME (validator, epoch,
     /// timestamp_ms) so the consensus key is stable and duplicate
@@ -173,7 +173,7 @@ impl MpcDataAnnouncementSender {
         consensus_adapter: Arc<dyn SubmitToConsensus>,
         blob_cache: Arc<BlobCache>,
         root_seed: RootSeed,
-        next_epoch_committee_receiver: Receiver<Committee>,
+        next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     ) -> Self {
         Self {
             epoch_store,
@@ -509,23 +509,15 @@ mod tests {
         let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
         std::mem::forget(dir); // keep the DB path alive for the test
         let blob_cache = BlobCache::new(InMemoryBlobStore::new(), perpetual);
-        // Minimal next-epoch committee; the idempotency test never
-        // reads it (it exercises `cached_or_build_announcement`).
-        // `Committee::new` validates the member pubkey, so use a real
-        // test keypair rather than a synthetic AuthorityName.
-        let member: AuthorityName = ika_types::crypto::random_committee_key_pairs_of_size(1)[0]
-            .public()
-            .into();
-        let next_committee = Committee::new(
-            6,
-            vec![(member, 1u64)],
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            1,
-            1,
-        );
+        // Minimal next-epoch committee membership; the idempotency test
+        // never reads it (it exercises `cached_or_build_announcement`).
+        let member = name(1);
+        let next_committee = CommitteeMembership {
+            epoch: 6,
+            voting_rights: vec![(member, 1u64)],
+            quorum_threshold: 1,
+            validity_threshold: 1,
+        };
         let (_ntx, next_rx) = tokio::sync::watch::channel(next_committee);
         MpcDataAnnouncementSender::new(
             Weak::new(),
