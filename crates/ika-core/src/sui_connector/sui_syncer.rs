@@ -704,9 +704,14 @@ where
                         let overlay_incomplete = off_chain_on
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);
-                        let merged_state = merged.state.clone();
-                        all_fetched_network_keys_data.insert(key_id, merged);
                         if overlay_incomplete {
+                            // Don't publish a transient incomplete entry
+                            // (empty DKG / reconfiguration output) on the
+                            // channel — a consumer that decodes the bytes
+                            // would choke on it. Skip the insert; leaving
+                            // `last_fetched_network_keys` un-updated makes
+                            // the next tick re-merge and publish the
+                            // complete entry once the output is cached.
                             warn!(
                                 key = ?key_id,
                                 current_epoch,
@@ -715,7 +720,9 @@ where
                                  output not cached yet; will retry next tick"
                             );
                         } else {
-                            last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));
+                            last_fetched_network_keys
+                                .insert(key_id, (current_epoch, merged.state.clone()));
+                            all_fetched_network_keys_data.insert(key_id, merged);
                         }
                     }
                     Err(err) => {
