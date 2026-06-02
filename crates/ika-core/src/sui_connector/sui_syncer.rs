@@ -702,14 +702,24 @@ where
                         let overlay_incomplete = off_chain_on
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);
+                        // Publish the entry even when the overlay is
+                        // incomplete (empty DKG / reconfiguration output).
+                        // The epoch-switch reconfiguration gate counts the
+                        // channel entries against the on-chain key count
+                        // (`SuiConnectorExecutor::run_epoch_switch`:
+                        // `dwallet_network_encryption_keys.size == network_encryption_keys.len()`),
+                        // so dropping an incomplete key here would make that
+                        // count mismatch on the notifier node — whose
+                        // overlay is legitimately empty for a key it didn't
+                        // compute — and the mid-epoch reconfiguration would
+                        // never be requested, wedging the epoch advance.
+                        // Decode-side consumers already guard `is_empty`.
+                        // `last_fetched_network_keys` stays un-updated while
+                        // incomplete, so the next tick re-merges until the
+                        // output is cached.
+                        let merged_state = merged.state.clone();
+                        all_fetched_network_keys_data.insert(key_id, merged);
                         if overlay_incomplete {
-                            // Don't publish a transient incomplete entry
-                            // (empty DKG / reconfiguration output) on the
-                            // channel — a consumer that decodes the bytes
-                            // would choke on it. Skip the insert; leaving
-                            // `last_fetched_network_keys` un-updated makes
-                            // the next tick re-merge and publish the
-                            // complete entry once the output is cached.
                             warn!(
                                 key = ?key_id,
                                 current_epoch,
@@ -718,9 +728,7 @@ where
                                  output not cached yet; will retry next tick"
                             );
                         } else {
-                            last_fetched_network_keys
-                                .insert(key_id, (current_epoch, merged.state.clone()));
-                            all_fetched_network_keys_data.insert(key_id, merged);
+                            last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));
                         }
                     }
                     Err(err) => {
