@@ -1720,6 +1720,17 @@ async fn publish_package_to_sui(
     context: &mut WalletContext,
     package_path: PathBuf,
 ) -> Result<ExecutedTransaction, anyhow::Error> {
+    let environment = "localnet";
+    // Keep the ephemeral publication file (`Pub.<env>.toml`) inside the
+    // copied-contracts temp dir — alongside the package, shared across
+    // all four packages so cross-package dependency addresses still
+    // resolve — instead of letting `test-publish` default it to a
+    // cwd-relative `Pub.<env>.toml` (i.e. the repo root). There it dies
+    // with the contracts `TempDir` rather than persisting as a stale
+    // file that has to be deleted before every local network start.
+    let pubfile_path = package_path
+        .parent()
+        .map(|contracts_dir| contracts_dir.join(format!("Pub.{environment}.toml")));
     let result = SuiClientCommands::TestPublish(TestPublishArgs {
         publish_args: PublishArgs {
             package_path,
@@ -1736,8 +1747,8 @@ async fn publish_package_to_sui(
                 warnings_are_errors: true,
                 json_errors: false,
                 additional_named_addresses: Default::default(),
-                environment: Some("localnet".to_string()),
-                pubfile_path: None,
+                environment: Some(environment.to_string()),
+                pubfile_path,
                 ..Default::default()
             },
             payment: Default::default(),
