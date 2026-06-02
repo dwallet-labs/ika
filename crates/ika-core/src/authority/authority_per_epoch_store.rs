@@ -374,10 +374,15 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> IkaResult<()>;
 
     /// Same as `cache_network_dkg_output`, but for reconfiguration
-    /// outputs (per-epoch, per-key).
+    /// outputs (per-epoch, per-key). `reconfiguration_epoch` is the
+    /// reconfiguration session's own epoch (the on-chain request
+    /// event's epoch), used to key the epoch-deterministic handoff
+    /// digest — pass `session_request.epoch`, never the wall-clock
+    /// current epoch.
     fn cache_network_reconfiguration_output(
         &self,
         dwallet_network_encryption_key_id: ObjectID,
+        reconfiguration_epoch: EpochId,
         output_bytes: &[u8],
     ) -> IkaResult<()>;
 
@@ -687,13 +692,42 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     fn cache_network_reconfiguration_output(
         &self,
         dwallet_network_encryption_key_id: ObjectID,
+        reconfiguration_epoch: EpochId,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
+        // Per-epoch table + perpetual blob/by-key mirror (feeds the
+        // off-chain overlay's by-key lookup). Unchanged.
         self.cache_protocol_output(
             ProtocolOutputKind::Reconfiguration,
             dwallet_network_encryption_key_id,
             output_bytes,
-        )
+        )?;
+        // Epoch-keyed digest for the handoff attestation, keyed by the
+        // reconfiguration session's own epoch (deterministic across
+        // validators) rather than the wall-clock epoch the per-epoch
+        // table above is implicitly bound to. This is the slice the
+        // handoff items builder reads, so a late-finalized output that
+        // crosses the epoch boundary still certifies under the correct
+        // epoch on every validator.
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+            use fastcrypto::hash::{Blake2b256, HashFunction};
+            let mut hasher = Blake2b256::default();
+            hasher.update(output_bytes);
+            let digest: [u8; 32] = hasher.finalize().into();
+            if let Err(e) = perpetual.insert_network_reconfiguration_output_digest_for_epoch(
+                reconfiguration_epoch,
+                dwallet_network_encryption_key_id,
+                digest,
+            ) {
+                warn!(
+                    error = ?e,
+                    ?dwallet_network_encryption_key_id,
+                    reconfiguration_epoch,
+                    "failed to persist epoch-keyed reconfiguration output digest — handoff attestation may omit this key for the epoch"
+                );
+            }
+        }
+        Ok(())
     }
 
     fn get_certified_handoff_attestation(
@@ -2323,25 +2357,35 @@ impl AuthorityPerEpochStore {
     }
 
     /// Returns the `key_id -> digest` map of reconfiguration outputs
-    /// cached **in the current epoch only** — the per-epoch table, with
-    /// no perpetual fallback. The handoff attestation MUST use this, not
-    /// the perpetual-merged [`Self::get_network_reconfiguration_output_digests`]:
-    /// the reconfiguration output is epoch-specific, and the perpetual
-    /// mirror holds the *prior* epoch's output until this epoch's is
-    /// computed locally. Certifying that stale value diverges from peers
-    /// who already hold the current one (the stale-vs-current
-    /// `AttestationMismatch`). A validator that hasn't locally computed
-    /// this epoch's reconfiguration simply has no entry here and is
-    /// correctly excluded from the `NetworkReconfigurationOutput` item.
-    pub fn get_network_reconfiguration_output_digests_current_epoch(
+    /// recorded for `epoch` — the epoch-keyed perpetual slice written by
+    /// [`Self::cache_network_reconfiguration_output`] under the
+    /// reconfiguration session's *own* epoch. The handoff attestation
+    /// for `epoch` MUST use this: it is deterministic across validators
+    /// regardless of when each one processed the output locally. The
+    /// prior per-epoch-table source was not — a late-finalized output
+    /// crossing the epoch boundary landed under the wrong epoch on slow
+    /// validators, so peers certified different
+    /// `NetworkReconfigurationOutput` digests for the same epoch and
+    /// cross-rejected as `AttestationMismatch`, wedging EndOfPublish. A
+    /// validator that hasn't yet recorded `epoch`'s reconfiguration
+    /// output simply has no entry here and is correctly excluded from
+    /// the item.
+    pub fn get_network_reconfiguration_output_digests_for_epoch(
         &self,
+        epoch: EpochId,
     ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
-        let tables = self.tables()?;
         let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
             std::collections::BTreeMap::new();
-        for entry in tables.network_reconfiguration_output_digests.safe_iter() {
-            let (key_id, digest) = entry.map_err(IkaError::from)?;
-            out.insert(key_id, digest);
+        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+            for entry in perpetual
+                .network_reconfiguration_output_digest_by_epoch_and_key
+                .safe_iter()
+            {
+                let ((entry_epoch, key_id), digest) = entry.map_err(IkaError::from)?;
+                if entry_epoch == epoch {
+                    out.insert(key_id, digest);
+                }
+            }
         }
         Ok(out)
     }

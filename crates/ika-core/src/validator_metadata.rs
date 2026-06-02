@@ -769,7 +769,7 @@ impl MpcDataHandoffItemsBuilder {
 impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
     fn build(
         &self,
-        _epoch: EpochId,
+        epoch: EpochId,
         next_committee_pubkeys: &[AuthorityName],
     ) -> IkaResult<Vec<(HandoffItemKey, [u8; 32])>> {
         let Some(store) = self.epoch_store.upgrade() else {
@@ -783,12 +783,14 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
             store.get_effective_reconfig_input_set(next_committee_pubkeys.iter().copied())?;
         let dkg = store.get_network_dkg_output_digests()?;
         // Reconfiguration is epoch-specific: source it from the
-        // current-epoch table only, never the perpetual-merged getter
-        // (which would surface the prior epoch's output for a validator
-        // that hasn't computed this epoch's reconfiguration locally,
-        // diverging the attestation). DKG output is stable across epochs,
+        // epoch-keyed slice for *this handoff's* epoch, written under the
+        // reconfiguration session's own (consensus-deterministic) epoch.
+        // This is identical across validators regardless of when each one
+        // processed the output locally — unlike the old per-epoch table,
+        // which a late output crossing the epoch boundary mis-filed,
+        // diverging the attestation. DKG output is stable across epochs,
         // so the perpetual-merged getter is correct for it.
-        let reconfig = store.get_network_reconfiguration_output_digests_current_epoch()?;
+        let reconfig = store.get_network_reconfiguration_output_digests_for_epoch(epoch)?;
         Ok(compute_handoff_items(&effective, &dkg, &reconfig))
     }
 }

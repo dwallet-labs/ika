@@ -2327,7 +2327,11 @@ async fn install_joiner_network_key_outputs(
             continue;
         };
         let cached = if is_reconfiguration {
-            epoch_store.cache_network_reconfiguration_output(key_id, &bytes)
+            // Key the digest under the epoch this cert attests — the
+            // epoch whose reconfiguration output the cert certifies —
+            // not the joiner's wall-clock epoch, matching the producer
+            // side's session-epoch keying.
+            epoch_store.cache_network_reconfiguration_output(key_id, cert.attestation.epoch, &bytes)
         } else {
             epoch_store.cache_network_dkg_output(key_id, &bytes)
         };

@@ -56,6 +56,23 @@ pub struct AuthorityPerpetualTables {
     /// epoch, but only the most recent one matters for class-groups
     /// assembly + downstream MPC, so we overwrite on each write.
     pub(crate) network_reconfiguration_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
+
+    /// `(reconfiguration_epoch, network_key_id) -> reconfig output
+    /// digest`, keyed by the reconfiguration session's *own* epoch
+    /// (the on-chain request event's epoch, identical across
+    /// validators) rather than the wall-clock epoch in which the
+    /// output happened to be processed locally. The handoff
+    /// attestation for epoch `e` reads exactly the `e` slice: this is
+    /// what makes the `NetworkReconfigurationOutput` item
+    /// epoch-deterministic. Without it, a reconfiguration output
+    /// finalized just after a validator rolled to epoch `e+1` lands in
+    /// `e+1`'s per-epoch table on that validator but `e`'s on a faster
+    /// peer, so the two certify different digests for epoch `e` and
+    /// cross-reject as `AttestationMismatch` — wedging EndOfPublish.
+    /// One small entry per (epoch, key); never overwritten, so the
+    /// historical slice stays available for late handoff retries.
+    pub(crate) network_reconfiguration_output_digest_by_epoch_and_key:
+        DBMap<(EpochId, ObjectID), [u8; 32]>,
 }
 
 impl AuthorityPerpetualTables {
@@ -229,6 +246,22 @@ impl AuthorityPerpetualTables {
     ) -> IkaResult {
         self.network_reconfiguration_output_digests_by_key
             .insert(&network_key_id, &digest)?;
+        Ok(())
+    }
+
+    /// Records a reconfiguration output digest under the
+    /// reconfiguration session's own epoch (deterministic across
+    /// validators), for the epoch-keyed handoff attestation lookup.
+    /// Distinct from [`Self::insert_network_reconfiguration_output_digest`],
+    /// which keeps only the latest per key for the off-chain overlay.
+    pub fn insert_network_reconfiguration_output_digest_for_epoch(
+        &self,
+        reconfiguration_epoch: EpochId,
+        network_key_id: ObjectID,
+        digest: [u8; 32],
+    ) -> IkaResult {
+        self.network_reconfiguration_output_digest_by_epoch_and_key
+            .insert(&(reconfiguration_epoch, network_key_id), &digest)?;
         Ok(())
     }
 

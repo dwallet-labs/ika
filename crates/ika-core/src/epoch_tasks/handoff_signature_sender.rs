@@ -127,19 +127,20 @@ impl HandoffSignatureSender {
         if snapshot.is_empty() {
             return false;
         }
-        // Gate the reconfiguration output on the *current-epoch* per-epoch
-        // cache (this validator's own locally-computed bytes), NOT the
+        // Gate the reconfiguration output on this epoch's epoch-keyed
+        // digest slice (this validator's own locally-computed bytes,
+        // filed under the reconfiguration session's own epoch), NOT the
         // overlay snapshot. The overlay can surface the prior epoch's
         // output via the perpetual mirror, which would let this validator
         // sign a stale `NetworkReconfigurationOutput` digest that diverges
-        // from peers holding the current one. This also keeps the gate
-        // consistent with the handoff items builder, which sources the
-        // same current-epoch table.
+        // from peers. Reading the same epoch-keyed slice the handoff items
+        // builder reads keeps the readiness gate and the attestation
+        // strictly in sync.
         let Some(epoch_store) = self.epoch_store.upgrade() else {
             return false;
         };
-        let Ok(reconfig_current) =
-            epoch_store.get_network_reconfiguration_output_digests_current_epoch()
+        let Ok(reconfig_for_epoch) =
+            epoch_store.get_network_reconfiguration_output_digests_for_epoch(self.epoch_id)
         else {
             return false;
         };
@@ -147,7 +148,7 @@ impl HandoffSignatureSender {
             matches!(
                 data.state,
                 DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-            ) && reconfig_current.contains_key(key_id)
+            ) && reconfig_for_epoch.contains_key(key_id)
         })
     }
 
@@ -184,22 +185,21 @@ impl HandoffSignatureSender {
                     "failed to hydrate network DKG digest from chain bytes"
                 );
             }
-            // NOTE: the current-epoch *reconfiguration* output is
-            // deliberately NOT hydrated here. Unlike the one-time DKG
-            // output, it is epoch-specific, and this
-            // `network_keys_receiver` snapshot is a non-consensus watch
-            // channel that can surface the *prior* epoch's output (via
-            // the perpetual mirror) a round behind. The per-epoch
-            // reconfiguration digest is written solely by this
-            // validator's local reconfiguration MPC in
-            // `dwallet_mpc_service` (deterministic, current-epoch), and
-            // both the handoff items builder and
-            // `snapshot_ready_for_signing` read it from the current-epoch
-            // table (`get_network_reconfiguration_output_digests_current_epoch`).
-            // Hydrating from the lagging snapshot would overwrite that
-            // current value with a possibly-stale one, so two signers
-            // would hash different `NetworkReconfigurationOutput` digests
-            // and cross-reject as `AttestationMismatch`.
+            // NOTE: the *reconfiguration* output is deliberately NOT
+            // hydrated here. Unlike the one-time DKG output, it is
+            // epoch-specific, and this `network_keys_receiver` snapshot
+            // is a non-consensus watch channel that can surface the
+            // *prior* epoch's output (via the perpetual mirror) a round
+            // behind. The reconfiguration digest is written solely by
+            // this validator's local reconfiguration MPC in
+            // `dwallet_mpc_service`, keyed by the reconfiguration
+            // session's own epoch, and both the handoff items builder and
+            // `snapshot_ready_for_signing` read it from that epoch-keyed
+            // slice (`get_network_reconfiguration_output_digests_for_epoch`).
+            // Hydrating from the lagging snapshot would file a
+            // possibly-stale value under this epoch, so two signers would
+            // hash different `NetworkReconfigurationOutput` digests and
+            // cross-reject as `AttestationMismatch`.
         }
     }
 

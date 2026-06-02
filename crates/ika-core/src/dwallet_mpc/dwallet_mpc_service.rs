@@ -1751,6 +1751,7 @@ impl DWalletMPCService {
                         } => {
                             if let Err(e) = self.epoch_store.cache_network_reconfiguration_output(
                                 *dwallet_network_encryption_key_id,
+                                session_request.epoch,
                                 &output,
                             ) {
                                 warn!(

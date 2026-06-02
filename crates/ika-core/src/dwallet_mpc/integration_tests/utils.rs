@@ -428,6 +428,7 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
     fn cache_network_reconfiguration_output(
         &self,
         _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _reconfiguration_epoch: sui_types::base_types::EpochId,
         _output_bytes: &[u8],
     ) -> IkaResult<()> {
         Ok(())

@@ -1587,8 +1587,9 @@ impl DWalletMPCManager {
                         // `NetworkReconfigurationOutput` digest — the
                         // stale-vs-current `AttestationMismatch`. The
                         // handoff sources the reconfiguration digest from
-                        // the per-epoch local-MPC write only
-                        // (`get_network_reconfiguration_output_digests_current_epoch`);
+                        // the local-MPC write only, keyed by the
+                        // reconfiguration session's own epoch
+                        // (`get_network_reconfiguration_output_digests_for_epoch`);
                         // a validator that didn't compute this epoch's
                         // reconfiguration is excluded from that item by
                         // design (the computing validators are a quorum).
