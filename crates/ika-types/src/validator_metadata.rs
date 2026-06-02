@@ -99,10 +99,18 @@ pub struct EpochMpcDataReadySignal {
     /// and the strict-superset re-emit gate would never fire.
     pub sequence_number: u64,
     /// Authorities whose mpc_data blob this signer has locally
-    /// decode-validated. Wire-encoded as a sorted `Vec` (we sort
-    /// on emit) so the BCS bytes are canonical and identical
+    /// decode-validated, each paired with the blob hash it
+    /// validated. Wire-encoded as a `Vec` sorted by authority (we
+    /// sort on emit) so the BCS bytes are canonical and identical
     /// across honest validators with the same view.
-    pub validated_peers: Vec<AuthorityName>,
+    ///
+    /// Carrying the hash is what makes the freeze a pure function of
+    /// consensus: the frozen set is tallied per `(authority, hash)`
+    /// from these signals alone — never from a validator's local
+    /// announcement table, which can diverge if a relayed joiner
+    /// announcement was dropped/buffered while the joiner-pubkey
+    /// provider lagged.
+    pub validated_peers: Vec<(AuthorityName, [u8; 32])>,
 }
 
 #[cfg(test)]
@@ -133,7 +141,10 @@ mod tests {
             authority: make_authority(3),
             epoch: 99,
             sequence_number: 7,
-            validated_peers: vec![make_authority(1), make_authority(2)],
+            validated_peers: vec![
+                (make_authority(1), [0x11; 32]),
+                (make_authority(2), [0x22; 32]),
+            ],
         };
         let bytes = bcs::to_bytes(&signal).expect("encode");
         let decoded: EpochMpcDataReadySignal = bcs::from_bytes(&bytes).expect("decode");

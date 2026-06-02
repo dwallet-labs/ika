@@ -43,7 +43,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
     EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
@@ -307,9 +307,11 @@ pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanonicalizeReadySignalOutcome {
     /// Signal accepted; the contained vec is the deduped +
-    /// committee-filtered + sorted `validated_peers` ready for
-    /// persistence. Guaranteed to attest to ≥quorum stake.
-    Accept { validated_peers: Vec<AuthorityName> },
+    /// committee-filtered + sorted `(authority, blob_hash)` set
+    /// ready for persistence. Guaranteed to attest to ≥quorum stake.
+    Accept {
+        validated_peers: Vec<(AuthorityName, [u8; 32])>,
+    },
     /// Signal rejected: after dedup + committee-filter, the
     /// remaining peer set attests to less than quorum stake.
     /// Recorded so a byzantine signer can't push the freeze
@@ -361,7 +363,7 @@ pub struct CanonicalizeReadySignalDiagnostics {
 ///    BFT quorum-stake floor; the `Committee::quorum_threshold`
 ///    callers pass in already incorporates the `2f+1` rounding.
 pub fn canonicalize_ready_signal_peers<S>(
-    validated_peers: &[AuthorityName],
+    validated_peers: &[(AuthorityName, [u8; 32])],
     stake_of: S,
     quorum_threshold: u64,
 ) -> (
@@ -371,21 +373,29 @@ pub fn canonicalize_ready_signal_peers<S>(
 where
     S: Fn(&AuthorityName) -> u64,
 {
-    let mut unique: std::collections::BTreeSet<AuthorityName> =
-        validated_peers.iter().copied().collect();
+    // Dedup by authority: a signer validated one blob per peer, so
+    // collapse to one `(peer, hash)` pair per peer. This both keeps
+    // the BCS canonical and stops a byzantine signer from splitting a
+    // target's stake across multiple hashes (each pair would only be
+    // counted once anyway, but the collapse keeps the tally clean).
+    let mut unique: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
+        std::collections::BTreeMap::new();
+    for (peer, hash) in validated_peers {
+        unique.insert(*peer, *hash);
+    }
     let duplicates_collapsed = validated_peers.len().saturating_sub(unique.len());
     let mut non_committee_dropped: Vec<AuthorityName> = unique
-        .iter()
+        .keys()
         .copied()
         .filter(|peer| stake_of(peer) == 0)
         .collect();
     non_committee_dropped.sort();
-    unique.retain(|peer| stake_of(peer) > 0);
+    unique.retain(|peer, _| stake_of(peer) > 0);
     let diagnostics = CanonicalizeReadySignalDiagnostics {
         non_committee_dropped,
         duplicates_collapsed,
     };
-    let attested_stake: u64 = unique.iter().map(&stake_of).sum();
+    let attested_stake: u64 = unique.keys().map(&stake_of).sum();
     if attested_stake < quorum_threshold {
         return (
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
@@ -407,73 +417,79 @@ where
 /// into the working set vs. get excluded for this epoch.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FreezePartition {
-    /// Announcers attested to by a stake quorum of signers.
-    /// `Vec<(authority, blob_hash)>`; the order follows the input
-    /// announcements (deterministic given the BTreeMap input).
+    /// Announcers a stake quorum of signers attested to under a
+    /// single blob hash. `Vec<(authority, blob_hash)>`, sorted by
+    /// `(authority, hash)` (deterministic given the consensus
+    /// signals).
     pub frozen: Vec<(AuthorityName, [u8; 32])>,
-    /// Announcers that appeared in the announcement table but
-    /// didn't reach stake-quorum of attestations.
+    /// Announcers that appeared in some signer's `validated_peers`
+    /// but whose blob hash didn't reach stake-quorum agreement.
     pub excluded: Vec<AuthorityName>,
 }
 
-/// Computes the freeze-time partition from announcements and
-/// recorded `EpochMpcDataReadySignal`s. Pure function — extracted
-/// from `AuthorityPerEpochStore::freeze_mpc_data_if_first` so the
+/// Computes the freeze-time partition purely from the recorded
+/// `EpochMpcDataReadySignal`s. Pure function — extracted from
+/// `AuthorityPerEpochStore::freeze_mpc_data_if_first` so the
 /// attestation-tally logic can be unit-tested directly against
 /// byzantine scenarios (silent withholder, malicious-data
-/// withholder, late propagation) without standing up a full
-/// epoch store.
+/// withholder, late propagation) without standing up a full epoch
+/// store.
+///
+/// Crucially this reads ONLY the consensus signals — never a local
+/// announcement table — so every honest validator computes the
+/// identical partition. Each signal carries `(peer, hash)` pairs:
+/// "I validated *this blob* for *this peer*." A peer is frozen on
+/// the hash a stake quorum agrees on (quorum > 2/3 ⇒ at most one
+/// hash per peer can reach it), so the frozen `(peer, hash)` is
+/// consensus-determined, not sourced from whatever blob_hash a given
+/// validator happened to have in its local table.
 ///
 /// Inputs:
-/// - `announcements`: validator → blob_hash, the announcement
-///   table at freeze time.
-/// - `signals`: signer → `validated_peers` list, the ready-
-///   signals seen so far (typically already at stake quorum).
-/// - `stake_of`: callback returning each authority's committee
-///   stake.
+/// - `signals`: signer → `Vec<(peer, blob_hash)>`, the ready-signals
+///   seen so far (typically already at stake quorum).
+/// - `stake_of`: callback returning each authority's committee stake.
 /// - `quorum_threshold`: the committee's stake-quorum threshold.
 ///
-/// Output: every announcer is partitioned into `frozen` (≥quorum
-/// attested) or `excluded` (otherwise). Announcers that don't
-/// appear in any signer's `validated_peers` end up in `excluded`,
-/// which is the expected outcome for a byzantine validator that
-/// announces but withholds/corrupts its blob.
+/// Output: every peer that appears in a signal is partitioned into
+/// `frozen` (some `(peer, hash)` reached quorum) or `excluded`
+/// (no hash did). A byzantine validator that withholds/corrupts its
+/// blob never gets a quorum of honest validators to attest the same
+/// hash, so it lands in `excluded`.
 pub fn compute_freeze_partition<S>(
-    announcements: &BTreeMap<AuthorityName, [u8; 32]>,
-    signals: &BTreeMap<AuthorityName, Vec<AuthorityName>>,
+    signals: &BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>>,
     stake_of: S,
     quorum_threshold: u64,
 ) -> FreezePartition
 where
     S: Fn(&AuthorityName) -> u64,
 {
-    let mut attested_stake: BTreeMap<AuthorityName, u64> = BTreeMap::new();
+    // Tally attested stake per (peer, hash). Dedup each signer's own
+    // pairs by peer first (one validated blob per peer) so a byzantine
+    // signer can't credit a target twice by listing it under two
+    // hashes.
+    let mut attested_stake: BTreeMap<(AuthorityName, [u8; 32]), u64> = BTreeMap::new();
+    let mut peers_seen: BTreeSet<AuthorityName> = BTreeSet::new();
     for (signer, validated_peers) in signals {
         let signer_stake = stake_of(signer);
-        // Dedup the signer's attested peers BEFORE crediting
-        // stake. A byzantine signer can otherwise inflate any
-        // target's attested stake by listing them N times in
-        // `validated_peers` and have N*signer_stake credited.
-        // The wire-format itself is `Vec<AuthorityName>` (chosen
-        // for canonical BCS) so we have to enforce set semantics
-        // explicitly at every consumer.
-        let unique_peers: std::collections::BTreeSet<AuthorityName> =
-            validated_peers.iter().copied().collect();
-        for peer in &unique_peers {
-            let slot = attested_stake.entry(*peer).or_default();
+        let unique: BTreeMap<AuthorityName, [u8; 32]> = validated_peers.iter().copied().collect();
+        for (peer, hash) in unique {
+            peers_seen.insert(peer);
+            let slot = attested_stake.entry((peer, hash)).or_default();
             *slot = slot.saturating_add(signer_stake);
         }
     }
     let mut frozen: Vec<(AuthorityName, [u8; 32])> = Vec::new();
-    let mut excluded: Vec<AuthorityName> = Vec::new();
-    for (authority, blob_hash) in announcements {
-        let stake = attested_stake.get(authority).copied().unwrap_or(0);
-        if stake >= quorum_threshold {
-            frozen.push((*authority, *blob_hash));
-        } else {
-            excluded.push(*authority);
+    let mut frozen_peers: BTreeSet<AuthorityName> = BTreeSet::new();
+    for ((peer, hash), stake) in &attested_stake {
+        if *stake >= quorum_threshold {
+            frozen.push((*peer, *hash));
+            frozen_peers.insert(*peer);
         }
     }
+    let excluded: Vec<AuthorityName> = peers_seen
+        .into_iter()
+        .filter(|peer| !frozen_peers.contains(peer))
+        .collect();
     FreezePartition { frozen, excluded }
 }
 
@@ -628,10 +644,13 @@ pub fn build_epoch_mpc_data_ready_signal_transaction(
     authority: AuthorityName,
     epoch: EpochId,
     sequence_number: u64,
-    mut validated_peers: Vec<AuthorityName>,
+    mut validated_peers: Vec<(AuthorityName, [u8; 32])>,
 ) -> ConsensusTransaction {
-    validated_peers.sort();
-    validated_peers.dedup();
+    // Sort + dedup by authority so the BCS bytes are canonical — one
+    // `(peer, hash)` pair per peer (a validator validates a single
+    // blob per peer).
+    validated_peers.sort_by(|left, right| left.0.cmp(&right.0));
+    validated_peers.dedup_by(|left, right| left.0 == right.0);
     let signal = EpochMpcDataReadySignal {
         authority,
         epoch,
@@ -2875,51 +2894,39 @@ mod tests {
         AuthorityName::new([byte; 48])
     }
 
-    /// All 4 validators announce, all honestly validate each
-    /// other's blob, and all signal ready with the full peer set —
-    /// the happy path. Every announcer crosses the quorum and the
-    /// excluded set is empty.
+    /// All 4 validators validate each other's blob and signal ready
+    /// with the full `(peer, hash)` set — the happy path. Every peer
+    /// reaches single-hash quorum and the excluded set is empty.
     #[test]
     fn freeze_partition_happy_path_includes_all() {
         let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        let announcements: BTreeMap<_, _> = [
+        let view = vec![
             (a, [0x11; 32]),
             (b, [0x22; 32]),
             (c, [0x33; 32]),
             (d, [0x44; 32]),
-        ]
-        .into_iter()
-        .collect();
-        let all = vec![a, b, c, d];
-        let signals: BTreeMap<_, _> = all.iter().map(|signer| (*signer, all.clone())).collect();
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        ];
+        let signals: BTreeMap<_, _> = [a, b, c, d]
+            .into_iter()
+            .map(|signer| (signer, view.clone()))
+            .collect();
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
         assert_eq!(partition.frozen.len(), 4);
         assert!(partition.excluded.is_empty());
     }
 
-    /// Byzantine scenario: validator D never broadcasts an
-    /// announcement at all (e.g. process crashed, malicious
-    /// silence). The honest validators announce and signal — but
-    /// nobody has D's blob, so nobody's `validated_peers` contains
-    /// D, so no attestation stake is recorded for D.
-    ///
-    /// `announcements` here doesn't even include D (we wouldn't
-    /// have a row for them). `partition.frozen` covers the 3
-    /// honest announcers; `partition.excluded` is empty because
-    /// D never made the table. This is the "silent withholding"
-    /// outcome: the network proceeds with the surviving committee
-    /// minus the missing announcer.
+    /// Byzantine scenario: validator D withholds its blob, so no
+    /// honest signer lists D in its `(peer, hash)` set and D never
+    /// signals. D appears in no signal → it's absent from the
+    /// partition entirely (not frozen, not excluded), and therefore
+    /// out of the working set. The 3 honest peers freeze. This is the
+    /// "silent withholding" outcome: the network proceeds with the
+    /// surviving committee minus the missing announcer.
     #[test]
     fn freeze_partition_byzantine_silent_no_announcement_at_all() {
         let (a, b, c, _d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        // D never announced — they're absent from the table.
-        let announcements: BTreeMap<_, _> = [(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])]
-            .into_iter()
-            .collect();
-        // Honest signers only attest to peers they actually have.
-        // They never received D's blob (D never published) so D
-        // is not in their `validated_peers`.
-        let honest_view = vec![a, b, c];
+        // Honest signers only attest to peers whose blob they have.
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
         let signals: BTreeMap<_, _> = [
             (a, honest_view.clone()),
             (b, honest_view.clone()),
@@ -2927,82 +2934,30 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         assert_eq!(frozen_authorities, vec![a, b, c]);
         assert!(partition.excluded.is_empty());
     }
 
-    /// Byzantine scenario: validator D *did* broadcast an
-    /// announcement (their digest landed in consensus) but
-    /// withheld the blob bytes — honest peers tried to fetch via
-    /// P2P, failed, never decode-validated. Honest signers
-    /// therefore don't include D in their `validated_peers`. At
-    /// freeze, D's announcement is on file but no attestation
-    /// stake reaches D → D goes into the excluded set.
-    ///
-    /// This is the "exclude-on-no-bytes" outcome that the design
-    /// is built around: the working committee proceeds without
-    /// the byzantine actor, same semantics as today's "bad chain
-    /// mpc_data → ignore that validator."
-    #[test]
-    fn freeze_partition_byzantine_announces_digest_but_withholds_blob() {
-        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        // D's announcement landed (their digest is in the table)…
-        let announcements: BTreeMap<_, _> = [
-            (a, [0x11; 32]),
-            (b, [0x22; 32]),
-            (c, [0x33; 32]),
-            (d, [0xDD; 32]),
-        ]
-        .into_iter()
-        .collect();
-        // …but no honest validator has D's blob locally, so D is
-        // not in anyone's `validated_peers`.
-        let honest_view = vec![a, b, c];
-        let signals: BTreeMap<_, _> = [
-            (a, honest_view.clone()),
-            (b, honest_view.clone()),
-            (c, honest_view.clone()),
-        ]
-        .into_iter()
-        .collect();
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
-        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
-        assert_eq!(frozen_authorities, vec![a, b, c]);
-        assert_eq!(partition.excluded, vec![d]);
-    }
-
-    /// Byzantine scenario: validator D broadcasts an announcement
-    /// AND serves bytes — but the bytes are malicious (don't decode
-    /// to valid mpc_data, e.g. random garbage that happens to hash
-    /// to the announced digest). Honest validators verify the hash
-    /// (passes) then run `blob_decodes_to_valid_mpc_data` (fails),
-    /// so they DON'T list D in `validated_peers`. The freeze tally
-    /// excludes D exactly like the withholding case.
-    ///
-    /// We additionally model a byzantine signer (D itself, or any
-    /// colluder) trying to vouch for D in *their own* signal: with
-    /// only 1/4 stake of byzantine attestation, D still falls
-    /// short of the 3/4 quorum threshold → excluded.
+    /// Byzantine scenario: validator D serves bytes but they're
+    /// malicious (don't decode to valid mpc_data). Honest validators
+    /// drop D from their attestation, but byzantine D vouches for
+    /// itself in its own signal — so D *appears* in a signal (it's in
+    /// `peers_seen`) but its single self-vote (1/4) falls short of the
+    /// 3/4 quorum → D is excluded. The 3 honest peers freeze.
     #[test]
     fn freeze_partition_byzantine_malicious_blob_excluded() {
         let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        let announcements: BTreeMap<_, _> = [
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        // Byzantine D vouches for itself, but one byzantine signer
+        // can't push D past the 3/4 quorum on its own.
+        let byzantine_view = vec![
             (a, [0x11; 32]),
             (b, [0x22; 32]),
             (c, [0x33; 32]),
             (d, [0xBE; 32]),
-        ]
-        .into_iter()
-        .collect();
-        // Honest signers tried to use D's blob, found it bad,
-        // dropped D from their attestation.
-        let honest_view = vec![a, b, c];
-        // Byzantine D vouches for itself (and everyone, including
-        // itself), but a single byzantine signer can't push D
-        // past the 3/4 quorum on its own.
-        let byzantine_view = vec![a, b, c, d];
+        ];
         let signals: BTreeMap<_, _> = [
             (a, honest_view.clone()),
             (b, honest_view.clone()),
@@ -3011,7 +2966,40 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert_eq!(frozen_authorities, vec![a, b, c]);
+        assert_eq!(partition.excluded, vec![d]);
+    }
+
+    /// The agreement property the hash-in-signal design adds: a peer
+    /// a stake quorum attested to but under *different* hashes (a
+    /// re-announce mid-collection, or a malicious split) reaches no
+    /// single-hash quorum and is excluded — even though 4/4 attest
+    /// *some* hash. The freeze pins a peer only when a stake quorum
+    /// agrees on the SAME blob.
+    #[test]
+    fn freeze_partition_split_hashes_reach_no_quorum() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // Everyone agrees on a/b/c's hashes, but splits on d's: a,b
+        // saw 0x91; c,d saw 0x92. Neither d-hash clears 3/4.
+        let view = |d_hash: [u8; 32]| {
+            vec![
+                (a, [0x11; 32]),
+                (b, [0x22; 32]),
+                (c, [0x33; 32]),
+                (d, d_hash),
+            ]
+        };
+        let signals: BTreeMap<_, _> = [
+            (a, view([0x91; 32])),
+            (b, view([0x91; 32])),
+            (c, view([0x92; 32])),
+            (d, view([0x92; 32])),
+        ]
+        .into_iter()
+        .collect();
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         assert_eq!(frozen_authorities, vec![a, b, c]);
         assert_eq!(partition.excluded, vec![d]);
@@ -3075,19 +3063,23 @@ mod tests {
     //          byzantine resistance for `EpochMpcDataReadySignal`.
 
     /// Happy path: a well-formed signal with quorum coverage
-    /// returns the sorted, deduped, committee-filtered list.
+    /// returns the sorted, deduped, committee-filtered `(peer, hash)`
+    /// pairs.
     #[test]
     fn canonicalize_ready_signal_accepts_quorum_coverage() {
         let (a, b, c) = (auth(0xAA), auth(0xBB), auth(0xCC));
         // Stake 1 each; quorum = 3. Signal lists all three.
         let (outcome, diagnostics) = canonicalize_ready_signal_peers(
-            &[c, a, b], // unsorted on purpose
+            &[(c, [0xCC; 32]), (a, [0xAA; 32]), (b, [0xBB; 32])], // unsorted on purpose
             |_| 1,
             3,
         );
         match outcome {
             CanonicalizeReadySignalOutcome::Accept { validated_peers } => {
-                assert_eq!(validated_peers, vec![a, b, c]);
+                assert_eq!(
+                    validated_peers,
+                    vec![(a, [0xAA; 32]), (b, [0xBB; 32]), (c, [0xCC; 32])]
+                );
             }
             other => panic!("expected Accept, got {other:?}"),
         }
@@ -3097,15 +3089,21 @@ mod tests {
 
     /// Byzantine signer pads `validated_peers` with duplicates of
     /// the same target to inflate apparent coverage. Canonicalize
-    /// must dedup before computing attested-stake — so a list of
-    /// `[a, a, a]` with 1-stake-each committee counts as 1 stake,
-    /// well below a quorum of 3. The diagnostics surface the
-    /// number of collapses so the caller can log a byzantine
-    /// signal.
+    /// must dedup by authority before computing attested-stake — so
+    /// four `(a, …)` pairs count as 1 stake, well below a quorum of 3.
     #[test]
     fn canonicalize_ready_signal_rejects_duplicate_padding() {
         let a = auth(0xAA);
-        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&[a, a, a, a], |_| 1, 3);
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(
+            &[
+                (a, [0x01; 32]),
+                (a, [0x01; 32]),
+                (a, [0x01; 32]),
+                (a, [0x01; 32]),
+            ],
+            |_| 1,
+            3,
+        );
         match outcome {
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage {
                 attested_stake,
@@ -3120,9 +3118,7 @@ mod tests {
     }
 
     /// Byzantine signer pads with non-committee authorities (zero
-    /// stake) to try to make `validated_peers` look full. The
-    /// committee filter drops them so they don't contribute toward
-    /// the apparent attested stake — and the diagnostics surface
+    /// stake). The committee filter drops them; diagnostics surface
     /// the dropped names for caller-side logging.
     #[test]
     fn canonicalize_ready_signal_rejects_non_committee_padding() {
@@ -3130,7 +3126,11 @@ mod tests {
         let outsider1 = auth(0xF0);
         let outsider2 = auth(0xF1);
         let (outcome, diagnostics) = canonicalize_ready_signal_peers(
-            &[a, outsider1, outsider2],
+            &[
+                (a, [0x01; 32]),
+                (outsider1, [0x02; 32]),
+                (outsider2, [0x03; 32]),
+            ],
             |peer| if *peer == a { 1 } else { 0 },
             3,
         );
@@ -3146,14 +3146,14 @@ mod tests {
         );
     }
 
-    /// Byzantine "race the freeze trigger" attack: signal an empty
-    /// `validated_peers` to spend stake toward the freeze quorum
-    /// without contributing useful attestations, pushing freeze
-    /// earlier than honest validators would have. Receive-side
-    /// must reject this.
+    /// Byzantine "race the freeze trigger" attack: an empty
+    /// `validated_peers` spends stake toward the freeze quorum
+    /// without contributing useful attestations. Receive-side must
+    /// reject this.
     #[test]
     fn canonicalize_ready_signal_rejects_empty_set() {
-        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&[], |_| 1, 3);
+        let empty: [(AuthorityName, [u8; 32]); 0] = [];
+        let (outcome, diagnostics) = canonicalize_ready_signal_peers(&empty, |_| 1, 3);
         assert!(matches!(
             outcome,
             CanonicalizeReadySignalOutcome::BelowQuorumCoverage { .. }
@@ -3163,9 +3163,9 @@ mod tests {
     }
 
     /// Diagnostics surface both kinds of byzantine padding so the
-    /// epoch-store caller can `warn!` on persistent offenders. This
-    /// test pins the dual-signal behavior — a single inbound signal
-    /// can contain both duplicates AND non-committee names.
+    /// epoch-store caller can `warn!` on persistent offenders. A
+    /// single inbound signal can contain both duplicates AND
+    /// non-committee names.
     #[test]
     fn canonicalize_ready_signal_diagnostics_capture_mixed_padding() {
         let (a, b) = (auth(0xAA), auth(0xBB));
@@ -3173,7 +3173,13 @@ mod tests {
         // [a, a, b, outsider, b] — 1 dup of `a`, 1 dup of `b`,
         // and one non-committee `outsider`.
         let (outcome, diagnostics) = canonicalize_ready_signal_peers(
-            &[a, a, b, outsider, b],
+            &[
+                (a, [0x01; 32]),
+                (a, [0x01; 32]),
+                (b, [0x02; 32]),
+                (outsider, [0x03; 32]),
+                (b, [0x02; 32]),
+            ],
             |peer| if *peer == a || *peer == b { 1 } else { 0 },
             2, // quorum just low enough for `{a, b}` to clear
         );
@@ -3237,8 +3243,6 @@ mod tests {
     #[test]
     fn freeze_partition_duplicate_validated_peers_cannot_inflate_stake() {
         let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        // Only D announces; the other three are signers.
-        let announcements: BTreeMap<_, _> = [(d, [0xDD; 32])].into_iter().collect();
         // Byzantine D submits a signal listing itself three times.
         // No honest signer attests to D (they don't have D's
         // bytes — D withheld).
@@ -3246,13 +3250,14 @@ mod tests {
             (a, vec![]), // honest signers with no D
             (b, vec![]),
             (c, vec![]),
-            (d, vec![d, d, d]), // byzantine dup-inflation attempt
+            // byzantine dup-inflation attempt:
+            (d, vec![(d, [0xDD; 32]), (d, [0xDD; 32]), (d, [0xDD; 32])]),
         ]
         .into_iter()
         .collect();
         // With unit stakes and quorum=3, D contributes at most 1
         // (deduped) to its own attestation — far below the threshold.
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
         assert!(partition.frozen.is_empty(), "D must not slip past dedup");
         assert_eq!(partition.excluded, vec![d]);
     }
@@ -3282,7 +3287,7 @@ mod tests {
         use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKey};
         let authority = auth(0xAA);
         let epoch = 42;
-        let validated_peers = vec![auth(0x11), auth(0x22)];
+        let validated_peers = vec![(auth(0x11), [0x01; 32]), (auth(0x22), [0x02; 32])];
 
         let tx_seq0 = build_epoch_mpc_data_ready_signal_transaction(
             authority,
@@ -3327,23 +3332,22 @@ mod tests {
     #[test]
     fn freeze_partition_late_propagation_falls_short_of_quorum() {
         let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
-        let announcements: BTreeMap<_, _> = [
+        let full = vec![
             (a, [0x11; 32]),
             (b, [0x22; 32]),
             (c, [0x33; 32]),
             (d, [0x44; 32]),
-        ]
-        .into_iter()
-        .collect();
+        ];
+        let missing_d = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
         // C is slow — they don't yet have D's bytes.
         let signals: BTreeMap<_, _> = [
-            (a, vec![a, b, c, d]),
-            (b, vec![a, b, c, d]),
-            (c, vec![a, b, c]), // missing D
+            (a, full.clone()),
+            (b, full.clone()),
+            (c, missing_d), // missing D
         ]
         .into_iter()
         .collect();
-        let partition = compute_freeze_partition(&announcements, &signals, |_| 1, 3);
+        let partition = compute_freeze_partition(&signals, |_| 1, 3);
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         // A/B/C are in everyone's view → frozen.
         // D has 2/3 attestation stake, below the quorum of 3 → excluded.

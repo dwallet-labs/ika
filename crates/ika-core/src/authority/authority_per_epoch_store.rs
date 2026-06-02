@@ -2644,6 +2644,38 @@ impl AuthorityPerEpochStore {
         Ok(decision.validated.into_iter().collect())
     }
 
+    /// Like [`Self::compute_locally_validated_peers`], but pairs each
+    /// validated peer with the blob hash this validator validated for
+    /// it — the payload an `EpochMpcDataReadySignal` carries so the
+    /// freeze can be tallied from consensus alone. Peer hashes come
+    /// from the local announcement table (which already held them to
+    /// fetch + validate the blob); our own hash — in the window before
+    /// our announcement lands in the table — comes from
+    /// `self_blob_hash` (the producer's freshly-built announcement).
+    pub fn validated_peers_with_hashes(
+        &self,
+        self_blob_hash: [u8; 32],
+    ) -> IkaResult<Vec<(AuthorityName, [u8; 32])>> {
+        let validated = self.compute_locally_validated_peers()?;
+        let tables = self.tables()?;
+        let mut pairs = Vec::with_capacity(validated.len());
+        for name in validated {
+            let hash =
+                if let Some(announcement) = tables.validator_mpc_data_announcements.get(&name)? {
+                    announcement.blob_hash
+                } else if name == self.name {
+                    self_blob_hash
+                } else {
+                    // A validated non-self peer is always in the table (its
+                    // blob hash had to be known to fetch + validate the
+                    // blob). Skip defensively rather than emit a bogus pair.
+                    continue;
+                };
+            pairs.push((name, hash));
+        }
+        Ok(pairs)
+    }
+
     /// Whether the locally-validated peer set covers a stake
     /// quorum of the current committee. Used by the announcement
     /// sender as the emit-gate for `EpochMpcDataReadySignal`:
@@ -2768,8 +2800,18 @@ impl AuthorityPerEpochStore {
         // prevents a byzantine signer from oscillating attestation
         // sets to disturb the partition.
         if let Some(existing) = existing.as_ref() {
-            let existing_set: BTreeSet<_> = existing.validated_peers.iter().copied().collect();
-            let new_set: BTreeSet<_> = canonical_peers.iter().copied().collect();
+            // Monotonicity is over the set of attested *peers* (names),
+            // not the `(peer, hash)` pairs: the validated set only ever
+            // grows, and a rare re-announce that changes a peer's hash
+            // shouldn't be treated as growth. The hashes ride along for
+            // the freeze tally.
+            let existing_set: BTreeSet<AuthorityName> = existing
+                .validated_peers
+                .iter()
+                .map(|(name, _)| *name)
+                .collect();
+            let new_set: BTreeSet<AuthorityName> =
+                canonical_peers.iter().map(|(name, _)| *name).collect();
             if !new_set.is_superset(&existing_set) || new_set.len() == existing_set.len() {
                 debug!(
                     signer = ?signal.authority,
@@ -2841,18 +2883,16 @@ impl AuthorityPerEpochStore {
             return Ok(());
         }
         let committee = self.committee();
-        // Materialize the inputs as `BTreeMap` so the pure tally
-        // function in `validator_metadata` can be exercised by
-        // unit tests without an `AuthorityPerEpochStore`. The map
-        // sizes here are O(committee size), so the copy is cheap
-        // relative to the rest of an epoch boundary.
-        let mut announcements: std::collections::BTreeMap<AuthorityName, [u8; 32]> =
-            std::collections::BTreeMap::new();
-        for entry in tables.validator_mpc_data_announcements.safe_iter() {
-            let (authority, announcement) = entry?;
-            announcements.insert(authority, announcement.blob_hash);
-        }
-        let mut signals: std::collections::BTreeMap<AuthorityName, Vec<AuthorityName>> =
+        // Tally purely from the consensus-ordered ready-signals — each
+        // carrying `(peer, blob_hash)` pairs — so every honest
+        // validator computes the identical frozen set. We deliberately
+        // do NOT read the local announcement table here: a relayed
+        // joiner announcement this validator dropped/buffered (while
+        // its joiner-pubkey provider lagged) would otherwise shrink the
+        // frozen set and diverge from peers. Materialized as a
+        // `BTreeMap` so the pure tally function can be unit-tested
+        // without an `AuthorityPerEpochStore`.
+        let mut signals: std::collections::BTreeMap<AuthorityName, Vec<(AuthorityName, [u8; 32])>> =
             std::collections::BTreeMap::new();
         for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
             let (signer, signal) = entry?;
@@ -2860,7 +2900,6 @@ impl AuthorityPerEpochStore {
         }
         let committee_for_tally = committee.clone();
         let partition = crate::validator_metadata::compute_freeze_partition(
-            &announcements,
             &signals,
             |authority| committee_for_tally.weight(authority),
             committee.quorum_threshold(),

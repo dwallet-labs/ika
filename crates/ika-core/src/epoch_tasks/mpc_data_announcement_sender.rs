@@ -399,9 +399,18 @@ impl MpcDataAnnouncementSender {
             );
             return Ok(());
         }
+        // Carry the blob hash we validated for each peer, so the
+        // freeze tally is a pure function of consensus signals (the
+        // `(peer, hash)` pairs) rather than each validator's local
+        // announcement table. Our own hash (for the optimistic
+        // self-insert before our announcement lands in the table)
+        // comes from the announcement the producer built + persisted.
+        let self_blob_hash = self.cached_or_build_announcement()?.blob_hash;
         let validated_peers = epoch_store
-            .compute_locally_validated_peers()
+            .validated_peers_with_hashes(self_blob_hash)
             .map_err(DwalletMPCError::IkaError)?;
+        let validated_names: Vec<AuthorityName> =
+            validated_peers.iter().map(|(name, _)| *name).collect();
         // Defer the ready signal until the next-epoch committee is
         // known and all its members are locally validated (or the
         // epoch-clock deadline elapses). The freeze fires on the
@@ -412,7 +421,7 @@ impl MpcDataAnnouncementSender {
         // The deadline (wall-clock) only affects WHEN each validator
         // emits; the freeze snapshot itself is still computed
         // deterministically at the consensus-ordered quorum point.
-        match self.ready_to_finalize(&epoch_store, &validated_peers) {
+        match self.ready_to_finalize(&epoch_store, &validated_names) {
             ReadyToFinalize::NotYet => {
                 debug!(
                     epoch = self.epoch_id,
@@ -487,10 +496,8 @@ impl MpcDataAnnouncementSender {
 mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
-    use fastcrypto::traits::KeyPair;
     use ika_network::mpc_artifacts::InMemoryBlobStore;
     use ika_types::messages_consensus::ConsensusTransaction;
-    use std::collections::HashMap;
 
     struct NoopAdapter;
     #[async_trait::async_trait]
