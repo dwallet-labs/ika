@@ -1,2 +1,3 @@
 rm -rf ~/.ika
+rm Pub.localnet.toml
 RUST_LOG=warn,ika=info,ika_node=info,ika_core=info RUST_MIN_STACK=67108864 cargo run --release --no-default-features --bin ika -- start --epoch-duration-ms 60000 2>&1 | tee debug_output.txt
