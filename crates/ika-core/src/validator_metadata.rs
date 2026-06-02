@@ -1884,9 +1884,8 @@ mod tests {
             q,
             v,
         ));
-        let provider = StaticConsensusPubkeyProvider::from_iter(
-            names.iter().copied().zip(consensus_pubs.into_iter()),
-        );
+        let provider =
+            StaticConsensusPubkeyProvider::from_iter(names.iter().copied().zip(consensus_pubs));
         (committee, names, consensus_kps, provider)
     }
 
@@ -2578,7 +2577,7 @@ mod tests {
         assert_eq!(effective.get(&staying), Some(&[0xA0; 32]));
         assert_eq!(effective.get(&joiner), Some(&[0xA2; 32]));
         assert_eq!(effective.get(&leaving_to_next), Some(&[0xA3; 32]));
-        assert!(effective.get(&leaving_into_no_one).is_none());
+        assert!(!effective.contains_key(&leaving_into_no_one));
     }
 
     #[test]
