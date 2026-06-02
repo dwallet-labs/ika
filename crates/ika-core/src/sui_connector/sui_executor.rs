@@ -41,7 +41,7 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
@@ -57,6 +57,24 @@ pub enum StopReason {
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
+/// Serialized submission state for the notifier's single Sui address.
+///
+/// `last_tx_digest` gates submission ordering (wait for the previous tx
+/// to be observed before sending the next). `gas_coins` caches the gas
+/// `ObjectRef` carried by the previous tx's effects so the next tx is
+/// built against the *authoritative* post-tx gas version rather than the
+/// notifier fullnode's `get_gas_objects` view, which lags the validators
+/// by hundreds of versions under checkpoint-heavy load and otherwise
+/// produces "transaction needs to be rebuilt (stale object version)"
+/// rejections that stall epoch advance. Submission is serial (the lock is
+/// held across each `submit_tx_to_sui`), so the cached ref is always the
+/// exact current version when the next tx is built.
+#[derive(Default)]
+struct NotifierSubmitState {
+    last_tx_digest: Option<TransactionDigest>,
+    gas_coins: Option<Vec<ObjectRef>>,
+}
+
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
@@ -66,7 +84,7 @@ pub struct SuiExecutor<C> {
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
     metrics: Arc<SuiConnectorMetrics>,
-    notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+    notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
 }
 
 struct EpochSwitchState {
@@ -100,7 +118,7 @@ where
             sui_notifier,
             sui_client,
             metrics,
-            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState::default())),
         }
     }
 
@@ -603,9 +621,10 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -644,10 +663,11 @@ where
         sui_client: &Arc<SuiClient<C>>,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
         default_pricing_keys: &[PricingInfoKey],
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -695,13 +715,33 @@ where
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
+    /// Returns the gas coins to fund the next notifier tx. Prefers the
+    /// cached `ObjectRef` carried by the previous tx's effects (the
+    /// authoritative post-tx version); falls back to a fresh
+    /// `get_gas_objects` fetch only when nothing is cached yet (first tx
+    /// of the process). See [`NotifierSubmitState`] for why the fullnode
+    /// fetch is avoided on the steady-state path.
+    async fn next_gas_coins(
+        notifier_tx_lock: &Arc<tokio::sync::Mutex<NotifierSubmitState>>,
+        sui_client: &Arc<SuiClient<C>>,
+        address: SuiAddress,
+    ) -> Vec<ObjectRef> {
+        {
+            let state = notifier_tx_lock.lock().await;
+            if let Some(gas) = &state.gas_coins {
+                return gas.clone();
+            }
+        }
+        sui_client.get_gas_objects(address).await
+    }
+
     async fn submit_tx_to_sui(
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
         transaction: Transaction,
         sui_client: &Arc<SuiClient<C>>,
     ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
-        let mut last_submitted_tx_digest = notifier_tx_lock.lock().await;
-        if let Some(prev_digest) = *last_submitted_tx_digest {
+        let mut state = notifier_tx_lock.lock().await;
+        if let Some(prev_digest) = state.last_tx_digest {
             while sui_client
                 .get_events_by_tx_digest(prev_digest)
                 .await
@@ -746,6 +786,13 @@ where
             .into());
         };
 
+        // The tx executed (effects are present), so the gas coin advanced
+        // to a new version regardless of move success/abort. Cache that
+        // authoritative ref for the next tx instead of re-reading the
+        // notifier fullnode, which lags under load and yields stale gas
+        // versions that get rejected and stall epoch advance.
+        state.gas_coins = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
+
         if let SuiExecutionStatus::Failure { error } = tx_effects.status() {
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
@@ -756,7 +803,7 @@ where
             .into());
         };
 
-        *last_submitted_tx_digest = Some(tx_response.digest);
+        state.last_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
@@ -765,10 +812,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_mid_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -838,10 +886,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Process `lock_last_active_session_sequence_number()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -904,10 +953,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_request_advance_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -981,11 +1031,12 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         let mut ptb = ProgrammableTransactionBuilder::new();
 
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         //merge_gas_coins(&mut ptb, &gas_coins)?;
         // let gas_coin = gas_coins
         //     .first()
@@ -1067,11 +1118,12 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<()> {
         let mut ptb = ProgrammableTransactionBuilder::new();
 
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // merge_gas_coins(&mut ptb, &gas_coins)?;
         // let gas_coin = gas_coins
         //     .first()
