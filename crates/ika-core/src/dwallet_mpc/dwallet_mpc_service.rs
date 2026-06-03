@@ -39,6 +39,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
+use ika_types::error::IkaError;
 use ika_types::message::{
     DWalletCheckpointMessageKind, DWalletDKGOutput, DWalletImportedKeyVerificationOutput,
     EncryptedUserShareOutput, MPCNetworkDKGOutput, MPCNetworkReconfigurationOutput,
@@ -781,11 +782,36 @@ impl DWalletMPCService {
     }
 
     async fn process_consensus_rounds_from_storage(&mut self) -> Vec<ObjectID> {
+        // `EpochEnded` from a per-epoch-store read is the normal reconfiguration
+        // boundary: the store's tables were swapped out from under this
+        // (per-epoch) service while it was mid-iteration. Stop the iteration
+        // gracefully — the loop's sleep and the service teardown take over —
+        // instead of panicking, which crashed the node and stalled reconfiguration
+        // under churn. `$on_epoch_end` is the value to return (nothing useful is
+        // left to process for the ended epoch); other results pass through to the
+        // caller's existing handling unchanged.
+        macro_rules! stop_on_epoch_end {
+            ($read:expr, $on_epoch_end:expr) => {
+                match $read {
+                    Err(IkaError::EpochEnded(ended_epoch)) => {
+                        info!(
+                            ended_epoch,
+                            "epoch ended while reading the per-epoch DWallet MPC store; \
+                             stopping this service iteration gracefully"
+                        );
+                        return $on_epoch_end;
+                    }
+                    other => other,
+                }
+            };
+        }
+
         // The last consensus round for MPC messages is also the last one for MPC outputs and verified dWallet checkpoint messages,
         // as they are all written in an atomic batch manner as part of committing the consensus commit outputs.
-        let last_consensus_round = if let Ok(last_consensus_round) =
-            self.epoch_store.last_dwallet_mpc_message_round()
-        {
+        let last_consensus_round = if let Ok(last_consensus_round) = stop_on_epoch_end!(
+            self.epoch_store.last_dwallet_mpc_message_round(),
+            Vec::new()
+        ) {
             if let Some(last_consensus_round) = last_consensus_round {
                 last_consensus_round
             } else {
@@ -803,9 +829,11 @@ impl DWalletMPCService {
         while Some(last_consensus_round) > self.last_read_consensus_round {
             self.number_of_consensus_rounds += 1;
 
-            let mpc_messages = self
-                .epoch_store
-                .next_dwallet_mpc_message(self.last_read_consensus_round);
+            let mpc_messages = stop_on_epoch_end!(
+                self.epoch_store
+                    .next_dwallet_mpc_message(self.last_read_consensus_round),
+                accumulated_new_key_ids
+            );
             let (mpc_messages_consensus_round, mpc_messages) = match mpc_messages {
                 Ok(mpc_messages) => {
                     if let Some(mpc_messages) = mpc_messages {
