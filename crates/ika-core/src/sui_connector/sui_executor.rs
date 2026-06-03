@@ -771,6 +771,15 @@ where
             .await?;
 
         if !tx_response.errors.is_empty() {
+            // The tx was rejected before execution (e.g. a stale gas-coin
+            // version: the cached ref lagged the coin's on-chain version under
+            // fullnode lag or a lost race). The cached `gas_coins` that built
+            // it is therefore stale — drop it so the caller's
+            // `retry_with_max_elapsed_time!` re-fetches a fresh ref from the
+            // fullnode on the next attempt. Without this the retry resubmits
+            // the same stale version every time and spins for the full retry
+            // budget (an hour), wedging epoch advance.
+            state.gas_coins = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 format!("{:?}", tx_response.errors),
@@ -779,6 +788,10 @@ where
         }
 
         let Some(tx_effects) = tx_response.effects.clone() else {
+            // No effects to derive the post-tx gas version from; treat the
+            // cached ref as unreliable and re-fetch on retry (same rationale
+            // as the rejection path above).
+            state.gas_coins = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 "Transaction effects are missing".to_string(),
