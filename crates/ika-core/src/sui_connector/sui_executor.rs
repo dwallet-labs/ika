@@ -41,7 +41,7 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
@@ -73,7 +73,24 @@ const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 struct NotifierSubmitState {
     last_tx_digest: Option<TransactionDigest>,
     gas_coins: Option<Vec<ObjectRef>>,
+    /// The gas ref(s) handed to the most recent submission, so a failure can
+    /// learn which version was rejected without threading it back through the
+    /// callers. Submission is serial, so this is unambiguous.
+    last_used_gas: Option<Vec<ObjectRef>>,
+    /// When a tx is rejected for a stale gas version, the rejected version is
+    /// recorded here as a floor: the next `get_gas_objects` re-fetch must
+    /// return a version strictly greater before it is trusted. This stops the
+    /// re-fetch from reusing the same stale version the lagging notifier
+    /// fullnode keeps serving (e.g. after another holder of this address — in
+    /// the in-process test cluster, the shared publisher coin — advanced it),
+    /// which would otherwise re-reject in a tight loop and wedge epoch advance.
+    min_gas_version: Option<SequenceNumber>,
 }
+
+/// Cap on how long `next_gas_coins` waits for the fullnode to catch up past a
+/// rejected gas version before giving up and using whatever it returns (the
+/// outer `retry_with_max_elapsed_time!` re-attempts). 60 × 500ms = 30s.
+const MAX_GAS_REFETCH_ATTEMPTS: u32 = 60;
 
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
@@ -726,13 +743,38 @@ where
         sui_client: &Arc<SuiClient<C>>,
         address: SuiAddress,
     ) -> Vec<ObjectRef> {
+        // Fast path: the authoritative ref carried by the prior tx's effects.
         {
-            let state = notifier_tx_lock.lock().await;
-            if let Some(gas) = &state.gas_coins {
-                return gas.clone();
+            let mut state = notifier_tx_lock.lock().await;
+            if let Some(gas) = state.gas_coins.clone() {
+                state.last_used_gas = Some(gas.clone());
+                return gas;
             }
         }
-        sui_client.get_gas_objects(address).await
+        // Slow path (first tx of the process, or after a stale-gas rejection
+        // cleared the cache): re-fetch from the fullnode. If a prior rejection
+        // recorded a `min_gas_version` floor, wait for the fullnode to catch up
+        // past it before trusting the result — the notifier fullnode lags the
+        // validators, so an immediate re-fetch keeps serving the same stale
+        // version that was just rejected.
+        let mut attempts = 0u32;
+        loop {
+            let gas = sui_client.get_gas_objects(address).await;
+            let mut state = notifier_tx_lock.lock().await;
+            let highest = gas.iter().map(|gas_ref| gas_ref.1).max();
+            let acceptable = match state.min_gas_version {
+                Some(floor) => highest.is_some_and(|version| version > floor),
+                None => true,
+            };
+            if acceptable || attempts >= MAX_GAS_REFETCH_ATTEMPTS {
+                state.min_gas_version = None;
+                state.last_used_gas = Some(gas.clone());
+                return gas;
+            }
+            drop(state);
+            attempts += 1;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 
     async fn submit_tx_to_sui(
@@ -771,26 +813,30 @@ where
             .await?;
 
         if !tx_response.errors.is_empty() {
-            // The tx was rejected before execution (e.g. a stale gas-coin
-            // version: the cached ref lagged the coin's on-chain version under
-            // fullnode lag or a lost race). The cached `gas_coins` that built
-            // it is therefore stale — drop it so the caller's
-            // `retry_with_max_elapsed_time!` re-fetches a fresh ref from the
-            // fullnode on the next attempt. Without this the retry resubmits
-            // the same stale version every time and spins for the full retry
-            // budget (an hour), wedging epoch advance.
-            state.gas_coins = None;
-            return Err(IkaError::SuiClientTxFailureGeneric(
-                tx_response.digest,
-                format!("{:?}", tx_response.errors),
-            )
-            .into());
+            let errors = format!("{:?}", tx_response.errors);
+            // Distinguish a stale-gas rejection from any other pre-execution
+            // error. Only the former means the cached gas ref is stale, so only
+            // then drop it AND record the rejected version as a floor — so the
+            // caller's `retry_with_max_elapsed_time!` re-fetch waits for the
+            // notifier fullnode to advance past it instead of re-serving the
+            // same stale version in a tight loop (which wedged epoch advance).
+            // Other errors leave the gas cache intact: the gas was fine, the tx
+            // failed for an unrelated reason, and clearing it would force an
+            // unnecessary (and possibly stale) fullnode re-fetch.
+            let is_stale_gas = errors.contains("unavailable for consumption")
+                || errors.contains("needs to be rebuilt");
+            if is_stale_gas {
+                if let Some(used) = &state.last_used_gas {
+                    state.min_gas_version = used.iter().map(|gas_ref| gas_ref.1).max();
+                }
+                state.gas_coins = None;
+            }
+            return Err(IkaError::SuiClientTxFailureGeneric(tx_response.digest, errors).into());
         }
 
         let Some(tx_effects) = tx_response.effects.clone() else {
             // No effects to derive the post-tx gas version from; treat the
-            // cached ref as unreliable and re-fetch on retry (same rationale
-            // as the rejection path above).
+            // cached ref as unreliable and re-fetch on retry.
             state.gas_coins = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
@@ -805,6 +851,9 @@ where
         // notifier fullnode, which lags under load and yields stale gas
         // versions that get rejected and stall epoch advance.
         state.gas_coins = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
+        // The cached ref is now authoritative again; drop any stale-version
+        // floor a prior rejection left so a future re-fetch isn't over-gated.
+        state.min_gas_version = None;
 
         if let SuiExecutionStatus::Failure { error } = tx_effects.status() {
             return Err(IkaError::SuiClientTxFailureGeneric(
