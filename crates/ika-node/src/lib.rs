@@ -1726,7 +1726,9 @@ impl IkaNode {
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
                 };
-                use ika_core::sui_connector::pubkey_provider_updater::fetch_previous_committee_consensus_pubkeys;
+                use ika_core::sui_connector::pubkey_provider_updater::{
+                    fetch_previous_committee, fetch_previous_committee_consensus_pubkeys,
+                };
                 use ika_core::validator_metadata::{
                     StaticConsensusPubkeyProvider, next_committee_pubkey_set,
                     verify_joiner_bootstrap_cert,
@@ -1737,12 +1739,42 @@ impl IkaNode {
                 let current_epoch = cur_epoch_store.epoch();
                 let prior_epoch = current_epoch - 1;
                 let self_name = cur_epoch_store.name;
-                let prior_committee = self
+                let prior_committee = match self
                     .state
                     .committee_store()
                     .get_committee(&prior_epoch)
                     .ok()
-                    .flatten();
+                    .flatten()
+                {
+                    Some(committee) => Some(committee),
+                    // A true joiner that never observed/persisted the prior
+                    // epoch has no local committee for it, so the cross-epoch
+                    // trust anchor (and the network-key blob install it gates)
+                    // would be skipped — leaving the joiner's off-chain overlay
+                    // permanently incomplete and wedging the epoch advance.
+                    // Chain-read the prior committee from
+                    // `validator_set.previous_committee` (the same source the
+                    // bootstrap already chain-reads consensus pubkeys from) so
+                    // bootstrap can still run.
+                    None => match fetch_previous_committee(&sui_client, prior_epoch).await {
+                        Ok(committee) => {
+                            info!(
+                                prior_epoch,
+                                "prior committee absent locally; chain-read it for joiner \
+                                 bootstrap from validator_set.previous_committee"
+                            );
+                            Some(Arc::new(committee))
+                        }
+                        Err(error) => {
+                            warn!(
+                                ?error,
+                                prior_epoch,
+                                "failed to chain-read the prior committee for joiner bootstrap"
+                            );
+                            None
+                        }
+                    },
+                };
                 let perpetual = self.state.perpetual_tables();
                 // Every validator anchors the new epoch on the prior
                 // epoch's handoff cert. A continuing validator that

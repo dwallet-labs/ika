@@ -31,10 +31,10 @@ use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
 use crate::validator_metadata::{StaticConsensusPubkeyProvider, StaticJoinerPubkeyProvider};
 use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
-use ika_types::committee::EpochId;
+use ika_types::committee::{Committee, EpochId, StakeUnit};
 use ika_types::crypto::AuthorityName;
-use ika_types::sui::{SystemInner, SystemInnerV1};
-use std::collections::BTreeMap;
+use ika_types::sui::{SystemInner, SystemInnerTrait, SystemInnerV1};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
@@ -109,6 +109,58 @@ pub async fn fetch_previous_committee_consensus_pubkeys<C: SuiClientInner>(
             Ok((name, verified.consensus_pubkey.clone()))
         })
         .collect()
+}
+
+/// Chain-reads the **previous** committee as a quorum-checkable
+/// `Committee`, for a joiner that never locally observed/persisted that
+/// epoch (so its `committee_store` has no entry for it). The source is
+/// `validator_set.previous_committee` — the same field
+/// `fetch_previous_committee_consensus_pubkeys` reads — and the membership
+/// is decoded with `read_bls_committee`. The class-groups / PVSS maps are
+/// left empty: handoff-cert verification (`verify_certified_handoff_attestation`)
+/// only needs membership, voting power, and the quorum threshold.
+///
+/// `previous_committee` is implicitly the committee of `on_chain_epoch -
+/// 1`. This returns it **only** when that equals `expected_prior_epoch`,
+/// so an advanced on-chain view can't hand back a wrong-epoch committee —
+/// which would make a valid handoff cert fail to verify and (via
+/// `BootstrapOutcome::Rejected`) fail-closed-halt the node.
+pub async fn fetch_previous_committee<C: SuiClientInner>(
+    sui_client: &SuiClient<C>,
+    expected_prior_epoch: EpochId,
+) -> anyhow::Result<Committee> {
+    let (_, system_inner) = sui_client
+        .get_system_inner()
+        .await
+        .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
+    let SystemInner::V1(system_inner) = system_inner;
+    let on_chain_epoch = system_inner.epoch();
+    if on_chain_epoch != expected_prior_epoch + 1 {
+        anyhow::bail!(
+            "on-chain epoch {on_chain_epoch} does not equal expected prior epoch \
+             {expected_prior_epoch} + 1; refusing to use validator_set.previous_committee \
+             as a possibly-wrong-epoch bootstrap anchor"
+        );
+    }
+    let bls_committee = &system_inner.validator_set.previous_committee;
+    let voting_rights: Vec<(AuthorityName, StakeUnit)> = system_inner
+        .read_bls_committee(bls_committee)
+        .into_iter()
+        .map(|(_, (name, stake))| (name, stake))
+        .collect();
+    if voting_rights.is_empty() {
+        anyhow::bail!("validator_set.previous_committee is empty");
+    }
+    Ok(Committee::new(
+        expected_prior_epoch,
+        voting_rights,
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::new(),
+        bls_committee.quorum_threshold,
+        bls_committee.validity_threshold,
+    ))
 }
 
 fn install_consensus_provider(
