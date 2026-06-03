@@ -38,9 +38,10 @@ use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, Sessi
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
-use sui_keys::keystore::AccountKeystore;
+use sui_keys::key_derive::generate_new_key;
 use sui_sdk::SuiClientBuilder;
 use sui_types::base_types::{ObjectID, SuiAddress};
+use sui_types::crypto::SignatureScheme;
 use test_cluster::{TestCluster, TestClusterBuilder};
 
 #[cfg(not(msim))]
@@ -1121,12 +1122,25 @@ impl IkaTestClusterBuilder {
         // Without one the network is frozen at its genesis epoch, so any test that
         // calls `wait_for_epoch` hangs. Run one notifier (a fullnode carrying the
         // publisher's Sui key) so reconfiguration actually progresses.
-        let publisher_keypair = test_cluster
-            .wallet()
-            .config
-            .keystore
-            .export(&publisher_address)?
-            .copy();
+        // Give the notifier its OWN funded Sui key rather than reusing the
+        // publisher's. Sharing the publisher gas coin makes the notifier's
+        // cached gas ref go stale whenever the test wallet spends from the same
+        // address (validator management, funding, faucet, presign drivers), and
+        // the in-process notifier fullnode lags the validators too far behind to
+        // recover the current version — the rejected-version re-fetch loops and
+        // wedges epoch advance. Production notifiers run a dedicated key, so a
+        // dedicated, publisher-funded key here matches reality and removes the
+        // cross-actor gas contention.
+        let (notifier_address, notifier_keypair, _scheme, _phrase) =
+            generate_new_key(SignatureScheme::ED25519, None, None)?;
+        let fund_notifier_tx_data = test_cluster
+            .test_transaction_builder_with_sender(publisher_address)
+            .await
+            .transfer_sui(Some(VALIDATOR_FUNDING_MIST), notifier_address)
+            .build();
+        test_cluster
+            .sign_and_execute_transaction(&fund_notifier_tx_data)
+            .await;
         let mut notifier_rng = OsRng;
         let notifier_config = FullnodeConfigBuilder::new().build(
             &mut notifier_rng,
@@ -1138,7 +1152,7 @@ impl IkaTestClusterBuilder {
             packages.ika_system_package_id,
             system.ika_system_object_id,
             system.ika_dwallet_coordinator_object_id,
-            Some(publisher_keypair),
+            Some(notifier_keypair),
         );
 
         let network_config = NetworkConfig {
