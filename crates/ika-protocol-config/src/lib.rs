@@ -706,6 +706,35 @@ impl ProtocolConfig {
                 _ => panic!("unsupported version {version:?}"),
             }
         }
+
+        // Local-swarm opt-in (see
+        // `enable_small_presign_pools_for_local_swarm`): shrink both the
+        // internal and network-owned-address presign pools so one host running
+        // the whole validator set can keep them filled. Off unless the local
+        // swarm / `ika start` explicitly enabled it, so testnet/mainnet keep the
+        // per-version production sizes set above.
+        if SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.load(Ordering::Relaxed) {
+            cfg.internal_secp256k1_ecdsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_secp256k1_ecdsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_secp256r1_ecdsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_secp256r1_ecdsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_eddsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_eddsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_schnorrkel_substrate_presign_pool_minimum_size = Some(2);
+            cfg.internal_schnorrkel_substrate_presign_pool_maximum_size = Some(10);
+            cfg.internal_taproot_presign_pool_minimum_size = Some(2);
+            cfg.internal_taproot_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_eddsa_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_eddsa_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_taproot_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_taproot_presign_pool_maximum_size = Some(10);
+        }
         cfg
     }
 
@@ -721,6 +750,24 @@ impl ProtocolConfig {
             *cur = Some(Box::new(override_fn));
             OverrideGuard
         })
+    }
+
+    /// Enable the small-presign-pool override for this process. Called by the
+    /// local in-memory swarm / `ika start` so a single host running the whole
+    /// validator set can keep both the internal and network-owned-address
+    /// presign pools filled instead of pegging the CPU and stalling epoch
+    /// advance. No-op (production sizes retained) when the
+    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set, so a local network can
+    /// still exercise production-scale pools. Validator binaries never call it,
+    /// so testnet/mainnet are unaffected.
+    pub fn enable_small_presign_pools_for_local_swarm() {
+        if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
+            info!(
+                "IKA_DISABLE_SMALL_PRESIGN_POOLS set; keeping production presign pool sizes for the local swarm"
+            );
+            return;
+        }
+        SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.store(true, Ordering::Relaxed);
     }
 
     /// Get the minimum size of the NOA sign presign pool for a given signature algorithm.
@@ -947,6 +994,16 @@ type OverrideFn = dyn Fn(ProtocolVersion, ProtocolConfig) -> ProtocolConfig + Se
 thread_local! {
     static CONFIG_OVERRIDE: RefCell<Option<Box<OverrideFn>>> = RefCell::new(None);
 }
+
+/// Process-global switch, set by the local in-memory swarm / `ika start`, to
+/// shrink both the internal and network-owned-address presign pools so a single
+/// host running the whole validator set can keep them filled. The production
+/// pool sizes (thousands of presigns per curve) peg the CPU there and stall
+/// epoch advance. Unlike the thread-local `CONFIG_OVERRIDE` (which only the
+/// calling thread sees), this is honored by `get_for_version_impl` on every
+/// thread and every epoch. Off by default — only the local swarm turns it on,
+/// so testnet/mainnet binaries keep the production sizes.
+static SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM: AtomicBool = AtomicBool::new(false);
 
 #[must_use]
 pub struct OverrideGuard;
