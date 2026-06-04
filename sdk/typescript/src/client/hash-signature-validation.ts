@@ -9,7 +9,7 @@ const VALID_HASH_SIGNATURE_COMBINATIONS: Record<SignatureAlgorithm, readonly Has
 	[SignatureAlgorithm.Taproot]: [Hash.SHA256],
 	[SignatureAlgorithm.ECDSASecp256r1]: [Hash.SHA256],
 	[SignatureAlgorithm.EdDSA]: [Hash.SHA512],
-	[SignatureAlgorithm.SchnorrkelSubstrate]: [Hash.Merlin],
+	[SignatureAlgorithm.Schnorrkel]: [Hash.Merlin],
 } as const;
 
 // Maps signature algorithms to their curves (for validation)
@@ -18,7 +18,7 @@ const SIGNATURE_ALGORITHM_TO_CURVE: Record<SignatureAlgorithm, Curve> = {
 	[SignatureAlgorithm.Taproot]: Curve.SECP256K1,
 	[SignatureAlgorithm.ECDSASecp256r1]: Curve.SECP256R1,
 	[SignatureAlgorithm.EdDSA]: Curve.ED25519,
-	[SignatureAlgorithm.SchnorrkelSubstrate]: Curve.RISTRETTO,
+	[SignatureAlgorithm.Schnorrkel]: Curve.RISTRETTO,
 } as const;
 
 // Absolute numbering for signature algorithms (global, not relative to curve)
@@ -27,7 +27,7 @@ const SIGNATURE_ALGORITHM_ABSOLUTE_NUMBERS: Record<SignatureAlgorithm, number> =
 	[SignatureAlgorithm.Taproot]: 1,
 	[SignatureAlgorithm.ECDSASecp256r1]: 2,
 	[SignatureAlgorithm.EdDSA]: 3,
-	[SignatureAlgorithm.SchnorrkelSubstrate]: 4,
+	[SignatureAlgorithm.Schnorrkel]: 4,
 } as const;
 
 // Absolute numbering for hashes (global, not relative to curve/signature)
@@ -86,7 +86,7 @@ const CURVE_SIGNATURE_HASH_CONFIG = {
 	[Curve.RISTRETTO]: {
 		curveNumber: 3,
 		signatureAlgorithms: {
-			[SignatureAlgorithm.SchnorrkelSubstrate]: {
+			[SignatureAlgorithm.Schnorrkel]: {
 				signatureAlgorithmNumber: 0,
 				hashes: {
 					[Hash.Merlin]: 0,
@@ -130,8 +130,8 @@ export function getSignatureAlgorithmName(signatureAlgorithm: SignatureAlgorithm
 			return 'ECDSASecp256r1';
 		case SignatureAlgorithm.EdDSA:
 			return 'EdDSA';
-		case SignatureAlgorithm.SchnorrkelSubstrate:
-			return 'SchnorrkelSubstrate (Ristretto)';
+		case SignatureAlgorithm.Schnorrkel:
+			return 'Schnorrkel (Ristretto)';
 		default:
 			return `Unknown SignatureAlgorithm (${signatureAlgorithm})`;
 	}
@@ -200,7 +200,7 @@ export type ValidSignatureAlgorithmForCurve<C extends Curve> = C extends typeof 
 		: C extends typeof Curve.ED25519
 			? typeof SignatureAlgorithm.EdDSA
 			: C extends typeof Curve.RISTRETTO
-				? typeof SignatureAlgorithm.SchnorrkelSubstrate
+				? typeof SignatureAlgorithm.Schnorrkel
 				: never;
 
 /** Compile-time type for valid hash/signature combinations */
@@ -213,7 +213,7 @@ export type ValidHashForSignature<S extends SignatureAlgorithm> =
 				? typeof Hash.SHA256
 				: S extends typeof SignatureAlgorithm.EdDSA
 					? typeof Hash.SHA512
-					: S extends typeof SignatureAlgorithm.SchnorrkelSubstrate
+					: S extends typeof SignatureAlgorithm.Schnorrkel
 						? typeof Hash.Merlin
 						: never;
 
@@ -444,7 +444,7 @@ export function fromNumberToCurve(curveNumber: number): Curve {
 
 /**
  * Converts absolute signature algorithm number to its SignatureAlgorithm enum (direct conversion).
- * Uses global numbering: ECDSASecp256k1=0, Taproot=1, ECDSASecp256r1=2, EdDSA=3, SchnorrkelSubstrate=4
+ * Uses global numbering: ECDSASecp256k1=0, Taproot=1, ECDSASecp256r1=2, EdDSA=3, Schnorrkel=4
  * @throws {Error} if number is unknown
  */
 export function fromAbsoluteNumberToSignatureAlgorithm(absoluteNumber: number): SignatureAlgorithm {
@@ -458,7 +458,7 @@ export function fromAbsoluteNumberToSignatureAlgorithm(absoluteNumber: number): 
 
 /**
  * Converts SignatureAlgorithm enum to its absolute number (direct conversion).
- * Uses global numbering: ECDSASecp256k1=0, Taproot=1, ECDSASecp256r1=2, EdDSA=3, SchnorrkelSubstrate=4
+ * Uses global numbering: ECDSASecp256k1=0, Taproot=1, ECDSASecp256r1=2, EdDSA=3, Schnorrkel=4
  */
 export function fromSignatureAlgorithmToAbsoluteNumber(
 	signatureAlgorithm: SignatureAlgorithm,

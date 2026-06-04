@@ -90,7 +90,7 @@ lazy_static! {
             (
                 3, // Curve: Ristretto
                 vec![(
-                    0, // Signature Algorithm: SchnorrkelSubstrate
+                    0, // Signature Algorithm: Schnorrkel
                     vec![
                         0, // Hash: Merlin
                     ],
@@ -109,7 +109,7 @@ lazy_static! {
         config.insert(0, vec![0, 1]); // Secp256k1: ECDSA, Taproot
         config.insert(1, vec![0]); // Secp256r1: ECDSA
         config.insert(2, vec![0]); // Curve25519: EdDSA
-        config.insert(3, vec![0]); // Ristretto: SchnorrkelSubstrate
+        config.insert(3, vec![0]); // Ristretto: Schnorrkel
         config
     };
 
@@ -119,7 +119,7 @@ lazy_static! {
         config.insert(0, vec![1]); // Secp256k1: Taproot (ECDSA not supported for imported keys)
         // Secp256r1 (1): ECDSA not supported for imported keys
         config.insert(2, vec![0]); // Curve25519: EdDSA
-        config.insert(3, vec![0]); // Ristretto: SchnorrkelSubstrate
+        config.insert(3, vec![0]); // Ristretto: Schnorrkel
         config
     };
 
@@ -213,7 +213,7 @@ pub fn try_into_signature_algorithm(
                         },
                         3 => match signature_algorithm {
                             // Ristretto
-                            0 => Some(DWalletSignatureAlgorithm::SchnorrkelSubstrate),
+                            0 => Some(DWalletSignatureAlgorithm::Schnorrkel),
                             _ => None,
                         },
                         _ => None,
@@ -286,7 +286,7 @@ pub fn try_into_hash_scheme(
                             3 => match signature_algorithm {
                                 // Ristretto
                                 0 => {
-                                    // SchnorrkelSubstrate},
+                                    // Schnorrkel},
                                     match hash_scheme {
                                         0 => Some(HashScheme::Merlin),
                                         _ => None,
@@ -402,15 +402,15 @@ mod tests {
             .get(&3)
             .expect("Ristretto entry should exist");
 
-        // Validate Ristretto curve / SchnorrkelSubstrate signature algorithm
+        // Validate Ristretto curve / Schnorrkel signature algorithm
         let schnorrkel_entry = ristretto_entry
             .get(&0)
-            .expect("SchnorrkelSubstrate entry should exist for Ristretto");
+            .expect("Schnorrkel entry should exist for Ristretto");
 
         assert_eq!(
             schnorrkel_entry,
             &vec![0],
-            "Ristretto SchnorrkelSubstrate should support Merlin"
+            "Ristretto Schnorrkel should support Merlin"
         );
 
         // Validate Ristretto curve / no invalid signature algorithm
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(
             all_ristretto_signature_algorithm_keys,
             vec![0],
-            "Ristretto have only SchnorrkelSubstrate signature algorithm"
+            "Ristretto have only Schnorrkel signature algorithm"
         );
     }
 }

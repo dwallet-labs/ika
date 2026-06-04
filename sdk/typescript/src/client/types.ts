@@ -168,7 +168,7 @@ export type SignWithState<S extends SignState> = Omit<Sign, 'state'> & {
  * - `SHA256`: Compatible with Taproot
  * - `SHA256`, `DoubleSHA256`: Compatible with ECDSASecp256r1
  * - `SHA512`: Compatible with EdDSA
- * - `Merlin`: Compatible with SchnorrkelSubstrate
+ * - `Merlin`: Compatible with Schnorrkel
  */
 export const Hash = {
 	/** KECCAK256 (SHA3) - Compatible with: ECDSASecp256k1 */
@@ -179,7 +179,7 @@ export const Hash = {
 	DoubleSHA256: 'DoubleSHA256',
 	/** SHA512 - Compatible with: EdDSA only */
 	SHA512: 'SHA512',
-	/** Merlin (STROBE-based transcript construction) - Compatible with: SchnorrkelSubstrate only */
+	/** Merlin (STROBE-based transcript construction) - Compatible with: Schnorrkel only */
 	Merlin: 'Merlin',
 } as const;
 
@@ -192,7 +192,7 @@ export type Hash = (typeof Hash)[keyof typeof Hash];
 export const Curve = {
 	/** secp256k1 - Used by: ECDSASecp256k1, Taproot */
 	SECP256K1: 'SECP256K1',
-	/** Ristretto - Used by: SchnorrkelSubstrate */
+	/** Ristretto - Used by: Schnorrkel */
 	RISTRETTO: 'RISTRETTO',
 	/** Ed25519 - Used by: EdDSA */
 	ED25519: 'ED25519',
@@ -210,7 +210,7 @@ export type Curve = (typeof Curve)[keyof typeof Curve];
  * - `Taproot`: SHA256 only
  * - `ECDSASecp256r1`: SHA256, DoubleSHA256
  * - `EdDSA`: SHA512 only
- * - `SchnorrkelSubstrate`: Merlin only
+ * - `Schnorrkel`: Merlin only
  */
 export const SignatureAlgorithm = {
 	/** ECDSA with secp256k1 curve - Valid hashes: KECCAK256, SHA256, DoubleSHA256 */
@@ -222,7 +222,7 @@ export const SignatureAlgorithm = {
 	/** EdDSA (Ed25519) - Valid hash: SHA512 only */
 	EdDSA: 'EdDSA',
 	/** Schnorrkel/Ristretto (Substrate) - Valid hash: Merlin only */
-	SchnorrkelSubstrate: 'SchnorrkelSubstrate',
+	Schnorrkel: 'Schnorrkel',
 } as const;
 
 export type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];

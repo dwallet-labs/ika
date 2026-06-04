@@ -37,7 +37,7 @@ use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
     Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
     DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
+    IdleStatusUpdate, RistrettoSchnorrkelProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
     SuiChainObservationUpdate,
 };
@@ -1533,8 +1533,8 @@ impl DWalletMPCManager {
                             output,
                         );
                     }
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
+                    DWalletSignatureAlgorithm::Schnorrkel => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelProtocol>(
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                             session_sequence_number,
