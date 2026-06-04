@@ -227,7 +227,7 @@ impl ProtocolData {
                     DWalletSignatureAlgorithm::ECDSASecp256r1 => dwallet_public_output.is_none(),
                     DWalletSignatureAlgorithm::EdDSA => true,
                     DWalletSignatureAlgorithm::Taproot => true,
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => true,
+                    DWalletSignatureAlgorithm::Schnorrkel => true,
                 };
 
                 if is_global_presign {

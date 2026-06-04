@@ -207,8 +207,8 @@ pub enum DWalletSignatureAlgorithm {
     Taproot,
     #[strum(to_string = "EdDSA")]
     EdDSA,
-    #[strum(to_string = "SchnorrkelSubstrate")]
-    SchnorrkelSubstrate,
+    #[strum(to_string = "Schnorrkel")]
+    Schnorrkel,
 }
 
 #[derive(
@@ -237,6 +237,13 @@ pub enum DWalletHashScheme {
     SHA512,
     #[strum(to_string = "Merlin")]
     Merlin,
+    // Appended at the end so existing variant discriminants (0..=4) — which are
+    // what bcs/bincode persists for this Serialize-derived enum — stay stable.
+    // No current ika protocol maps to Blake2b256 in `try_into_hash_scheme`; it
+    // exists here only so the bidirectional From conversions to `group::HashScheme`
+    // remain total after cryptography-private PR 547.
+    #[strum(to_string = "Blake2b256")]
+    Blake2b256,
 }
 
 impl From<DWalletHashScheme> for group::HashScheme {
@@ -247,6 +254,7 @@ impl From<DWalletHashScheme> for group::HashScheme {
             DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
             DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
             DWalletHashScheme::Merlin => group::HashScheme::Merlin,
+            DWalletHashScheme::Blake2b256 => group::HashScheme::Blake2b256,
         }
     }
 }
@@ -259,6 +267,7 @@ impl From<group::HashScheme> for DWalletHashScheme {
             group::HashScheme::DoubleSHA256 => DWalletHashScheme::DoubleSHA256,
             group::HashScheme::SHA512 => DWalletHashScheme::SHA512,
             group::HashScheme::Merlin => DWalletHashScheme::Merlin,
+            group::HashScheme::Blake2b256 => DWalletHashScheme::Blake2b256,
         }
     }
 }

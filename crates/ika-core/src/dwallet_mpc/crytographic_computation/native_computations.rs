@@ -15,11 +15,11 @@ use dwallet_mpc_types::dwallet_mpc::{
     DWalletSignatureAlgorithm, VersionedDwalletDKGPublicOutput, VersionedPresignOutput,
     VersionedUserSignedMessage,
 };
-use group::OsCsRng;
+use group::{HashContext, OsCsRng};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    RistrettoSchnorrkelProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
     Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
@@ -133,6 +133,7 @@ impl ProtocolCryptographicData {
                     <Secp256k1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
                         message,
                         hash_scheme,
+                        &HashContext::None,
                         decentralized_dkg_output,
                         presign.into(),
                         partial,
@@ -151,6 +152,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
+                                &HashContext::None,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -164,6 +166,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
+                                &HashContext::None,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -197,6 +200,7 @@ impl ProtocolCryptographicData {
                     verify_partial_signature::<Secp256r1ECDSAProtocol, Secp256r1AsyncDKGProtocol>(
                         &data.message,
                         &data.hash_scheme,
+                        &HashContext::None,
                         &data.dwallet_decentralized_output,
                         &data.presign,
                         &data.partially_signed_message,
@@ -223,6 +227,7 @@ impl ProtocolCryptographicData {
                 >(
                     &data.message,
                     &data.hash_scheme,
+                    &HashContext::None,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
@@ -236,19 +241,28 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
-                if data.signature_algorithm != DWalletSignatureAlgorithm::SchnorrkelSubstrate {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::Schnorrkel {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
                         protocol: data.signature_algorithm,
                     });
                 }
 
+                // TODO(domain-separation): hard-coded substrate context. Should be sourced from
+                // the per-chain SignRequestEvent (cryptography-private PR 547 Part 2 / ika-private
+                // wiring) so each chain can supply its own schnorrkel signing context bytes. Until
+                // then this matches the previously-hardcoded `b"substrate"` inside the crypto
+                // crate and the already-deployed schnorrkel domain separator — do not change
+                // without a coordinated upgrade.
                 let _verified_sign_data = verify_partial_signature::<
-                    RistrettoSchnorrkelSubstrateProtocol,
+                    RistrettoSchnorrkelProtocol,
                     RistrettoAsyncDKGProtocol,
                 >(
                     &data.message,
                     &data.hash_scheme,
+                    &HashContext::Schnorrkel {
+                        signing_context: b"substrate".to_vec(),
+                    },
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,

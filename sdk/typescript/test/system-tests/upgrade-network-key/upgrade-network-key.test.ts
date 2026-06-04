@@ -80,7 +80,7 @@ async function testImportedDWalletFullFlowWithAllCurves() {
 
 	await testImportedKeyScenario(
 		Curve.RISTRETTO,
-		SignatureAlgorithm.SchnorrkelSubstrate,
+		SignatureAlgorithm.Schnorrkel,
 		Hash.Merlin,
 		'schnorrkel-merlin',
 	);
@@ -134,7 +134,7 @@ async function testSignFullFlowWithAllCurves() {
 
 	await testSignCombination(
 		Curve.RISTRETTO,
-		SignatureAlgorithm.SchnorrkelSubstrate,
+		SignatureAlgorithm.Schnorrkel,
 		Hash.Merlin,
 		'schnorrkel-merlin',
 	);

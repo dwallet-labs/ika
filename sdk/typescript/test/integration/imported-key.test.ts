@@ -129,7 +129,7 @@ function verifySignatureWithPublicKey(
 				throw new Error('Message is required for EdDSA');
 			}
 			return ed25519.verify(signature, message, publicKey);
-		case SignatureAlgorithm.SchnorrkelSubstrate:
+		case SignatureAlgorithm.Schnorrkel:
 			// Schnorrkel verification would require special handling
 			return true;
 		default:
@@ -196,7 +196,7 @@ async function requestPresignForImportedKey(
 
 	if (
 		signatureAlgorithm === SignatureAlgorithm.EdDSA ||
-		signatureAlgorithm === SignatureAlgorithm.SchnorrkelSubstrate ||
+		signatureAlgorithm === SignatureAlgorithm.Schnorrkel ||
 		signatureAlgorithm === SignatureAlgorithm.Taproot
 	) {
 		unverifiedPresignCap = ikaTransaction.requestGlobalPresign({
@@ -548,11 +548,11 @@ describe('Imported Key DWallet Creation and Signing', () => {
 		});
 	});
 
-	describe('SchnorrkelSubstrate on RISTRETTO', () => {
+	describe('Schnorrkel on RISTRETTO', () => {
 		it('should create imported key DWallet and sign with Merlin', async () => {
 			await testImportedKeyScenario(
 				Curve.RISTRETTO,
-				SignatureAlgorithm.SchnorrkelSubstrate,
+				SignatureAlgorithm.Schnorrkel,
 				Hash.Merlin,
 				'schnorrkel-merlin',
 			);

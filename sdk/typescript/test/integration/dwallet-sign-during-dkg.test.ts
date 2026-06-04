@@ -28,14 +28,14 @@ describe('DWallet Creation', () => {
 		});
 	});
 
-	it('should sign during DKG v2 for a new zero trust DWallet - Ristretto SchnorrkelSubstrate', async () => {
+	it('should sign during DKG v2 for a new zero trust DWallet - Ristretto Schnorrkel', async () => {
 		await runCompleteDKGFlow(
 			'dwallet-creation-dkg-v2-test-ristretto-schnorrkel-substrate',
 			Curve.RISTRETTO,
 			{
 				message: Buffer.from('test message'),
 				hashScheme: Hash.Merlin,
-				signatureAlgorithm: SignatureAlgorithm.SchnorrkelSubstrate,
+				signatureAlgorithm: SignatureAlgorithm.Schnorrkel,
 			},
 		);
 	});
@@ -84,14 +84,14 @@ describe('DWallet Creation', () => {
 		);
 	});
 
-	it('should sign during DKG v2 for a new shared DWallet - Ristretto SchnorrkelSubstrate', async () => {
+	it('should sign during DKG v2 for a new shared DWallet - Ristretto Schnorrkel', async () => {
 		await runCompleteSharedDKGFlowWithSign(
 			'dwallet-creation-shared-dkg-v2-sign-test-ristretto-schnorrkel-substrate',
 			Curve.RISTRETTO,
 			{
 				message: Buffer.from('test message'),
 				hashScheme: Hash.Merlin,
-				signatureAlgorithm: SignatureAlgorithm.SchnorrkelSubstrate,
+				signatureAlgorithm: SignatureAlgorithm.Schnorrkel,
 			},
 		);
 	});
