@@ -7118,6 +7118,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ika-upgrade-test"
+version = "1.1.9"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "ika-config",
+ "ika-protocol-config",
+ "ika-sui-client",
+ "ika-swarm-config",
+ "ika-types",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml 0.9.34+deprecated",
+ "sui-config",
+ "sui-keys",
+ "sui-sdk",
+ "sui-types",
+ "telemetry-subscribers",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "im"
 version = "15.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
