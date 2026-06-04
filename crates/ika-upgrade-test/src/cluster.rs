@@ -31,6 +31,7 @@ use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::SystemInner;
 use rand::rngs::OsRng;
 use sui_sdk::SuiClient as SuiSdkClient;
+use sui_types::crypto::SuiKeyPair;
 
 use crate::process::ValidatorProcess;
 use crate::sui::SuiLocalnet;
@@ -45,6 +46,10 @@ pub struct ClusterOfProcesses {
     pub notifier: ValidatorProcess,
     network_config: IkaNetworkConfig,
     ika_client: IkaClient<SuiSdkClient>,
+    rpc_url: String,
+    /// The genesis publisher's Sui key — funded with SUI + the initial IKA
+    /// supply. The workload driver reuses it as the user paying session fees.
+    publisher_keypair: SuiKeyPair,
     /// Kept alive so the persistent data dirs outlive the cluster.
     _base_dir: BaseDir,
 }
@@ -153,6 +158,24 @@ impl ClusterBuilder {
         if let Some(v) = self.genesis_protocol_version {
             initiation_parameters.protocol_version = v.as_u64();
         }
+        // `sui move build`/publish writes `Pub.localnet.toml` into the cwd, keyed
+        // to the chain id. Across runs a fresh `--force-regenesis` chain rejects
+        // a stale pubfile. `init_ika_on_sui` (unlike `IkaTestClusterBuilder`)
+        // does not park cwd in the contracts temp dir, so we chdir into the
+        // per-run base (wiped each run) and restore afterwards. The single
+        // process-global cwd is safe under `--test-threads=1`.
+        let original_cwd = std::env::current_dir().ok();
+        std::env::set_current_dir(&base).context("chdir to base dir for publish")?;
+        let init_result = init_ika_on_sui(
+            &validator_init_configs,
+            rpc_url.clone(),
+            faucet_url,
+            initiation_parameters,
+        )
+        .await;
+        if let Some(cwd) = &original_cwd {
+            let _ = std::env::set_current_dir(cwd);
+        }
         let (
             ika_package_id,
             ika_common_package_id,
@@ -161,14 +184,7 @@ impl ClusterBuilder {
             ika_system_object_id,
             ika_dwallet_coordinator_object_id,
             publisher_keypair,
-        ) = init_ika_on_sui(
-            &validator_init_configs,
-            rpc_url.clone(),
-            faucet_url,
-            initiation_parameters,
-        )
-        .await
-        .context("init_ika_on_sui")?;
+        ) = init_result.context("init_ika_on_sui")?;
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
         let mut validators = Vec::with_capacity(self.num_validators);
@@ -215,7 +231,7 @@ impl ClusterBuilder {
                 ika_system_package_id,
                 ika_system_object_id,
                 ika_dwallet_coordinator_object_id,
-                Some(publisher_keypair),
+                Some(publisher_keypair.copy()),
             );
         let notifier = spawn_node(
             usize::MAX,
@@ -248,6 +264,8 @@ impl ClusterBuilder {
             notifier,
             network_config,
             ika_client,
+            rpc_url,
+            publisher_keypair,
             _base_dir: base_dir,
         })
     }
@@ -293,6 +311,20 @@ impl ClusterOfProcesses {
 
     pub fn network_config(&self) -> &IkaNetworkConfig {
         &self.network_config
+    }
+
+    pub fn rpc_url(&self) -> &str {
+        &self.rpc_url
+    }
+
+    /// The funded genesis publisher key, reused by the workload driver as the
+    /// fee-paying user.
+    pub fn publisher_keypair(&self) -> &SuiKeyPair {
+        &self.publisher_keypair
+    }
+
+    pub fn ika_client(&self) -> &IkaClient<SuiSdkClient> {
+        &self.ika_client
     }
 }
 

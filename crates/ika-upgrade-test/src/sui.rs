@@ -86,7 +86,7 @@ impl SuiLocalnet {
             "params": [],
         });
         loop {
-            let ok = http
+            let rpc_ok = http
                 .post(&self.rpc_url)
                 .json(&body)
                 .send()
@@ -94,13 +94,24 @@ impl SuiLocalnet {
                 .ok()
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
-            if ok {
-                tracing::info!(rpc = %self.rpc_url, "sui localnet ready");
+            // The faucet (port 9123) comes up a beat after the RPC. `init_ika_on_sui`
+            // hits it immediately, so wait for it too. The `/gas` endpoint is
+            // POST-only; any HTTP response (even 405) means it is listening —
+            // only a connection error means it is not up yet.
+            let faucet_ok = rpc_ok
+                && http
+                    .get(&self.faucet_url)
+                    .send()
+                    .await
+                    .map(|_| true)
+                    .unwrap_or(false);
+            if rpc_ok && faucet_ok {
+                tracing::info!(rpc = %self.rpc_url, faucet = %self.faucet_url, "sui localnet ready");
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
                 bail!(
-                    "sui localnet not ready within {:?}; see {}",
+                    "sui localnet (rpc_ok={rpc_ok}, faucet_ok={faucet_ok}) not ready within {:?}; see {}",
                     timeout,
                     self.log_path.display(),
                 );

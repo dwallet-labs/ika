@@ -7123,6 +7123,7 @@ version = "1.1.9"
 dependencies = [
  "anyhow",
  "clap",
+ "dwallet-mpc-centralized-party",
  "futures",
  "ika-config",
  "ika-protocol-config",

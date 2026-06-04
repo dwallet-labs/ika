@@ -113,13 +113,14 @@ impl ValidatorProcess {
         Ok(())
     }
 
-    /// `GET /capabilities` — this node's view of received `AuthorityCapabilitiesV1`.
-    pub async fn capabilities(&self) -> Result<serde_json::Value> {
+    /// `GET /capabilities` — this node's view of received `AuthorityCapabilitiesV1`,
+    /// as the admin server's debug text (one capability per line).
+    pub async fn capabilities(&self) -> Result<String> {
         self.admin_get("capabilities").await
     }
 
-    /// `GET /node-config` — masked current config snapshot.
-    pub async fn node_config(&self) -> Result<serde_json::Value> {
+    /// `GET /node-config` — masked current config snapshot (debug text).
+    pub async fn node_config(&self) -> Result<String> {
         self.admin_get("node-config").await
     }
 
@@ -152,12 +153,14 @@ impl ValidatorProcess {
         }
     }
 
-    async fn admin_get(&self, path: &str) -> Result<serde_json::Value> {
+    /// GET an admin endpoint, returning its body as text. The ika admin server
+    /// returns `(StatusCode, String)` debug text, not JSON.
+    async fn admin_get(&self, path: &str) -> Result<String> {
         let url = format!("http://{}/{path}", self.admin_addr);
         let resp = self.http.get(&url).send().await.context("admin GET")?;
         if !resp.status().is_success() {
             bail!("admin GET {url} -> {}", resp.status());
         }
-        resp.json().await.context("decode admin response")
+        resp.text().await.context("read admin response")
     }
 }

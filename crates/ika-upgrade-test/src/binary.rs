@@ -76,6 +76,7 @@ impl BinarySpec {
 
 /// Resolves binary specs against a source checkout, caching built artifacts by
 /// commit sha.
+#[derive(Clone)]
 pub struct BinaryResolver {
     /// Path to the source git repo to build from.
     repo: PathBuf,
@@ -161,6 +162,9 @@ impl BinaryResolver {
         .with_context(|| format!("git worktree add for {sha}"))?;
 
         tracing::info!(sha = %short_sha(sha), "building ika-validator (cache miss)");
+        // `--no-default-features` drops `ika-node`'s only default feature,
+        // `enforce-minimum-cpu`, which otherwise panics the validator on hosts
+        // with < 16 cores. The harness must run on ordinary dev machines.
         let status = Command::new("cargo")
             .current_dir(&worktree)
             .args([
@@ -168,6 +172,7 @@ impl BinaryResolver {
                 "--release",
                 "-p",
                 "ika-node",
+                "--no-default-features",
                 "--bin",
                 "ika-validator",
             ])

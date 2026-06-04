@@ -19,9 +19,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use ika_protocol_config::ProtocolVersion;
 
-use crate::binary::BinarySpec;
+use crate::DEFAULT_EPOCH_DURATION_MS;
+use crate::binary::{BinaryResolver, BinarySpec};
+use crate::cluster::{ClusterBuilder, ClusterOfProcesses};
 
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
@@ -87,8 +90,71 @@ impl Scenario {
     }
 
     /// Resolve binaries, bring up the cluster, and execute the steps in order.
-    /// Implemented in the cross-binary scenario task.
+    /// Binary resolution (a `cargo build` for git refs) runs on a blocking
+    /// thread so it doesn't stall the async runtime.
     pub async fn run(self) -> Result<()> {
-        anyhow::bail!("scenario runner not yet wired (task #4)")
+        let resolver = BinaryResolver::new(self.repo.clone(), BinaryResolver::default_cache_root());
+        let mut cluster: Option<ClusterOfProcesses> = None;
+
+        for step in &self.steps {
+            match step {
+                Step::StartAll(spec) => {
+                    let validator_binary = resolve(&resolver, spec).await?;
+                    tracing::info!(spec = %spec.label(), "starting cluster on binary");
+                    let built = ClusterBuilder::new(
+                        validator_binary,
+                        self.notifier_binary.clone(),
+                        self.sui_binary.clone(),
+                    )
+                    .with_num_validators(self.num_validators)
+                    .with_epoch_duration_ms(DEFAULT_EPOCH_DURATION_MS)
+                    .with_genesis_protocol_version(ProtocolVersion::MIN)
+                    .build()
+                    .await
+                    .context("bring up cluster")?;
+                    cluster = Some(built);
+                }
+                Step::WaitForEpoch(epoch) => {
+                    let c = cluster.as_ref().context("WaitForEpoch before StartAll")?;
+                    c.wait_for_epoch(*epoch, self.epoch_timeout).await?;
+                }
+                Step::StopAndSwap { validators, to } => {
+                    let new_binary = resolve(&resolver, to).await?;
+                    let c = cluster.as_mut().context("StopAndSwap before StartAll")?;
+                    for &idx in validators {
+                        let proc = c
+                            .validators
+                            .get_mut(idx)
+                            .with_context(|| format!("validator index {idx} out of range"))?;
+                        proc.swap_binary(new_binary.clone()).await?;
+                    }
+                }
+                Step::ExpectProtocolVersionAtLeast(version) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectProtocolVersion before StartAll")?;
+                    let got = c.current_protocol_version().await?;
+                    if got < *version {
+                        bail!("protocol version {got} < expected {version}");
+                    }
+                    tracing::info!(
+                        got,
+                        expected = *version,
+                        "protocol version assertion passed"
+                    );
+                }
+            }
+        }
+        Ok(())
     }
+}
+
+/// Resolve a spec to a binary path on a blocking thread (a git-ref spec triggers
+/// a `cargo build`, which must not block the async runtime).
+async fn resolve(resolver: &BinaryResolver, spec: &BinarySpec) -> Result<PathBuf> {
+    let resolver = resolver.clone();
+    let spec = spec.clone();
+    tokio::task::spawn_blocking(move || resolver.resolve(&spec))
+        .await
+        .context("binary resolver task panicked")?
 }
