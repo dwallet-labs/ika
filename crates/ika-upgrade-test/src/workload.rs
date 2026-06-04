@@ -31,7 +31,7 @@ use ika_sui_client::ika_dwallet_transactions::{
 };
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
-use ika_types::sui::SystemInner;
+use ika_types::sui::{DWalletCoordinatorInner, SystemInner};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use sui_keys::keystore::{AccountKeystore, InMemKeystore, Keystore};
@@ -138,8 +138,7 @@ impl WorkloadDriver {
         self.network_config.packages.ika_dwallet_2pc_mpc_package_id
     }
 
-    #[allow(dead_code)]
-    async fn ika_client(&self) -> Result<IkaClient<SuiSdkClient>> {
+    pub async fn ika_client(&self) -> Result<IkaClient<SuiSdkClient>> {
         IkaClient::new(
             &self.rpc_url,
             SuiClientMetrics::new_for_testing(),
@@ -147,6 +146,48 @@ impl WorkloadDriver {
         )
         .await
         .context("construct ika client for workload")
+    }
+
+    /// `(started, completed)` user-session counts from the coordinator. These
+    /// are the on-chain truth for whether sessions are draining — used to
+    /// confirm completion without per-dwallet Move decoding (no Rust type for
+    /// the dWallet state object exists).
+    async fn user_session_counts(&self, ika: &IkaClient<SuiSdkClient>) -> Result<(u64, u64)> {
+        let (_, DWalletCoordinatorInner::V1(inner)) = ika
+            .get_dwallet_coordinator_inner()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_dwallet_coordinator_inner: {e}"))?;
+        let keeper = inner.sessions_manager.user_sessions_keeper;
+        Ok((
+            keeper.started_sessions_count,
+            keeper.completed_sessions_count,
+        ))
+    }
+
+    /// Issue one DKG and block until the coordinator's completed-session count
+    /// rises (a real on-chain completion) or `timeout` elapses (orphaned). This
+    /// is aggregate, not per-session: it proves the committee is draining user
+    /// sessions, which is the load-bearing invariant across an upgrade.
+    pub async fn issue_dkg_and_confirm(
+        &mut self,
+        ika: &IkaClient<SuiSdkClient>,
+        timeout: Duration,
+    ) -> Result<TerminalState> {
+        let (_, completed_before) = self.user_session_counts(ika).await?;
+        let session_id = self.issue_dkg(ika).await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let (_, completed_now) = self.user_session_counts(ika).await?;
+            if completed_now > completed_before {
+                tracing::info!(%session_id, completed_now, "DKG session completed on-chain");
+                return Ok(TerminalState::Completed);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!(%session_id, "DKG session not completed within timeout");
+                return Ok(TerminalState::OrphanedAfterTimeout);
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
     }
 
     /// Wait until the network key's DKG output is published on-chain and return
