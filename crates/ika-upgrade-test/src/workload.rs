@@ -239,10 +239,18 @@ impl WorkloadDriver {
         if data.network_dkg_public_output.is_empty() {
             return Ok(None);
         }
-        let pp =
-            network_dkg_public_output_to_protocol_pp_inner(curve, data.network_dkg_public_output)
-                .context("derive protocol public parameters")?;
-        Ok(Some((id, pp)))
+        // The DKG output `TableVec` can still be assembling just after the key is
+        // created; a partial read fails BCS decode ("unexpected end of input").
+        // Treat a decode failure as "not ready yet" and let the caller retry
+        // rather than hard-failing.
+        match network_dkg_public_output_to_protocol_pp_inner(curve, data.network_dkg_public_output)
+        {
+            Ok(pp) => Ok(Some((id, pp))),
+            Err(e) => {
+                tracing::debug!(error = %e, "protocol pp not derivable yet, retrying");
+                Ok(None)
+            }
+        }
     }
 
     /// Find an IKA coin owned by the user to pay session fees.
@@ -267,9 +275,10 @@ impl WorkloadDriver {
         Ok(coin.coin_object_id)
     }
 
-    /// Issue one Curve25519 DKG (public-share variant) and return the created
-    /// dWallet's object id.
-    pub async fn issue_dkg(&mut self, ika: &IkaClient<SuiSdkClient>) -> Result<ObjectID> {
+    /// Issue one Curve25519 DKG (public-share variant) and return the
+    /// submitting transaction digest (for logging — completion is confirmed via
+    /// the coordinator session counter, not a per-dWallet read).
+    pub async fn issue_dkg(&mut self, ika: &IkaClient<SuiSdkClient>) -> Result<String> {
         let curve = CURVE25519;
         let (network_key_id, protocol_pp) = self
             .protocol_public_parameters(ika, curve, Duration::from_secs(300))
@@ -309,10 +318,9 @@ impl WorkloadDriver {
         .await
         .map_err(|e| anyhow::anyhow!("request_dwallet_dkg_with_public_share: {e}"))?;
 
-        let dwallet_id = created_dwallet_id(&response)
-            .context("extract created dWallet id from DKG response")?;
-        tracing::info!(%dwallet_id, "issued DKG");
-        Ok(dwallet_id)
+        let digest = response.digest.to_string();
+        tracing::info!(%digest, "issued DKG (submitted)");
+        Ok(digest)
     }
 }
 
@@ -347,27 +355,4 @@ async fn build_wallet_context(
     .save()?;
     let context = WalletContext::new(&config_path)?;
     Ok((context, dir))
-}
-
-/// Pull the created dWallet object id out of a DKG transaction response.
-fn created_dwallet_id(
-    response: &sui_sdk::rpc_types::SuiTransactionBlockResponse,
-) -> Result<ObjectID> {
-    let changes = response
-        .object_changes
-        .as_ref()
-        .context("response has no object_changes (request full content)")?;
-    for change in changes {
-        if let sui_sdk::rpc_types::ObjectChange::Created {
-            object_type,
-            object_id,
-            ..
-        } = change
-            && (object_type.name.as_str().contains("DWallet")
-                || object_type.module.as_str().contains("dwallet"))
-        {
-            return Ok(*object_id);
-        }
-    }
-    bail!("no created DWallet object in response")
 }
