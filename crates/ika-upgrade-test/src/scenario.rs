@@ -47,6 +47,11 @@ pub struct Scenario {
     pub sui_binary: PathBuf,
     pub notifier_binary: PathBuf,
     pub epoch_timeout: Duration,
+    /// Genesis ika epoch duration. Long epochs avoid the known sui_executor
+    /// gas-coin-contention wedge that short, rapid epoch transitions trigger
+    /// (see project memory: epoch-13 wedge), and give a binary swap time to
+    /// finish well before the mid-epoch reconfiguration MPC window.
+    pub epoch_duration_ms: u64,
     /// Persistent data dir for the cluster. When `None` a temp dir is used
     /// (cleaned on drop — set this to keep node logs after a failure).
     pub base_dir: Option<PathBuf>,
@@ -66,12 +71,18 @@ impl Scenario {
             sui_binary,
             notifier_binary,
             epoch_timeout: Duration::from_secs(600),
+            epoch_duration_ms: DEFAULT_EPOCH_DURATION_MS,
             base_dir: None,
         }
     }
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_epoch_duration_ms(mut self, ms: u64) -> Self {
+        self.epoch_duration_ms = ms;
         self
     }
 
@@ -121,7 +132,7 @@ impl Scenario {
                         self.sui_binary.clone(),
                     )
                     .with_num_validators(self.num_validators)
-                    .with_epoch_duration_ms(DEFAULT_EPOCH_DURATION_MS)
+                    .with_epoch_duration_ms(self.epoch_duration_ms)
                     .with_genesis_protocol_version(ProtocolVersion::MIN);
                     if let Some(dir) = &self.base_dir {
                         builder = builder.with_base_dir(dir.clone());
