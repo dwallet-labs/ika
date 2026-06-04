@@ -21,11 +21,8 @@
 //! one is honest) or a bounded attempt budget is exhausted.
 
 use crate::blob_cache::BlobCache;
-use crate::validator_metadata::{
-    derive_mpc_data_blob, now_ms, sign_validator_mpc_data_announcement,
-};
+use crate::validator_metadata::{now_ms, sign_validator_mpc_data_announcement};
 use anemo::PeerId;
-use dwallet_rng::RootSeed;
 use fastcrypto::ed25519::Ed25519KeyPair;
 use ika_network::mpc_artifacts::{
     SubmitMpcDataAnnouncementResponse, mpc_data_blob_hash, submit_announcement_to_committee,
@@ -117,7 +114,13 @@ pub struct JoinerFanoutConfig {
 pub struct JoinerAnnouncementSender {
     authority: AuthorityName,
     next_epoch: EpochId,
-    root_seed: RootSeed,
+    /// Our own mpc_data blob, pre-derived once up front by the caller.
+    /// The class-groups derivation is slow and deterministic from the
+    /// root seed, so it's done off the critical path (at node startup)
+    /// rather than lazily here — otherwise it would sit on the joiner's
+    /// narrow committee-publish → freeze-deadline window and miss the
+    /// freeze under short epochs.
+    blob: Vec<u8>,
     consensus_keypair: Arc<Ed25519KeyPair>,
     blob_cache: Arc<BlobCache>,
     fanout: Arc<dyn AnnouncementFanout>,
@@ -129,7 +132,7 @@ impl JoinerAnnouncementSender {
     pub fn new(
         authority: AuthorityName,
         next_epoch: EpochId,
-        root_seed: RootSeed,
+        blob: Vec<u8>,
         consensus_keypair: Arc<Ed25519KeyPair>,
         blob_cache: Arc<BlobCache>,
         fanout: Arc<dyn AnnouncementFanout>,
@@ -138,7 +141,7 @@ impl JoinerAnnouncementSender {
         Self {
             authority,
             next_epoch,
-            root_seed,
+            blob,
             consensus_keypair,
             blob_cache,
             fanout,
@@ -207,8 +210,7 @@ impl JoinerAnnouncementSender {
     fn build_signed_announcement(
         &self,
     ) -> anyhow::Result<(SignedValidatorMpcDataAnnouncement, Vec<u8>)> {
-        let blob = derive_mpc_data_blob(&self.root_seed)
-            .map_err(|e| anyhow::anyhow!("derive mpc_data blob: {e}"))?;
+        let blob = self.blob.clone();
         let digest = mpc_data_blob_hash(&blob);
         // Persist our own blob locally, and push it on the fan-out
         // (returned here): the joiner isn't in the current committee's
@@ -300,10 +302,9 @@ mod tests {
         let sender = JoinerAnnouncementSender {
             authority: AuthorityName::new([1; 48]),
             next_epoch: 5,
-            // run() builds the announcement, but we override by
-            // calling the loop directly to avoid blob derivation;
-            // instead we test the loop via a thin reimplementation.
-            root_seed: RootSeed::new([0; 32]),
+            // The loop is driven directly here, bypassing
+            // build_signed_announcement, so the blob is never read.
+            blob: Vec::new(),
             consensus_keypair: Arc::new(test_consensus_keypair()),
             blob_cache: unreachable_blob_cache(),
             fanout: fanout.clone(),

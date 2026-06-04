@@ -757,6 +757,29 @@ impl IkaNode {
         };
         let root_seed = root_seed_kp.root_seed().clone();
         let consensus_keypair = Arc::new(node.config.consensus_key_pair().copy());
+        // Pre-derive our stable, seed-deterministic mpc_data blob once, up
+        // front and off the critical path. The class-groups derivation is
+        // slow; doing it lazily the moment we discover we're a next-epoch
+        // joiner would put it on the narrow committee-publish → freeze-
+        // deadline window and miss the freeze under short epochs. The blob is
+        // identical every epoch (a pure function of the root seed), so one
+        // derivation serves every future joiner announcement.
+        let own_mpc_data_blob = match tokio::task::spawn_blocking({
+            let root_seed = root_seed.clone();
+            move || ika_core::validator_metadata::derive_mpc_data_blob(&root_seed)
+        })
+        .await
+        {
+            Ok(Ok(blob)) => blob,
+            Ok(Err(e)) => {
+                warn!(error = ?e, "joiner monitor: failed to derive own mpc_data blob; not announcing as a joiner");
+                return;
+            }
+            Err(e) => {
+                warn!(error = ?e, "joiner monitor: mpc_data blob derivation task panicked; not announcing as a joiner");
+                return;
+            }
+        };
         let mut last_handled_next_epoch: Option<u64> = None;
         loop {
             let next_committee = next_epoch_committee_receiver.borrow_and_update().clone();
@@ -795,7 +818,7 @@ impl IkaNode {
                         let sender = JoinerAnnouncementSender::new(
                             self_name,
                             next_epoch,
-                            root_seed.clone(),
+                            own_mpc_data_blob.clone(),
                             consensus_keypair.clone(),
                             blob_cache,
                             fanout,
