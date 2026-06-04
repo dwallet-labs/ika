@@ -7115,8 +7115,9 @@ version = "1.1.9"
 dependencies = [
  "anyhow",
  "clap",
- "dwallet-mpc-centralized-party",
+ "fastcrypto",
  "futures",
+ "hex",
  "ika-config",
  "ika-protocol-config",
  "ika-sui-client",
@@ -7127,6 +7128,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml 0.9.34+deprecated",
+ "shared-crypto",
  "sui-config",
  "sui-keys",
  "sui-sdk",

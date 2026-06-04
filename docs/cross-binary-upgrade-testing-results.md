@@ -33,7 +33,7 @@ host genuinely different binaries in one committee.
 |------|--------|-------|
 | `tests/smoke.rs` (go/no-go) | **GREEN** | 4 out-of-process validators + notifier, external sui, network DKG, reach epoch 2 (~396 s). |
 | `tests/cross_binary.rs` | **GREEN** | Boot 4 on a v3-only binary, swap all to dev (v3..v4), capability vote advances **v3 → v4** (~722 s). |
-| `tests/workload.rs` | **PARTIAL** | User DKG submission proven (txn executes, event emitted); on-chain completion not yet green — see below. |
+| `tests/workload.rs` | **GREEN** | Full user **DKG → Presign → Sign** lifecycle completes on-chain (~415 s). |
 
 All tests are opt-in (`RUN_UPGRADE_SMOKE` / `RUN_CROSS_BINARY` /
 `RUN_WORKLOAD_TEST`) and need real binaries + a matching `sui`.
@@ -78,20 +78,31 @@ overlaps the mid-epoch reconfiguration window stalls the epoch. The green run
 uses **10-minute epochs** and swaps **all four at once** so the run crosses
 exactly one reconfiguration, well clear of the swap window.
 
-## Known gap: workload on-chain completion
+## Workload driver (session-lifecycle invariant)
 
-The workload driver derives protocol public parameters from the on-chain network
-key, runs the centralized Curve25519 party, and **submits** the DKG to the
-coordinator (transaction executes, digest returned). But the validators currently
-**ignore the emitted event** (`received an event that is not a
-DWalletSessionEvent`), so the session never advances and
-`completed_sessions_count` does not rise. The TS SDK calls
-`registerEncryptionKey` before `requestDWalletDKG`; the Rust driver must do the
-same (generate a class-groups encryption keypair, sign it, call
-`register_encryption_key`) before the coordinator will process the DKG. Until
-that prerequisite is wired, `issue_dkg_and_confirm` returns
-`OrphanedAfterTimeout`. Presign and Sign build on a completed DKG and are not yet
-implemented.
+`workload.rs` drives a full user **DKG → Presign → Sign** lifecycle to completion
+on-chain by orchestrating the canonical `ika` CLI (`dwallet
+register-encryption-key | create | presign | sign`) as a subprocess — the CLI is
+the tested Rust client built on `dwallet-mpc-centralized-party` + `ika-sui-client`,
+so this exercises the real client flow end to end. What it took to make it green
+(each a real property of the system, surfaced by the harness):
+
+- **Dedicated user.** The workload must NOT reuse the publisher key — the
+  notifier submits from it, and sharing the coin causes lock contention
+  ("already locked by a different transaction"). The driver generates a fresh
+  key, faucet-funds SUI, and transfers one IKA coin from the publisher.
+- **register-encryption-key before create.** The encrypted DKG borrows the
+  user's encryption key from the coordinator (`encryption_keys.borrow(address)`),
+  so it must be registered first (as the TS SDK does).
+- **v4 genesis.** `internal_presign_sessions` is a v4 feature; at v3 global
+  presign requests pile up and never run.
+- **Long epoch (30 min).** Epoch 1 is reached fast (network-DKG-gated), so the
+  lifecycle runs in the first minutes — clear of the mid-epoch reconfiguration
+  MPC, which otherwise stalls presign completion.
+- **Confirm sign via on-chain count, not `--wait`.** The CLI's `sign --wait`
+  polls an ephemeral sign-session object that is removed on completion, so it
+  races; the driver instead confirms the sign by the coordinator's user
+  `completed_sessions_count` rising.
 
 ## Running
 
