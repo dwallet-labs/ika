@@ -47,6 +47,9 @@ pub struct Scenario {
     pub sui_binary: PathBuf,
     pub notifier_binary: PathBuf,
     pub epoch_timeout: Duration,
+    /// Persistent data dir for the cluster. When `None` a temp dir is used
+    /// (cleaned on drop — set this to keep node logs after a failure).
+    pub base_dir: Option<PathBuf>,
 }
 
 impl Scenario {
@@ -63,7 +66,18 @@ impl Scenario {
             sui_binary,
             notifier_binary,
             epoch_timeout: Duration::from_secs(600),
+            base_dir: None,
         }
+    }
+
+    pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
+        self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_epoch_timeout(mut self, timeout: Duration) -> Self {
+        self.epoch_timeout = timeout;
+        self
     }
 
     pub fn start_all(mut self, spec: BinarySpec) -> Self {
@@ -101,17 +115,18 @@ impl Scenario {
                 Step::StartAll(spec) => {
                     let validator_binary = resolve(&resolver, spec).await?;
                     tracing::info!(spec = %spec.label(), "starting cluster on binary");
-                    let built = ClusterBuilder::new(
+                    let mut builder = ClusterBuilder::new(
                         validator_binary,
                         self.notifier_binary.clone(),
                         self.sui_binary.clone(),
                     )
                     .with_num_validators(self.num_validators)
                     .with_epoch_duration_ms(DEFAULT_EPOCH_DURATION_MS)
-                    .with_genesis_protocol_version(ProtocolVersion::MIN)
-                    .build()
-                    .await
-                    .context("bring up cluster")?;
+                    .with_genesis_protocol_version(ProtocolVersion::MIN);
+                    if let Some(dir) = &self.base_dir {
+                        builder = builder.with_base_dir(dir.clone());
+                    }
+                    let built = builder.build().await.context("bring up cluster")?;
                     cluster = Some(built);
                 }
                 Step::WaitForEpoch(epoch) => {

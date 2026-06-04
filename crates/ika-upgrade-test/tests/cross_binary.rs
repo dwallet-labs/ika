@@ -56,7 +56,14 @@ async fn cross_binary_v118_to_dev_reaches_v4() {
         .expect("workspace root")
         .to_path_buf();
 
+    let base = PathBuf::from(
+        std::env::var("UPGRADE_TEST_DIR")
+            .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-cross-binary".to_string()),
+    );
+    let _ = std::fs::remove_dir_all(&base);
+
     Scenario::new(4, repo, sui, notifier)
+        .with_base_dir(base)
         .start_all(old)
         .wait_for_epoch(2)
         .stop_and_swap(&[0, 1], new.clone())
