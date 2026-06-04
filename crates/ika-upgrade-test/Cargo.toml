@@ -27,6 +27,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
+dwallet-mpc-centralized-party.workspace = true
 ika-config.workspace = true
 ika-protocol-config.workspace = true
 ika-sui-client.workspace = true
