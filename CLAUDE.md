@@ -246,7 +246,7 @@ Other gotchas:
 
 - **Release mode required**: Crypto operations are extremely slow in debug mode
 - **Forked from Sui**: Much code structure mirrors Sui Network patterns
-- **Sui dependency pinned**: Uses `mainnet-v1.51.5` tag for all Sui dependencies
+- **Sui dependency pinned**: Uses `mainnet-v1.70.2` tag for all Sui dependencies
 - **WASM excluded**: `sdk/ika-wasm` is excluded from workspace (separate build)
 - **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing
 - **NOA checkpoints not live**: The NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`) is under active development and not yet deployed. No backward compatibility constraints on serialization formats or type names
