@@ -102,9 +102,13 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
             }
         }
         self.blob_cache
-            .insert(digest, blob)
+            .insert(digest, blob.clone())
             .map_err(|e| format!("cache joiner blob failed: {e}"))?;
-        let tx = ConsensusTransaction::new_relayed_validator_mpc_data_announcement(announcement);
+        // Carry the joiner's blob in-band on the consensus relay so the
+        // whole committee obtains the bytes via consensus replication
+        // rather than each member fetching them peer-to-peer.
+        let tx =
+            ConsensusTransaction::new_relayed_validator_mpc_data_announcement(announcement, blob);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await

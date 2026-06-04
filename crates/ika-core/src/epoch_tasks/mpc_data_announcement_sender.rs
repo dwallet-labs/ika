@@ -37,7 +37,7 @@ use crate::validator_metadata::{
     build_epoch_mpc_data_ready_signal_transaction, derive_mpc_data_blob, now_ms,
 };
 use dwallet_rng::RootSeed;
-use ika_network::mpc_artifacts::mpc_data_blob_hash;
+use ika_network::mpc_artifacts::{MpcDataBlobStorage, mpc_data_blob_hash};
 use ika_types::committee::{CommitteeMembership, EpochId};
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -274,7 +274,20 @@ impl MpcDataAnnouncementSender {
         // up duplicate table entries, and avoids re-running the
         // expensive class-groups derivation on every retry tick.
         let announcement = self.cached_or_build_announcement()?;
-        let tx = ConsensusTransaction::new_validator_mpc_data_announcement(announcement.clone());
+        let Some(blob) = self.blob_cache.get(&announcement.blob_hash) else {
+            // Build-time persist must have failed: the blob isn't in
+            // the cache, and re-sending the announcement without its
+            // bytes would defeat in-band consensus delivery. Clear the
+            // cache to force a rebuild next tick, then retry.
+            *self.cached_announcement.lock().expect("mutex poisoned") = None;
+            warn!(
+                blob_hash = ?announcement.blob_hash,
+                "own mpc_data blob absent from cache; rebuilding before announcing"
+            );
+            return Ok(());
+        };
+        let tx =
+            ConsensusTransaction::new_validator_mpc_data_announcement(announcement.clone(), blob);
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;

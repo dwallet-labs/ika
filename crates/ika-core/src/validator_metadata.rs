@@ -1503,11 +1503,14 @@ mod tests {
         let name = name_of(&random_committee_key_pairs_of_size(1)[0]);
         let consensus_kp = &make_consensus_keys(1)[0];
         let signed = build_signed_for_epoch(name, consensus_kp, 5, [0x01; 32]);
-        let self_key =
-            ConsensusTransaction::new_validator_mpc_data_announcement(signed.announcement.clone())
-                .key();
+        let self_key = ConsensusTransaction::new_validator_mpc_data_announcement(
+            signed.announcement.clone(),
+            Vec::new(),
+        )
+        .key();
         let relayed_key =
-            ConsensusTransaction::new_relayed_validator_mpc_data_announcement(signed).key();
+            ConsensusTransaction::new_relayed_validator_mpc_data_announcement(signed, Vec::new())
+                .key();
         assert_ne!(
             self_key, relayed_key,
             "self and relayed keys must not collide for the same identity"

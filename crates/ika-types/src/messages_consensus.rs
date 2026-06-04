@@ -324,15 +324,24 @@ pub enum ConsensusTransactionKind {
     SuiChainObservationUpdate(SuiChainObservationUpdate),
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
     NOAObservation(ConsensusNOAObservation),
-    /// Self-submission by a current-committee validator: the bare
-    /// announcement, no payload signature (the consensus block
-    /// author authenticates the sender).
-    ValidatorMpcDataAnnouncement(ValidatorMpcDataAnnouncement),
+    /// Self-submission by a current-committee validator: the
+    /// announcement (digest + metadata) plus the full mpc_data blob
+    /// carried in-band. No payload signature (the consensus block
+    /// author authenticates the sender). The receiver hash-verifies
+    /// the blob against `announcement.blob_hash` and writes it to the
+    /// local blob store, so every node obtains the bytes via consensus
+    /// replication rather than an out-of-band P2P fetch.
+    ValidatorMpcDataAnnouncement(ValidatorMpcDataAnnouncement, Vec<u8>),
     /// Relay of a next-epoch joiner's announcement by a
     /// current-committee validator: carries the joiner's Ed25519
-    /// consensus-key signature, verified against the joiner's
-    /// next-epoch consensus pubkey before the relay forwards it.
-    RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement),
+    /// consensus-key signature (verified against the joiner's
+    /// next-epoch consensus pubkey before the relay forwards it) plus
+    /// the joiner's full mpc_data blob in-band, hash-verified against
+    /// the signed digest. The joiner — not a consensus participant —
+    /// fans its blob out over P2P to current-committee receivers; each
+    /// receiver relays it into consensus here so the bytes reach the
+    /// whole committee via consensus replication.
+    RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement, Vec<u8>),
     EpochMpcDataReadySignal(EpochMpcDataReadySignal),
     /// V2 of `EndOfPublish` that bundles the validator's signed
     /// handoff attestation into the same consensus message.
@@ -567,7 +576,10 @@ impl ConsensusTransaction {
     /// announcement, no signature. The consensus block author
     /// authenticates the sender, and `verify_consensus_transaction`
     /// enforces `sender == announcement.validator`.
-    pub fn new_validator_mpc_data_announcement(announcement: ValidatorMpcDataAnnouncement) -> Self {
+    pub fn new_validator_mpc_data_announcement(
+        announcement: ValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+    ) -> Self {
         let mut hasher = DefaultHasher::new();
         announcement.validator.hash(&mut hasher);
         announcement.epoch.hash(&mut hasher);
@@ -575,7 +587,7 @@ impl ConsensusTransaction {
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
-            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
+            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, blob),
         }
     }
 
@@ -584,6 +596,7 @@ impl ConsensusTransaction {
     /// consensus-key signature, verified before forwarding.
     pub fn new_relayed_validator_mpc_data_announcement(
         signed: SignedValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
     ) -> Self {
         let mut hasher = DefaultHasher::new();
         signed.announcement.validator.hash(&mut hasher);
@@ -592,7 +605,7 @@ impl ConsensusTransaction {
         let tracking_id = hasher.finish().to_le_bytes();
         Self {
             tracking_id,
-            kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
+            kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, blob),
         }
     }
 
@@ -671,14 +684,14 @@ impl ConsensusTransaction {
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
             }
-            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement) => {
+            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, _) => {
                 ConsensusTransactionKey::ValidatorMpcDataAnnouncement(
                     announcement.validator,
                     announcement.epoch,
                     announcement.timestamp_ms,
                 )
             }
-            ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed) => {
+            ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, _) => {
                 ConsensusTransactionKey::RelayedValidatorMpcDataAnnouncement(
                     signed.announcement.validator,
                     signed.announcement.epoch,

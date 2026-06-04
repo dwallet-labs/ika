@@ -1886,6 +1886,7 @@ impl AuthorityPerEpochStore {
     pub fn record_validator_mpc_data_announcement(
         &self,
         announcement: &ValidatorMpcDataAnnouncement,
+        blob: &[u8],
     ) -> IkaResult {
         if !self
             .protocol_config()
@@ -1901,7 +1902,42 @@ impl AuthorityPerEpochStore {
             );
             return Ok(());
         }
+        // The blob rides consensus in-band, so every node persists it
+        // here (hash-verified) instead of fetching it peer-to-peer.
+        self.store_announced_mpc_data_blob(announcement.blob_hash, blob);
         self.insert_validator_mpc_data_announcement(announcement)
+    }
+
+    /// Persist an mpc_data blob delivered in-band over consensus into
+    /// perpetual `mpc_artifact_blobs`, where the off-chain assembler
+    /// resolves blobs by digest. The bytes are hash- and decode-
+    /// verified against the announced digest first; a bad blob is
+    /// dropped (the separately-recorded announcement just won't be
+    /// locally validated without good bytes). Storage is content-
+    /// addressed, so a blob from an as-yet-unverified relayed
+    /// announcement is inert unless and until a frozen digest matches.
+    fn store_announced_mpc_data_blob(&self, digest: [u8; 32], blob: &[u8]) {
+        match crate::validator_metadata::verify_peer_blob_for_relay(blob, &digest) {
+            crate::validator_metadata::PeerBlobVerdict::Accept => {}
+            verdict => {
+                warn!(
+                    ?verdict,
+                    digest = ?digest,
+                    "in-band mpc_data blob failed verification — not persisting"
+                );
+                return;
+            }
+        }
+        let Some(perpetual) = self.perpetual_tables_for_handoff_load_full() else {
+            warn!(
+                digest = ?digest,
+                "perpetual tables not installed — in-band mpc_data blob not persisted"
+            );
+            return;
+        };
+        if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, blob) {
+            warn!(error = ?e, digest = ?digest, "failed to persist in-band mpc_data blob");
+        }
     }
 
     /// Record a next-epoch joiner's announcement relayed by a
@@ -1912,6 +1948,7 @@ impl AuthorityPerEpochStore {
     pub fn record_relayed_validator_mpc_data_announcement(
         &self,
         signed: &SignedValidatorMpcDataAnnouncement,
+        blob: &[u8],
     ) -> IkaResult {
         if !self
             .protocol_config()
@@ -1919,6 +1956,12 @@ impl AuthorityPerEpochStore {
         {
             return Ok(());
         }
+        // Persist the joiner's blob immediately (hash-verified,
+        // content-addressed) even if the announcement itself must be
+        // buffered until the joiner pubkey provider installs: bytes
+        // keyed by their own digest are inert unless a frozen digest
+        // matches them, so storage needn't wait on the signature check.
+        self.store_announced_mpc_data_blob(signed.announcement.blob_hash, blob);
         let next_epoch = self.epoch().saturating_add(1);
         let Some(provider) = self.joiner_pubkey_provider.load_full() else {
             // Provider not installed yet — buffer and re-evaluate on
@@ -3292,7 +3335,7 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, _),
                 ..
             }) => {
                 // Self-submission: the consensus block author IS the
@@ -3309,7 +3352,7 @@ impl AuthorityPerEpochStore {
                 }
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
+                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, _),
                 ..
             }) => {
                 // The wire authority binding is the *relayer* — any
@@ -3819,17 +3862,17 @@ impl AuthorityPerEpochStore {
                 ..
             }) => Ok(ConsensusCertificateResult::ConsensusMessage),
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement),
+                kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, blob),
                 ..
             }) => {
-                self.record_validator_mpc_data_announcement(announcement)?;
+                self.record_validator_mpc_data_announcement(announcement, blob)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
-                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed),
+                kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, blob),
                 ..
             }) => {
-                self.record_relayed_validator_mpc_data_announcement(signed)?;
+                self.record_relayed_validator_mpc_data_announcement(signed, blob)?;
                 Ok(ConsensusCertificateResult::ConsensusMessage)
             }
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
