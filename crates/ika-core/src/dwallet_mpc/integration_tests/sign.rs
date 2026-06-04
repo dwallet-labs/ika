@@ -307,6 +307,7 @@ pub(crate) fn send_start_sign_event(
                     data: SignData {
                         curve,
                         hash_scheme,
+                        hash_context: signature_algorithm.hash_context(),
                         signature_algorithm,
                     },
                     dwallet_id,
@@ -358,6 +359,7 @@ pub(crate) fn send_start_future_sign_event(
                     data: SignData {
                         curve,
                         hash_scheme,
+                        hash_context: signature_algorithm.hash_context(),
                         signature_algorithm,
                     },
                     dwallet_id,
@@ -410,6 +412,7 @@ pub(crate) fn send_start_partial_signature_verification_event(
                         curve,
                         message: message.clone(),
                         hash_scheme,
+                        hash_context: signature_algorithm.hash_context(),
                         signature_algorithm,
                         dwallet_decentralized_output: dwallet_public_output.clone(),
                         presign: presign.clone(),

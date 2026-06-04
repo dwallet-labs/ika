@@ -28,11 +28,11 @@ describe('Global Presign', () => {
 		);
 	});
 
-	it('should create a global presign - Ristretto SchnorrkelSubstrate', async () => {
+	it('should create a global presign - Ristretto Schnorrkel', async () => {
 		await runGlobalPresignTest(
 			'global-presign-test-ristretto-schnorrkel-substrate',
 			Curve.RISTRETTO,
-			SignatureAlgorithm.SchnorrkelSubstrate,
+			SignatureAlgorithm.Schnorrkel,
 		);
 	});
 
