@@ -25,6 +25,7 @@ members = [
     "crates/ika-network",
     "crates/ika-archival",
     "crates/ika-test-cluster",
+    "crates/ika-upgrade-test",
 ]
 [workspace.package]
 # This version string will be inherited by ika-core, ika-node, ika-tools, ika-sdk, and ika crates.
@@ -343,6 +344,7 @@ ika-move-contracts = { path = "crates/ika-move-contracts" }
 ika-network = { path = "crates/ika-network" }
 ika-archival = { path = "crates/ika-archival" }
 ika-test-cluster = { path = "crates/ika-test-cluster" }
+ika-upgrade-test = { path = "crates/ika-upgrade-test" }
 
 [patch.crates-io]
 crypto-bigint = { git = "https://github.com/ycscaly/crypto-bigint.git", rev = "8aabcee553b25f9f619722391de33edbe2f7412c" }
