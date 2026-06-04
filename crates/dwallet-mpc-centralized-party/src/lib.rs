@@ -453,6 +453,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
         VersionedPresignOutput::V2(presign) => {
             let signature_scheme_enum = try_into_signature_algorithm(curve, signature_algorithm)?;
             let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
+            let hash_context = signature_scheme_enum.hash_context();
             match signature_scheme_enum {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_with_centralized_party_dkg_output::<
@@ -463,7 +464,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -477,7 +478,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -491,7 +492,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -505,18 +506,12 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
                 DWalletSignatureAlgorithm::Schnorrkel => {
-                    // TODO(domain-separation): hard-coded substrate context. Should be sourced
-                    // from the per-chain SignRequestEvent (cryptography-private PR 547 Part 2 /
-                    // ika-private wiring) so each chain can supply its own schnorrkel signing
-                    // context bytes. Until then this matches the previously-hardcoded
-                    // `b"substrate"` inside the crypto crate and the already-deployed schnorrkel
-                    // domain separator — do not change without a coordinated upgrade.
                     advance_sign_with_centralized_party_dkg_output::<
                         SchnorrkelProtocol,
                         RistrettoDKGProtocol,
@@ -525,9 +520,7 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::Schnorrkel {
-                            signing_context: b"substrate".to_vec(),
-                        },
+                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -603,6 +596,7 @@ pub fn advance_centralized_sign_party(
         }
         VersionedPresignOutput::V2(presign) => {
             let signature_algorithm = try_into_signature_algorithm(curve, signature_algorithm)?;
+            let hash_context = signature_algorithm.hash_context();
             match signature_algorithm {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_with_decentralized_party_dkg_output::<
@@ -613,7 +607,7 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -627,7 +621,7 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -641,7 +635,7 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -655,18 +649,12 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::None,
+                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
                 DWalletSignatureAlgorithm::Schnorrkel => {
-                    // TODO(domain-separation): hard-coded substrate context. Should be sourced
-                    // from the per-chain SignRequestEvent (cryptography-private PR 547 Part 2 /
-                    // ika-private wiring) so each chain can supply its own schnorrkel signing
-                    // context bytes. Until then this matches the previously-hardcoded
-                    // `b"substrate"` inside the crypto crate and the already-deployed schnorrkel
-                    // domain separator — do not change without a coordinated upgrade.
                     advance_sign_with_decentralized_party_dkg_output::<
                         SchnorrkelProtocol,
                         RistrettoDKGProtocol,
@@ -675,9 +663,7 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        HashContext::Schnorrkel {
-                            signing_context: b"substrate".to_vec(),
-                        },
+                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )

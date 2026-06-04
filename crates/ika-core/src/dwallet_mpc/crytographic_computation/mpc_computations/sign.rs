@@ -332,6 +332,7 @@ impl SignPublicInputByProtocol {
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
+        hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
@@ -348,6 +349,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?),
             ),
@@ -359,6 +361,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -370,6 +373,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -381,6 +385,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -392,6 +397,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -413,6 +419,7 @@ fn build_secp256k1_ecdsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -457,7 +464,7 @@ fn build_secp256k1_ecdsa_sign_public_input(
         expected_decrypters,
         message,
         hash_type: hash_scheme,
-        hash_context: HashContext::None,
+        hash_context,
         dkg_output,
         presign: presign_value,
         sign_message: sign_data,
@@ -473,6 +480,7 @@ fn build_secp256r1_ecdsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256r1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -490,7 +498,7 @@ fn build_secp256r1_ecdsa_sign_public_input(
         expected_decrypters,
         message,
         hash_type: hash_scheme,
-        hash_context: HashContext::None,
+        hash_context,
         dkg_output,
         presign: presign_value,
         sign_message: sign_data,
@@ -506,6 +514,7 @@ fn build_secp256k1_taproot_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256k1TaprootProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -524,7 +533,7 @@ fn build_secp256k1_taproot_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -541,6 +550,7 @@ fn build_curve25519_eddsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Curve25519EdDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -559,7 +569,7 @@ fn build_curve25519_eddsa_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -576,6 +586,7 @@ fn build_ristretto_schnorrkel_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -594,15 +605,7 @@ fn build_ristretto_schnorrkel_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            // TODO(domain-separation): hard-coded substrate context. Should be sourced from the
-            // per-chain SignRequestEvent (cryptography-private PR 547 Part 2 / ika-private wiring)
-            // so each chain can supply its own schnorrkel signing context bytes. Until then this
-            // matches the previously-hardcoded `b"substrate"` inside the crypto crate and the
-            // already-deployed schnorrkel domain separator — do not change without a coordinated
-            // upgrade.
-            hash_context: HashContext::Schnorrkel {
-                signing_context: b"substrate".to_vec(),
-            },
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -753,6 +756,7 @@ impl DKGAndSignPublicInputByProtocol {
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
+        hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         protocol: DWalletSignatureAlgorithm,
@@ -774,6 +778,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -792,6 +797,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -810,6 +816,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -828,6 +835,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -846,6 +854,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -866,6 +875,7 @@ fn build_secp256k1_ecdsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -881,7 +891,7 @@ fn build_secp256k1_ecdsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_type: hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             sign_message: sign_data,
@@ -898,6 +908,7 @@ fn build_secp256r1_ecdsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256r1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -913,7 +924,7 @@ fn build_secp256r1_ecdsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_type: hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             sign_message: sign_data,
@@ -930,6 +941,7 @@ fn build_secp256k1_taproot_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1TaprootProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -945,7 +957,7 @@ fn build_secp256k1_taproot_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -962,6 +974,7 @@ fn build_curve25519_eddsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Curve25519EdDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -977,7 +990,7 @@ fn build_curve25519_eddsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            hash_context: HashContext::None,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -994,6 +1007,7 @@ fn build_ristretto_schnorrkel_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<RistrettoSchnorrkelProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1009,15 +1023,7 @@ fn build_ristretto_schnorrkel_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
-            // TODO(domain-separation): hard-coded substrate context. Should be sourced from the
-            // per-chain SignRequestEvent (cryptography-private PR 547 Part 2 / ika-private wiring)
-            // so each chain can supply its own schnorrkel signing context bytes. Until then this
-            // matches the previously-hardcoded `b"substrate"` inside the crypto crate and the
-            // already-deployed schnorrkel domain separator — do not change without a coordinated
-            // upgrade.
-            hash_context: HashContext::Schnorrkel {
-                signing_context: b"substrate".to_vec(),
-            },
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,

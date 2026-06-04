@@ -5,6 +5,7 @@ use crate::mpc_protocol_configuration::try_into_curve;
 use class_groups::CiphertextSpaceValue;
 use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
+use group::HashContext;
 use group::secp256k1;
 use k256::elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
@@ -209,6 +210,29 @@ pub enum DWalletSignatureAlgorithm {
     EdDSA,
     #[strum(to_string = "Schnorrkel")]
     Schnorrkel,
+}
+
+impl DWalletSignatureAlgorithm {
+    /// Returns the [`HashContext`] that pairs with this algorithm under cryptography-private
+    /// PR 547's domain-separation matrix.
+    ///
+    /// TODO(domain-separation): Schnorrkel currently hard-codes `b"substrate"` as the
+    /// signing-context bytes. Once the per-chain plumbing lands (PR 547 Part 2 / ika-private
+    /// wiring), the context should be sourced from `SignRequestEvent` so each chain can
+    /// supply its own. The byte literal here is byte-identical to what the crypto crate
+    /// previously hard-coded inside the Schnorrkel sign path and matches the already-deployed
+    /// schnorrkel domain separator — do not change without a coordinated upgrade.
+    pub fn hash_context(&self) -> HashContext {
+        match self {
+            DWalletSignatureAlgorithm::Schnorrkel => HashContext::Schnorrkel {
+                signing_context: b"substrate".to_vec(),
+            },
+            DWalletSignatureAlgorithm::ECDSASecp256k1
+            | DWalletSignatureAlgorithm::ECDSASecp256r1
+            | DWalletSignatureAlgorithm::Taproot
+            | DWalletSignatureAlgorithm::EdDSA => HashContext::None,
+        }
+    }
 }
 
 #[derive(
