@@ -1,12 +1,11 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! End-to-end workload-driver check: bring up a single-binary cluster, then
-//! drive a real user dWallet DKG and confirm it completes on-chain (the
-//! coordinator's completed-session count rises). Proves the workload path —
-//! protocol-public-parameters from the network key, centralized Curve25519
-//! party, coordinator submission, completion — independently of the
-//! cross-binary scenario.
+//! End-to-end workload check: bring up a single-binary cluster, then drive a
+//! full **DKG → Presign → Sign** dWallet lifecycle (via the `ika` CLI) and
+//! confirm a signature is produced on-chain. Proves the session-lifecycle
+//! invariant the upgrade harness depends on — sessions started in an epoch
+//! actually complete — independently of the cross-binary scenario.
 //!
 //! Opt-in via `RUN_WORKLOAD_TEST=1`:
 //!
@@ -14,6 +13,7 @@
 //! RUN_WORKLOAD_TEST=1 \
 //!   IKA_VALIDATOR_BIN=target/release/ika-validator \
 //!   IKA_NOTIFIER_BIN=target/release/ika-notifier \
+//!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
 //!   cargo test --release -p ika-upgrade-test --test workload -- --nocapture
 //! ```
@@ -30,7 +30,7 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn workload_dkg_completes() {
+async fn workload_dkg_presign_sign() {
     if std::env::var("RUN_WORKLOAD_TEST").is_err() {
         eprintln!("skipping: set RUN_WORKLOAD_TEST=1 to run the workload driver test");
         return;
@@ -42,6 +42,7 @@ async fn workload_dkg_completes() {
 
     let validator = bin_from_env("IKA_VALIDATOR_BIN", "target/release/ika-validator");
     let notifier = bin_from_env("IKA_NOTIFIER_BIN", "target/release/ika-notifier");
+    let ika_cli = bin_from_env("IKA_BIN", "target/release/ika");
     let sui = bin_from_env("SUI_BIN", "sui");
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
@@ -51,8 +52,14 @@ async fn workload_dkg_completes() {
 
     let cluster = ClusterBuilder::new(validator, notifier, sui)
         .with_num_validators(4)
-        .with_epoch_duration_ms(120_000)
+        // Genesis at v4 (MAX): `internal_presign_sessions` is a v4 feature, and
+        // without it the global-presign requests pile up but are never run.
         .with_genesis_protocol_version(ProtocolVersion::MAX)
+        // Long epoch (30 min): epoch 1 is reached fast (network-DKG-gated, not
+        // the timer), so the whole dWallet lifecycle runs in the first minutes
+        // — well before the mid-epoch reconfiguration MPC (~15 min in), which
+        // would otherwise stall the presign's on-chain completion.
+        .with_epoch_duration_ms(1_800_000)
         .with_base_dir(base)
         .build()
         .await
@@ -60,36 +67,46 @@ async fn workload_dkg_completes() {
 
     // Let the network-key DKG land (it completes during the genesis epoch).
     cluster
-        .wait_for_epoch(1, Duration::from_secs(600))
+        .wait_for_epoch(1, Duration::from_secs(900))
         .await
         .expect("reach epoch 1 (network DKG done)");
 
-    let mut driver = WorkloadDriver::new(
+    let driver = WorkloadDriver::new(
+        ika_cli,
         cluster.rpc_url().to_string(),
+        cluster.faucet_url().to_string(),
         cluster.network_config().clone(),
         cluster.publisher_keypair().copy(),
     )
     .await
     .expect("build workload driver");
 
-    let ika = driver.ika_client().await.expect("ika client");
+    // Debug aid: hold the cluster up and print config paths so `ika dwallet`
+    // can be driven manually (fast iteration vs. ~6-min test cycles).
+    if std::env::var("HOLD_CLUSTER").is_ok() {
+        eprintln!("HOLD_CLUSTER: cluster up. Run e.g.:");
+        eprintln!(
+            "  ika --json --client.config {} --ika-config {} dwallet create --curve secp256k1 --output-secret /tmp/s.bin",
+            driver.client_config_path().display(),
+            driver.ika_config_path().display(),
+        );
+        eprintln!("user_address={}", driver.user_address());
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        return;
+    }
 
-    // Proven end-to-end: derive protocol public parameters from the on-chain
-    // network key, run the centralized Curve25519 party, and submit the DKG
-    // request to the coordinator (the transaction executes and emits its event).
-    let digest = driver.issue_dkg(&ika).await.expect("submit user DKG");
-    assert!(!digest.is_empty(), "DKG submission returns a txn digest");
-    tracing::info!(%digest, "workload: user DKG submitted to coordinator");
+    let outcome = driver
+        .run_dwallet_lifecycle()
+        .await
+        .expect("DKG -> Presign -> Sign lifecycle completes on-chain");
 
-    // KNOWN GAP — on-chain completion confirmation is not yet green. The
-    // coordinator currently ignores the submitted event ("not a
-    // DWalletSessionEvent"), so the session never advances and
-    // completed_sessions_count does not rise. The TS SDK calls
-    // `registerEncryptionKey` before `requestDWalletDKG`; the Rust driver must
-    // do the same (generate a class-groups encryption keypair, sign it, call
-    // `register_encryption_key`) before the coordinator will process the DKG.
-    // Until that prerequisite is wired, `issue_dkg_and_confirm` would return
-    // `OrphanedAfterTimeout`, so it is not asserted here. See
-    // `WorkloadDriver::issue_dkg_and_confirm` for the completion path.
-    tracing::info!("workload submission path verified: user DKG submitted to coordinator");
+    assert!(
+        !outcome.sign_digest.is_empty(),
+        "sign produced a transaction digest"
+    );
+    tracing::info!(
+        dwallet_id = %outcome.dwallet_id,
+        sign_digest = %outcome.sign_digest,
+        "workload PASSED: DKG -> Presign -> Sign completed on-chain"
+    );
 }

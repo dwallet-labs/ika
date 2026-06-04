@@ -317,6 +317,10 @@ impl ClusterOfProcesses {
         &self.rpc_url
     }
 
+    pub fn faucet_url(&self) -> &str {
+        self.sui.faucet_url()
+    }
+
     /// The funded genesis publisher key, reused by the workload driver as the
     /// fee-paying user.
     pub fn publisher_keypair(&self) -> &SuiKeyPair {
