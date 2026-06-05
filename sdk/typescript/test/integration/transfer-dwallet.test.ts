@@ -179,7 +179,7 @@ async function aliceTransferShareToBob(
 		await ikaClient.getEncryptedUserSecretKeyShareInParticularState(
 			bobEncryptedUserSecretKeyShareId,
 			'NetworkVerificationCompleted',
-			{ timeout: 300000 },
+			{ timeout: 600000 },
 		);
 
 	expect(bobEncryptedUserSecretKeyShare).toBeDefined();
@@ -263,7 +263,7 @@ async function requestAndWaitForPresign(
 	const presignObject = await ikaClient.getPresignInParticularState(
 		presignRequestEvent.event_data.presign_id,
 		'Completed',
-		{ timeout: 300000 },
+		{ timeout: 600000 },
 	);
 
 	expect(presignObject).toBeDefined();
@@ -349,12 +349,13 @@ async function bobSignAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();

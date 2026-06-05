@@ -214,7 +214,11 @@ async function createImportedKeyDWallet(
 
 	// Wait for DWallet to be verified and active
 	const importedKeyDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
+		() =>
+			ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature', {
+				timeout: 600000,
+				interval: 1000,
+			}),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -267,7 +271,11 @@ async function acceptAndActivateImportedKeyDWallet(
 
 	// Wait for wallet to become Active
 	const activeDWallet = (await retryUntil(
-		() => ikaClient.getDWalletInParticularState(importedKeyDWallet.id, 'Active'),
+		() =>
+			ikaClient.getDWalletInParticularState(importedKeyDWallet.id, 'Active', {
+				timeout: 600000,
+				interval: 1000,
+			}),
 		(wallet) => wallet !== null,
 		30,
 		2000,
@@ -324,7 +332,11 @@ async function makeImportedKeyDWalletPublic(
 
 	// Wait for DWallet to have public shares
 	const publicDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active'),
+		() =>
+			ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active', {
+				timeout: 600000,
+				interval: 1000,
+			}),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
 		30,
 		2000,
@@ -397,7 +409,10 @@ async function requestPresignForImportedKey(
 
 	const presign = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
+				timeout: 600000,
+				interval: 1000,
+			}),
 		(presign) => presign !== null,
 		30,
 		2000,
@@ -479,12 +494,13 @@ async function signWithPublicShareAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();

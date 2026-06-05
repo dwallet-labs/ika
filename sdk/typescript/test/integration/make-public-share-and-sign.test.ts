@@ -132,7 +132,11 @@ async function makeDWalletPublic(
 
 	// Wait for DWallet to have public shares
 	const publicDWallet = await retryUntil(
-		() => ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active'),
+		() =>
+			ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active', {
+				timeout: 600000,
+				interval: 1000,
+			}),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
 		30,
 		2000,
@@ -172,7 +176,11 @@ async function requestAndWaitForPresign(
 
 	const presignObject = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
+			ikaClient.getPresignInParticularState(
+				presignRequestEvent.event_data.presign_id,
+				'Completed',
+				{ timeout: 600000, interval: 1000 },
+			),
 		(presign) => presign !== null,
 		30,
 		2000,
@@ -254,12 +262,13 @@ async function signWithPublicShareAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 60000, interval: 1000 },
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();

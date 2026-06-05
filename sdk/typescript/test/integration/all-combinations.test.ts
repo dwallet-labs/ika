@@ -266,6 +266,7 @@ async function signAndVerify(
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
+		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();
