@@ -8,10 +8,15 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
-use tracing::error;
+use tracing::{error, info};
 
-/// `EndOfPublishSender` handles sending the `end of publish`
-/// message to the consensus adapter
+/// `EndOfPublishSender` submits the `EndOfPublish` consensus
+/// message once the local signal (the `end_of_publish_receiver`)
+/// has asserted the current epoch_id. Nothing else.
+///
+/// The handoff-attestation signature emit used to be bundled here;
+/// it now lives in [`super::handoff_signature_sender`] so the two
+/// orthogonal protocol steps are wired independently.
 pub struct EndOfPublishSender {
     epoch_store: Weak<AuthorityPerEpochStore>,
     epoch_id: u64,
@@ -20,7 +25,6 @@ pub struct EndOfPublishSender {
 }
 
 impl EndOfPublishSender {
-    /// Creates a new instance of `EndOfPublishSender`.
     pub fn new(
         epoch_store: Weak<AuthorityPerEpochStore>,
         consensus_adapter: Arc<dyn SubmitToConsensus>,
@@ -35,10 +39,23 @@ impl EndOfPublishSender {
         }
     }
 
-    /// Runs the `end of publish` sender,
-    /// which checks if the `end of publish` signal has been received
-    /// and sends the `end of publish` message to the consensus adapter if it has.
     pub async fn run(&self) {
+        // The off-chain validator-metadata flow uses EndOfPublishV2,
+        // which carries this validator's EndOfPublish vote bundled
+        // with its signed handoff attestation. The handoff sender
+        // owns emitting V2; standalone V1 EndOfPublish is suppressed
+        // here to avoid double-voting.
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            info!(
+                epoch = self.epoch_id,
+                "EndOfPublishV2 active; standalone EndOfPublish sender exiting"
+            );
+            return;
+        }
         loop {
             if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id)
                 && let Err(err) = self.send_end_of_publish().await

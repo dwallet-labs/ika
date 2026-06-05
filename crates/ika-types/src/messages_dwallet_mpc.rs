@@ -176,14 +176,6 @@ pub struct ConsensusGlobalPresignRequest {
     pub request: GlobalPresignRequest,
 }
 
-/// Individual consensus message for network encryption key data.
-/// One message per key, keyed by `authority + key_id`.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ConsensusNetworkKeyData {
-    pub authority: AuthorityName,
-    pub key_data: DWalletNetworkEncryptionKeyData,
-}
-
 /// Individual consensus message for an NOA checkpoint observation.
 /// One message per observation, keyed by `authority + nonce`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

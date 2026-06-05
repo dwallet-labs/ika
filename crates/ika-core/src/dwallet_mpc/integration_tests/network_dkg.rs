@@ -223,6 +223,154 @@ pub(crate) async fn create_network_key_test(
     (consensus_round + 2, network_key_bytes, key_id.unwrap())
 }
 
+/// Bootstraps K0 via the normal DKG flow, then runs a SECOND
+/// network DKG (K1) in the same epoch and verifies that both keys
+/// end up installed in every validator's `DWalletMPCManager`.
+///
+/// This exercises the multi-key code paths that the production
+/// off-chain pipeline depends on: the per-key
+/// `agreed_network_key_data` quorum, `instantiate_agreed_keys_from_voted_data`'s
+/// ability to install more than one key per epoch, and the
+/// per-key digest/blob caches.
+#[tokio::test]
+#[cfg(test)]
+async fn test_two_network_keys_same_epoch_dkg() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+
+    // K0 — bootstrap. `create_network_key_test` returns the next
+    // consensus round to start from, K0's public output bytes,
+    // and K0's id; it also asserts every validator installed K0.
+    let (next_round_after_k0, k0_bytes, k0_id) = create_network_key_test(&mut test_state).await;
+
+    // K1 — a fresh DKG in the same epoch, distinct
+    // `session_identifier_preimage` and `key_id`. Drive the MPC
+    // flow to completion the same way `create_network_key_test`
+    // does for K0, then pull K1's public output out of the
+    // resulting checkpoint message.
+    let epoch_id = test_state
+        .dwallet_mpc_services
+        .first()
+        .expect("at least one service should exist")
+        .epoch;
+    let k1_id = ObjectID::random();
+    let all_parties: Vec<usize> = (0..test_state.sui_data_senders.len()).collect();
+    utils::send_configurable_start_network_dkg_event(
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [2u8; 32],
+        2,
+        &all_parties,
+        k1_id,
+    );
+    let (round_after_k1, k1_checkpoint) =
+        utils::advance_mpc_flow_until_completion(&mut test_state, next_round_after_k0).await;
+
+    let mut k1_bytes = Vec::new();
+    for message in k1_checkpoint.messages() {
+        let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) = message
+        else {
+            continue;
+        };
+        let id = ObjectID::from_bytes(message.dwallet_network_encryption_key_id.clone()).unwrap();
+        assert_eq!(id, k1_id, "K1 DKG checkpoint should reference K1's id");
+        k1_bytes.extend(message.public_output.clone());
+    }
+    assert!(
+        !k1_bytes.is_empty(),
+        "K1 network DKG checkpoint should carry non-empty public output"
+    );
+    assert_ne!(k1_bytes, k0_bytes, "K1 output should differ from K0");
+
+    // Publish a snapshot of BOTH keys to the `network_keys` watch
+    // channel so each validator's service-loop iteration sees the
+    // full set when it tallies `NetworkKeyData` votes and runs
+    // `instantiate_agreed_keys_from_voted_data`.
+    let both_keys = Arc::new(HashMap::from([
+        (
+            k0_id,
+            DWalletNetworkEncryptionKeyData {
+                id: k0_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: epoch_id,
+                current_reconfiguration_public_output: vec![],
+                network_dkg_public_output: k0_bytes.clone(),
+                state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+            },
+        ),
+        (
+            k1_id,
+            DWalletNetworkEncryptionKeyData {
+                id: k1_id,
+                current_epoch: epoch_id,
+                dkg_at_epoch: epoch_id,
+                current_reconfiguration_public_output: vec![],
+                network_dkg_public_output: k1_bytes.clone(),
+                state: DWalletNetworkEncryptionKeyState::AwaitingNetworkReconfiguration,
+            },
+        ),
+    ]));
+    test_state.sui_data_senders.iter().for_each(|sender| {
+        let _ = sender.network_keys_sender.send(both_keys.clone());
+    });
+
+    // First service-loop pass: each party emits its
+    // `NetworkKeyData` consensus vote for both keys. Second pass
+    // (after `send_advance_results_between_parties` distributes
+    // those votes) reaches quorum and calls
+    // `instantiate_agreed_keys_from_voted_data`, populating
+    // `manager.network_keys`.
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+    utils::send_advance_results_between_parties(
+        &test_state.committee,
+        &mut test_state.sent_consensus_messages_collectors,
+        &mut test_state.epoch_stores,
+        round_after_k1 + 1,
+    );
+    for service in test_state.dwallet_mpc_services.iter_mut() {
+        service.run_service_loop_iteration(vec![]).await;
+    }
+
+    for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
+        let net_keys = &service.dwallet_mpc_manager().network_keys;
+        assert!(
+            net_keys
+                .get_network_encryption_key_public_data(&k0_id)
+                .is_ok(),
+            "validator {i} should still have K0 ({k0_id:?}) installed after K1 DKG",
+        );
+        assert!(
+            net_keys
+                .get_network_encryption_key_public_data(&k1_id)
+                .is_ok(),
+            "validator {i} should have K1 ({k1_id:?}) installed after second DKG + status voting",
+        );
+    }
+}
+
 pub(crate) fn send_start_network_key_reconfiguration_event(
     epoch_id: EpochId,
     sui_data_senders: &mut [SuiDataSenders],

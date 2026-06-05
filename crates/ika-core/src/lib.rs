@@ -5,7 +5,7 @@
 extern crate core;
 
 use dwallet_session_request::DWalletSessionRequest;
-use ika_types::committee::Committee;
+use ika_types::committee::{Committee, CommitteeMembership};
 use ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use tokio::sync::watch::Receiver;
 use tracing::debug;
 
 pub mod authority;
+pub mod blob_cache;
 pub mod consensus_adapter;
 pub mod consensus_handler;
 pub mod consensus_manager;
@@ -31,8 +32,11 @@ pub mod storage;
 pub mod system_checkpoints;
 
 pub mod dwallet_mpc;
+pub mod epoch_tasks;
+pub mod handoff_cert;
 pub mod noa_checkpoints;
 pub mod sui_connector;
+pub mod validator_metadata;
 
 mod dwallet_session_request;
 mod request_protocol_data;
@@ -42,6 +46,14 @@ pub struct SuiDataReceivers {
     pub network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     pub new_requests_receiver: broadcast::Receiver<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_receiver: Receiver<Committee>,
+    /// Chain view of the next-epoch committee (members + stake, no
+    /// class-groups), published as soon as Sui selects it — before
+    /// the off-chain class-groups assembly. The joiner watcher and the
+    /// mpc_data producer's freeze emit-gate consume this (not the
+    /// assembled committee) to avoid a deadlock where the assembly
+    /// can't complete until a joiner announces and the joiner can't
+    /// learn it's a joiner until the assembly publishes.
+    pub chain_next_epoch_committee_receiver: Receiver<CommitteeMembership>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
     pub uncompleted_requests_receiver: Receiver<(Vec<DWalletSessionRequest>, EpochId)>,
@@ -53,6 +65,7 @@ impl Clone for SuiDataReceivers {
             network_keys_receiver: self.network_keys_receiver.clone(),
             new_requests_receiver: self.new_requests_receiver.resubscribe(),
             next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
+            chain_next_epoch_committee_receiver: self.chain_next_epoch_committee_receiver.clone(),
             last_session_to_complete_in_current_epoch_receiver: self
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
@@ -68,6 +81,7 @@ pub struct SuiDataSenders {
         tokio::sync::watch::Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     pub new_events_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_sender: tokio::sync::watch::Sender<Committee>,
+    pub chain_next_epoch_committee_sender: tokio::sync::watch::Sender<CommitteeMembership>,
     pub last_session_to_complete_in_current_epoch_sender:
         tokio::sync::watch::Sender<(EpochId, u64)>,
     pub end_of_publish_sender: tokio::sync::watch::Sender<Option<u64>>,
@@ -83,6 +97,14 @@ impl SuiDataReceivers {
         let (new_events_sender, new_events_receiver) = broadcast::channel(100);
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
             tokio::sync::watch::channel(Committee::new_simple_test_committee().0);
+        let test_committee = Committee::new_simple_test_committee().0;
+        let (chain_next_epoch_committee_sender, chain_next_epoch_committee_receiver) =
+            tokio::sync::watch::channel(CommitteeMembership {
+                epoch: test_committee.epoch,
+                voting_rights: test_committee.voting_rights.clone(),
+                quorum_threshold: test_committee.quorum_threshold,
+                validity_threshold: test_committee.validity_threshold,
+            });
         let (
             last_session_to_complete_in_current_epoch_sender,
             last_session_to_complete_in_current_epoch_receiver,
@@ -94,6 +116,7 @@ impl SuiDataReceivers {
             network_keys_sender,
             new_events_sender,
             next_epoch_committee_sender,
+            chain_next_epoch_committee_sender,
             last_session_to_complete_in_current_epoch_sender,
             end_of_publish_sender,
             uncompleted_events_sender,
@@ -102,6 +125,7 @@ impl SuiDataReceivers {
             SuiDataReceivers {
                 network_keys_receiver,
                 new_requests_receiver: new_events_receiver,
+                chain_next_epoch_committee_receiver,
                 next_epoch_committee_receiver,
                 last_session_to_complete_in_current_epoch_receiver,
                 end_of_publish_receiver,

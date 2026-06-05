@@ -48,8 +48,8 @@ use ika_types::message::{
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::messages_dwallet_mpc::{
     DWalletInternalMPCOutputKind, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    DWalletNetworkEncryptionKeyState, GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier,
-    SessionType, SuiChainObservationUpdate, UserSecretKeyShareEventType,
+    GlobalPresignRequest, IdleStatusUpdate, SessionIdentifier, SessionType,
+    SuiChainObservationUpdate, UserSecretKeyShareEventType,
 };
 use ika_types::messages_system_checkpoints::SystemCheckpointMessageKind;
 use ika_types::noa_checkpoint;
@@ -104,8 +104,6 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
-    /// Tracks which network key IDs have already been sent through consensus.
-    sent_network_key_ids: HashSet<ObjectID>,
     /// Receiver for network-owned-address sign requests.
     network_owned_address_sign_requests_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
@@ -217,7 +215,6 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
-            sent_network_key_ids: HashSet::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
             submitted_noa_sign_messages: HashSet::new(),
@@ -295,7 +292,6 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
-            sent_network_key_ids: HashSet::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
@@ -564,24 +560,6 @@ impl DWalletMPCService {
         // Only include presign requests that haven't been sent yet.
         let unsent_presign_requests = self.dwallet_mpc_manager.get_unsent_presign_requests();
 
-        // Read raw key data from the Sui watch channel and filter to keys not yet sent
-        // and only in completed states (with actual usable data).
-        // Scoped to ensure the RwLockReadGuard is dropped before any `.await`.
-        let new_key_data: Vec<_> = {
-            let all_key_data = self.sui_data_requests.network_keys_receiver.borrow();
-            all_key_data
-                .values()
-                .filter(|data| !self.sent_network_key_ids.contains(&data.id))
-                .filter(|data| {
-                    !matches!(
-                        &data.state,
-                        DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG
-                    )
-                })
-                .cloned()
-                .collect()
-        };
-
         // FIXME(noa-checkpoints): Without a real SuiChainObservation, the entire NOA
         // checkpoint flow is non-functional — messages buffer indefinitely because
         // `current_agreed_sui_chain_context` never becomes Some. Wire up SuiSyncer.
@@ -590,13 +568,11 @@ impl DWalletMPCService {
         // Check if there's anything new to send.
         let has_unsent_requests = !unsent_presign_requests.is_empty();
         let idle_status_changed = self.last_sent_idle_status != Some(is_idle);
-        let has_new_key_data = !new_key_data.is_empty();
         let observation_changed = sui_chain_observation != self.last_sent_sui_chain_observation;
         let has_noa_observations = !self.buffered_noa_observations.is_empty();
 
         if !has_unsent_requests
             && !idle_status_changed
-            && !has_new_key_data
             && !observation_changed
             && !has_noa_observations
         {
@@ -647,20 +623,6 @@ impl DWalletMPCService {
                 .await
             {
                 error!(error = ?e, consensus_round, "Failed to submit presign request");
-            }
-        }
-
-        // One message per new network key.
-        for key_data in &new_key_data {
-            let tx = ConsensusTransaction::new_network_key_data(self.name, key_data.clone());
-            if let Err(e) = self
-                .dwallet_submit_to_consensus
-                .submit_to_consensus(&[tx])
-                .await
-            {
-                error!(error = ?e, consensus_round, "Failed to submit network key data");
-            } else {
-                self.sent_network_key_ids.insert(key_data.id);
             }
         }
 
@@ -1047,28 +1009,6 @@ impl DWalletMPCService {
                 }
             };
 
-            let network_key_data_messages = match self
-                .epoch_store
-                .next_network_key_data(self.last_read_consensus_round)
-            {
-                Ok(Some((round, msgs))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "network key data consensus round mismatch"
-                        );
-                        panic!("network key data consensus round mismatch");
-                    }
-                    msgs
-                }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load network key data from the local DB");
-                    panic!("failed to load network key data from the local DB");
-                }
-            };
-
             let noa_observation_messages = match self
                 .epoch_store
                 .next_noa_observation(self.last_read_consensus_round)
@@ -1129,10 +1069,6 @@ impl DWalletMPCService {
                 .dwallet_mpc_manager
                 .handle_presign_request_messages(consensus_round, presign_request_messages);
 
-            // 1c. Handle network key data messages.
-            self.dwallet_mpc_manager
-                .handle_network_key_data_messages(consensus_round, network_key_data_messages);
-
             // 1d. Handle NOA observation messages.
             let (newly_finalized_tx_refs, newly_failed_tx_refs) = self
                 .dwallet_mpc_manager
@@ -1185,7 +1121,25 @@ impl DWalletMPCService {
                 }
             }
 
-            // 2. Instantiate any agreed keys we don't have yet, from consensus-voted data.
+            // 1f. Adopt this validator's own locally-observed network-key
+            // outputs into the instantiation set, verified against the
+            // prior epoch's handoff cert (the cross-epoch agreement that
+            // gates which keys may be instantiated). Sourced from the
+            // overlay but cert-digest-gated, so a stale/wrong local value
+            // is skipped.
+            // Cheap Arc clone; the borrow guard is dropped before the
+            // instantiation await below.
+            let overlay_snapshot = self
+                .sui_data_requests
+                .network_keys_receiver
+                .borrow()
+                .clone();
+            self.dwallet_mpc_manager
+                .adopt_cert_verified_keys(&overlay_snapshot);
+
+            // 2. Instantiate any keys we don't have yet, from the
+            // cert-verified local outputs adopted above (the consensus
+            // vote that previously fed this set has been removed).
             let new_key_ids = self
                 .dwallet_mpc_manager
                 .instantiate_agreed_keys_from_voted_data()
@@ -1765,6 +1719,52 @@ impl DWalletMPCService {
                 }
             },
             SessionType::User | SessionType::System => {
+                // Cache canonical (non-rejected) network DKG /
+                // reconfig output bytes locally before they get
+                // moved into the message builder. The handoff
+                // trigger reads these back at EndOfPublish.
+                //
+                // Skipped entirely when the off-chain validator
+                // metadata feature is disabled — leaves the cache
+                // empty and the syncer overlay path naturally
+                // falls through to chain-only reads.
+                if !rejected && self.epoch_store.off_chain_validator_metadata_enabled() {
+                    match &session_request.protocol_data {
+                        ProtocolData::NetworkEncryptionKeyDkg {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_dkg_output(
+                                *dwallet_network_encryption_key_id,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network DKG output"
+                                );
+                            }
+                        }
+                        ProtocolData::NetworkEncryptionKeyReconfiguration {
+                            dwallet_network_encryption_key_id,
+                            ..
+                        } => {
+                            if let Err(e) = self.epoch_store.cache_network_reconfiguration_output(
+                                *dwallet_network_encryption_key_id,
+                                session_request.epoch,
+                                &output,
+                            ) {
+                                warn!(
+                                    error = ?e,
+                                    ?dwallet_network_encryption_key_id,
+                                    "failed to cache network reconfiguration output"
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 let output = Self::build_dwallet_checkpoint_message_kinds_from_output(
                     &session_identifier,
                     session_request,

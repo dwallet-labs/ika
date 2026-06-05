@@ -1,6 +1,5 @@
 ---
 source: crates/ika-protocol-config/src/lib.rs
-assertion_line: 1061
 expression: "ProtocolConfig::get_for_version(cur, *chain_id)"
 ---
 version: 3

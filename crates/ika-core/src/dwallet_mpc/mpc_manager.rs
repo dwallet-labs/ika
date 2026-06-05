@@ -28,18 +28,19 @@ use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
 use hex;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
+use ika_types::handoff::HandoffItemKey;
 use ika_types::messages_dwallet_mpc::{
-    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    Curve25519EdDSAProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind,
-    DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData, GlobalPresignRequest,
-    IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
-    SuiChainObservationUpdate,
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
+    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
+    DWalletNetworkEncryptionKeyData, GlobalPresignRequest, IdleStatusUpdate,
+    RistrettoSchnorrkelSubstrateProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
+    Secp256r1ECDSAProtocol, SessionIdentifier, SessionType, SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -124,6 +125,14 @@ pub(crate) struct DWalletMPCManager {
     /// Once we get the network key, these events will be executed.
     pub(crate) requests_pending_for_network_key: HashMap<ObjectID, Vec<DWalletSessionRequest>>,
     pub(crate) requests_pending_for_next_active_committee: Vec<DWalletSessionRequest>,
+
+    /// Network DKG / reconfig requests that arrived before the
+    /// off-chain freeze gate was satisfied. Drained on every
+    /// `handle_mpc_request_batch` by re-running each through
+    /// `handle_mpc_request`; once the per-epoch freeze (and
+    /// per-key DKG quorum, for DKG requests) is in place, they
+    /// pass the gate and run normally.
+    pub(crate) requests_pending_for_frozen_mpc_data: Vec<DWalletSessionRequest>,
     pub(crate) next_active_committee: Option<Committee>,
     pub(crate) dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
 
@@ -154,12 +163,25 @@ pub(crate) struct DWalletMPCManager {
     /// This prevents sending the same request multiple times.
     sent_presign_sequence_numbers: HashSet<u64>,
 
-    /// Per-key voting: maps each key ID to a map from data values to the set of parties that voted for that data.
-    network_key_data_votes:
-        HashMap<ObjectID, HashMap<DWalletNetworkEncryptionKeyData, HashSet<PartyID>>>,
-
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
-    agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
+    /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
+    /// shape we last passed to `update_network_key`. Used by
+    /// `instantiate_agreed_keys_from_voted_data` to distinguish
+    /// "agreed data hasn't changed since we last instantiated"
+    /// from "agreed data was just overwritten by a fresh quorum
+    /// (typically the reconfig output flipping)" — only the latter
+    /// needs a re-instantiation pass.
+    last_instantiated_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    /// The last network-key data whose instantiation FAILED to decrypt
+    /// this validator's share (e.g. the validator isn't in that output's
+    /// committee yet — a joiner mid-fold-in, or a departing validator).
+    /// The decryption is deterministic, so re-running it on identical
+    /// bytes every service tick only burns class-groups crypto; this
+    /// snapshot suppresses the retry until the bytes change (the output
+    /// that carries this validator's share arrives).
+    last_failed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
@@ -187,7 +209,7 @@ pub(crate) struct DWalletMPCManager {
         HashMap<(DWalletCurve, DWalletSignatureAlgorithm), u64>,
 
     /// The epoch store for persisting presign pools to disk.
-    epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
+    pub(crate) epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
 
     /// Channel sender for completed network-owned-address sign session outputs.
     pub(crate) network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
@@ -289,6 +311,7 @@ impl DWalletMPCManager {
             sui_data_receivers,
             requests_pending_for_next_active_committee: Vec::new(),
             requests_pending_for_network_key: HashMap::new(),
+            requests_pending_for_frozen_mpc_data: Vec::new(),
             dwallet_mpc_metrics,
             next_active_committee: None,
             validator_name,
@@ -302,8 +325,9 @@ impl DWalletMPCManager {
             completed_presign_sequence_numbers: HashSet::new(),
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
-            network_key_data_votes: HashMap::new(),
             agreed_network_key_data: HashMap::new(),
+            last_instantiated_network_key_data: HashMap::new(),
+            last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
             completed_internal_presign_sessions: HashMap::new(),
@@ -520,53 +544,88 @@ impl DWalletMPCManager {
         agreed_presign_requests
     }
 
-    /// Handle network key data messages. Performs quorum voting per key.
-    /// Updates `agreed_network_key_data` in place.
-    pub fn handle_network_key_data_messages(
+    /// Adopt this validator's locally-observed network-key outputs into
+    /// the instantiation set (`agreed_network_key_data`), gated by the
+    /// prior epoch's handoff cert — the cross-epoch agreement on which
+    /// outputs the current epoch inherits, replacing the now-removed consensus vote.
+    ///
+    /// - A **reconfigured** key (it carries a current-epoch
+    ///   reconfiguration output) is adopted only when both its stable DKG
+    ///   digest and its epoch-specific reconfiguration digest match the
+    ///   prior cert. A stale/wrong local value (the lagging-snapshot
+    ///   hazard the now-removed vote filtered via byte-identical-quorum) fails the
+    ///   match and is skipped; so does any key when the cert isn't
+    ///   available yet (the bootstrap anchor may still be fetching it).
+    /// - A key still in its **initial-DKG state** (no reconfiguration has
+    ///   run yet — the genesis network key, or one created this epoch) is
+    ///   adopted from its local DKG output directly: the DKG output is a
+    ///   one-time deterministic computation (byte-identical across the
+    ///   committee), and no prior cert can pin a key produced after it.
+    ///   THIS epoch's handoff then certifies it for peers joining at E+1.
+    ///   If a cert does happen to pin the key's DKG digest, the match is
+    ///   still required as a consistency check.
+    pub fn adopt_cert_verified_keys(
         &mut self,
-        consensus_round: u64,
-        messages: Vec<ConsensusNetworkKeyData>,
+        overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
     ) {
-        for msg in messages {
-            let sender_authority = msg.authority;
-            let key_data = msg.key_data;
-
-            let Ok(sender_party_id) =
-                authority_name_to_party_id_from_committee(&self.committee, &sender_authority)
-            else {
-                error!(
-                    sender_authority=?sender_authority,
-                    consensus_round,
-                    should_never_happen = true,
-                    "got network key data for an authority without party ID",
-                );
-                continue;
-            };
-
-            let key_id = key_data.id;
-
-            // Skip if this key has already reached agreement.
-            if self.agreed_network_key_data.contains_key(&key_id) {
-                continue;
+        let cert = self.epoch_id.checked_sub(1).and_then(|prior_epoch| {
+            match self
+                .epoch_store
+                .get_certified_handoff_attestation(prior_epoch)
+            {
+                Ok(cert) => cert,
+                Err(e) => {
+                    warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
+                    None
+                }
             }
-
-            // Add this party's vote for this specific key data.
-            let parties = self
-                .network_key_data_votes
-                .entry(key_id)
-                .or_default()
-                .entry(key_data.clone())
-                .or_default();
-            parties.insert(sender_party_id);
-
-            // Check if the parties that voted for this data form an authorized subset.
-            if self.access_structure.is_authorized_subset(parties).is_ok() {
-                self.agreed_network_key_data.insert(key_id, key_data);
-                info!(
-                    ?key_id,
-                    consensus_round, "Network key data has been agreed upon"
-                );
+        });
+        let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
+        let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
+        if let Some(cert) = &cert {
+            for (item, digest) in &cert.attestation.items {
+                match item {
+                    HandoffItemKey::NetworkDkgOutput { key_id } => {
+                        dkg_digests.insert(*key_id, *digest);
+                    }
+                    HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                        reconfiguration_digests.insert(*key_id, *digest);
+                    }
+                    HandoffItemKey::ValidatorMpcData { .. } => {}
+                }
             }
+        }
+        for (key_id, data) in overlay {
+            if data.network_dkg_public_output.is_empty() {
+                continue; // nothing computed/fetched locally yet
+            }
+            let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
+            if data.current_reconfiguration_public_output.is_empty() {
+                // Initial-DKG state: adopt the deterministic local DKG
+                // output. Require the match only if a cert pins it.
+                if let Some(cert_dkg) = dkg_digests.get(key_id)
+                    && *cert_dkg != local_dkg_digest
+                {
+                    continue;
+                }
+            } else {
+                // Reconfigured key: both the stable DKG digest and the
+                // epoch-specific reconfiguration digest must match the
+                // prior cert. With no cert the maps are empty, so the
+                // match fails and the key is skipped until the anchor
+                // lands.
+                if dkg_digests.get(key_id) != Some(&local_dkg_digest) {
+                    continue;
+                }
+                if reconfiguration_digests.get(key_id)
+                    != Some(&mpc_data_blob_hash(
+                        &data.current_reconfiguration_public_output,
+                    ))
+                {
+                    continue;
+                }
+            }
+            self.agreed_network_key_data.insert(*key_id, data.clone());
         }
     }
 
@@ -1129,6 +1188,60 @@ impl DWalletMPCManager {
             })
     }
 
+    /// Whether this validator has every frozen-set member's
+    /// mpc_data blob locally available and decode-validated.
+    /// Returns `true` under v3 (off_chain disabled — no frozen set
+    /// to check), under v4 when the frozen set is still empty
+    /// (freeze hasn't fired — caller's gate is purely additive,
+    /// other gates govern session start), or when every authority
+    /// in the frozen set has a blob whose hash matches the frozen
+    /// digest AND the blob structurally decodes.
+    ///
+    /// Used by `perform_cryptographic_computation` to hold back
+    /// network DKG / reconfig session messages on a validator
+    /// whose P2P fan-out hasn't fully converged yet. The remedy
+    /// is "wait until the next tick"; the rest of the network
+    /// proceeds via threshold.
+    fn local_mpc_data_ready_for_frozen_set(&self) -> bool {
+        if !self.epoch_store.off_chain_validator_metadata_enabled() {
+            return true;
+        }
+        let Ok(frozen) = self.epoch_store.get_frozen_mpc_data_input_set_trait() else {
+            return true;
+        };
+        if frozen.is_empty() {
+            // Freeze gate hasn't fired yet. The on-chain
+            // session-activation gate is the single source of
+            // truth for session start while the freeze is
+            // still pending; the local-readiness gate just
+            // doesn't have an opinion until the frozen set
+            // materializes.
+            return true;
+        }
+        let Some(perpetual) = self.epoch_store.perpetual_tables_handle() else {
+            // Bootstrap window — `install_perpetual_tables_for_handoff`
+            // hasn't fired yet. Behave like the empty-frozen-set
+            // branch above ("no opinion") rather than blocking
+            // every session forever. Compare
+            // `compute_locally_validated_peers`, which also treats
+            // an absent perpetual handle as "not enough info to
+            // veto."
+            tracing::debug!(
+                "local readiness: perpetual tables not installed yet, deferring opinion"
+            );
+            return true;
+        };
+        for expected_digest in frozen.values() {
+            let Ok(Some(bytes)) = perpetual.get_mpc_artifact_blob(expected_digest) else {
+                return false;
+            };
+            if !crate::validator_metadata::blob_decodes_to_valid_mpc_data(&bytes) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
     pub(super) fn new_session(
@@ -1217,11 +1330,32 @@ impl DWalletMPCManager {
                     SessionType::NetworkOwnedAddressSign => true,
                 };
 
-                if should_advance {
-                    Some((session, request))
-                } else {
-                    None
+                if !should_advance {
+                    return None;
                 }
+
+                // Local-readiness gate for network DKG / reconfig
+                // sessions under v4 off_chain mode. These sessions
+                // consume the frozen-set members' mpc_data blobs
+                // (class-groups keys). If the freeze gate has fired
+                // but P2P propagation hasn't delivered every
+                // frozen-set blob to this validator yet, we hold off
+                // emitting our first-round message — other validators
+                // proceed via threshold; we catch up on the next tick
+                // once the missing blob lands. Without this gate, we
+                // would emit a round message computed against an
+                // incomplete view of peer class-groups material and
+                // cross-reject in MPC.
+                if matches!(
+                    &request.protocol_data,
+                    crate::request_protocol_data::ProtocolData::NetworkEncryptionKeyDkg { .. }
+                        | crate::request_protocol_data::ProtocolData::NetworkEncryptionKeyReconfiguration { .. }
+                ) && !self.local_mpc_data_ready_for_frozen_set()
+                {
+                    return None;
+                }
+
+                Some((session, request))
             })
             .collect();
 
@@ -1338,19 +1472,59 @@ impl DWalletMPCManager {
         false
     }
 
-    /// Instantiates agreed network keys from consensus-voted data.
-    /// For each key in `agreed_network_key_data` that is not yet loaded locally,
-    /// instantiates the key from the consensus-voted data.
-    /// Returns the IDs of newly instantiated keys.
+    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
+    /// For each key in `agreed_network_key_data` either (a) not yet
+    /// loaded locally, or (b) loaded but with a stale shape compared
+    /// to the latest agreed bytes (typically the reconfig output
+    /// flipping each epoch), runs the instantiation pass. Returns
+    /// the IDs touched.
+    ///
+    /// The `last_instantiated_network_key_data` snapshot prevents
+    /// re-running on every poll: re-instantiation costs a per-curve
+    /// decrypt + key-share regenerate inside `update_network_key`,
+    /// so we only do it when the agreed bytes actually changed.
     pub(crate) async fn instantiate_agreed_keys_from_voted_data(&mut self) -> Vec<ObjectID> {
         let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
             .agreed_network_key_data
             .iter()
-            .filter(|(key_id, _)| {
-                !self
+            .filter(|(key_id, key_data)| {
+                // Filter to: first instantiation OR the *content*
+                // (DKG output, reconfig output, state) has moved
+                // since we last instantiated. Excludes the per-epoch
+                // `current_epoch` field, which flips every epoch
+                // boundary even when the underlying bytes are
+                // unchanged and would otherwise force a wasteful
+                // `update_network_key` pass that re-decrypts the key
+                // shares.
+                if !self
                     .network_keys
                     .network_encryption_keys
                     .contains_key(key_id)
+                {
+                    return true;
+                }
+                match self.last_instantiated_network_key_data.get(key_id) {
+                    // Never instantiated this key. Attempt it — unless we
+                    // already failed to decrypt these exact bytes. The
+                    // decryption is deterministic, so identical bytes
+                    // would fail identically; retry only once the bytes
+                    // change (the output carrying our share arrives).
+                    None => match self.last_failed_network_key_data.get(key_id) {
+                        None => true,
+                        Some(failed) => {
+                            failed.network_dkg_public_output != key_data.network_dkg_public_output
+                                || failed.current_reconfiguration_public_output
+                                    != key_data.current_reconfiguration_public_output
+                                || failed.state != key_data.state
+                        }
+                    },
+                    Some(prev) => {
+                        prev.network_dkg_public_output != key_data.network_dkg_public_output
+                            || prev.current_reconfiguration_public_output
+                                != key_data.current_reconfiguration_public_output
+                            || prev.state != key_data.state
+                    }
+                }
             })
             .map(|(key_id, key_data)| (*key_id, key_data.clone()))
             .collect();
@@ -1358,7 +1532,11 @@ impl DWalletMPCManager {
         let mut new_key_ids = Vec::new();
 
         for (key_id, key_data) in keys_to_instantiate {
-            info!(key_id=?key_id, "Instantiating agreed network key from consensus-voted data");
+            info!(key_id=?key_id, "Instantiating agreed network key");
+            // Retained for the failure path (the bytes are moved into
+            // instantiation below) so we can record what failed and skip
+            // re-attempting identical bytes next tick.
+            let attempted = key_data.clone();
 
             let res =
                 instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
@@ -1379,23 +1557,75 @@ impl DWalletMPCManager {
                         );
                         continue;
                     }
-                    info!(key_id=?key_id, "Updating network key from consensus-voted data");
+                    info!(key_id=?key_id, "Updating network key");
                     if let Err(e) = self
                         .network_keys
                         .update_network_key(key_id, &key, &self.access_structure)
                         .await
                     {
-                        error!(error=?e, key_id=?key_id, "Failed to update network key from consensus-voted data");
+                        // Expected during churn: this validator can't yet
+                        // decrypt its share from this output (not in its
+                        // committee yet — a joiner mid-fold-in, or a
+                        // departing validator). Record the bytes so the
+                        // deterministic decryption isn't re-run on them
+                        // every tick; it retries when the bytes change.
+                        warn!(error=?e, key_id=?key_id, "could not decrypt share for network key from this output yet; will retry when its bytes change");
+                        self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
+                        // Mirror the adopted **DKG** output bytes
+                        // into the local digest caches so validators that
+                        // didn't reach `Finalize` locally still hold the
+                        // stable, one-time DKG digest and can build the
+                        // `NetworkDkgOutput` handoff item.
+                        //
+                        // The reconfiguration output is deliberately NOT
+                        // mirrored here. It is epoch-specific, and
+                        // `agreed_network_key_data` can still carry the
+                        // *prior* epoch's output (the adopted overlay can lag the local
+                        // computation), so mirroring it would race the
+                        // local current value and corrupt the handoff
+                        // `NetworkReconfigurationOutput` digest — the
+                        // stale-vs-current `AttestationMismatch`. The
+                        // handoff sources the reconfiguration digest from
+                        // the local-MPC write only, keyed by the
+                        // reconfiguration session's own epoch
+                        // (`get_network_reconfiguration_output_digests_for_epoch`);
+                        // a validator that didn't compute this epoch's
+                        // reconfiguration is excluded from that item by
+                        // design (the computing validators are a quorum).
+                        let key_data = self.agreed_network_key_data.get(&key_id).cloned();
+                        if let Some(key_data) = key_data {
+                            if !key_data.network_dkg_public_output.is_empty()
+                                && let Err(e) = self.epoch_store.cache_network_dkg_output(
+                                    key_id,
+                                    &key_data.network_dkg_public_output,
+                                )
+                            {
+                                warn!(
+                                    error = ?e,
+                                    ?key_id,
+                                    "failed to cache DKG output digest from adopted data"
+                                );
+                            }
+                            // Snapshot the data we just instantiated so
+                            // the next poll skips this key unless a
+                            // newer quorum has overwritten
+                            // `agreed_network_key_data` since.
+                            self.last_instantiated_network_key_data
+                                .insert(key_id, key_data);
+                        }
+                        // Succeeded — drop any prior failure record.
+                        self.last_failed_network_key_data.remove(&key_id);
                         new_key_ids.push(key_id);
                     }
                 }
                 Err(err) => {
-                    error!(
+                    warn!(
                         error=?err,
                         key_id=?key_id,
-                        "Failed to instantiate network key from consensus-voted data"
+                        "could not instantiate network key from this output yet; will retry when its bytes change"
                     );
+                    self.last_failed_network_key_data.insert(key_id, attempted);
                 }
             }
         }
