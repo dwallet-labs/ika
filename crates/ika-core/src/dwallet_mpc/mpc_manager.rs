@@ -49,7 +49,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use ika_types::noa_checkpoint::{
     CounterpartyChain, NOACheckpointTxObservation, NOACheckpointTxRef, SuiChainContext,
@@ -534,7 +534,7 @@ impl DWalletMPCManager {
                 self.completed_presign_sequence_numbers
                     .insert(sequence_number);
                 agreed_presign_requests.push(request);
-                info!(
+                debug!(
                     sequence_number,
                     consensus_round, "Presign request reached majority vote"
                 );
@@ -738,6 +738,7 @@ impl DWalletMPCManager {
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
+    #[tracing::instrument(level = "trace", skip_all, fields(session_identifier = ?message.session_identifier))]
     pub(crate) fn handle_message(&mut self, consensus_round: u64, message: DWalletMPCMessage) {
         let session_identifier = message.session_identifier;
         let sender_authority = message.authority;
@@ -757,7 +758,7 @@ impl DWalletMPCManager {
         };
         let mut message_hasher = DefaultHash::default();
         message_hasher.update(&message.message);
-        info!(
+        trace!(
             session_identifier=?session_identifier,
             sender_authority=?sender_authority,
             receiver_authority=?self.validator_name,
@@ -781,7 +782,7 @@ impl DWalletMPCManager {
         let session = match self.sessions.entry(session_identifier) {
             Entry::Occupied(session) => session.into_mut(),
             Entry::Vacant(_) => {
-                info!(
+                debug!(
                     ?session_identifier,
                     sender_authority=?sender_authority,
                     receiver_authority=?self.validator_name,
@@ -865,6 +866,7 @@ impl DWalletMPCManager {
             };
 
         let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
+        let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
                 for signature_algorithm in signature_algorithms {
@@ -950,9 +952,19 @@ impl DWalletMPCManager {
                                 .entry((curve, signature_algorithm))
                                 .or_insert(0) += 1;
                         }
+                        pools_filled.push(format!(
+                            "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
+                        ));
                     }
                 }
             }
+        }
+        if !pools_filled.is_empty() {
+            info!(
+                consensus_round,
+                pools = ?pools_filled,
+                "Topping up internal presign pools",
+            );
         }
     }
 
@@ -997,7 +1009,7 @@ impl DWalletMPCManager {
             messages_by_consensus_round: HashMap::new(),
         };
 
-        info!(
+        debug!(
             status=?status,
             consensus_round,
             ?curve,
@@ -1244,6 +1256,7 @@ impl DWalletMPCManager {
 
     /// Creates a new session with SID `session_identifier`,
     /// and insert it into the MPC session map `self.mpc_sessions`.
+    #[tracing::instrument(level = "debug", skip_all, fields(session_identifier = ?session_identifier, session_sequence_number = ?status.session_sequence_number()))]
     pub(super) fn new_session(
         &mut self,
         session_identifier: &SessionIdentifier,
@@ -1251,7 +1264,7 @@ impl DWalletMPCManager {
         counterparty_chain: Option<CounterpartyChainKind>,
         session_computation_type: SessionComputationType,
     ) {
-        info!(
+        debug!(
             status=?status,
             "Received start MPC flow request for session identifier {:?}",
             session_identifier,

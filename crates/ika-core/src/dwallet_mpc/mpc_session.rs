@@ -96,6 +96,17 @@ pub(crate) enum SessionStatus {
     Failed,
 }
 
+impl SessionStatus {
+    /// The session's ordinal sequence number when its request is available
+    /// (set for presign sessions; `None` while still awaiting the request).
+    pub(crate) fn session_sequence_number(&self) -> Option<u64> {
+        match self {
+            SessionStatus::Active { request, .. } => request.session_sequence_number,
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SessionComputationType {
     #[allow(clippy::upper_case_acronyms)]
@@ -251,8 +262,9 @@ impl DWalletSession {
         if sender_party_id == self.party_id {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
-                authority=?self.validator_name,
-                status =? self.status,
+                session_identifier = ?self.session_identifier,
+                session_sequence_number = ?self.status.session_sequence_number(),
+                authority = ?self.validator_name,
                 "Received our output from consensus, marking session as computation completed",
             );
 

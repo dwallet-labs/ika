@@ -47,7 +47,7 @@ use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum StopReason {
@@ -454,7 +454,7 @@ where
                             next_dwallet_checkpoint_sequence_number,
                         ) {
                         Ok(Some(dwallet_checkpoint_message)) => {
-                            info!(
+                            debug!(
                                 ?next_dwallet_checkpoint_sequence_number,
                                 "Processing checkpoint sequence number"
                             );
@@ -477,7 +477,7 @@ where
                             )
                             .expect("Serializing checkpoint message cannot fail");
 
-                            info!(
+                            debug!(
                                 signers_len=?signers_len,
                                 ?signers_bitmap,
                                 "Processing checkpoint with signers"
@@ -502,7 +502,7 @@ where
                                     response.err()
                                 );
                             }
-                            info!(
+                            debug!(
                                 ?next_dwallet_checkpoint_sequence_number,
                                 "Successfully submitted dwallet checkpoint"
                             );
@@ -545,7 +545,7 @@ where
                         bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
                             .expect("Serializing `system_checkpoint` message cannot fail");
 
-                    info!("Signers_bitmap: {:?}", signers_bitmap);
+                    debug!("Signers_bitmap: {:?}", signers_bitmap);
                     self.metrics.system_checkpoint_write_requests_total.inc();
                     let response = retry_with_max_elapsed_time!(
                         Self::handle_system_checkpoint_execution_task(
@@ -571,7 +571,7 @@ where
                         .last_written_system_checkpoint_sequence
                         .set(next_dwallet_checkpoint_sequence_number as i64);
                     last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
-                    info!(
+                    debug!(
                         "Sui transaction successfully executed for system_checkpoint sequence number: {}",
                         next_system_checkpoint_sequence_number
                     );
@@ -789,7 +789,7 @@ where
                 .await
                 .is_err()
             {
-                info!(
+                debug!(
                     transaction_digest = ?prev_digest,
                     "The last submitted transaction has not been processed yet, retrying..."
                 );
@@ -797,13 +797,13 @@ where
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
-            info!(
+            debug!(
             transaction_digest = ?prev_digest,
             "The last submitted transaction has been processed, submitting the next one",
                         );
         }
 
-        info!(
+        debug!(
             transaction_digest = ?transaction.digest(),
             "Submitting a transaction to Sui"
         );

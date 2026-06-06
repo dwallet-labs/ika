@@ -150,7 +150,7 @@ impl CryptographicComputationsOrchestrator {
                     "Cryptographic computation failed"
                 );
             } else {
-                info!(
+                debug!(
                     party_id,
                     ?session_identifier,
                     ?computation_result_data,
@@ -232,7 +232,7 @@ impl CryptographicComputationsOrchestrator {
         }
 
         if !self.has_available_cores_to_perform_computation() {
-            info!(
+            debug!(
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
@@ -250,7 +250,7 @@ impl CryptographicComputationsOrchestrator {
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
 
-        info!(
+        debug!(
             party_id,
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,

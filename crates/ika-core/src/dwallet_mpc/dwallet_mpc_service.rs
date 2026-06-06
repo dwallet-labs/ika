@@ -503,7 +503,7 @@ impl DWalletMPCService {
                 );
                 continue;
             }
-            info!(
+            debug!(
                 message_len = request.message.len(),
                 curve = ?request.curve,
                 algorithm = ?request.signature_algorithm,
@@ -757,7 +757,7 @@ impl DWalletMPCService {
                                 SessionComputationType::from(&request.protocol_data),
                             );
 
-                        info!(
+                        debug!(
                             ?session_identifier,
                             "Got a request for a session that was previously computation completed, marking it as computation completed"
                         );
@@ -1136,7 +1136,7 @@ impl DWalletMPCService {
                     .collect();
 
                 if self.network_is_idle != is_idle || !new_global_presign_requests.is_empty() {
-                    info!(
+                    debug!(
                         consensus_round,
                         is_idle,
                         number_of_new_global_presign_requests = new_global_presign_requests.len(),
@@ -1234,7 +1234,7 @@ impl DWalletMPCService {
                         Ok(Some((_presign_session_id, _presign_blending_index, presign))) => {
                             match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
                                 Ok(presign) => {
-                                    info!(
+                                    debug!(
                                         request_session_id =? request.session_identifier,
                                         presign_id =? request.presign_id,
                                         session_sequence_number =? request.session_sequence_number,
@@ -1510,7 +1510,7 @@ impl DWalletMPCService {
 
             match computation_result {
                 Ok(GuaranteedOutputDeliveryRoundResult::Advance { message }) => {
-                    info!(
+                    debug!(
                         ?session_identifier,
                         validator=?validator_name,
                         ?computation_result_data,
@@ -1534,7 +1534,7 @@ impl DWalletMPCService {
                     private_output: _,
                     public_output_value,
                 }) => {
-                    info!(
+                    debug!(
                         ?session_identifier,
                         validator=?validator_name,
                         "Reached output for session"
@@ -1815,7 +1815,7 @@ impl DWalletMPCService {
         output: Vec<u8>,
         rejected: bool,
     ) -> Vec<DWalletCheckpointMessageKind> {
-        info!(
+        debug!(
             mpc_protocol=?DWalletSessionRequestMetricData::from(&session_request.protocol_data),
             session_identifier=?session_identifier,
             "Creating session output message for checkpoint"
