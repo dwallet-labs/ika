@@ -123,6 +123,7 @@ where
             tokio::spawn(Self::sync_uncompleted_events(
                 sui_client_clone,
                 dwallet_coordinator_object_receiver.clone(),
+                system_object_receiver.clone(),
                 uncompleted_requests_sender,
             ));
         }
@@ -211,6 +212,7 @@ where
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
+        system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
     ) {
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -270,7 +272,27 @@ where
                     );
                 }
             }
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            // Epoch-scale the re-poll so a restarted validator re-discovers
+            // in-flight session requests (system + reconfiguration) fast
+            // enough to drive them to completion before the epoch's
+            // end-of-publish window. Without this, a mid-epoch restart at a
+            // short epoch leaves those sessions `WaitingForSessionRequest`
+            // (never re-advanced) and the epoch can't advance. A no-op at
+            // production epoch lengths (clamps back to 30s). Mirrors the
+            // epoch-scaling already done by `sync_next_committee`.
+            let epoch_duration_ms = system_object_receiver
+                .borrow()
+                .as_ref()
+                .map(|(_, system_inner)| system_inner.epoch_duration_ms());
+            let poll_interval = epoch_duration_ms
+                .map(|ms| {
+                    crate::validator_metadata::epoch_scaled_poll_interval(
+                        ms,
+                        Duration::from_secs(30),
+                    )
+                })
+                .unwrap_or(Duration::from_secs(30));
+            tokio::time::sleep(poll_interval).await;
         }
     }
 
@@ -795,20 +817,38 @@ where
                 coordinator.dwallet_network_encryption_keys.size
                     == coordinator.epoch_dwallet_network_encryption_keys_reconfiguration_completed;
             let all_noa_checkpoints_finalized = noa_checkpoints_finalized();
-            if coordinator
+            let session_locked = coordinator
                 .sessions_manager
-                .locked_last_user_initiated_session_to_complete_in_current_epoch
+                .locked_last_user_initiated_session_to_complete_in_current_epoch;
+            let no_pricing_calculation_votes = coordinator
+                .pricing_and_fee_management
+                .calculation_votes
+                .is_none();
+            let ready_to_end_publish = session_locked
                 && all_epoch_sessions_finished
                 && all_immediate_sessions_completed
                 && next_epoch_committee_exists
                 && all_network_encryption_keys_reconfiguration_completed
                 && all_noa_checkpoints_finalized
-                && coordinator
-                    .pricing_and_fee_management
-                    .calculation_votes
-                    .is_none()
-                && let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch))
-            {
+                && no_pricing_calculation_votes;
+            if !ready_to_end_publish {
+                // The epoch cannot end-of-publish (and therefore cannot
+                // advance) until every condition below holds. Logging the
+                // breakdown each tick pinpoints a stuck reconfiguration —
+                // e.g. a restarted validator that left a system session
+                // started-but-not-completed.
+                debug!(
+                    epoch = system_inner_v1.epoch,
+                    session_locked,
+                    all_epoch_sessions_finished,
+                    all_immediate_sessions_completed,
+                    next_epoch_committee_exists,
+                    all_network_encryption_keys_reconfiguration_completed,
+                    all_noa_checkpoints_finalized,
+                    no_pricing_calculation_votes,
+                    "end-of-publish gate not yet satisfied; epoch cannot advance",
+                );
+            } else if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
                 error!(error=?err, "failed to send end of publish epoch to the channel");
             }
         }
