@@ -86,14 +86,39 @@ impl ValidatorProcess {
         Ok(())
     }
 
-    /// SIGKILL the process and reap it. A hard kill models a validator crash,
-    /// which the on-disk-compat path must survive anyway (RocksDB is
-    /// crash-consistent via its WAL).
+    /// Gracefully stop the process: send SIGTERM (which `ika-node`'s
+    /// `wait_termination` handles to run an orderly shutdown — flushing
+    /// in-flight consensus-output writes), wait for it to exit, and only
+    /// SIGKILL as a fallback if it doesn't exit in time.
+    ///
+    /// A hard SIGKILL was wrong here: it can interrupt the node partway through
+    /// a consensus round's processing, leaving the dwallet-MPC replay state on
+    /// disk in a partial state that the next binary chokes on at replay. A
+    /// binary swap is a planned restart, not a crash, so it must be graceful.
     pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut child) = self.child.take() {
-            tracing::info!(index = self.index, "stopping ika-validator");
-            child.start_kill().ok();
-            let _ = child.wait().await;
+            tracing::info!(index = self.index, "stopping ika-validator (SIGTERM)");
+            if let Some(pid) = child.id() {
+                // SIGTERM via `kill(1)` — avoids an `unsafe` libc::kill call.
+                let _ = Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .status()
+                    .await;
+            }
+            match tokio::time::timeout(Duration::from_secs(60), child.wait()).await {
+                Ok(_) => {
+                    tracing::info!(index = self.index, "ika-validator exited cleanly");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        index = self.index,
+                        "graceful shutdown timed out after 60s; sending SIGKILL"
+                    );
+                    child.start_kill().ok();
+                    let _ = child.wait().await;
+                }
+            }
         }
         Ok(())
     }
@@ -122,6 +147,19 @@ impl ValidatorProcess {
     /// `GET /node-config` — masked current config snapshot (debug text).
     pub async fn node_config(&self) -> Result<String> {
         self.admin_get("node-config").await
+    }
+
+    /// `POST /set-override-buffer-stake?buffer_bps=<bps>&epoch=<epoch>` — override
+    /// the protocol-upgrade buffer stake for `epoch` (must equal the node's
+    /// current epoch). `buffer_bps=0` drops the effective vote threshold to the
+    /// bare quorum, so a quorum (not unanimity) advances the protocol version —
+    /// the realistic behavior the n=4 default (50% buffer rounds up to all four)
+    /// otherwise hides.
+    pub async fn set_buffer_stake(&self, epoch: u64, buffer_bps: u64) -> Result<String> {
+        self.admin_post(&format!(
+            "set-override-buffer-stake?buffer_bps={buffer_bps}&epoch={epoch}"
+        ))
+        .await
     }
 
     pub fn is_running(&self) -> bool {
@@ -160,6 +198,18 @@ impl ValidatorProcess {
         let resp = self.http.get(&url).send().await.context("admin GET")?;
         if !resp.status().is_success() {
             bail!("admin GET {url} -> {}", resp.status());
+        }
+        resp.text().await.context("read admin response")
+    }
+
+    /// POST an admin endpoint, returning its body as text.
+    async fn admin_post(&self, path: &str) -> Result<String> {
+        let url = format!("http://{}/{path}", self.admin_addr);
+        let resp = self.http.post(&url).send().await.context("admin POST")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            bail!("admin POST {url} -> {status}: {body}");
         }
         resp.text().await.context("read admin response")
     }

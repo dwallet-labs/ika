@@ -292,8 +292,15 @@ impl ClusterOfProcesses {
         Ok(inner.protocol_version)
     }
 
-    /// Block until the on-chain ika epoch reaches `target`. Polls the system
-    /// object; epochs advance on the genesis `epoch_duration_ms` cadence.
+    /// Block until the on-chain ika epoch counter reaches `target`.
+    ///
+    /// The counter advancing to epoch N is itself the completion signal for
+    /// epoch N-1: reconfiguration into a new epoch is gated on that epoch's
+    /// network-key MPC (genesis DKG / reshare) finishing, so the epoch cannot
+    /// advance until it does. Callers therefore wait for the epoch *after* the
+    /// work they depend on — e.g. wait for epoch 2 to guarantee the genesis
+    /// network DKG (which runs during epoch 1) has completed — rather than
+    /// polling the network-key state directly.
     pub async fn wait_for_epoch(&self, target: u64, timeout: Duration) -> Result<()> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {

@@ -83,11 +83,23 @@ async fn cross_binary_rolling_upgrade_reaches_v4() {
     Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
         .with_epoch_duration_ms(600_000)
-        .with_epoch_timeout(Duration::from_secs(1200))
+        // wait_for_epoch(2) spans two 600s epochs from genesis; give each wait
+        // generous margin over the genesis-bootstrap + epoch-duration budget.
+        .with_epoch_timeout(Duration::from_secs(1800))
         .start_all(old)
-        .wait_for_epoch(1)
-        .stop_and_swap(&[0, 1, 2, 3], new)
+        // The genesis network DKG runs *during* epoch 1; the epoch cannot
+        // advance to 2 until it completes (reconfiguration into epoch 2 reshares
+        // that key). Waiting for epoch 2 therefore guarantees v1.1.8 finished the
+        // genesis DKG before we swap — so the dev binaries inherit a completed
+        // key and exercise a cross-crypto *reshare*, not an interrupted DKG.
         .wait_for_epoch(2)
+        .stop_and_swap(&[0, 1, 2, 3], new)
+        // With n=4 the default 50% buffer stake rounds up to requiring all four
+        // votes; the rolling swap can leave one validator's fresh capability
+        // uncommitted at the epoch-boundary tally, so drop the buffer to a bare
+        // quorum (the realistic behavior on larger committees).
+        .set_buffer_stake(0)
+        .wait_for_epoch(3)
         .expect_protocol_version_at_least(4)
         .run()
         .await

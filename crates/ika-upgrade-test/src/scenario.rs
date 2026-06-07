@@ -35,6 +35,12 @@ pub enum Step {
         validators: Vec<usize>,
         to: BinarySpec,
     },
+    /// Override the protocol-upgrade buffer stake on every validator for the
+    /// current epoch. `buffer_bps = 0` makes a quorum (not unanimity) enough to
+    /// advance the protocol version.
+    SetBufferStake {
+        buffer_bps: u64,
+    },
     ExpectProtocolVersionAtLeast(u64),
 }
 
@@ -109,6 +115,14 @@ impl Scenario {
         self
     }
 
+    /// Override the protocol-upgrade buffer stake on every validator for the
+    /// epoch the cluster is currently in. Insert after a `stop_and_swap` and
+    /// before the `wait_for_epoch` that crosses the upgrade boundary.
+    pub fn set_buffer_stake(mut self, buffer_bps: u64) -> Self {
+        self.steps.push(Step::SetBufferStake { buffer_bps });
+        self
+    }
+
     pub fn expect_protocol_version_at_least(mut self, version: u64) -> Self {
         self.steps.push(Step::ExpectProtocolVersionAtLeast(version));
         self
@@ -154,6 +168,20 @@ impl Scenario {
                             .with_context(|| format!("validator index {idx} out of range"))?;
                         proc.swap_binary(new_binary.clone()).await?;
                     }
+                }
+                Step::SetBufferStake { buffer_bps } => {
+                    let c = cluster.as_ref().context("SetBufferStake before StartAll")?;
+                    let epoch = c.current_epoch().await?;
+                    for proc in &c.validators {
+                        if proc.is_running() {
+                            proc.set_buffer_stake(epoch, *buffer_bps)
+                                .await
+                                .with_context(|| {
+                                    format!("set buffer stake on validator {}", proc.index)
+                                })?;
+                        }
+                    }
+                    tracing::info!(epoch, buffer_bps, "buffer stake override applied");
                 }
                 Step::ExpectProtocolVersionAtLeast(version) => {
                     let c = cluster
