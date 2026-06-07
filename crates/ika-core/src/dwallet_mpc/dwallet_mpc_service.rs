@@ -887,36 +887,55 @@ impl DWalletMPCService {
                 }
             };
 
-            let mpc_outputs = self
-                .epoch_store
-                .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
+            // Internal presign sessions are a v4 feature
+            // (`internal_presign_sessions_enabled`), and only a binary with the
+            // feature live ever writes `dwallet_internal_mpc_outputs` records.
+            // The round assertion below assumes a *dense* stream — one record
+            // per processed consensus round — which holds only when every round
+            // in the replayed history was produced by such a binary. While the
+            // feature is disabled the stream is empty; worse, when replaying a
+            // history whose earlier rounds were produced by a binary that never
+            // wrote internal outputs (a pre-v4 node, e.g. during a rolling
+            // protocol/binary upgrade) the stream is *sparse*:
+            // `next_dwallet_internal_mpc_output` returns the next future record,
+            // whose round is ahead of the round being processed, and the
+            // dense-stream assertion trips. Gate the read on the same feature
+            // flag that gates instantiation so a node ignores the internal-output
+            // stream until internal presign is actually live.
+            let internal_mpc_outputs = if self.protocol_config.internal_presign_sessions_enabled() {
+                let mpc_outputs = self
+                    .epoch_store
+                    .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
 
-            let internal_mpc_outputs = match mpc_outputs {
-                Ok(Some((round, outputs))) => {
-                    // Validate round matches
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?mpc_messages_consensus_round,
-                            ?round,
-                            "consensus round mismatch for internal MPC outputs"
-                        );
-                        panic!("consensus round mismatch for internal MPC outputs");
+                match mpc_outputs {
+                    Ok(Some((round, outputs))) => {
+                        // Validate round matches
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?mpc_messages_consensus_round,
+                                ?round,
+                                "consensus round mismatch for internal MPC outputs"
+                            );
+                            panic!("consensus round mismatch for internal MPC outputs");
+                        }
+                        outputs
                     }
-                    outputs
+                    Ok(None) => {
+                        // No internal MPC outputs for this round - use empty list.
+                        // This can happen during initialization or when no internal outputs are generated.
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        error!(
+                            error=?e,
+                            last_read_consensus_round=self.last_read_consensus_round,
+                            "failed to load internal DWallet MPC outputs from the local DB"
+                        );
+                        panic!("failed to load DWallet MPC outputs from the local DB");
+                    }
                 }
-                Ok(None) => {
-                    // No internal MPC outputs for this round - use empty list.
-                    // This can happen during initialization or when no internal outputs are generated.
-                    Vec::new()
-                }
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load internal DWallet MPC outputs from the local DB"
-                    );
-                    panic!("failed to load DWallet MPC outputs from the local DB");
-                }
+            } else {
+                Vec::new()
             };
 
             let verified_dwallet_checkpoint_messages = self
