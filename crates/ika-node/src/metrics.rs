@@ -1,11 +1,25 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
+use prometheus::{
+    Histogram, IntCounter, IntGauge, Registry, register_histogram_with_registry,
+    register_int_counter_with_registry, register_int_gauge_with_registry,
+};
 
 pub struct IkaNodeMetrics {
     pub current_protocol_version: IntGauge,
     pub binary_max_protocol_version: IntGauge,
     pub configured_max_protocol_version: IntGauge,
+
+    /// 1 while the prepare-then-start barrier is blocking the new epoch's
+    /// MPC components on full verified handoff data; 0 otherwise. A value
+    /// stuck at 1 is the dashboard signal that a validator is wedged
+    /// waiting for handoff data and is not signing.
+    pub handoff_prepare_waiting: IntGauge,
+    /// Number of prepare-then-start barrier poll iterations spent waiting
+    /// for handoff data.
+    pub handoff_prepare_retries_total: IntCounter,
+    /// Wall-clock seconds spent inside the prepare-then-start barrier.
+    pub handoff_prepare_duration_seconds: Histogram,
 }
 
 impl IkaNodeMetrics {
@@ -26,6 +40,26 @@ impl IkaNodeMetrics {
             configured_max_protocol_version: register_int_gauge_with_registry!(
                 "ika_configured_max_protocol_version",
                 "Max protocol version configured in the node config",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_waiting: register_int_gauge_with_registry!(
+                "ika_handoff_prepare_waiting",
+                "1 while the prepare-then-start barrier is blocking the new epoch's MPC \
+                 components on full verified handoff data; 0 otherwise",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_retries_total: register_int_counter_with_registry!(
+                "ika_handoff_prepare_retries_total",
+                "Number of prepare-then-start barrier poll iterations spent waiting for \
+                 handoff data",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_duration_seconds: register_histogram_with_registry!(
+                "ika_handoff_prepare_duration_seconds",
+                "Wall-clock seconds spent inside the prepare-then-start barrier",
                 registry,
             )
             .unwrap(),
