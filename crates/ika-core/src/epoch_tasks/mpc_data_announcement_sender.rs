@@ -612,8 +612,13 @@ mod tests {
         );
         // Same consensus key on both -> consensus dedup drops the
         // re-send rather than recording a second entry.
-        let key_first = ConsensusTransaction::new_validator_mpc_data_announcement(first).key();
-        let key_second = ConsensusTransaction::new_validator_mpc_data_announcement(second).key();
+        // The blob does not participate in the consensus key (the key
+        // authenticates `sender == announcement.validator`), so an empty blob
+        // suffices to exercise the idempotence the test asserts.
+        let key_first =
+            ConsensusTransaction::new_validator_mpc_data_announcement(first, vec![]).key();
+        let key_second =
+            ConsensusTransaction::new_validator_mpc_data_announcement(second, vec![]).key();
         assert_eq!(key_first, key_second);
     }
 }
