@@ -655,7 +655,65 @@ where
                 // overlay below substitutes the actual blob bytes
                 // from the local producer cache (which all honest
                 // validators populate from their own MPC outputs).
-                let chain_fetched = if off_chain_on {
+                // ===================================================================
+                // TODO(v3->v4 migration): REMOVE this temporary branch after the
+                // upgrade is complete and every network key has been reconfigured
+                // under v4 (i.e. all keys are in the off-chain handoff plane).
+                //
+                // A network key whose DKG / last reconfiguration ran while
+                // off-chain metadata was disabled (protocol v3) has its
+                // authoritative blobs only on chain — they were never written to
+                // the off-chain handoff plane. The off-chain fast path below
+                // synthesizes metadata-only data with EMPTY blobs (the overlay
+                // normally fills them from the local cache), which would leave
+                // such a pre-v4 key unrepresented and wedge the first v4
+                // reconfiguration on an undecryptable share. So when the key's
+                // DKG output isn't in the handoff yet, fall back to the full
+                // chain read to import its real blobs; the overlay then adopts
+                // the chain copy until the key has migrated off-chain.
+                //
+                // The gate is whether this key's DKG output is present in the
+                // off-chain handoff plane. The DKG output is the stable,
+                // one-time anchor of a network key: a v4-native key always has
+                // it in the handoff (cached and durably mirrored to perpetual
+                // when the key was DKG'd under v4), whereas a pre-v4 key whose
+                // DKG ran while off-chain metadata was disabled never put it
+                // there. We deliberately gate on the DKG blob rather than the
+                // reconfiguration blob: the per-epoch reconfiguration output is
+                // absent at the start of every epoch until that epoch's
+                // reconfiguration finalizes locally, so gating on it would leak
+                // a transient chain read on every healthy reconfiguration and
+                // break the v4-native "no steady-state chain blob reads"
+                // invariant. The DKG digest is durable, so this gate is stable:
+                // true throughout steady-state v4 (no chain reads), false only
+                // for a not-yet-migrated pre-v4 key, whose real blobs the full
+                // chain read below then imports.
+                //
+                // TODO(v3->v4 migration): once all keys are off-chain, delete this
+                // whole `key_blobs_already_cached` branch and collapse
+                // `chain_fetched` back to the unconditional `off_chain_on`
+                // synthesize-empty fast path — a v4-native key carries empty
+                // on-chain blobs, so the import would read empty and the cache
+                // path already covers it.
+                // ===================================================================
+                let dkg_in_handoff = network_key_blob_source
+                    .load_full()
+                    .as_ref()
+                    .and_then(|s| s.network_dkg_output_blob(&network_dec_key_shares.id))
+                    .is_some();
+                // A key DKG'd in the CURRENT epoch is a fresh v4-native key still
+                // converging its own off-chain DKG blob (the producer caches it
+                // a beat after the on-chain key appears) — it has no pre-v4,
+                // chain-only data to import, so we must never chain-read for it.
+                // Without this exception the DKG-presence gate would otherwise
+                // leak a chain read during every fresh key's DKG-bootstrap window
+                // and break the v4-native no-chain-read invariant. Only a key
+                // DKG'd in a PRIOR epoch whose DKG output is absent from the
+                // handoff is a genuine not-yet-migrated pre-v4 key.
+                let freshly_dkgd_this_epoch = network_dec_key_shares.dkg_at_epoch == current_epoch;
+                let key_blobs_already_cached =
+                    off_chain_on && (dkg_in_handoff || freshly_dkgd_this_epoch);
+                let chain_fetched = if off_chain_on && key_blobs_already_cached {
                     Ok(
                         ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
                             id: network_dec_key_shares.id,
