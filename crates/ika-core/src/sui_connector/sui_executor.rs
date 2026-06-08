@@ -337,10 +337,26 @@ where
             epoch_switch_state.ran_lock_last_session = true;
             info!("Successfully locked last session in current epoch");
         }
-        if coordinator_inner.received_end_of_publish
+        // Mirror the on-chain `all_current_epoch_sessions_completed` assertion in
+        // `sessions_manager::advance_epoch`: the locked user-session batch must be
+        // fully completed AND every system session (network-key DKG/reconfiguration)
+        // must have finished. `received_end_of_publish` is set from a quorum snapshot
+        // and can momentarily precede a freshly-initiated system session (a
+        // `respond_*` on a network-key session chains a new `initiate_system_session`),
+        // so we re-check against the just-synced coordinator state before submitting.
+        // Submitting `advance_epoch` while this is false MoveAborts with
+        // `ENotAllCurrentEpochSessionsCompleted` (code 6); the outer hour-long retry
+        // would then burn out and `panic!` the validator over a transient,
+        // self-clearing condition — dropping the committee below quorum mid-transition
+        // and risking a network-wide wedge. Gating the submission keeps the panic for
+        // genuinely fatal submission failures only.
+        let sessions_manager = &coordinator_inner.sessions_manager;
+        let all_current_epoch_sessions_completed =
+            sessions_manager.all_current_epoch_sessions_completed();
+        let advance_gate_open = coordinator_inner.received_end_of_publish
             && system_inner_v1.received_end_of_publish
-            && !epoch_switch_state.ran_request_advance_epoch
-        {
+            && !epoch_switch_state.ran_request_advance_epoch;
+        if advance_gate_open && all_current_epoch_sessions_completed {
             info!("Calling `process_request_advance_epoch()`");
             let response = retry_with_max_elapsed_time!(
                 Self::process_request_advance_epoch(
@@ -360,6 +376,27 @@ where
             }
             info!("Successfully requested advance epoch");
             epoch_switch_state.ran_request_advance_epoch = true;
+        } else if advance_gate_open {
+            // End-of-publish is in, but sessions are still draining. Hold this
+            // tick (do NOT submit a doomed `advance_epoch`); re-check next tick.
+            debug!(
+                epoch = coordinator_inner.current_epoch,
+                locked = sessions_manager
+                    .locked_last_user_initiated_session_to_complete_in_current_epoch,
+                user_completed = sessions_manager
+                    .user_sessions_keeper
+                    .completed_sessions_count,
+                user_target =
+                    sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                system_started = sessions_manager
+                    .system_sessions_keeper
+                    .started_sessions_count,
+                system_completed = sessions_manager
+                    .system_sessions_keeper
+                    .completed_sessions_count,
+                "end-of-publish received but current-epoch sessions are still completing; \
+                 holding advance_epoch this tick",
+            );
         }
     }
 
