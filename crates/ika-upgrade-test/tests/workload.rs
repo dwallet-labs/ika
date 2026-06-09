@@ -55,21 +55,32 @@ async fn workload_dkg_presign_sign() {
         // Genesis at v4 (MAX): `internal_presign_sessions` is a v4 feature, and
         // without it the global-presign requests pile up but are never run.
         .with_genesis_protocol_version(ProtocolVersion::MAX)
-        // Long epoch (30 min): epoch 1 is reached fast (network-DKG-gated, not
-        // the timer), so the whole dWallet lifecycle runs in the first minutes
-        // — well before the mid-epoch reconfiguration MPC (~15 min in), which
-        // would otherwise stall the presign's on-chain completion.
-        .with_epoch_duration_ms(1_800_000)
+        // 4-minute epoch. At v4 the genesis network-key DKG is gated on the
+        // off-chain mpc_data freeze, whose ready-signal — with no next-epoch
+        // committee published yet at genesis — only fires at the freeze
+        // deadline of 3/4 * epoch_duration (so ~3 min here). A 30-min epoch
+        // pushed that to ~22 min, far longer than any client waits. The epoch
+        // can't be too short either: 3/4 * epoch must clear validator
+        // bring-up + announcement recording (~90s), and the dWallet lifecycle
+        // must fit inside the next epoch before its own reconfiguration window.
+        .with_epoch_duration_ms(240_000)
         .with_base_dir(base)
         .build()
         .await
         .expect("cluster bring-up");
 
-    // Let the network-key DKG land (it completes during the genesis epoch).
+    // Wait for epoch 2, not 1. Epoch 1 is genesis and is reached immediately,
+    // *before* the network DKG runs — so the DKG output isn't on-chain yet and
+    // the CLI can't derive protocol parameters. The epoch counter advancing to
+    // 2 is itself the completion signal: reconfiguration into epoch 2 reshares
+    // the genesis key, which can't happen until the genesis DKG finished. So
+    // reaching epoch 2 guarantees the network key is readable (same reasoning as
+    // the cross-binary scenario). Don't drive the lifecycle before then — it
+    // could only fail.
     cluster
-        .wait_for_epoch(1, Duration::from_secs(900))
+        .wait_for_epoch(2, Duration::from_secs(900))
         .await
-        .expect("reach epoch 1 (network DKG done)");
+        .expect("reach epoch 2 (genesis network DKG + reshare done)");
 
     let driver = WorkloadDriver::new(
         ika_cli,
