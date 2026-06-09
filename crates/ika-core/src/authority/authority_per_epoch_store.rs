@@ -397,11 +397,21 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
     ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>>;
 
     /// Returns whether the epoch-wide `mpc_data` input set has been
-    /// frozen — i.e., a stake-quorum of `EpochMpcDataReadySignal`s
-    /// has been observed in consensus order this epoch. Network DKG
-    /// and reconfiguration session kickoff defers until this is
-    /// `true`.
+    /// frozen. Network DKG and reconfiguration session kickoff defers
+    /// until this is `true`.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
+
+    /// Freezes the epoch-wide `mpc_data` input set IF a stake-quorum of
+    /// `EpochMpcDataReadySignal`s has been recorded — the "+ quorum" half
+    /// of the freeze condition. Called from the network DKG /
+    /// reconfiguration session gate (the "dkg or reconfig in progress"
+    /// half), so the freeze fires only once such a session actually starts
+    /// AND quorum coverage exists, rather than prematurely at epoch start
+    /// on a wall-clock ready-signal deadline — which the long genesis-DKG
+    /// transition consumes, locking the freeze at sub-full coverage before
+    /// slower validators' mpc_data has propagated. Idempotent (locks once);
+    /// returns whether the mpc_data is frozen afterward.
+    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool>;
 
     /// Reflects the per-epoch `protocol_config` flag that gates
     /// the entire off-chain validator-metadata pipeline. When
@@ -745,6 +755,23 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
     }
 
+    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool> {
+        let tables = self.tables()?;
+        if tables.frozen_validator_mpc_data_input_set.is_empty() {
+            let committee = self.committee();
+            let total_stake: u64 = tables
+                .epoch_mpc_data_ready_signals
+                .safe_iter()
+                .filter_map(Result::ok)
+                .map(|(authority, _)| committee.weight(&authority))
+                .sum();
+            if total_stake >= committee.quorum_threshold() {
+                self.freeze_mpc_data_if_first(&tables)?;
+            }
+        }
+        Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
+    }
+
     fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.protocol_config()
             .off_chain_validator_metadata_enabled()
@@ -994,6 +1021,14 @@ pub struct AuthorityEpochTables {
 
     /// Validators that sent a EndOfPublish message in this epoch.
     end_of_publish: DBMap<AuthorityName, ()>,
+
+    /// Single-entry (key `0`) record of the consensus leader round at which
+    /// a stake-quorum of EndOfPublish votes was first observed this epoch.
+    /// Anchors the `end_of_publish_grace_rounds` (protocol config) close grace; persisted so a
+    /// validator restarting mid-grace closes the epoch at the same round as
+    /// its peers (the close — and the final checkpoint it builds — must be
+    /// consensus-deterministic).
+    end_of_publish_quorum_round: DBMap<u64, u64>,
 
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
@@ -2566,6 +2601,27 @@ impl AuthorityPerEpochStore {
                 pending_len = pending.len(),
                 "buffering peer handoff signature until expected attestation installs"
             );
+            // As soon as the buffered peer signatures show a quorum (by
+            // stake) of distinct committee members agreeing on ONE
+            // attestation, adopt it even though this validator's own
+            // snapshot isn't ready. `install_expected_handoff_attestation`
+            // replays the buffer (re-verifying every signature against the
+            // adopted attestation) and persists the cert — so a lagging
+            // continuing validator reliably holds its own prior-epoch cert
+            // instead of having to re-fetch it from peers at the next epoch
+            // boundary. Drop the buffer lock first: the install path locks
+            // the aggregator and re-drains the buffer.
+            let quorum_attestation =
+                crate::handoff_cert::quorum_attestation_in_buffer(&self.committee, &pending);
+            drop(pending);
+            if let Some(attestation) = quorum_attestation {
+                info!(
+                    epoch = attestation.epoch,
+                    "adopting quorum-agreed handoff attestation from buffered peer signatures \
+                     (own snapshot not ready) — persisting the cert from the observed quorum"
+                );
+                self.install_expected_handoff_attestation(attestation)?;
+            }
             return Ok(true);
         };
         let Some(provider) = self.consensus_pubkey_provider.load_full() else {
@@ -2934,15 +2990,14 @@ impl AuthorityPerEpochStore {
             .epoch_mpc_data_ready_signals
             .insert(&signal.authority, &canonical)?;
 
-        let total_stake: u64 = tables
-            .epoch_mpc_data_ready_signals
-            .safe_iter()
-            .filter_map(Result::ok)
-            .map(|(authority, _)| committee.weight(&authority))
-            .sum();
-        if total_stake >= committee.quorum_threshold() {
-            self.freeze_mpc_data_if_first(&tables)?;
-        }
+        // NOTE: recording a ready-signal no longer triggers the freeze.
+        // The freeze is now gated on a network DKG/reconfiguration session
+        // actually starting (see `freeze_mpc_data_if_quorum`, called from
+        // the session gate in `mpc_session.rs`) so it fires mid-epoch with
+        // full coverage rather than at epoch start on the first quorum —
+        // when slower validators' mpc_data hasn't propagated yet. Signals
+        // keep accruing here (and validators re-emit as their coverage
+        // grows) so the deferred freeze captures the complete set.
         Ok(())
     }
 
@@ -2950,7 +3005,9 @@ impl AuthorityPerEpochStore {
     /// the frozen working set + excluded set. Idempotent on a
     /// non-empty frozen table.
     ///
-    /// Fired only on `EpochMpcDataReadySignal` quorum. For each
+    /// Fired (via `freeze_mpc_data_if_quorum`) once a network DKG /
+    /// reconfiguration session starts AND a stake-quorum of
+    /// `EpochMpcDataReadySignal`s has been recorded. For each
     /// validator V that announced this epoch:
     /// - sum the stake of every signer whose `validated_peers`
     ///   contains V,
@@ -3560,72 +3617,73 @@ impl AuthorityPerEpochStore {
                     // filter_roots = true;
                 }
                 ConsensusCertificateResult::EndOfPublish => {
-                    let capabilities = self.get_capabilities_v1()?;
-                    let AuthorityCapabilitiesVotingResults {
-                        protocol_version: new_version,
-                        move_contracts_to_upgrade
-                    } = AuthorityState::choose_highest_protocol_version_and_move_contracts_upgrades_v1(
-                        self.protocol_version(),
-                        self.committee(),
-                        capabilities.clone(),
-                        self.get_effective_buffer_stake_bps(),
-                    );
-
-                    let mut system_transactions: Vec<SystemCheckpointMessageKind> = Vec::new();
-                    let current_protocol_version = self.protocol_version();
-                    if self.protocol_version() != new_version {
-                        info!(
-                            validator=?self.name,
-                            ?current_protocol_version,
-                            new_protocol_version=?new_version,
-                            "New protocol version reached quorum from capabilities v1",
-                        );
-                        system_transactions.push(
-                            SystemCheckpointMessageKind::SetNextConfigVersion(new_version),
-                        );
-                        if new_version.as_u64() == 2
-                            && self.chain_identifier.chain() == Chain::Testnet
-                        {
-                            system_transactions.push(
-                                SystemCheckpointMessageKind::SetMinValidatorJoiningStake(
-                                    40_000_000 * 1_000_000_000,
-                                ),
-                            );
-                            system_transactions
-                                .push(SystemCheckpointMessageKind::SetStakeSubsidyRate(200));
-                        }
-                    }
-
-                    if !move_contracts_to_upgrade.is_empty() {
-                        info!(
-                            validator=?self.name,
-                            ?current_protocol_version,
-                            ?move_contracts_to_upgrade,
-                            "New move contracts upgrade reached quorum from capabilities v1",
-                        );
-                        for (package_id, digest) in move_contracts_to_upgrade.iter() {
-                            system_transactions.push(
-                                SystemCheckpointMessageKind::SetApprovedUpgrade {
-                                    package_id: package_id.to_vec(),
-                                    digest: Some(digest.to_vec()),
-                                },
-                            );
-                        }
-                    }
-                    verified_system_checkpoint_certificates.extend(system_transactions);
-                    verified_dwallet_checkpoint_certificates
-                        .push_back(DWalletCheckpointMessageKind::EndOfPublish);
-                    verified_system_checkpoint_certificates
-                        .push_back(SystemCheckpointMessageKind::EndOfPublish);
-                    let mut reconfig_state = self.reconfig_state.write();
-                    reconfig_state.status = ReconfigCertStatus::RejectAllTx;
-                    break;
+                    // The EndOfPublish quorum no longer closes the epoch inline.
+                    // `process_end_of_publish_vote` returns `ConsensusMessage`
+                    // now, so this arm is effectively unreachable; the close is
+                    // deferred to the grace check at the commit boundary below
+                    // (`end_of_publish_grace_rounds` (protocol config) rounds past quorum). Kept
+                    // for match exhaustiveness.
                 }
             }
             if !ignored {
                 output.record_consensus_message_processed(key.clone());
             }
         }
+
+        // EndOfPublish close grace: once a stake-quorum of EndOfPublish votes
+        // is in, defer the epoch close `end_of_publish_grace_rounds` (protocol config) more
+        // consensus rounds (unless every committee member has already voted)
+        // so stragglers' `EndOfPublishV2` bundles — carrying their handoff
+        // signatures — are still sequenced before the epoch closes. The anchor
+        // round is persisted, so a validator restarting mid-grace closes at the
+        // same round as its peers (the final checkpoint must be deterministic).
+        let already_closed = matches!(
+            self.reconfig_state.read().status,
+            ReconfigCertStatus::RejectAllTx
+        );
+        if !already_closed {
+            let (has_quorum, voted_count) = {
+                let end_of_publish = self.end_of_publish.lock();
+                (end_of_publish.has_quorum(), end_of_publish.keys().count())
+            };
+            if has_quorum {
+                let quorum_round = match self.tables()?.end_of_publish_quorum_round.get(&0)? {
+                    Some(round) => round,
+                    None => {
+                        self.tables()?
+                            .end_of_publish_quorum_round
+                            .insert(&0, &consensus_commit_info.round)?;
+                        consensus_commit_info.round
+                    }
+                };
+                let all_voted = voted_count >= self.committee().num_members();
+                // Consensus leader rounds advance in sequence but NOT by a
+                // fixed +1 per commit — rounds skip when a leader is not
+                // committed — so the grace is measured as the leader-round
+                // DELTA since quorum (robust to skips), not a commit count.
+                let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
+                    >= self.protocol_config().end_of_publish_grace_rounds();
+                if all_voted || grace_elapsed {
+                    let (dwallet_close_messages, system_close_messages) =
+                        self.build_epoch_close_checkpoint_messages()?;
+                    for message in dwallet_close_messages {
+                        verified_dwallet_checkpoint_certificates.push_back(message);
+                    }
+                    for message in system_close_messages {
+                        verified_system_checkpoint_certificates.push_back(message);
+                    }
+                    self.reconfig_state.write().status = ReconfigCertStatus::RejectAllTx;
+                    info!(
+                        validator = ?self.name,
+                        quorum_round,
+                        close_round = consensus_commit_info.round,
+                        all_voted,
+                        "EndOfPublish grace elapsed — closing the epoch",
+                    );
+                }
+            }
+        }
+
         // Save all the dWallet-MPC related DB data to the consensus commit output to
         // write it to the local DB. After saving the data, clear the data from the epoch store.
         let new_dwallet_mpc_round_messages = Self::filter_dwallet_mpc_messages(transactions);
@@ -3957,6 +4015,71 @@ impl AuthorityPerEpochStore {
         }
     }
 
+    /// Builds the end-of-epoch checkpoint messages produced when the epoch
+    /// closes: the capabilities-driven protocol-version / move-contract-upgrade
+    /// system transactions, followed by the `EndOfPublish` markers. Factored
+    /// out of the (now commit-boundary-driven) close so it can be invoked once
+    /// the EndOfPublish grace elapses. Returns `(dwallet_messages,
+    /// system_messages)` for the caller to append, in order, to the per-commit
+    /// certificate sets.
+    fn build_epoch_close_checkpoint_messages(
+        &self,
+    ) -> IkaResult<(
+        Vec<DWalletCheckpointMessageKind>,
+        Vec<SystemCheckpointMessageKind>,
+    )> {
+        let capabilities = self.get_capabilities_v1()?;
+        let AuthorityCapabilitiesVotingResults {
+            protocol_version: new_version,
+            move_contracts_to_upgrade,
+        } = AuthorityState::choose_highest_protocol_version_and_move_contracts_upgrades_v1(
+            self.protocol_version(),
+            self.committee(),
+            capabilities.clone(),
+            self.get_effective_buffer_stake_bps(),
+        );
+
+        let mut system_transactions: Vec<SystemCheckpointMessageKind> = Vec::new();
+        let current_protocol_version = self.protocol_version();
+        if self.protocol_version() != new_version {
+            info!(
+                validator=?self.name,
+                ?current_protocol_version,
+                new_protocol_version=?new_version,
+                "New protocol version reached quorum from capabilities v1",
+            );
+            system_transactions.push(SystemCheckpointMessageKind::SetNextConfigVersion(
+                new_version,
+            ));
+            if new_version.as_u64() == 2 && self.chain_identifier.chain() == Chain::Testnet {
+                system_transactions.push(SystemCheckpointMessageKind::SetMinValidatorJoiningStake(
+                    40_000_000 * 1_000_000_000,
+                ));
+                system_transactions.push(SystemCheckpointMessageKind::SetStakeSubsidyRate(200));
+            }
+        }
+
+        if !move_contracts_to_upgrade.is_empty() {
+            info!(
+                validator=?self.name,
+                ?current_protocol_version,
+                ?move_contracts_to_upgrade,
+                "New move contracts upgrade reached quorum from capabilities v1",
+            );
+            for (package_id, digest) in move_contracts_to_upgrade.iter() {
+                system_transactions.push(SystemCheckpointMessageKind::SetApprovedUpgrade {
+                    package_id: package_id.to_vec(),
+                    digest: Some(digest.to_vec()),
+                });
+            }
+        }
+        system_transactions.push(SystemCheckpointMessageKind::EndOfPublish);
+        Ok((
+            vec![DWalletCheckpointMessageKind::EndOfPublish],
+            system_transactions,
+        ))
+    }
+
     /// Shared EndOfPublish vote-recording + quorum-check logic. Used
     /// by both V1 (`EndOfPublish`) and V2 (`EndOfPublishV2`) consumer
     /// arms.
@@ -3965,20 +4088,13 @@ impl AuthorityPerEpochStore {
         authority: &AuthorityName,
     ) -> IkaResult<ConsensusCertificateResult> {
         self.record_end_of_publish_vote(authority)?;
-        let mut end_of_publish = self.end_of_publish.lock();
-        // Note that we don't check here that the sender didn't already vote,
-        // but that would be OK for two reasons:
-        // The first, its transaction would be denied because its key is the same
-        // (so the second wouldn't reach this flow).
-        // The second, the stake aggregator is implemented by a HashMap,
-        // and duplicate votes cannot be registered.
-        if !end_of_publish.has_quorum()
-            && end_of_publish
-                .insert_generic(*authority, ())
-                .is_quorum_reached()
-        {
-            return Ok(ConsensusCertificateResult::EndOfPublish);
-        }
+        // Update the in-memory aggregator, but do NOT close the epoch here.
+        // The close is deferred `end_of_publish_grace_rounds` (protocol config) more consensus
+        // rounds past quorum (the close grace at the commit boundary in
+        // `process_consensus_transactions_and_commit_boundary`), so straggler
+        // EndOfPublish/handoff-signature bundles are still collected.
+        // Duplicate votes can't double-count (the aggregator is a HashMap).
+        self.end_of_publish.lock().insert_generic(*authority, ());
         Ok(ConsensusCertificateResult::ConsensusMessage)
     }
 

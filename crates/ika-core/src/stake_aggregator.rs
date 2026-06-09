@@ -217,12 +217,6 @@ pub enum InsertResult<CertT> {
     },
 }
 
-impl<CertT> InsertResult<CertT> {
-    pub fn is_quorum_reached(&self) -> bool {
-        matches!(self, Self::QuorumReached(..))
-    }
-}
-
 /// MultiStakeAggregator is a utility data structure that tracks the stake accumulation of
 /// potentially multiple different values (usually due to byzantine/corrupted responses). Each
 /// value is tracked using a StakeAggregator and determine whether it has reached a quorum.
