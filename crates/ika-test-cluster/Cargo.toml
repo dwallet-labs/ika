@@ -15,6 +15,7 @@ bcs.workspace = true
 cargo_metadata = "0.19"
 fastcrypto.workspace = true
 futures.workspace = true
+hex.workspace = true
 rand = "0.8"
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true

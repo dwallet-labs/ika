@@ -78,15 +78,23 @@ where
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
         mode: NodeMode,
+        // When `true` (protocol v≤3, OCS off), this syncer runs the legacy
+        // JSON-RPC event-ingestion path (`run_event_listening_task` +
+        // `sync_uncompleted_events`). When `false` (v4, OCS on), the
+        // `BagEventPump` feeds the MPC engine instead and these tasks are
+        // skipped. The two event senders are `None` in the latter case
+        // because they are handed to the pump (and `watch::Sender` is not
+        // `Clone`, so they can only belong to one path).
+        run_legacy_event_ingestion: bool,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
             Option<(DWalletCoordinator, DWalletCoordinatorInner)>,
         >,
         network_keys_sender: Sender<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
-        new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
+        new_requests_sender: Option<tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
-        uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
+        uncompleted_requests_sender: Option<Sender<(Vec<DWalletSessionRequest>, EpochId)>>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
@@ -136,18 +144,28 @@ where
                 dwallet_coordinator_object_receiver.clone(),
                 last_session_to_complete_in_current_epoch_sender,
             ));
-            info!("Syncing uncompleted events");
-            tokio::spawn(Self::sync_uncompleted_events(
-                sui_client_clone,
-                dwallet_coordinator_object_receiver.clone(),
-                system_object_receiver.clone(),
-                uncompleted_requests_sender,
-            ));
+            // Legacy (v≤3) uncompleted-events poller. Under v4 the
+            // BagEventPump emits the recovery snapshot instead.
+            if run_legacy_event_ingestion {
+                if let Some(uncompleted_requests_sender) = uncompleted_requests_sender {
+                    info!("Syncing uncompleted events");
+                    tokio::spawn(Self::sync_uncompleted_events(
+                        sui_client_clone,
+                        dwallet_coordinator_object_receiver.clone(),
+                        system_object_receiver.clone(),
+                        uncompleted_requests_sender,
+                    ));
+                }
+            }
         }
 
-        // Event listening: only validators need to listen to events to process MPC sessions
-        // Fullnodes sync state via P2P, notifiers only submit checkpoints
-        if mode.is_validator() {
+        // Legacy (v≤3) event listening: validators poll Sui events over
+        // JSON-RPC to drive MPC sessions. Under v4 the BagEventPump replaces
+        // this, so the block is skipped and `new_requests_sender` is `None`
+        // (it was handed to the pump instead).
+        if run_legacy_event_ingestion && mode.is_validator() {
+            let new_requests_sender = new_requests_sender
+                .expect("run_legacy_event_ingestion implies new_requests_sender is Some");
             let ika_dwallet_2pc_mpc_package_id = self
                 .sui_client
                 .ika_network_config
@@ -182,7 +200,10 @@ where
                 }
             }
         } else {
-            info!(?mode, "Skipping event listening task");
+            info!(
+                ?mode,
+                run_legacy_event_ingestion, "Skipping legacy event listening task"
+            );
         }
 
         Ok(task_handles)

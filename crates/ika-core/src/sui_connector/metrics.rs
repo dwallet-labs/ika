@@ -17,6 +17,8 @@ const FINE_GRAINED_LATENCY_SEC_BUCKETS: &[f64] = &[
 
 #[derive(Clone, Debug)]
 pub struct SuiConnectorMetrics {
+    /// Latest Sui checkpoint synced per module by the legacy (v≤3)
+    /// event-listening task. Unused under v4 (OCS BagEventPump).
     pub last_synced_sui_checkpoints: IntGaugeVec,
 
     pub gas_coin_balance: IntGauge,
@@ -78,6 +80,7 @@ impl SuiConnectorMetrics {
                 registry,
             )
             .unwrap(),
+
             gas_coin_balance: register_int_gauge_with_registry!(
                 "sui_connector_gas_coin_balance",
                 "Current balance of gas coin, in mist",

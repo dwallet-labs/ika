@@ -14,6 +14,7 @@ use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey};
 use fastcrypto::hash::{HashFunction, Keccak256};
 use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
+use ika_config::node::SuiDataSource;
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiConnectorClient;
@@ -956,6 +957,30 @@ pub struct IkaTestClusterBuilder {
     /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     /// `Some(v)` must have length `num_validators`.
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
+    /// When true, seed every validator's `sui_unsafe_genesis_committee` with
+    /// the running Sui localnet's epoch-0 committee, so the OCS verifier
+    /// (active at protocol v4) bootstraps and validators ingest MPC session
+    /// events via the OCS `BagEventPump` instead of the legacy JSON-RPC
+    /// event path. Off by default — without an anchor the OCS stack isn't
+    /// built and v4 clusters keep using the legacy path.
+    ocs_genesis_anchor: bool,
+    /// Split the OCS read topology: when `Some(k)`, validators `0..k` read Sui
+    /// state directly over gRPC (and serve the `SuiStateMirror` relay), while
+    /// validators `k..num_validators` are `SuiStateMirrored` — they read
+    /// *verified* Sui state through one of the direct validators' anemo relay
+    /// (`SuiMirrorTransport`) instead of their own gRPC connection. Only
+    /// meaningful together with `with_ocs_genesis_anchor(true)`. `None` (the
+    /// default) leaves every validator on the direct path.
+    sui_state_direct_count: Option<usize>,
+    /// When true, the `SuiStateMirrored` validators (those at index
+    /// `>= sui_state_direct_count`) are configured *peer-only*: their
+    /// `fallback_grpc_url` is `None`, so they have no direct Sui uplink at all
+    /// and must serve every `sui_client` read — including the boot-time
+    /// committee/epoch bootstrap — over the relay through the verified
+    /// `VerifiedSuiTransport`. Only meaningful together with
+    /// `with_sui_state_direct_count(_)`. Off by default (mirrored validators
+    /// keep a direct gRPC fallback).
+    peer_only_mirrored: bool,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1008,7 +1033,42 @@ impl IkaTestClusterBuilder {
             epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
+            ocs_genesis_anchor: false,
+            sui_state_direct_count: None,
+            peer_only_mirrored: false,
         }
+    }
+
+    /// Activate the OCS verified-state path: seed validators with the
+    /// localnet genesis committee as their `sui_unsafe_genesis_committee`
+    /// trust anchor. Combine with `with_protocol_version(4)` (or the default
+    /// MAX) so `off_chain_validator_metadata_enabled()` is on and the OCS
+    /// `BagEventPump` becomes the MPC event source.
+    pub fn with_ocs_genesis_anchor(mut self, enabled: bool) -> Self {
+        self.ocs_genesis_anchor = enabled;
+        self
+    }
+
+    /// Run the first `direct_count` validators on the direct gRPC path (serving
+    /// the `SuiStateMirror` relay) and the remaining validators as
+    /// `SuiStateMirrored`, reading verified Sui state through the direct
+    /// validators' anemo relay. Exercises `SuiMirrorTransport` /
+    /// `SuiMirrorProofProvider` end-to-end. Requires `with_ocs_genesis_anchor(true)`
+    /// and `direct_count` in `1..num_validators` (at least one server and one
+    /// mirror). With the default (unset) every validator reads directly.
+    pub fn with_sui_state_direct_count(mut self, direct_count: usize) -> Self {
+        self.sui_state_direct_count = Some(direct_count);
+        self
+    }
+
+    /// Make the `SuiStateMirrored` validators *peer-only*: no `fallback_grpc_url`,
+    /// hence no direct Sui uplink. They read all Sui state — including the
+    /// boot-time committee/epoch bootstrap — over the relay via the verified
+    /// reader. Requires `with_sui_state_direct_count(_)` (there must be at least
+    /// one direct validator serving the relay).
+    pub fn with_peer_only_mirrored(mut self, enabled: bool) -> Self {
+        self.peer_only_mirrored = enabled;
+        self
     }
 
     pub fn with_num_validators(mut self, num_validators: usize) -> Self {
@@ -1150,6 +1210,52 @@ impl IkaTestClusterBuilder {
                 validator_initialization_configs.len(),
             );
         }
+        // OCS trust anchor: when requested, every validator boots from the
+        // Sui localnet's epoch-0 committee (the unsafe-genesis path). This is
+        // what makes `has_anchor` true so the OCS stack is built at v4.
+        let ocs_genesis_committee = if self.ocs_genesis_anchor {
+            Some(
+                ika_sui_client::anchor::fetch_genesis_committee(&sui_rpc_url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("fetch genesis committee for OCS anchor: {e}"))?,
+            )
+        } else {
+            None
+        };
+
+        // OCS read topology: when a direct/mirror split is requested, the first
+        // `direct_count` validators read Sui directly (and serve the relay) and
+        // the rest read verified state through their anemo relay. A mirrored
+        // validator's `sui_state_mirror_peers` is the hex-encoded anemo
+        // `PeerId` (its network public key) of each direct validator — the same
+        // derivation the p2p layer uses (`anemo::PeerId(network_pubkey.0.to_bytes())`).
+        let direct_count = self.sui_state_direct_count;
+        if let Some(direct_count) = direct_count {
+            anyhow::ensure!(
+                self.ocs_genesis_anchor,
+                "with_sui_state_direct_count requires with_ocs_genesis_anchor(true)"
+            );
+            anyhow::ensure!(
+                direct_count >= 1 && direct_count < validator_initialization_configs.len(),
+                "sui_state_direct_count ({direct_count}) must be in 1..num_validators ({})",
+                validator_initialization_configs.len()
+            );
+        }
+        anyhow::ensure!(
+            !self.peer_only_mirrored || direct_count.is_some(),
+            "with_peer_only_mirrored requires with_sui_state_direct_count(_) \
+             (peer-only validators need at least one direct validator serving the relay)"
+        );
+        let direct_mirror_peer_ids: Vec<String> = direct_count
+            .map(|direct_count| {
+                validator_initialization_configs
+                    .iter()
+                    .take(direct_count)
+                    .map(|v| hex::encode(v.network_key_pair.public().0.to_bytes()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let validator_configs: Vec<_> = validator_initialization_configs
             .iter()
             .enumerate()
@@ -1159,18 +1265,36 @@ impl IkaTestClusterBuilder {
                     .as_ref()
                     .map(|per_validator| per_validator[i])
                     .unwrap_or(SupportedProtocolVersions::SYSTEM_DEFAULT);
-                ValidatorConfigBuilder::new()
-                    .with_supported_protocol_versions(supported_versions)
-                    .build(
-                        v,
-                        sui_rpc_url.clone(),
-                        packages.ika_package_id,
-                        packages.ika_common_package_id,
-                        packages.ika_dwallet_2pc_mpc_package_id,
-                        packages.ika_system_package_id,
-                        system.ika_system_object_id,
-                        system.ika_dwallet_coordinator_object_id,
-                    )
+                let mut builder = ValidatorConfigBuilder::new()
+                    .with_supported_protocol_versions(supported_versions);
+                if let Some(committee) = &ocs_genesis_committee {
+                    builder = builder.with_unsafe_genesis_committee(committee.clone());
+                }
+                // Validators at index >= direct_count read through the relay.
+                if let Some(direct_count) = direct_count
+                    && i >= direct_count
+                {
+                    // Peer-only: no fallback uplink, reads go entirely over the
+                    // relay. Otherwise keep a direct gRPC fallback.
+                    let fallback_grpc_url = if self.peer_only_mirrored {
+                        None
+                    } else {
+                        Some(sui_rpc_url.clone())
+                    };
+                    builder = builder
+                        .with_sui_data_source(SuiDataSource::SuiStateMirrored { fallback_grpc_url })
+                        .with_sui_state_mirror_peers(direct_mirror_peer_ids.clone());
+                }
+                builder.build(
+                    v,
+                    sui_rpc_url.clone(),
+                    packages.ika_package_id,
+                    packages.ika_common_package_id,
+                    packages.ika_dwallet_2pc_mpc_package_id,
+                    packages.ika_system_package_id,
+                    system.ika_system_object_id,
+                    system.ika_dwallet_coordinator_object_id,
+                )
             })
             .collect();
         // Record the validators' protocol public keys in their configured

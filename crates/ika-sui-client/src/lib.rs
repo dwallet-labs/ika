@@ -49,11 +49,15 @@ use sui_types::{
 use tokio::sync::OnceCell;
 use tracing::{debug, error, info, warn};
 
+pub mod anchor;
+pub mod grpc;
+pub mod grpc_backend;
 pub mod ika_dwallet_transactions;
 #[cfg(feature = "protocol-commands")]
 pub mod ika_protocol_transactions;
 pub mod ika_validator_transactions;
 pub mod metrics;
+pub mod transport;
 
 #[macro_export]
 macro_rules! retry_with_max_elapsed_time {
@@ -104,7 +108,24 @@ pub struct SuiClient<P> {
     dwallet_coordinator_arg_cache: OnceCell<ObjectArg>,
 }
 
-pub type SuiConnectorClient = SuiClient<SuiSdkClient>;
+pub type SuiConnectorClient = SuiClient<SuiBackend>;
+
+/// Swappable inner backend for [`SuiConnectorClient`]. Keeps the connector a
+/// single concrete type so downstream signatures don't change, while letting
+/// the node pick JSON-RPC (legacy) or gRPC (OCS mode) reads/writes at boot.
+pub enum SuiBackend {
+    JsonRpc(SuiSdkClient),
+    Grpc(grpc_backend::GrpcSuiClient),
+}
+
+/// Unifying error for [`SuiBackend`]. Carries the active variant's error.
+#[derive(thiserror::Error, Debug)]
+pub enum SuiBackendError {
+    #[error(transparent)]
+    JsonRpc(#[from] sui_sdk::error::Error),
+    #[error(transparent)]
+    Grpc(#[from] grpc_backend::GrpcSuiClientError),
+}
 
 impl SuiConnectorClient {
     pub async fn new(
@@ -119,7 +140,7 @@ impl SuiConnectorClient {
                 anyhow!("Can't establish connection with Sui Rpc {rpc_url}. Error: {e}")
             })?;
         let self_ = Self {
-            inner,
+            inner: SuiBackend::JsonRpc(inner),
             sui_client_metrics,
             ika_network_config,
             system_arg_cache: OnceCell::new(),
@@ -130,8 +151,55 @@ impl SuiConnectorClient {
         Ok(self_)
     }
 
-    pub fn sui_client(&self) -> &SuiSdkClient {
-        &self.inner
+    /// Build a connector whose I/O goes through gRPC instead of JSON-RPC.
+    /// Used in OCS mode so the node depends only on the gRPC fullnode API.
+    pub async fn new_grpc(
+        grpc_url: &str,
+        sui_client_metrics: Arc<SuiClientMetrics>,
+        ika_network_config: IkaNetworkConfig,
+    ) -> anyhow::Result<Self> {
+        let inner = grpc_backend::GrpcSuiClient::new(grpc_url).await?;
+        let self_ = Self {
+            inner: SuiBackend::Grpc(inner),
+            sui_client_metrics,
+            ika_network_config,
+            system_arg_cache: OnceCell::new(),
+            clock_arg_cache: OnceCell::new(),
+            dwallet_coordinator_arg_cache: OnceCell::new(),
+        };
+        self_.describe().await?;
+        Ok(self_)
+    }
+
+    /// Build a gRPC-backed connector over an already-constructed transport
+    /// instead of opening a fresh gRPC connection. Used by a *peer-only*
+    /// validator, whose transport is a verified relay reader
+    /// (`VerifiedSuiTransport`) rather than a direct gRPC client.
+    pub async fn new_grpc_with_transport(
+        transport: Arc<dyn crate::transport::SuiTransport>,
+        sui_client_metrics: Arc<SuiClientMetrics>,
+        ika_network_config: IkaNetworkConfig,
+    ) -> anyhow::Result<Self> {
+        let inner = grpc_backend::GrpcSuiClient::with_transport(transport);
+        let self_ = Self {
+            inner: SuiBackend::Grpc(inner),
+            sui_client_metrics,
+            ika_network_config,
+            system_arg_cache: OnceCell::new(),
+            clock_arg_cache: OnceCell::new(),
+            dwallet_coordinator_arg_cache: OnceCell::new(),
+        };
+        self_.describe().await?;
+        Ok(self_)
+    }
+
+    /// The JSON-RPC SDK handle, when the connector is JSON-RPC backed.
+    /// `None` in gRPC (OCS) mode.
+    pub fn sui_client(&self) -> Option<&SuiSdkClient> {
+        match &self.inner {
+            SuiBackend::JsonRpc(client) => Some(client),
+            SuiBackend::Grpc(_) => None,
+        }
     }
 }
 
@@ -870,19 +938,19 @@ pub trait SuiClientInner: Send + Sync {
         &self,
         validators: &Vec<StakingPool>,
         read_next_epoch_mpc_data: bool,
-    ) -> Result<HashMap<ObjectID, VersionedMPCData>, self::Error>;
+    ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error>;
 
     #[allow(clippy::ptr_arg)]
     async fn get_network_encryption_keys(
         &self,
         dwallet_coordinator_inner: &DWalletCoordinatorInnerV1,
-    ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, self::Error>;
+    ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, Self::Error>;
 
     async fn get_network_encryption_key_with_full_data_by_epoch(
         &self,
         network_decryption_key: &DWalletNetworkEncryptionKey,
         epoch: EpochId,
-    ) -> Result<DWalletNetworkEncryptionKeyData, self::Error>;
+    ) -> Result<DWalletNetworkEncryptionKeyData, Self::Error>;
 
     async fn get_current_reconfiguration_public_output(
         &self,
@@ -891,7 +959,7 @@ pub trait SuiClientInner: Send + Sync {
     ) -> Result<ObjectID, Self::Error>;
 
     async fn read_table_vec_as_raw_bytes(&self, table_id: ObjectID)
-    -> Result<Vec<u8>, self::Error>;
+    -> Result<Vec<u8>, Self::Error>;
 
     async fn get_system_inner(
         &self,
@@ -942,7 +1010,7 @@ pub trait SuiClientInner: Send + Sync {
     async fn get_uncompleted_events(
         &self,
         events_bag_id: ObjectID,
-    ) -> Result<Vec<DBSuiEvent>, self::Error>;
+    ) -> Result<Vec<DBSuiEvent>, Self::Error>;
 }
 
 #[async_trait]
@@ -1003,7 +1071,7 @@ impl SuiClientInner for SuiSdkClient {
     async fn get_uncompleted_events(
         &self,
         coordinator_events_bag_id: ObjectID,
-    ) -> Result<Vec<DBSuiEvent>, self::Error> {
+    ) -> Result<Vec<DBSuiEvent>, Self::Error> {
         let mut events = vec![];
         let mut next_cursor = None;
         loop {
@@ -1050,7 +1118,7 @@ impl SuiClientInner for SuiSdkClient {
         &self,
         validators: &Vec<StakingPool>,
         read_next_mpc_data: bool,
-    ) -> Result<HashMap<ObjectID, VersionedMPCData>, self::Error> {
+    ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
         let mut mpc_data_from_all_validators: HashMap<ObjectID, VersionedMPCData> = HashMap::new();
         for validator in validators {
             let info = validator.verified_validator_info();
@@ -1098,7 +1166,7 @@ impl SuiClientInner for SuiSdkClient {
     async fn get_network_encryption_keys(
         &self,
         dwallet_coordinator_inner: &DWalletCoordinatorInnerV1,
-    ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, self::Error> {
+    ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, Self::Error> {
         let mut network_encryption_keys = HashMap::new();
 
         let mut cursor = None;
@@ -1147,7 +1215,7 @@ impl SuiClientInner for SuiSdkClient {
         &self,
         key: &DWalletNetworkEncryptionKey,
         epoch: EpochId,
-    ) -> Result<DWalletNetworkEncryptionKeyData, self::Error> {
+    ) -> Result<DWalletNetworkEncryptionKeyData, Self::Error> {
         let network_dkg_public_output = self
             .read_table_vec_as_raw_bytes(key.network_dkg_public_output.contents.id)
             .await?;
@@ -1583,5 +1651,190 @@ impl SuiClientInner for SuiSdkClient {
                 }
             }
         }
+    }
+}
+
+/// Dispatch a `SuiClientInner` call to the active backend variant, mapping
+/// each variant's error into [`SuiBackendError`].
+macro_rules! dispatch_backend {
+    ($self:expr, $method:ident ( $($arg:expr),* $(,)? )) => {
+        match $self {
+            SuiBackend::JsonRpc(client) => client.$method($($arg),*).await.map_err(SuiBackendError::from),
+            SuiBackend::Grpc(client) => client.$method($($arg),*).await.map_err(SuiBackendError::from),
+        }
+    };
+}
+
+#[async_trait]
+impl SuiClientInner for SuiBackend {
+    type Error = SuiBackendError;
+
+    async fn query_events(
+        &self,
+        query: EventFilter,
+        cursor: Option<EventID>,
+    ) -> Result<EventPage, Self::Error> {
+        dispatch_backend!(self, query_events(query, cursor))
+    }
+
+    async fn get_events_by_tx_digest(
+        &self,
+        tx_digest: TransactionDigest,
+    ) -> Result<Vec<SuiEvent>, Self::Error> {
+        dispatch_backend!(self, get_events_by_tx_digest(tx_digest))
+    }
+
+    async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
+        dispatch_backend!(self, get_chain_identifier())
+    }
+
+    async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
+        dispatch_backend!(self, get_reference_gas_price())
+    }
+
+    async fn get_latest_checkpoint_sequence_number(&self) -> Result<u64, Self::Error> {
+        dispatch_backend!(self, get_latest_checkpoint_sequence_number())
+    }
+
+    async fn get_system(&self, ika_system_object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, get_system(ika_system_object_id))
+    }
+
+    async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, get_clock(clock_obj_id))
+    }
+
+    async fn get_dwallet_coordinator(
+        &self,
+        dwallet_coordinator_id: ObjectID,
+    ) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, get_dwallet_coordinator(dwallet_coordinator_id))
+    }
+
+    async fn get_mpc_data_from_validators_pool(
+        &self,
+        validators: &Vec<StakingPool>,
+        read_next_epoch_mpc_data: bool,
+    ) -> Result<HashMap<ObjectID, VersionedMPCData>, Self::Error> {
+        dispatch_backend!(
+            self,
+            get_mpc_data_from_validators_pool(validators, read_next_epoch_mpc_data)
+        )
+    }
+
+    async fn get_network_encryption_keys(
+        &self,
+        dwallet_coordinator_inner: &DWalletCoordinatorInnerV1,
+    ) -> Result<HashMap<ObjectID, DWalletNetworkEncryptionKey>, Self::Error> {
+        dispatch_backend!(self, get_network_encryption_keys(dwallet_coordinator_inner))
+    }
+
+    async fn get_network_encryption_key_with_full_data_by_epoch(
+        &self,
+        network_decryption_key: &DWalletNetworkEncryptionKey,
+        epoch: EpochId,
+    ) -> Result<DWalletNetworkEncryptionKeyData, Self::Error> {
+        dispatch_backend!(
+            self,
+            get_network_encryption_key_with_full_data_by_epoch(network_decryption_key, epoch)
+        )
+    }
+
+    async fn get_current_reconfiguration_public_output(
+        &self,
+        epoch_id: EpochId,
+        table_id: ObjectID,
+    ) -> Result<ObjectID, Self::Error> {
+        dispatch_backend!(
+            self,
+            get_current_reconfiguration_public_output(epoch_id, table_id)
+        )
+    }
+
+    async fn read_table_vec_as_raw_bytes(
+        &self,
+        table_id: ObjectID,
+    ) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, read_table_vec_as_raw_bytes(table_id))
+    }
+
+    async fn get_system_inner(
+        &self,
+        ika_system_object_id: ObjectID,
+        version: u64,
+    ) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, get_system_inner(ika_system_object_id, version))
+    }
+
+    async fn get_dwallet_coordinator_inner(
+        &self,
+        dwallet_coordinator_id: ObjectID,
+        version: u64,
+    ) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(
+            self,
+            get_dwallet_coordinator_inner(dwallet_coordinator_id, version)
+        )
+    }
+
+    async fn get_validators(
+        &self,
+        validator_ids: Vec<ObjectID>,
+    ) -> Result<Vec<Vec<u8>>, Self::Error> {
+        dispatch_backend!(self, get_validators(validator_ids))
+    }
+
+    async fn get_validator_inners(
+        &self,
+        validators: Vec<Validator>,
+    ) -> Result<Vec<Vec<u8>>, Self::Error> {
+        dispatch_backend!(self, get_validator_inners(validators))
+    }
+
+    async fn get_mutable_shared_arg(
+        &self,
+        ika_system_object_id: ObjectID,
+    ) -> Result<ObjectArg, Self::Error> {
+        dispatch_backend!(self, get_mutable_shared_arg(ika_system_object_id))
+    }
+
+    async fn get_shared_arg(&self, obj_id: ObjectID) -> Result<ObjectArg, Self::Error> {
+        dispatch_backend!(self, get_shared_arg(obj_id))
+    }
+
+    async fn get_available_move_packages(
+        &self,
+        ika_package_id: ObjectID,
+        ika_system_package_id: ObjectID,
+    ) -> Result<Vec<(ObjectID, MovePackageDigest)>, Self::Error> {
+        dispatch_backend!(
+            self,
+            get_available_move_packages(ika_package_id, ika_system_package_id)
+        )
+    }
+
+    async fn execute_transaction_block_with_effects(
+        &self,
+        tx: Transaction,
+    ) -> Result<SuiTransactionBlockResponse, IkaError> {
+        // Returns `IkaError` directly (not `Self::Error`), so no error mapping.
+        match self {
+            SuiBackend::JsonRpc(client) => client.execute_transaction_block_with_effects(tx).await,
+            SuiBackend::Grpc(client) => client.execute_transaction_block_with_effects(tx).await,
+        }
+    }
+
+    async fn get_gas_objects(&self, address: SuiAddress) -> Vec<ObjectRef> {
+        match self {
+            SuiBackend::JsonRpc(client) => client.get_gas_objects(address).await,
+            SuiBackend::Grpc(client) => client.get_gas_objects(address).await,
+        }
+    }
+
+    async fn get_uncompleted_events(
+        &self,
+        events_bag_id: ObjectID,
+    ) -> Result<Vec<DBSuiEvent>, Self::Error> {
+        dispatch_backend!(self, get_uncompleted_events(events_bag_id))
     }
 }
