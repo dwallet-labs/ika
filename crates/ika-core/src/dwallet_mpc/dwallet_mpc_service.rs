@@ -887,36 +887,55 @@ impl DWalletMPCService {
                 }
             };
 
-            let mpc_outputs = self
-                .epoch_store
-                .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
+            // Internal presign sessions are a v4 feature
+            // (`internal_presign_sessions_enabled`), and only a binary with the
+            // feature live ever writes `dwallet_internal_mpc_outputs` records.
+            // The round assertion below assumes a *dense* stream — one record
+            // per processed consensus round — which holds only when every round
+            // in the replayed history was produced by such a binary. While the
+            // feature is disabled the stream is empty; worse, when replaying a
+            // history whose earlier rounds were produced by a binary that never
+            // wrote internal outputs (a pre-v4 node, e.g. during a rolling
+            // protocol/binary upgrade) the stream is *sparse*:
+            // `next_dwallet_internal_mpc_output` returns the next future record,
+            // whose round is ahead of the round being processed, and the
+            // dense-stream assertion trips. Gate the read on the same feature
+            // flag that gates instantiation so a node ignores the internal-output
+            // stream until internal presign is actually live.
+            let internal_mpc_outputs = if self.protocol_config.internal_presign_sessions_enabled() {
+                let mpc_outputs = self
+                    .epoch_store
+                    .next_dwallet_internal_mpc_output(self.last_read_consensus_round);
 
-            let internal_mpc_outputs = match mpc_outputs {
-                Ok(Some((round, outputs))) => {
-                    // Validate round matches
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?mpc_messages_consensus_round,
-                            ?round,
-                            "consensus round mismatch for internal MPC outputs"
-                        );
-                        panic!("consensus round mismatch for internal MPC outputs");
+                match mpc_outputs {
+                    Ok(Some((round, outputs))) => {
+                        // Validate round matches
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?mpc_messages_consensus_round,
+                                ?round,
+                                "consensus round mismatch for internal MPC outputs"
+                            );
+                            panic!("consensus round mismatch for internal MPC outputs");
+                        }
+                        outputs
                     }
-                    outputs
+                    Ok(None) => {
+                        // No internal MPC outputs for this round - use empty list.
+                        // This can happen during initialization or when no internal outputs are generated.
+                        Vec::new()
+                    }
+                    Err(e) => {
+                        error!(
+                            error=?e,
+                            last_read_consensus_round=self.last_read_consensus_round,
+                            "failed to load internal DWallet MPC outputs from the local DB"
+                        );
+                        panic!("failed to load DWallet MPC outputs from the local DB");
+                    }
                 }
-                Ok(None) => {
-                    // No internal MPC outputs for this round - use empty list.
-                    // This can happen during initialization or when no internal outputs are generated.
-                    Vec::new()
-                }
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load internal DWallet MPC outputs from the local DB"
-                    );
-                    panic!("failed to load DWallet MPC outputs from the local DB");
-                }
+            } else {
+                Vec::new()
             };
 
             let verified_dwallet_checkpoint_messages = self
@@ -951,100 +970,139 @@ impl DWalletMPCService {
                 }
             };
 
-            let verified_system_checkpoint_messages = self
-                .epoch_store
-                .next_verified_system_checkpoint_message(self.last_read_consensus_round);
-            let verified_system_checkpoint_messages = match verified_system_checkpoint_messages {
-                Ok(Some((round, messages))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?mpc_messages_consensus_round,
-                            ?round,
-                            "consensus round mismatch for verified system checkpoint messages"
-                        );
-                        panic!("consensus round mismatch for verified system checkpoint messages");
+            // System-checkpoint messages back NOA (Network-Owned-Address) signing,
+            // introduced with the NOA signed-checkpoint infrastructure. Gate the
+            // read on the same `noa_checkpoints` flag that gates writing this
+            // stream, so a node whose history was produced before the feature was
+            // live (e.g. a mainnet-v1.1.8 -> dev rolling swap replaying v1.1.8's
+            // rounds) skips the stream the older binary never wrote, instead of
+            // tripping the dense-per-round alignment check below.
+            let verified_system_checkpoint_messages = if self.protocol_config.noa_checkpoints() {
+                let verified_system_checkpoint_messages = self
+                    .epoch_store
+                    .next_verified_system_checkpoint_message(self.last_read_consensus_round);
+                match verified_system_checkpoint_messages {
+                    Ok(Some((round, messages))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?mpc_messages_consensus_round,
+                                ?round,
+                                "consensus round mismatch for verified system checkpoint messages"
+                            );
+                            panic!(
+                                "consensus round mismatch for verified system checkpoint messages"
+                            );
+                        }
+                        messages
                     }
-                    messages
-                }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(
-                        error=?e,
-                        last_read_consensus_round=self.last_read_consensus_round,
-                        "failed to load verified system checkpoint messages from the local DB"
-                    );
-                    panic!("failed to load verified system checkpoint messages from the local DB");
-                }
-            };
-
-            let idle_status_updates = match self
-                .epoch_store
-                .next_idle_status_update(self.last_read_consensus_round)
-            {
-                Ok(Some((round, updates))) => {
-                    if round != mpc_messages_consensus_round {
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
                         error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "idle status updates consensus round does not match MPC messages consensus round"
+                            error=?e,
+                            last_read_consensus_round=self.last_read_consensus_round,
+                            "failed to load verified system checkpoint messages from the local DB"
                         );
                         panic!(
-                            "idle status updates consensus round does not match MPC messages consensus round"
+                            "failed to load verified system checkpoint messages from the local DB"
                         );
                     }
-                    updates
                 }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load idle status updates from the local DB");
-                    panic!("failed to load idle status updates from the local DB");
-                }
+            } else {
+                Vec::new()
             };
 
-            let sui_chain_observation_updates = match self
-                .epoch_store
-                .next_sui_chain_observation_update(self.last_read_consensus_round)
-            {
-                Ok(Some((round, updates))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "sui chain observation updates consensus round does not match MPC messages consensus round"
-                        );
-                        panic!(
-                            "sui chain observation updates consensus round does not match MPC messages consensus round"
-                        );
+            // Idle-status updates drive the internal presign pool (idle-fill),
+            // introduced with internal presign & sign sessions. Gate on the same
+            // flag that gates writing them so pre-feature history (v1.1.8 rounds)
+            // is skipped rather than tripping the alignment check.
+            let idle_status_updates = if self.protocol_config.internal_presign_sessions_enabled() {
+                match self
+                    .epoch_store
+                    .next_idle_status_update(self.last_read_consensus_round)
+                {
+                    Ok(Some((round, updates))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?round,
+                                ?mpc_messages_consensus_round,
+                                "idle status updates consensus round does not match MPC messages consensus round"
+                            );
+                            panic!(
+                                "idle status updates consensus round does not match MPC messages consensus round"
+                            );
+                        }
+                        updates
                     }
-                    updates
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
+                        error!(error=?e, "failed to load idle status updates from the local DB");
+                        panic!("failed to load idle status updates from the local DB");
+                    }
                 }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load sui chain observation updates from the local DB");
-                    panic!("failed to load sui chain observation updates from the local DB");
-                }
+            } else {
+                Vec::new()
             };
 
-            let presign_request_messages = match self
-                .epoch_store
-                .next_global_presign_request(self.last_read_consensus_round)
-            {
-                Ok(Some((round, msgs))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "presign requests consensus round mismatch"
-                        );
-                        panic!("presign requests consensus round mismatch");
+            // Sui-chain observations supply the agreed chain context the NOA
+            // system-checkpoint handler consumes, so they belong to the NOA
+            // cluster — gate on `noa_checkpoints` like the system-checkpoint read.
+            let sui_chain_observation_updates = if self.protocol_config.noa_checkpoints() {
+                match self
+                    .epoch_store
+                    .next_sui_chain_observation_update(self.last_read_consensus_round)
+                {
+                    Ok(Some((round, updates))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?round,
+                                ?mpc_messages_consensus_round,
+                                "sui chain observation updates consensus round does not match MPC messages consensus round"
+                            );
+                            panic!(
+                                "sui chain observation updates consensus round does not match MPC messages consensus round"
+                            );
+                        }
+                        updates
                     }
-                    msgs
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
+                        error!(error=?e, "failed to load sui chain observation updates from the local DB");
+                        panic!("failed to load sui chain observation updates from the local DB");
+                    }
                 }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load global presign requests from the local DB");
-                    panic!("failed to load global presign requests from the local DB");
+            } else {
+                Vec::new()
+            };
+
+            // Global presign requests were introduced with internal presign &
+            // sign sessions — gate on the same flag that gates writing them.
+            let presign_request_messages = if self
+                .protocol_config
+                .internal_presign_sessions_enabled()
+            {
+                match self
+                    .epoch_store
+                    .next_global_presign_request(self.last_read_consensus_round)
+                {
+                    Ok(Some((round, msgs))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?round,
+                                ?mpc_messages_consensus_round,
+                                "presign requests consensus round mismatch"
+                            );
+                            panic!("presign requests consensus round mismatch");
+                        }
+                        msgs
+                    }
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
+                        error!(error=?e, "failed to load global presign requests from the local DB");
+                        panic!("failed to load global presign requests from the local DB");
+                    }
                 }
+            } else {
+                Vec::new()
             };
 
             let network_key_data_messages = match self
@@ -1069,26 +1127,31 @@ impl DWalletMPCService {
                 }
             };
 
-            let noa_observation_messages = match self
-                .epoch_store
-                .next_noa_observation(self.last_read_consensus_round)
-            {
-                Ok(Some((round, msgs))) => {
-                    if round != mpc_messages_consensus_round {
-                        error!(
-                            ?round,
-                            ?mpc_messages_consensus_round,
-                            "NOA observations consensus round mismatch"
-                        );
-                        panic!("NOA observations consensus round mismatch");
+            // NOA observations belong to the NOA cluster — gate on `noa_checkpoints`.
+            let noa_observation_messages = if self.protocol_config.noa_checkpoints() {
+                match self
+                    .epoch_store
+                    .next_noa_observation(self.last_read_consensus_round)
+                {
+                    Ok(Some((round, msgs))) => {
+                        if round != mpc_messages_consensus_round {
+                            error!(
+                                ?round,
+                                ?mpc_messages_consensus_round,
+                                "NOA observations consensus round mismatch"
+                            );
+                            panic!("NOA observations consensus round mismatch");
+                        }
+                        msgs
                     }
-                    msgs
+                    Ok(None) => Vec::new(),
+                    Err(e) => {
+                        error!(error=?e, "failed to load NOA observations from the local DB");
+                        panic!("failed to load NOA observations from the local DB");
+                    }
                 }
-                Ok(None) => Vec::new(),
-                Err(e) => {
-                    error!(error=?e, "failed to load NOA observations from the local DB");
-                    panic!("failed to load NOA observations from the local DB");
-                }
+            } else {
+                Vec::new()
             };
 
             if mpc_messages_consensus_round != external_mpc_outputs_consensus_round {
