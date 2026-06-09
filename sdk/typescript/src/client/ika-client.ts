@@ -1353,7 +1353,12 @@ export class IkaClient {
 		await this.ensureInitialized();
 
 		const {
-			timeout = 30000,
+			// Default to 10 minutes: dWallet DKG / sign / reconfiguration MPC
+			// rounds legitimately take minutes (especially under load), and a
+			// short default silently caps every poll-site that doesn't pass an
+			// explicit timeout, surfacing as spurious "Timeout waiting for ..."
+			// failures on slow networks.
+			timeout = 600000,
 			interval = 1000,
 			maxInterval = 5000,
 			backoffMultiplier = 1.5,

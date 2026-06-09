@@ -342,8 +342,12 @@ export function sleep(ms: number): Promise<void> {
  */
 export async function retryUntil<T>(
 	fn: () => Promise<T>,
+	// Default to ~10 minutes (600 × 1s) to match the SDK poll default: the
+	// non-polling callers of this helper wait on the same minutes-long MPC
+	// operations, and a 30-attempt (~30s) cap surfaced as spurious "Condition
+	// not met after 30 attempts" failures on slow networks.
 	condition: (result: T) => boolean,
-	maxAttempts: number = 30,
+	maxAttempts: number = 600,
 	delayMs: number = 1000,
 ): Promise<T> {
 	// If the function being called is already a polling method (like getPresignInParticularState),
