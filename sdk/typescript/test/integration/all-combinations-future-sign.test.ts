@@ -198,11 +198,7 @@ async function setupDKGFlow(
 		expect(dWalletID).toBeDefined();
 
 		const activeDWallet = await retryUntil(
-			() =>
-				ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-					timeout: 600000,
-					interval: 1000,
-				}),
+			() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 			(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
 			30,
 			2000,
@@ -284,11 +280,7 @@ async function setupDKGFlow(
 
 		// Wait for DWallet to be verified and awaiting signature
 		const importedKeyDWallet = (await retryUntil(
-			() =>
-				ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature', {
-					timeout: 600000,
-					interval: 1000,
-				}),
+			() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
 			(wallet) => wallet !== null,
 			30,
 			1000,
@@ -322,11 +314,7 @@ async function setupDKGFlow(
 
 		// Wait for wallet to become Active
 		const activeDWallet = (await retryUntil(
-			() =>
-				ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-					timeout: 600000,
-					interval: 1000,
-				}),
+			() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 			(wallet) => wallet !== null,
 			30,
 			2000,
@@ -402,11 +390,7 @@ async function requestAndWaitForPresign(
 
 	const presignObject = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(
-				presignRequestEvent.event_data.presign_id,
-				'Completed',
-				{ timeout: 600000, interval: 1000 },
-			),
+			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
 		30,
 		2000,
@@ -539,7 +523,6 @@ async function futureSignAndVerify(
 	const partialCap = await ikaClient.getPartialUserSignatureInParticularState(
 		extractedPartialUserSignatureCap.event_data.partial_centralized_signed_message_id,
 		'NetworkVerificationCompleted',
-		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(partialCap).toBeDefined();
@@ -606,13 +589,11 @@ async function futureSignAndVerify(
 		curve,
 		signatureAlgorithm,
 		'Completed',
-		{ timeout: 600000, interval: 1000 },
 	);
 
 	const dWallet = await ikaClient.getDWalletInParticularState(
 		signEventData.event_data.dwallet_id,
 		'Active',
-		{ timeout: 600000, interval: 1000 },
 	);
 
 	expect(sign).toBeDefined();

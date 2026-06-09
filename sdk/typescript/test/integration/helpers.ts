@@ -144,10 +144,7 @@ export async function requestPresignForDKG(
 
 	const presign = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
-				timeout: 600000,
-				interval: 1000,
-			}),
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
 		30,
 		2000,
@@ -264,9 +261,6 @@ export async function waitForDWalletAwaitingSignature(
 	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
 		dWalletID,
 		'AwaitingKeyHolderSignature',
-		{
-			timeout: 600000,
-		},
 	);
 
 	expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
@@ -311,11 +305,7 @@ export async function acceptUserShareAndActivate(
 	await executeTestTransaction(suiClient, suiTransaction, testName);
 
 	const activeDWallet = await retryUntil(
-		() =>
-			ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-				timeout: 600000,
-				interval: 1000,
-			}),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -384,7 +374,6 @@ export async function runCompleteDKGFlow(
 			curve,
 			signDuringDKGOptions!.signatureAlgorithm,
 			'Completed',
-			{ timeout: 600000, interval: 1000 },
 		);
 
 		expect(signObject).toBeDefined();
@@ -471,11 +460,7 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 	// default ~60s is too short on slow local networks where class-groups
 	// crypto dominates.
 	const activeDWallet = await retryUntil(
-		() =>
-			ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-				timeout: 600000,
-				interval: 1000,
-			}),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -584,11 +569,7 @@ export async function runCompleteSharedDKGFlowWithSign(
 	// default ~60s is too short on slow local networks where class-groups
 	// crypto dominates.
 	const activeDWallet = await retryUntil(
-		() =>
-			ikaClient.getDWalletInParticularState(dWalletID, 'Active', {
-				timeout: 600000,
-				interval: 1000,
-			}),
+		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
 		30,
 		1000,
@@ -654,10 +635,7 @@ export async function runGlobalPresignTest(
 
 	const presign = await retryUntil(
 		() =>
-			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed', {
-				timeout: 600000,
-				interval: 1000,
-			}),
+			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
 		30,
 		2000,
