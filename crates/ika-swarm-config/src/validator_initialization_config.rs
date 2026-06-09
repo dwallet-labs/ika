@@ -61,16 +61,17 @@ impl ValidatorInitializationConfig {
 
         // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
         //
-        // ⚠️ MAINNET WIRE-FORMAT INCOMPATIBILITY ⚠️ Per the cryptography-private @ 9d35fa76 bump,
-        // the bytes published into the Move-side `class_groups_public_key_and_proof` field carry
-        // the COMBINED `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys), not the
-        // bare `ClassGroupsEncryptionKeyAndProof` mainnet expects. Validators on either side of
-        // this serialization boundary cannot decode each other's records — by design for the
-        // bump's local-network scope. See `ValidatorEncryptionKeysAndProofs`'s docstring.
+        // Publish the BARE mainnet-v1.1.8 `ClassGroupsEncryptionKeyAndProof` shape
+        // on-chain (matching the off-chain-metadata PR's `legacy_class_groups_only`
+        // publication path), so a mainnet-v1.1.8 binary can decode this record. The
+        // richer `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
+        // PVSS) travels off-chain via validator P2P. Reading is shape-tolerant on the
+        // dev side via `decode_validator_encryption_keys`.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
             class_groups_public_key_and_proof: bcs::to_bytes(
                 &ClassGroupsAndPvssKeyPairAndProof::from_seed(&self.root_seed)
-                    .validator_encryption_keys_and_proofs(),
+                    .class_groups
+                    .encryption_key_and_proof(),
             )
             .unwrap(),
         });
