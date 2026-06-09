@@ -143,7 +143,7 @@ public fun verify_certificate(
 
     // Count non-signers instead of summing their voting powers
     let mut non_signer_count = 0;
-    let mut non_signer_public_keys: vector<Element<UncompressedG1>> = vector::empty();
+    let mut non_signer_public_keys: vector<Element<UncompressedG1>> = vector[];
     let mut offset: u64 = 0;
     let n_members = members.length();
     let max_bitmap_len_bytes = n_members.div_ceil(8);

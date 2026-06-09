@@ -51,6 +51,10 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_fastpath(),
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
+        // `enable_v3` is new in mainnet-v1.72.3. Default to disabled,
+        // matching Sui's `ConsensusProtocolConfig::default()` and the
+        // pre-v3 behavior this code was written against.
+        false,
     )
 }
 
@@ -148,7 +152,10 @@ impl ConsensusManager {
         };
 
         let own_protocol_key = self.protocol_keypair.public();
-        let (own_index, _) = committee
+        // `own_index` is no longer passed to `ConsensusAuthority::start`
+        // (dropped in mainnet-v1.72.3), but we keep this lookup for its
+        // side-effect: asserting our authority is in the committee.
+        let (_own_index, _) = committee
             .authorities()
             .find(|(_, a)| a.protocol_key == own_protocol_key)
             .expect("Own authority should be among the consensus authorities!");
@@ -202,11 +209,14 @@ impl ConsensusManager {
         let authority = ConsensusAuthority::start(
             NetworkType::Tonic,
             epoch_store.epoch_start_config().epoch_start_timestamp_ms(),
-            own_index,
+            // `own_index` was dropped from `ConsensusAuthority::start` in
+            // mainnet-v1.72.3 (the node derives it from the committee +
+            // protocol keypair). `protocol_keypair` is now optional
+            // (observer nodes pass `None`); validators pass `Some`.
             committee.clone(),
             parameters.clone(),
             to_consensus_protocol_config(ika_protocol_config, chain),
-            self.protocol_keypair.clone(),
+            Some(self.protocol_keypair.clone()),
             self.network_keypair.clone(),
             Arc::new(Clock::default()),
             Arc::new(tx_validator.clone()),

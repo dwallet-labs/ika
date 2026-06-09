@@ -119,6 +119,11 @@ pub struct SuiExecutor<C> {
     system_checkpoint_store: Arc<SystemCheckpointStore>,
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
+    /// OCS-verified reader for coordinator/system polls. `Some` on
+    /// validators (where OCS is required); `None` on notifier-only nodes
+    /// that don't run an OCS verifier — they fall back to the legacy
+    /// JSON-RPC path on `sui_client`.
+    reader: Option<Arc<crate::sui_connector::verified_reader::OcsVerifiedReader>>,
     metrics: Arc<SuiConnectorMetrics>,
     notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
 }
@@ -144,6 +149,7 @@ where
         system_checkpoint_store: Arc<SystemCheckpointStore>,
         sui_notifier: Option<SuiNotifier>,
         sui_client: Arc<SuiClient<C>>,
+        reader: Option<Arc<crate::sui_connector::verified_reader::OcsVerifiedReader>>,
         metrics: Arc<SuiConnectorMetrics>,
     ) -> Self {
         Self {
@@ -153,9 +159,82 @@ where
             system_checkpoint_store,
             sui_notifier,
             sui_client,
+            reader,
             metrics,
             notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState::default())),
         }
+    }
+
+    /// Retrieve the System wrapper + its inner. OCS-verified when a
+    /// reader is wired in; falls back to the legacy JSON-RPC read on
+    /// validators without OCS (notifier nodes). Retries forever — same
+    /// semantics as the underlying `SuiClient::must_get_system_inner_object`.
+    async fn must_get_system_inner(&self) -> (System, SystemInner) {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_system_object_id;
+            loop {
+                match reader.verified_system_inner(id).await {
+                    Ok(v) => return v,
+                    Err(e) => {
+                        warn!(error = ?e, "verified_system_inner failed; retrying");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        }
+        self.sui_client.must_get_system_inner_object().await
+    }
+
+    /// Retrieve the DWalletCoordinator wrapper + its inner. OCS-verified
+    /// when a reader is wired in; falls back to legacy on notifiers.
+    async fn must_get_dwallet_coordinator_inner(
+        &self,
+    ) -> (DWalletCoordinator, DWalletCoordinatorInner) {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_dwallet_coordinator_object_id;
+            loop {
+                match reader.verified_dwallet_coordinator_inner(id).await {
+                    Ok(v) => return v,
+                    Err(e) => {
+                        warn!(error = ?e, "verified_dwallet_coordinator_inner failed; retrying");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        }
+        self.sui_client.must_get_dwallet_coordinator_inner().await
+    }
+
+    /// Single-shot variant of [`Self::must_get_dwallet_coordinator_inner`].
+    /// Used by `run_epoch_switch` where blocking the caller on retries
+    /// would interfere with timing-sensitive epoch logic; the caller
+    /// returns early on Err and the next tick retries the whole flow.
+    async fn try_get_dwallet_coordinator_inner(
+        &self,
+    ) -> anyhow::Result<(DWalletCoordinator, DWalletCoordinatorInner)> {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_dwallet_coordinator_object_id;
+            return reader
+                .verified_dwallet_coordinator_inner(id)
+                .await
+                .map_err(|e| anyhow::anyhow!("verified_dwallet_coordinator_inner: {e}"));
+        }
+        self.sui_client
+            .get_dwallet_coordinator_inner()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_dwallet_coordinator_inner: {e}"))
     }
 
     /// Checks whether `process_mid_epoch`, `lock_last_active_session_sequence_number`, or
@@ -212,7 +291,7 @@ where
             epoch_switch_state.ran_mid_epoch = true;
         }
         let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
-            self.sui_client.get_dwallet_coordinator_inner().await
+            self.try_get_dwallet_coordinator_inner().await
         else {
             error!("failed to get dwallet coordinator inner when running epoch switch");
             return;
@@ -454,7 +533,7 @@ where
 
         loop {
             interval.tick().await;
-            let (system, system_inner) = self.sui_client.must_get_system_inner_object().await;
+            let (system, system_inner) = self.must_get_system_inner().await;
             let ika_system_package_id = system.package_id;
             let _ = self
                 .system_object_sender
@@ -473,7 +552,7 @@ where
                 error!("epoch_on_sui cannot be less than epoch");
             }
             let (dwallet_coordinator, dwallet_coordinator_inner) =
-                self.sui_client.must_get_dwallet_coordinator_inner().await;
+                self.must_get_dwallet_coordinator_inner().await;
             let ika_dwallet_2pc_mpc_package_id = dwallet_coordinator.package_id;
             let _ = self.dwallet_coordinator_object_sender.send(Some((
                 dwallet_coordinator,
