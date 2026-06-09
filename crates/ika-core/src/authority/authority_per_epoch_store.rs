@@ -2756,8 +2756,21 @@ impl ConsensusCommitOutput {
     ) -> IkaResult {
         let tables = epoch_store.tables()?;
 
-        // Write all the dWallet MPC related messages from this consensus round to the local DB.
-        // The [`DWalletMPCService`] constantly reads and process those messages.
+        // Streams added after mainnet-v1.1.8 are persisted only once the protocol
+        // feature that introduced them is live, gated on the same flag the
+        // `DWalletMPCService` replay reads gate on. This keeps the on-disk
+        // consensus-output schema at a given protocol version identical to what an
+        // older binary writes: without it, a newer binary replaying an older
+        // binary's history (a rolling mainnet-v1.1.8 -> dev binary swap) finds
+        // these tables sparse where the dense per-round driver
+        // (`dwallet_mpc_messages`) expects them aligned, and the replay
+        // round-equality check trips.
+        let internal_presign = epoch_store
+            .protocol_config()
+            .internal_presign_sessions_enabled();
+        let noa = epoch_store.protocol_config().noa_checkpoints();
+
+        // Written by every binary including mainnet-v1.1.8 — dense, one per round.
         batch.insert_batch(
             &tables.dwallet_mpc_messages,
             [(self.consensus_round, self.dwallet_mpc_round_messages)],
@@ -2767,46 +2780,60 @@ impl ConsensusCommitOutput {
             [(self.consensus_round, self.dwallet_mpc_round_outputs)],
         )?;
         batch.insert_batch(
-            &tables.dwallet_internal_mpc_outputs,
-            [(
-                self.consensus_round,
-                self.dwallet_internal_mpc_round_outputs,
-            )],
-        )?;
-        batch.insert_batch(
-            &tables.idle_status_updates,
-            [(self.consensus_round, self.idle_status_updates)],
-        )?;
-        batch.insert_batch(
-            &tables.sui_chain_observation_updates,
-            [(self.consensus_round, self.sui_chain_observation_updates)],
-        )?;
-        batch.insert_batch(
-            &tables.global_presign_requests,
-            [(self.consensus_round, self.global_presign_requests)],
-        )?;
-        batch.insert_batch(
-            &tables.network_key_data_messages,
-            [(self.consensus_round, self.network_key_data)],
-        )?;
-        batch.insert_batch(
-            &tables.noa_observations,
-            [(self.consensus_round, self.noa_observations)],
-        )?;
-        batch.insert_batch(
             &tables.verified_dwallet_checkpoint_messages,
             [(
                 self.consensus_round,
                 self.verified_dwallet_checkpoint_messages,
             )],
         )?;
+        // `network_key_data_messages` is also a post-v1.1.8 stream, but the
+        // off-chain-metadata line that supersedes this on dev removes it
+        // entirely, so it is intentionally left ungated here rather than tied to
+        // a throwaway flag.
         batch.insert_batch(
-            &tables.verified_system_checkpoint_messages,
-            [(
-                self.consensus_round,
-                self.verified_system_checkpoint_messages,
-            )],
+            &tables.network_key_data_messages,
+            [(self.consensus_round, self.network_key_data)],
         )?;
+
+        // Internal presign & sign sessions (#1623): internal MPC outputs, global
+        // presign requests, and idle-status (presign-pool) updates.
+        if internal_presign {
+            batch.insert_batch(
+                &tables.dwallet_internal_mpc_outputs,
+                [(
+                    self.consensus_round,
+                    self.dwallet_internal_mpc_round_outputs,
+                )],
+            )?;
+            batch.insert_batch(
+                &tables.global_presign_requests,
+                [(self.consensus_round, self.global_presign_requests)],
+            )?;
+            batch.insert_batch(
+                &tables.idle_status_updates,
+                [(self.consensus_round, self.idle_status_updates)],
+            )?;
+        }
+
+        // NOA signed-checkpoint cluster (#1664/#1672): system-checkpoint messages,
+        // NOA observations, and the Sui-chain-observation context they consume.
+        if noa {
+            batch.insert_batch(
+                &tables.verified_system_checkpoint_messages,
+                [(
+                    self.consensus_round,
+                    self.verified_system_checkpoint_messages,
+                )],
+            )?;
+            batch.insert_batch(
+                &tables.noa_observations,
+                [(self.consensus_round, self.noa_observations)],
+            )?;
+            batch.insert_batch(
+                &tables.sui_chain_observation_updates,
+                [(self.consensus_round, self.sui_chain_observation_updates)],
+            )?;
+        }
 
         batch.insert_batch(
             &tables.consensus_message_processed,
