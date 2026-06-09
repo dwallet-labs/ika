@@ -10,7 +10,7 @@ use anemo_tower::trace::TraceLayer;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -2212,42 +2212,23 @@ impl IkaNode {
                 // rounds run against STALE (epoch N-1) network-key shares,
                 // failing with `FailedToAdvanceMPC(InvalidParameters)`.
                 //
-                // The blob source MUST be installed FIRST — before the
-                // barrier. `network_keys_receiver` is fed from whichever
-                // network-key blob-source overlay is installed, and the
-                // per-iteration install (~line 1991) runs in the NEXT loop
-                // iteration, AFTER this seam. Until the new epoch's overlay
-                // is installed the receiver is still backed by the OLD
-                // epoch's overlay and can NEVER surface epoch-N's
-                // reconfiguration output, so the barrier would deadlock.
-                // Installing it here lets the always-running network-keys
-                // syncer surface epoch-N data into the receiver; the
-                // ~1991 install then becomes a redundant, idempotent
-                // re-install.
-                if cur_epoch_store
-                    .protocol_config()
-                    .off_chain_validator_metadata_enabled()
-                {
-                    self.sui_connector_service
-                        .install_network_key_blob_source(Box::new(
-                            ika_core::validator_metadata::EpochStoreBlobSource::new(
-                                Arc::downgrade(&new_epoch_store),
-                            ),
-                        ));
-                }
+                // Readiness is decided off the verified handoff cert + this
+                // validator's local reconfiguration-output digest slice (see
+                // `wait_for_handoff_data_ready`), so the barrier needs no
+                // blob-source overlay pre-install here — the per-iteration
+                // install (~line 1991) handles the syncer overlay in the
+                // next loop iteration as before.
+                //
                 // Only a validator in the NEW epoch needs the handoff data,
                 // so only it prepares. A node leaving the committee
                 // (validator last epoch, not this one) must not block on
                 // handoff data it will never use.
                 if self.state.is_validator(&new_epoch_store) {
-                    let mut network_keys_receiver =
-                        sui_data_receivers.network_keys_receiver.clone();
                     self.wait_for_handoff_data_ready(
                         next_epoch,
                         cur_epoch_store.epoch(),
                         &cur_epoch_store,
                         &new_epoch_store,
-                        &mut network_keys_receiver,
                     )
                     .await;
                 }
@@ -2399,18 +2380,22 @@ impl IkaNode {
     /// the persisted-cert re-check and the fetch path's per-candidate
     /// verification.
     ///
-    /// Returns `true` iff a verified anchor cert is locally present
-    /// afterward. Fail-closes (halts the node via the shutdown channel)
-    /// when a persisted cert fails re-verification (tampered/corrupted DB),
-    /// or when peers served certs but none verified against the signing
-    /// committee — a genuine cross-epoch trust-anchor mismatch (a possible
-    /// eclipse), not something to limp past.
+    /// Returns `Some(cert)` — the verified anchor cert — iff one is locally
+    /// present afterward, so the caller can read the output digests it
+    /// certifies without a second DB read. Returns `None` when the anchor
+    /// is not yet confirmed (no peer served a cert within the attempt
+    /// budget — propagation lag, re-attempt) OR after fail-closing (halts
+    /// the node via the shutdown channel) when a persisted cert fails
+    /// re-verification (tampered/corrupted DB), or when peers served certs
+    /// but none verified against the signing committee — a genuine
+    /// cross-epoch trust-anchor mismatch (a possible eclipse), not
+    /// something to limp past.
     async fn prepare_handoff_anchor(
         &self,
         anchor_epoch: EpochId,
         cur_epoch_store: &AuthorityPerEpochStore,
         new_epoch_store: &Arc<AuthorityPerEpochStore>,
-    ) -> bool {
+    ) -> Option<CertifiedHandoffAttestation> {
         use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
             BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
             P2pHandoffCertSource,
@@ -2467,7 +2452,27 @@ impl IkaNode {
             .flatten()
         {
             return match verify(&persisted) {
-                Ok(()) => true,
+                Ok(()) => {
+                    // Holding the cert does NOT imply holding the network-key
+                    // outputs it certifies: a lagging validator can adopt the
+                    // cert from a buffered peer-signature quorum (see
+                    // `quorum_attestation_in_buffer`) without ever computing or
+                    // caching those outputs. The barrier's condition 2 requires
+                    // every certified reconfiguration output held locally, so
+                    // fetch + cache them now (idempotent — a no-op when already
+                    // present). Without this a cert-but-no-outputs validator
+                    // blocks at the barrier forever, never enters the epoch, and
+                    // never publishes its mpc_data — wedging the next
+                    // reconfiguration's committee assembly at sub-full coverage.
+                    install_joiner_network_key_outputs(
+                        &persisted,
+                        &self.p2p_network,
+                        &peer_ids,
+                        new_epoch_store,
+                    )
+                    .await;
+                    Some(persisted)
+                }
                 Err(e) => {
                     error!(
                         anchor_epoch,
@@ -2478,7 +2483,7 @@ impl IkaNode {
                          unverified cert."
                     );
                     let _ = self.shutdown_channel_tx.send(None);
-                    false
+                    None
                 }
             };
         }
@@ -2523,7 +2528,7 @@ impl IkaNode {
                     new_epoch_store,
                 )
                 .await;
-                true
+                Some(*cert)
             }
             BootstrapOutcome::Rejected => {
                 // Fail-closed: peers served certs but NONE verified
@@ -2540,12 +2545,12 @@ impl IkaNode {
                      for the wrong committee (possible eclipse)."
                 );
                 let _ = self.shutdown_channel_tx.send(None);
-                false
+                None
             }
             // No peer served a cert within the attempt budget
             // (propagation lag) — the anchor is unconfirmed, not
             // contradicted. The barrier will re-attempt.
-            BootstrapOutcome::Unavailable => false,
+            BootstrapOutcome::Unavailable => None,
         }
     }
 
@@ -2562,34 +2567,27 @@ impl IkaNode {
     /// INDEFINITELY (no timeout): a stuck validator that is visibly not
     /// signing is strictly safer than one signing with the wrong shares.
     ///
-    /// The barrier waits on two conditions:
+    /// The barrier waits on two conditions, both grounded in off-chain data
+    /// (the verified handoff cert + this validator's local outputs) — no
+    /// chain state, and no dependency on the chain-fed `network_keys_receiver`:
     ///   1. The cross-epoch trust anchor (the `cur_epoch` handoff cert) is
-    ///      locally present + verified — ensured by `prepare_handoff_anchor`,
-    ///      which fetches it inline if missing.
-    ///   2. Every locally-tracked network-encryption-key reports
-    ///      `current_epoch >= next_epoch` with a non-empty
-    ///      `current_reconfiguration_public_output` — i.e. the syncer has
-    ///      surfaced epoch-N's reconfiguration output for every key.
-    ///
-    /// DEADLOCK HAZARD (handled by the caller, documented here): the new
-    /// epoch's blob-source overlay must be installed BEFORE this runs.
-    /// `network_keys_receiver` is fed from whichever overlay is installed;
-    /// the per-iteration install at epoch start happens in the NEXT loop
-    /// iteration, AFTER this seam. Until the new epoch's overlay is
-    /// installed the receiver is still backed by the OLD epoch's overlay
-    /// and can never surface epoch-N data, so the caller installs the new
-    /// overlay immediately before calling this (see the seam).
+    ///      locally present + verified — `prepare_handoff_anchor` returns it,
+    ///      fetching it inline if missing.
+    ///   2. Every `NetworkReconfigurationOutput` item the cert certifies is
+    ///      held locally with a digest matching the cert. The cert's single
+    ///      `epoch` field scopes the whole handoff, so there is no per-key
+    ///      epoch to check — only per-key presence in this validator's
+    ///      reconfiguration-output digest slice (keyed by `cur_epoch`, the
+    ///      reconfiguration session's epoch). A continuing validator caches
+    ///      its own MPC output there; a joiner has `prepare_handoff_anchor`
+    ///      fetch + cache the cert's outputs into the same slice. See
+    ///      `all_cert_reconfiguration_outputs_held_locally`.
     async fn wait_for_handoff_data_ready(
         &self,
         next_epoch: EpochId,
         cur_epoch: EpochId,
         cur_epoch_store: &AuthorityPerEpochStore,
         new_epoch_store: &Arc<AuthorityPerEpochStore>,
-        network_keys_receiver: &mut watch::Receiver<
-            Arc<
-                HashMap<ObjectID, ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData>,
-            >,
-        >,
     ) {
         // Off-chain handoff is the only thing this barrier waits for; when
         // the protocol flag is off (pre-v4) there is no off-chain handoff
@@ -2598,12 +2596,6 @@ impl IkaNode {
             .protocol_config()
             .off_chain_validator_metadata_enabled()
         {
-            return;
-        }
-        // Likewise, with no keys to track and no off-chain handoff there is
-        // nothing to wait for (defensive: the flag check above already
-        // covers the pre-v4 case).
-        if network_keys_receiver.borrow().is_empty() {
             return;
         }
 
@@ -2617,31 +2609,34 @@ impl IkaNode {
         let mut retries: u64 = 0;
 
         loop {
-            // Condition 1: cross-epoch trust anchor present + verified.
-            // `prepare_handoff_anchor` returns immediately when already
-            // held, and otherwise fetches + verifies + persists it inline.
-            let have_anchor = self
+            // Condition 1: the cross-epoch trust anchor — the `cur_epoch`
+            // handoff cert — is present + verified. `prepare_handoff_anchor`
+            // returns it (re-verified) when already held, fetches + verifies
+            // + persists it inline when missing, and for a joiner also
+            // fetches + caches the outputs the cert certifies into the local
+            // digest slice condition 2 reads. `None` means the anchor is not
+            // yet confirmed (propagation lag) — re-attempt.
+            let cert = self
                 .prepare_handoff_anchor(cur_epoch, cur_epoch_store, new_epoch_store)
                 .await;
 
-            // Condition 2: every tracked network key has surfaced fresh
-            // (>= next_epoch) reconfiguration output.
-            let (total_keys, empty_output_keys, stale_epoch_keys, keys_fresh) = {
-                let keys = network_keys_receiver.borrow();
-                let total = keys.len();
-                let empty = keys
-                    .values()
-                    .filter(|k| k.current_reconfiguration_public_output.is_empty())
-                    .count();
-                let stale = keys
-                    .values()
-                    .filter(|k| k.current_epoch < next_epoch)
-                    .count();
-                let fresh = all_network_keys_ready_for_epoch(&keys, next_epoch);
-                (total, empty, stale, fresh)
-            };
+            // Condition 2: every network-key reconfiguration output the cert
+            // certifies is held locally with a digest matching the cert.
+            // Grounded entirely in the verified cert (the off-chain anchor)
+            // and this validator's own reconfiguration-output digest slice,
+            // keyed by the reconfiguration session's epoch (`cur_epoch`) — no
+            // chain state, and no per-key epoch (the cert's single epoch
+            // scopes the whole handoff). A read error is treated as not-ready
+            // (empty slice); the periodic WARN below surfaces a persistent
+            // failure.
+            let local_reconfiguration_digests = cur_epoch_store
+                .get_network_reconfiguration_output_digests_for_epoch(cur_epoch)
+                .unwrap_or_default();
+            let ready = cert.as_ref().is_some_and(|cert| {
+                all_cert_reconfiguration_outputs_held_locally(cert, &local_reconfiguration_digests)
+            });
 
-            if have_anchor && keys_fresh {
+            if ready {
                 let elapsed = started_at.elapsed();
                 self.metrics.handoff_prepare_waiting.set(0);
                 self.metrics
@@ -2662,26 +2657,47 @@ impl IkaNode {
             // Surface the breakdown roughly every 10s so a hang is never
             // silent on a dashboard or in the logs.
             if retries.is_multiple_of(10) {
+                let (cert_reconfiguration_items, missing_locally) = match &cert {
+                    Some(cert) => {
+                        let total = cert
+                            .attestation
+                            .items
+                            .iter()
+                            .filter(|(item, _)| {
+                                matches!(item, HandoffItemKey::NetworkReconfigurationOutput { .. })
+                            })
+                            .count();
+                        let missing = cert
+                            .attestation
+                            .items
+                            .iter()
+                            .filter(|(item, digest)| match item {
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                                    local_reconfiguration_digests.get(key_id) != Some(digest)
+                                }
+                                _ => false,
+                            })
+                            .count();
+                        (total, missing)
+                    }
+                    None => (0, 0),
+                };
                 warn!(
                     next_epoch,
                     cur_epoch,
-                    have_anchor,
-                    total_keys,
-                    empty_output_keys,
-                    stale_epoch_keys,
+                    have_cert = cert.is_some(),
+                    cert_reconfiguration_items,
+                    missing_locally,
                     retries,
                     "prepare-then-start: still awaiting full verified handoff data for epoch \
                      {next_epoch}"
                 );
             }
 
-            // Re-check on the next key update or after 1s, whichever comes
-            // first. No timeout — block indefinitely (safety-first: never
-            // start the epoch on stale network-key shares).
-            tokio::select! {
-                _ = network_keys_receiver.changed() => {}
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-            }
+            // Re-check after 1s. No timeout — block indefinitely
+            // (safety-first: never start the epoch without the verified
+            // handoff outputs the cert certifies).
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -2843,94 +2859,129 @@ fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
 }
 
 /// Readiness predicate for the prepare-then-start barrier's network-key
-/// condition: every locally-tracked network-encryption key must have surfaced
-/// fresh handoff data for `next_epoch` — synced/derived at
-/// `current_epoch >= next_epoch` with a non-empty
-/// `current_reconfiguration_public_output`. The barrier blocks until this holds
-/// so the new epoch's MPC never starts signing against a stale (previous-epoch)
-/// reconfiguration sharing. An empty map is NOT ready — there is nothing to sign
-/// with yet, so the barrier keeps waiting until the keys surface.
-fn all_network_keys_ready_for_epoch(
-    keys: &HashMap<ObjectID, ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData>,
-    next_epoch: EpochId,
+/// condition, grounded entirely in the verified handoff cert (the off-chain
+/// cross-epoch trust anchor) and this validator's local reconfiguration-output
+/// digest slice — no chain state.
+///
+/// The cert's single `epoch` field scopes the whole handoff (one cert per
+/// epoch, committee-signed), so there is no per-key epoch to check: every
+/// `NetworkReconfigurationOutput` item is an output of the same reconfiguration
+/// session (the one that ran during `cert.attestation.epoch`). The only per-key
+/// question is presence: for each reconfiguration output the cert certifies,
+/// has this validator locally computed/cached a digest-matching copy? (A
+/// continuing validator caches its own MPC output; a joiner has
+/// `install_joiner_network_key_outputs` fetch + cache the cert's outputs into
+/// the same slice.)
+///
+/// Returns true iff every `NetworkReconfigurationOutput { key_id }` item in the
+/// cert has a local digest equal to the cert's item digest. DKG and
+/// validator-mpc_data items are not gated here — the barrier exists to keep the
+/// new epoch from signing against a stale reconfiguration sharing, and the
+/// reconfiguration output is the epoch-varying material. A cert with no
+/// reconfiguration items is trivially ready on this condition.
+fn all_cert_reconfiguration_outputs_held_locally(
+    cert: &CertifiedHandoffAttestation,
+    local_reconfiguration_digests: &BTreeMap<ObjectID, [u8; 32]>,
 ) -> bool {
-    !keys.is_empty()
-        && keys.values().all(|key| {
-            key.current_epoch >= next_epoch && !key.current_reconfiguration_public_output.is_empty()
+    cert.attestation
+        .items
+        .iter()
+        .all(|(item, cert_digest)| match item {
+            HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                local_reconfiguration_digests.get(key_id) == Some(cert_digest)
+            }
+            HandoffItemKey::NetworkDkgOutput { .. } | HandoffItemKey::ValidatorMpcData { .. } => {
+                true
+            }
         })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ika_types::messages_dwallet_mpc::{
-        DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
-    };
+    use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 
-    fn network_key(
-        current_epoch: u64,
-        reconfiguration_output: Vec<u8>,
-    ) -> DWalletNetworkEncryptionKeyData {
-        DWalletNetworkEncryptionKeyData {
-            id: ObjectID::ZERO,
-            current_epoch,
-            dkg_at_epoch: 0,
-            current_reconfiguration_public_output: reconfiguration_output,
-            network_dkg_public_output: vec![1],
-            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+    fn key_id(index: u8) -> ObjectID {
+        ObjectID::new([index; 32])
+    }
+
+    /// Builds a cert whose only items are `NetworkReconfigurationOutput`s for
+    /// the given `(key_id, digest)` pairs. Signatures are irrelevant to the
+    /// readiness predicate, so they are left empty.
+    fn cert_with_reconfiguration_items(
+        items: Vec<(ObjectID, [u8; 32])>,
+    ) -> CertifiedHandoffAttestation {
+        CertifiedHandoffAttestation {
+            attestation: HandoffAttestation {
+                epoch: 7,
+                next_committee_pubkey_set_hash: [0u8; 32],
+                items: items
+                    .into_iter()
+                    .map(|(key_id, digest)| {
+                        (
+                            HandoffItemKey::NetworkReconfigurationOutput { key_id },
+                            digest,
+                        )
+                    })
+                    .collect(),
+            },
+            signatures: vec![],
         }
     }
 
-    fn key_map(
-        items: Vec<DWalletNetworkEncryptionKeyData>,
-    ) -> HashMap<ObjectID, DWalletNetworkEncryptionKeyData> {
-        items
-            .into_iter()
-            .enumerate()
-            .map(|(index, key)| (ObjectID::new([index as u8; 32]), key))
-            .collect()
-    }
-
     #[test]
-    fn all_network_keys_ready_for_epoch_cases() {
-        let next_epoch = 7;
+    fn all_cert_reconfiguration_outputs_held_locally_cases() {
+        // Cert certifies one reconfiguration output; the local slice holds a
+        // matching digest → ready.
+        let cert = cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32])]);
+        let held = BTreeMap::from([(key_id(0), [1u8; 32])]);
+        assert!(all_cert_reconfiguration_outputs_held_locally(&cert, &held));
 
-        // No keys surfaced yet — nothing to sign with → not ready (keep waiting).
-        assert!(!all_network_keys_ready_for_epoch(
-            &key_map(vec![]),
-            next_epoch
+        // Output not yet computed/cached locally (empty slice) → not ready.
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert,
+            &BTreeMap::new()
         ));
 
-        // Single key, freshly reconfigured for this epoch → ready.
-        assert!(all_network_keys_ready_for_epoch(
-            &key_map(vec![network_key(7, vec![1, 2, 3])]),
-            next_epoch
+        // Local digest differs from the cert's (a stale/wrong local output —
+        // the exact condition the cert-digest match exists to catch) → not ready.
+        let stale = BTreeMap::from([(key_id(0), [9u8; 32])]);
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert, &stale
         ));
 
-        // Key still on the PREVIOUS epoch's reconfiguration sharing — the exact
-        // stale-share condition prepare-then-start exists to prevent → not ready.
-        assert!(!all_network_keys_ready_for_epoch(
-            &key_map(vec![network_key(6, vec![1, 2, 3])]),
-            next_epoch
+        // Two certified outputs, only one held locally → not ready (EVERY item
+        // the cert certifies must be held + matching).
+        let cert_two =
+            cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
+        let one = BTreeMap::from([(key_id(0), [1u8; 32])]);
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert_two, &one
         ));
 
-        // Key at the right epoch but its reconfiguration output hasn't surfaced
-        // yet (overlay/syncer lag) → not ready.
-        assert!(!all_network_keys_ready_for_epoch(
-            &key_map(vec![network_key(7, vec![])]),
-            next_epoch
+        // Both held with matching digests → ready.
+        let both = BTreeMap::from([(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
+        assert!(all_cert_reconfiguration_outputs_held_locally(
+            &cert_two, &both
         ));
 
-        // Two keys, one fresh and one stale → not ready (EVERY key must be fresh).
-        assert!(!all_network_keys_ready_for_epoch(
-            &key_map(vec![network_key(7, vec![1]), network_key(6, vec![1])]),
-            next_epoch
-        ));
-
-        // A key already past next_epoch is fine (>= comparison).
-        assert!(all_network_keys_ready_for_epoch(
-            &key_map(vec![network_key(8, vec![1])]),
-            next_epoch
+        // A cert with no reconfiguration items is trivially ready (nothing to
+        // wait for), even against an empty slice — and a DKG-only item must NOT
+        // be gated by this reconfiguration-readiness predicate.
+        let dkg_only = CertifiedHandoffAttestation {
+            attestation: HandoffAttestation {
+                epoch: 7,
+                next_committee_pubkey_set_hash: [0u8; 32],
+                items: vec![(
+                    HandoffItemKey::NetworkDkgOutput { key_id: key_id(0) },
+                    [5u8; 32],
+                )],
+            },
+            signatures: vec![],
+        };
+        assert!(all_cert_reconfiguration_outputs_held_locally(
+            &dkg_only,
+            &BTreeMap::new()
         ));
     }
 }
