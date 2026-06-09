@@ -302,6 +302,14 @@ pub struct ProtocolConfig {
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
 
+    /// Number of additional consensus leader rounds the epoch close is
+    /// deferred after a stake-quorum of EndOfPublish votes is observed
+    /// (unless every committee member votes first), so straggler
+    /// `EndOfPublishV2` bundles — which carry their handoff signatures —
+    /// are sequenced before the epoch closes. A protocol constant: all
+    /// validators must agree on it or they fork on the close round.
+    end_of_publish_grace_rounds: Option<u64>,
+
     // === Network Owned Address (NOA) Sign Presign Configuration (per algorithm) ===
     // Pool minimum sizes
     network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Option<u64>,
@@ -605,6 +613,7 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
+            end_of_publish_grace_rounds: Some(50),
 
             // === Network Owned Address (NOA) Presign Configuration (per algorithm) ===
             // Non-EdDSA algorithms use the same defaults as their internal presign counterparts.

@@ -20,7 +20,7 @@ use ika_types::handoff::{
     CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey, HandoffSignatureMessage,
 };
 use ika_types::intent::{Intent, IntentMessage, IntentScope};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -326,6 +326,43 @@ pub fn process_handoff_signature(
         Some(cert) => HandoffSignatureRecordOutcome::Certified(cert),
         None => HandoffSignatureRecordOutcome::Recorded,
     }
+}
+
+/// If the buffered peer handoff signatures already include a single
+/// attestation that a quorum (by stake) of DISTINCT committee members have
+/// signed, returns it. A validator whose own snapshot isn't ready yet (its
+/// local reconfiguration output still lagging) never installs an expected
+/// attestation and would otherwise NEVER persist the cert — it would advance
+/// the epoch and later have to re-fetch its own prior-epoch cert from peers,
+/// delaying its re-entry and wedging the next reconfiguration's mpc_data
+/// freeze. Adopting the quorum-agreed attestation lets it persist the cert
+/// from the observed quorum instead of waiting to compute its own.
+///
+/// Counting is by the attestation each buffered message *claims*; the
+/// signatures themselves are re-verified on replay when the attestation is
+/// installed, so a byzantine member that buffers a bogus signature for the
+/// quorum attestation cannot forge the cert (its row fails verification and
+/// drops), and one that claims a different attestation cannot block a real
+/// quorum (the honest quorum still agrees on the real one).
+pub(crate) fn quorum_attestation_in_buffer(
+    committee: &Committee,
+    pending: &[HandoffSignatureMessage],
+) -> Option<HandoffAttestation> {
+    let mut signers_by_attestation: HashMap<&HandoffAttestation, Vec<AuthorityName>> =
+        HashMap::new();
+    for msg in pending {
+        let signers = signers_by_attestation.entry(&msg.attestation).or_default();
+        if !signers.contains(&msg.signer) {
+            signers.push(msg.signer);
+        }
+    }
+    signers_by_attestation
+        .into_iter()
+        .find(|(_, signers)| {
+            let stake: StakeUnit = signers.iter().map(|signer| committee.weight(signer)).sum();
+            stake >= committee.quorum_threshold()
+        })
+        .map(|(attestation, _)| attestation.clone())
 }
 
 /// Joiner-side single-hop bootstrap: fetch a cert for `prior_epoch`

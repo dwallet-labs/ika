@@ -1893,6 +1893,51 @@ mod tests {
     }
 
     #[test]
+    fn quorum_attestation_in_buffer_needs_distinct_quorum_on_one_attestation() {
+        use crate::handoff_cert::quorum_attestation_in_buffer;
+        // size=4 → quorum q=3, stake 1 each.
+        let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
+        let attestation = build_handoff_attestation(5, [0xAB; 32], vec![]).expect("build");
+        let other = build_handoff_attestation(5, [0xCD; 32], vec![]).expect("build");
+
+        // Under quorum (2 distinct signers on `attestation`) → None.
+        let pending = vec![
+            sign_handoff_attestation(attestation.clone(), names[0], &consensus_kps[0]),
+            sign_handoff_attestation(attestation.clone(), names[1], &consensus_kps[1]),
+        ];
+        assert!(quorum_attestation_in_buffer(&committee, &pending).is_none());
+
+        // Three distinct signers on the same attestation → that attestation.
+        let pending = vec![
+            sign_handoff_attestation(attestation.clone(), names[0], &consensus_kps[0]),
+            sign_handoff_attestation(attestation.clone(), names[1], &consensus_kps[1]),
+            sign_handoff_attestation(attestation.clone(), names[2], &consensus_kps[2]),
+        ];
+        assert_eq!(
+            quorum_attestation_in_buffer(&committee, &pending),
+            Some(attestation.clone())
+        );
+
+        // A duplicate signer is not double-counted: signer 0 twice + signer 1
+        // = 2 distinct → under quorum → None.
+        let pending = vec![
+            sign_handoff_attestation(attestation.clone(), names[0], &consensus_kps[0]),
+            sign_handoff_attestation(attestation.clone(), names[0], &consensus_kps[0]),
+            sign_handoff_attestation(attestation.clone(), names[1], &consensus_kps[1]),
+        ];
+        assert!(quorum_attestation_in_buffer(&committee, &pending).is_none());
+
+        // Signatures split across two attestations (2 + 1): neither reaches
+        // quorum → None. The honest quorum must agree on ONE attestation.
+        let pending = vec![
+            sign_handoff_attestation(attestation.clone(), names[0], &consensus_kps[0]),
+            sign_handoff_attestation(attestation.clone(), names[1], &consensus_kps[1]),
+            sign_handoff_attestation(other.clone(), names[2], &consensus_kps[2]),
+        ];
+        assert!(quorum_attestation_in_buffer(&committee, &pending).is_none());
+    }
+
+    #[test]
     fn aggregator_certifies_only_after_quorum() {
         let (committee, names, consensus_kps, _provider) = build_quorum_test_fixture(4);
         let att = build_handoff_attestation(5, [0xDD; 32], vec![]).expect("build");

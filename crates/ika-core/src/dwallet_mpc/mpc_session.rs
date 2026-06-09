@@ -556,12 +556,17 @@ impl DWalletMPCManager {
 
         // Off-chain mpc_data freeze gate: both network DKG and
         // reconfiguration sessions wait until the per-epoch mpc_data
-        // input set is frozen. The freeze is triggered by the first
-        // stake-quorum of `EpochMpcDataReadySignal`s (see the
-        // docstring on `freeze_mpc_data_if_first`). Gating on the
-        // freeze itself is the single source of truth — once it has
-        // fired, the working set is pinned and DKG / reconfiguration
-        // can proceed.
+        // input set is frozen. This session request reaching the gate IS
+        // the "dkg or reconfig in progress" trigger — and it only gets
+        // here after passing the `requires_next_active_committee` gate
+        // above, i.e. mid-epoch once `V_{e+1}` is published — so
+        // `freeze_mpc_data_if_quorum` freezes now if a quorum of
+        // ready-signals has accrued. Freezing here (rather than at the
+        // first ready-signal quorum at epoch start) lets slower
+        // validators' mpc_data propagate first, so the frozen set is
+        // complete instead of locking sub-full and excluding them. A
+        // deferred request re-drains every cycle (see the drain loop
+        // above), so the freeze fires on the cycle quorum is reached.
         //
         // Bypassed entirely when the off-chain validator metadata
         // protocol feature is disabled — legacy chain-only behavior.
@@ -569,7 +574,10 @@ impl DWalletMPCManager {
             ProtocolData::NetworkEncryptionKeyDkg { .. }
             | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
                 !self.epoch_store.off_chain_validator_metadata_enabled()
-                    || self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                    || self
+                        .epoch_store
+                        .freeze_mpc_data_if_quorum()
+                        .unwrap_or(false)
             }
             _ => true,
         };
