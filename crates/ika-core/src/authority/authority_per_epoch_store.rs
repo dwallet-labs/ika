@@ -1258,7 +1258,7 @@ impl AuthorityEpochTables {
             }
             DWalletSignatureAlgorithm::EdDSA => &self.internal_presign_pool_eddsa,
             DWalletSignatureAlgorithm::Taproot => &self.internal_presign_pool_taproot,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 &self.internal_presign_pool_schnorrkel_substrate
             }
         }
@@ -1451,9 +1451,7 @@ impl AuthorityEpochTables {
             DWalletSignatureAlgorithm::ECDSASecp256r1 => &self.assigned_presigns_ecdsa_secp256r1,
             DWalletSignatureAlgorithm::EdDSA => &self.assigned_presigns_eddsa,
             DWalletSignatureAlgorithm::Taproot => &self.assigned_presigns_taproot,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                &self.assigned_presigns_schnorrkel_substrate
-            }
+            DWalletSignatureAlgorithm::Schnorrkel => &self.assigned_presigns_schnorrkel_substrate,
         }
     }
 

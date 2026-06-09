@@ -83,7 +83,7 @@ function verifySignature(
 				throw new Error('Message is required for EdDSA');
 			}
 			return ed25519.verify(signature, message, publicKey);
-		case SignatureAlgorithm.SchnorrkelSubstrate:
+		case SignatureAlgorithm.Schnorrkel:
 			return true; // Skip client-side verification for Schnorrkel
 		default:
 			throw new Error(`Unsupported signature algorithm: ${signatureAlgorithm}`);
@@ -554,11 +554,11 @@ describe('DWallet Transfer from Alice to Bob', () => {
 		});
 	});
 
-	describe('SchnorrkelSubstrate on RISTRETTO', () => {
+	describe('Schnorrkel on RISTRETTO', () => {
 		it('should transfer DWallet from Alice to Bob and Bob should sign with Merlin', async () => {
 			await testDWalletTransfer(
 				Curve.RISTRETTO,
-				SignatureAlgorithm.SchnorrkelSubstrate,
+				SignatureAlgorithm.Schnorrkel,
 				Hash.Merlin,
 				'schnorrkel-merlin',
 			);

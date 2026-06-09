@@ -102,7 +102,7 @@ function verifySignature(
 				throw new Error('Message is required for EdDSA');
 			}
 			return ed25519.verify(signature, message, publicKey);
-		case SignatureAlgorithm.SchnorrkelSubstrate:
+		case SignatureAlgorithm.Schnorrkel:
 			return true; // Skip client-side verification for Schnorrkel
 		default:
 			throw new Error(`Unsupported signature algorithm: ${signatureAlgorithm}`);
@@ -361,7 +361,7 @@ async function requestPresignForImportedKey(
 
 	if (
 		signatureAlgorithm === SignatureAlgorithm.EdDSA ||
-		signatureAlgorithm === SignatureAlgorithm.SchnorrkelSubstrate ||
+		signatureAlgorithm === SignatureAlgorithm.Schnorrkel ||
 		signatureAlgorithm === SignatureAlgorithm.Taproot
 	) {
 		const latestNetworkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
@@ -647,11 +647,11 @@ describe('Make Imported Key DWallet User Share Public and Sign', () => {
 		});
 	});
 
-	describe('SchnorrkelSubstrate on RISTRETTO', () => {
+	describe('Schnorrkel on RISTRETTO', () => {
 		it('should create imported key wallet, make share public, and sign with Merlin', async () => {
 			await testMakeImportedKeyPublicAndSign(
 				Curve.RISTRETTO,
-				SignatureAlgorithm.SchnorrkelSubstrate,
+				SignatureAlgorithm.Schnorrkel,
 				Hash.Merlin,
 				'schnorrkel-merlin',
 			);

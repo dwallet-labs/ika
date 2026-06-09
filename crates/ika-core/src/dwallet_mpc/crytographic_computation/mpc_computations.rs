@@ -38,7 +38,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol,
+    RistrettoSchnorrkelProtocol, Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol,
     Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
 };
 use ika_types::messages_dwallet_mpc::{Secp256k1ECDSAProtocol, SessionIdentifier};
@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
-use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
+use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
@@ -611,11 +611,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                public_input: PresignPublicInputByProtocol::Schnorrkel(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -677,11 +676,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::InternalPresign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                public_input: PresignPublicInputByProtocol::Schnorrkel(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -819,7 +817,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_sign::<RistrettoSchnorrkelProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -976,7 +974,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelProtocol>(
                     data.curve,
                     party_id,
                     access_structure,
@@ -1125,7 +1123,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_sign::<RistrettoSchnorrkelProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -1256,8 +1254,8 @@ fn parse_signature_from_sign_output(
 
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
+        DWalletSignatureAlgorithm::Schnorrkel => {
+            let signature: SchnorrkelSignature = bcs::from_bytes(&public_output_value)?;
 
             Ok(signature.to_bytes().to_vec())
         }

@@ -149,8 +149,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
@@ -170,8 +169,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
@@ -334,8 +332,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
@@ -355,8 +352,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {

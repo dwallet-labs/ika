@@ -785,7 +785,7 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_pool_minimum_size()
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -809,7 +809,7 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_consensus_round_delay()
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.network_owned_address_schnorrkel_substrate_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -833,7 +833,7 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_sessions_to_instantiate()
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -857,7 +857,7 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_pool_maximum_size()
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -881,7 +881,7 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_minimum_size(),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.internal_schnorrkel_substrate_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_minimum_size(),
@@ -902,7 +902,7 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_consensus_round_delay(),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.internal_schnorrkel_substrate_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -927,7 +927,7 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.internal_eddsa_presign_sessions_to_instantiate()
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
             DWalletSignatureAlgorithm::Taproot => {
@@ -951,7 +951,7 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_maximum_size(),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 self.internal_schnorrkel_substrate_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_maximum_size(),

@@ -23,7 +23,7 @@ const ALL_ALGORITHMS: &[(DWalletCurve, DWalletSignatureAlgorithm)] = &[
     (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA),
     (
         DWalletCurve::Ristretto,
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        DWalletSignatureAlgorithm::Schnorrkel,
     ),
     (DWalletCurve::Secp256k1, DWalletSignatureAlgorithm::Taproot),
 ];

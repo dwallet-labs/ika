@@ -87,7 +87,7 @@ function verifySignature(
 			}
 
 			return ed25519.verify(signature, message, publicKey);
-		case SignatureAlgorithm.SchnorrkelSubstrate:
+		case SignatureAlgorithm.Schnorrkel:
 			// Schnorrkel verification would require special handling
 			// For now, we'll skip client-side verification for Schnorrkel
 			return true;
@@ -404,12 +404,12 @@ describe('All Valid Curve-SignatureAlgorithm-Hash Combinations', () => {
 		});
 	});
 
-	// SchnorrkelSubstrate + RISTRETTO combination (1 test)
-	describe('SchnorrkelSubstrate on RISTRETTO', () => {
+	// Schnorrkel + RISTRETTO combination (1 test)
+	describe('Schnorrkel on RISTRETTO', () => {
 		it('should work with Merlin', async () => {
 			await testSignCombination(
 				Curve.RISTRETTO,
-				SignatureAlgorithm.SchnorrkelSubstrate,
+				SignatureAlgorithm.Schnorrkel,
 				Hash.Merlin,
 				'schnorrkel-merlin',
 			);
