@@ -32,7 +32,7 @@ host genuinely different binaries in one committee.
 | Test | Status | Notes |
 |------|--------|-------|
 | `tests/smoke.rs` (go/no-go) | **GREEN** | 4 out-of-process validators + notifier, external sui, network DKG, reach epoch 2 (~396 s). |
-| `tests/cross_binary.rs` | **GREEN** | Boot 4 on a v3-only binary, swap all to dev (v3..v4), capability vote advances **v3 → v4** (~722 s). |
+| `tests/cross_binary.rs` | **GREEN** | Boot 4 on a v3-only binary, swap all to dev (v3..v4), capability vote advances **v3 → v4** (~722 s). *Version-only swap — the OLD binary shares dev's crypto (MAX pinned to 3); the real v1.1.8 crypto-boundary swap is **not** exercised here, see [Key finding](#key-finding-v118--dev-is-not-a-naive-binary-swap).* |
 | `tests/workload.rs` | **GREEN** | Full user **DKG → Presign → Sign** lifecycle completes on-chain (~415 s). |
 
 All tests are opt-in (`RUN_UPGRADE_SMOKE` / `RUN_CROSS_BINARY` /
@@ -122,3 +122,10 @@ RUN_CROSS_BINARY=1 OLD_BIN=/path/to/ika-validator-max3 \
 
 Build binaries with `--no-default-features` to drop `enforce-minimum-cpu`
 (panics on hosts with < 16 cores).
+
+**Run one scenario at a time.** The harness binds the fixed Sui localnet ports
+`9000`/`9123` and `chdir`s the process during publish, so two scenarios (or a
+scenario alongside a stray `sui start`) collide. Each test has its own opt-in
+guard (`RUN_UPGRADE_SMOKE` / `RUN_CROSS_BINARY` / `RUN_WORKLOAD_TEST`) so a
+single guard can only launch one; do not set two at once, and free port `9000`
+before a run.

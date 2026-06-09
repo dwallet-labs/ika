@@ -287,6 +287,10 @@ impl WorkloadDriver {
         // when the sign succeeds. Sign is also not idempotent (consumes the
         // single-use presign cap), so it must not be retried. Instead, confirm
         // completion via the coordinator's on-chain user completed-session count.
+        // That count is the coordinator's *aggregate* user-session total, so
+        // reading its increment as this sign's completion is sound only because
+        // the harness drives a single dedicated user with one sign in flight; a
+        // second concurrent user session would let it false-positive.
         let completed_before = self.user_completed_count().await?;
         let sign = self
             .run_dwallet(&[

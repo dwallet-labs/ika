@@ -304,7 +304,17 @@ impl ClusterOfProcesses {
     pub async fn wait_for_epoch(&self, target: u64, timeout: Duration) -> Result<()> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let current = self.current_epoch().await.unwrap_or(0);
+            // A failed read is treated as "not there yet" so a transient RPC
+            // blip during boot/reconfig doesn't abort the wait — but log it, so
+            // a persistently-down RPC isn't silently misreported as epoch 0
+            // until the deadline.
+            let current = match self.current_epoch().await {
+                Ok(epoch) => epoch,
+                Err(e) => {
+                    tracing::debug!(error = %e, "wait_for_epoch: current_epoch read failed; retrying");
+                    0
+                }
+            };
             if current >= target {
                 tracing::info!(current, target, "wait_for_epoch reached target");
                 return Ok(());

@@ -8,6 +8,7 @@
 //! `branch:`, or a bare value the resolver classifies).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
@@ -69,12 +70,23 @@ async fn main() -> Result<()> {
 
     let scenario = match args.scenario.as_str() {
         "rolling_majority_then_minority" => {
+            // Mirror the proven-good config from `tests/cross_binary.rs`: long
+            // (10-min) epochs avoid the short-epoch sui_executor wedge, the
+            // timeout covers a full long epoch per `wait_for_epoch`, and the
+            // `set_buffer_stake(0)` before the upgrade-crossing wait drops the
+            // n=4 threshold from round-up-to-unanimity to a bare quorum so the
+            // v3 -> v4 vote can land even if one fresh capability is late to
+            // commit at the boundary tally. (Unlike the all-at-once test this is
+            // a staged rollout, so it is not exercised in CI — a manual probe.)
             Scenario::new(args.validators, repo, args.sui_binary, args.notifier_binary)
+                .with_epoch_duration_ms(600_000)
+                .with_epoch_timeout(Duration::from_secs(1800))
                 .start_all(old)
                 .wait_for_epoch(1)
                 .stop_and_swap(&[0, 1], new.clone())
                 .wait_for_epoch(2)
                 .stop_and_swap(&[2, 3], new)
+                .set_buffer_stake(0)
                 .wait_for_epoch(3)
                 .expect_protocol_version_at_least(4)
         }
