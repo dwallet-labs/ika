@@ -142,6 +142,25 @@ jobs:
         run: pnpm install
         working-directory: ./sdk/typescript
 
+      # `ika start` does NOT spawn Sui itself — it expects a localnet at
+      # 127.0.0.1:9000 (and the tests use the faucet at 127.0.0.1:9123).
+      - name: Start Sui localnet
+        run: |
+          RUST_LOG=error sui start --with-faucet --force-regenesis > sui.log 2>&1 &
+          echo $! > sui.pid
+          for i in $(seq 1 60); do
+            if ! kill -0 "$(cat sui.pid)" 2>/dev/null; then
+              echo "sui process died"; tail -40 sui.log; exit 1
+            fi
+            if curl -s -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"rpc.discover","params":[]}' >/dev/null 2>&1 \
+               && curl -s http://127.0.0.1:9123 >/dev/null 2>&1; then
+              echo "sui localnet + faucet up after $((i*5))s"; exit 0
+            fi
+            sleep 5
+          done
+          echo "sui localnet not reachable after 5 minutes"; tail -40 sui.log; exit 1
+
       - name: Start devnet
         env:
           EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
@@ -202,5 +221,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: devnet-log-${{ matrix.file }}
-          path: devnet.log
+          path: |
+            devnet.log
+            sui.log
           retention-days: 7
