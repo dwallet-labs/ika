@@ -38,8 +38,10 @@ pub enum OcsError {
     NotEndOfEpoch(CheckpointSequenceNumber),
     #[error(
         "proof chain broken at epoch {epoch}: the end-of-epoch checkpoint is pruned upstream so \
-         the next committee cannot be BLS-verified; re-anchor closer to the current epoch (or set \
-         allow_unverified_committee_fallback to accept degraded trust)"
+         the next committee cannot be BLS-verified; re-anchor closer to the current epoch (set \
+         sui_trusted_anchor AND clear the node's OCS committee tables — perpetual state otherwise \
+         wins over the configured anchor), or set allow_unverified_committee_fallback to accept \
+         degraded trust"
     )]
     ProofChainBroken { epoch: u64 },
     #[error(
