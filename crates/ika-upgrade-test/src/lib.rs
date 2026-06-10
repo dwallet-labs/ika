@@ -20,6 +20,7 @@
 
 pub mod binary;
 pub mod cluster;
+pub mod mpc_timings;
 pub mod process;
 pub mod scenario;
 pub mod sui;
@@ -38,7 +39,8 @@ pub use sui::SuiLocalnet;
 /// `force-close-epoch` admin endpoint — it is a dead constant in `admin.rs`).
 pub const DEFAULT_EPOCH_DURATION_MS: u64 = 60_000;
 
-/// Number of validators in a harness cluster. Capped at 4: msim/ika node-id
-/// accounting aside, the project convention is never to exceed four ika
-/// validators in a test cluster.
+/// Default number of validators in a harness cluster. Committee-churn
+/// scenarios grow past this via `JoinValidator` (the builder caps concurrent
+/// validators at 8 — beyond that a developer machine starves on the
+/// class-groups crypto and epochs stop advancing).
 pub const DEFAULT_NUM_VALIDATORS: usize = 4;

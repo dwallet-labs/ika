@@ -1,16 +1,36 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Cross-binary rolling upgrade: boot a 4-validator committee on an OLD binary
-//! that supports only protocol v3, swap every validator to the NEW binary
-//! (`dev`, supports v3..=v4), and assert the capability vote advances v3 -> v4.
-//! Genesis is v3 — the only version both binaries support. For `n=4` the
-//! effective threshold is all four (`2f+1` + buffer stake), so the vote can
-//! only reach v4 after the last v3-only node is replaced. Reaching v4
-//! demonstrates the whole rollout: mixed-binary committees process each other's
-//! consensus + MPC messages (wire compat), a validator restarts on a new binary
-//! against its old RocksDB (on-disk compat), and the vote fires at the right
-//! moment.
+//! Cross-binary rolling upgrade **with per-epoch committee churn**: boot a
+//! 4-validator committee on an OLD binary that supports only protocol v3,
+//! then across consecutive epochs (committee size 4 → 3 → 5 → 4):
+//!
+//! - remove a validator and swap every remaining one to the NEW binary
+//!   (`dev`, supports v3..=v4) — the capability vote advances v3 -> v4 at the
+//!   same boundary the committee shrinks to 3;
+//! - join two brand-new validators (full candidate → stake → activate flow,
+//!   their class-groups keys registered on-chain) — the v4 reshare encrypts
+//!   shares to a 5-member committee that includes parties which never held
+//!   the key;
+//! - remove one of the original validators — a final reshare from 5 back
+//!   down to 4 members.
+//!
+//! Every epoch boundary after the first is therefore a *real* reshare to a
+//! different party set, which is the strongest exercise of reconfiguration:
+//! mixed-binary committees process each other's consensus + MPC messages
+//! (wire compat), a validator restarts on a new binary against its old
+//! RocksDB (on-disk compat), the vote fires at the right moment, and
+//! committee membership changes land at every boundary.
+//!
+//! A full DKG → Presign → Sign dWallet lifecycle runs once on the OLD binary
+//! at v3 and once on the NEW binary at v4 (5-member committee), and the MPC
+//! duration metrics are snapshotted after each so the run ends with a rough
+//! per-protocol timing comparison (see `mpc_timings`; informational, flagged
+//! not asserted — wall-clock on a loaded developer machine is noisy).
+//!
+//! Genesis is v3 — the only version both binaries support, and the only
+//! supported path anyway (a v4 *genesis* DKG is rejected forever; the network
+//! must upgrade into v4).
 //!
 //! On the OLD binary: the literal `mainnet-v1.1.8` ika-node is **not** usable
 //! here — it links `class_groups` from `dwallet-labs/inkrypto` while `dev` links
@@ -24,7 +44,7 @@
 //! build of dev) — genuinely a different compiled binary, differing only in the
 //! protocol version it advertises, which is the realistic minimal upgrade.
 //!
-//! Opt-in (real binaries + long-running, ~12 min), via `RUN_CROSS_BINARY=1`:
+//! Opt-in (real binaries + long-running), via `RUN_CROSS_BINARY=1`:
 //!
 //! ```bash
 //! # OLD_BIN: a dev build with MAX_PROTOCOL_VERSION patched to 3
@@ -32,6 +52,7 @@
 //!   OLD_BIN=/path/to/ika-validator-max3 \
 //!   NEW_BIN=target/release/ika-validator \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
+//!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
 //!   cargo test --release -p ika-upgrade-test --test cross_binary -- --nocapture
 //! ```
@@ -48,9 +69,11 @@ fn bin_from_env(var: &str, default: &str) -> PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn cross_binary_rolling_upgrade_reaches_v4() {
+async fn cross_binary_rolling_upgrade_with_committee_churn() {
     if std::env::var("RUN_CROSS_BINARY").is_err() {
-        eprintln!("skipping: set RUN_CROSS_BINARY=1 (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/SUI_BIN)");
+        eprintln!(
+            "skipping: set RUN_CROSS_BINARY=1 (needs OLD_BIN/NEW_BIN/NOTIFIER_BIN/IKA_BIN/SUI_BIN)"
+        );
         return;
     }
     let _guard = telemetry_subscribers::TelemetryConfig::new()
@@ -61,6 +84,7 @@ async fn cross_binary_rolling_upgrade_reaches_v4() {
     let old = BinarySpec::Path(bin_from_env("OLD_BIN", "target/release/ika-node"));
     let new = BinarySpec::Path(bin_from_env("NEW_BIN", "target/release/ika-validator"));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
+    let ika_cli = bin_from_env("IKA_BIN", "target/release/ika");
     let sui = bin_from_env("SUI_BIN", "sui");
     let repo = std::env::current_dir()
         .expect("cwd")
@@ -75,35 +99,70 @@ async fn cross_binary_rolling_upgrade_reaches_v4() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
-    // Long epochs: short, rapid transitions wedge the notifier's sui_executor
-    // on gas-coin version contention (known epoch-13 wedge), and a binary swap
-    // must finish before the mid-epoch reconfiguration MPC window. Swap all four
-    // at once so the run crosses exactly one reconfiguration: at the end of the
-    // all-dev epoch the capability vote (needs all 4 for n=4) advances v3 -> v4.
+    // 5-minute epochs: long enough that a swap-all + joiner registrations +
+    // a dWallet lifecycle each fit comfortably before their epoch's
+    // mid-epoch reconfiguration MPC window, short enough that the 5-epoch
+    // run stays tractable. (The notifier stale-gas wedge that once forced
+    // 10-minute epochs is fixed on this branch; the 3-minute workload test
+    // is the floor evidence.)
     Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
-        .with_epoch_duration_ms(600_000)
-        // wait_for_epoch(2) spans two 600s epochs from genesis; give each wait
-        // generous margin over the genesis-bootstrap + epoch-duration budget.
-        .with_epoch_timeout(Duration::from_secs(1800))
+        .with_epoch_duration_ms(300_000)
+        .with_epoch_timeout(Duration::from_secs(1200))
+        // The committee dips to 3 after the first removal; the protocol
+        // default min_validator_count = 4 would reject it at genesis.
+        .with_min_validator_count(3)
+        .with_ika_cli(ika_cli)
         .start_all(old)
         // The genesis network DKG runs *during* epoch 1; the epoch cannot
-        // advance to 2 until it completes (reconfiguration into epoch 2 reshares
-        // that key). Waiting for epoch 2 therefore guarantees v1.1.8 finished the
-        // genesis DKG before we swap — so the dev binaries inherit a completed
-        // key and exercise a cross-crypto *reshare*, not an interrupted DKG.
+        // advance to 2 until it completes (reconfiguration into epoch 2
+        // reshares that key). Waiting for epoch 2 therefore guarantees the
+        // OLD binary finished the genesis DKG — the NEW binaries will inherit
+        // a completed key and exercise a *reshare*, not an interrupted DKG.
         .wait_for_epoch(2)
-        .stop_and_swap(&[0, 1, 2, 3], new)
-        // With n=4 the default 50% buffer stake rounds up to requiring all four
-        // votes; the rolling swap can leave one validator's fresh capability
-        // uncommitted at the epoch-boundary tally, so drop the buffer to a bare
-        // quorum (the realistic behavior on larger committees).
+        // dWallet lifecycle on the OLD binary at v3 — the timing baseline.
+        .run_workload("old-binary-v3")
+        .record_mpc_timings("old-binary-v3")
+        // Validator 3 leaves the committee at the epoch-3 boundary...
+        .remove_validator(3)
+        // ...and everyone (including 3, which is still a committee member
+        // until the boundary) swaps to the NEW binary.
+        .stop_and_swap(&[0, 1, 2, 3], new.clone())
+        // With n=4 the default 50% buffer stake rounds up to requiring all
+        // four votes; the swap can leave one validator's fresh capability
+        // uncommitted at the epoch-boundary tally, so drop the buffer to a
+        // bare quorum (the realistic behavior on larger committees).
         .set_buffer_stake(0)
+        // Boundary 2->3: protocol v3 -> v4 AND committee 4 -> 3 in one
+        // reconfiguration.
         .wait_for_epoch(3)
         .expect_protocol_version_at_least(4)
+        .expect_committee_size(3)
+        // Out of the committee since the boundary; now safe to stop.
+        .stop_validator(3)
+        // Two brand-new validators join: candidate -> stake -> activate, node
+        // spawned on the NEW binary. Active at the epoch-4 boundary — the
+        // reshare into epoch 4 must encrypt shares to a 5-member committee
+        // including two parties that never held the key.
+        .join_validator(new.clone())
+        .join_validator(new)
+        .wait_for_epoch(4)
+        .expect_committee_size(5)
+        // dWallet lifecycle on the NEW binary at v4 with the churned
+        // committee, then the comparison snapshot.
+        .run_workload("new-binary-v4")
+        .record_mpc_timings("new-binary-v4")
+        // One more boundary with churn: an original validator leaves, the
+        // committee reshapes 5 -> 4 (both joiners stay).
+        .remove_validator(0)
+        .wait_for_epoch(5)
+        .expect_committee_size(4)
+        .stop_validator(0)
         .run()
         .await
-        .expect("cross-binary rolling upgrade reaches protocol v4");
+        .expect("cross-binary rolling upgrade with committee churn");
 
-    tracing::info!("cross-binary PASSED: rolling binary upgrade reached protocol v4");
+    tracing::info!(
+        "cross-binary PASSED: v3 -> v4 with committee churn 4 -> 3 -> 5 -> 4 and timing report"
+    );
 }

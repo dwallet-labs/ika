@@ -31,6 +31,9 @@ pub struct ValidatorProcess {
     data_dir: PathBuf,
     /// `127.0.0.1:<admin_interface_port>` from the node config.
     admin_addr: SocketAddr,
+    /// Port of the node's Prometheus metrics server (the node binds it on
+    /// all interfaces; scrape via `127.0.0.1:<port>/metrics`).
+    metrics_port: u16,
     /// Per-validator log file (child stdout+stderr).
     log_path: PathBuf,
     child: Option<Child>,
@@ -44,6 +47,7 @@ impl ValidatorProcess {
         config_path: PathBuf,
         data_dir: PathBuf,
         admin_addr: SocketAddr,
+        metrics_port: u16,
         log_path: PathBuf,
     ) -> Self {
         Self {
@@ -52,10 +56,15 @@ impl ValidatorProcess {
             config_path,
             data_dir,
             admin_addr,
+            metrics_port,
             log_path,
             child: None,
             http: reqwest::Client::new(),
         }
+    }
+
+    pub fn metrics_port(&self) -> u16 {
+        self.metrics_port
     }
 
     /// Spawn the process and block until its admin server answers, i.e. the

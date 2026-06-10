@@ -324,21 +324,20 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         if let Some(protocol_version) = self.protocol_version {
             initiation_parameters.protocol_version = protocol_version.as_u64();
         }
-        let (
-            ika_package_id,
-            ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id,
-            ika_system_package_id,
-            ika_system_object_id,
-            ika_dwallet_coordinator_object_id,
-            publisher_keypair,
-        ) = crate::sui_client::init_ika_on_sui(
+        let bootstrap = crate::sui_client::init_ika_on_sui(
             &validator_initialization_configs,
             self.sui_fullnode_rpc_url.to_string(),
             self.sui_faucet_url.to_string(),
             initiation_parameters,
         )
         .await?;
+        let ika_package_id = bootstrap.packages.ika_package_id;
+        let ika_common_package_id = bootstrap.packages.ika_common_package_id;
+        let ika_dwallet_2pc_mpc_package_id = bootstrap.packages.ika_dwallet_2pc_mpc_package_id;
+        let ika_system_package_id = bootstrap.packages.ika_system_package_id;
+        let ika_system_object_id = bootstrap.system.ika_system_object_id;
+        let ika_dwallet_coordinator_object_id = bootstrap.system.ika_dwallet_coordinator_object_id;
+        let publisher_keypair = bootstrap.publisher_keypair;
 
         let validator_configs = validator_initialization_configs
             .iter()

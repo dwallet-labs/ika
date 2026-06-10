@@ -93,5 +93,5 @@ async fn main() -> Result<()> {
         other => anyhow::bail!("unknown scenario: {other}"),
     };
 
-    scenario.run().await
+    scenario.run().await.map(|_report| ())
 }

@@ -23,7 +23,10 @@ use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
-use ika_swarm_config::sui_client::init_ika_on_sui;
+use ika_swarm_config::sui_client::{
+    InitializedIkaSystem, PublishedIkaPackages, fund_address_from_faucet, init_ika_on_sui,
+    request_add_validator, request_add_validator_candidate, request_remove_validator, stake_ika,
+};
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
@@ -31,6 +34,9 @@ use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::SystemInner;
 use rand::rngs::OsRng;
 use sui_sdk::SuiClient as SuiSdkClient;
+use sui_sdk::SuiClientBuilder;
+use sui_sdk::wallet_context::WalletContext;
+use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SuiKeyPair;
 
 use crate::process::ValidatorProcess;
@@ -50,8 +56,33 @@ pub struct ClusterOfProcesses {
     /// The genesis publisher's Sui key — funded with SUI + the initial IKA
     /// supply. The workload driver reuses it as the user paying session fees.
     publisher_keypair: SuiKeyPair,
+    /// On-chain registration of each validator slot, aligned with
+    /// `validators` by index. Joiners append; removal leaves the slot in
+    /// place (the cap stays valid, the process is just stopped).
+    committee: Vec<ValidatorSlot>,
+    /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
+    packages: PublishedIkaPackages,
+    /// Bootstrap system state (`init_system_shared_version` is needed by
+    /// every post-init system call).
+    system: InitializedIkaSystem,
+    /// The bootstrap wallet — publisher + all validator account keys
+    /// imported, all addresses faucet-funded. Join/leave flows sign their
+    /// transactions through it.
+    wallet: WalletContext,
+    publisher_address: SuiAddress,
+    /// Root of the per-validator data dirs (joiners allocate
+    /// `validator-{n}` under it).
+    base: PathBuf,
     /// Kept alive so the persistent data dirs outlive the cluster.
     _base_dir: BaseDir,
+}
+
+/// On-chain identity of one validator slot.
+#[derive(Clone, Debug)]
+pub struct ValidatorSlot {
+    pub address: SuiAddress,
+    pub validator_id: ObjectID,
+    pub validator_cap_id: ObjectID,
 }
 
 /// Either a caller-provided persistent dir or a harness-owned temp dir.
@@ -73,6 +104,9 @@ pub struct ClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: u64,
     genesis_protocol_version: Option<ProtocolVersion>,
+    /// Genesis `min_validator_count`. The protocol default is 4; committee-
+    /// churn scenarios that shrink below that set it lower at genesis.
+    min_validator_count: Option<u64>,
     /// Resolved `ika-validator` binary every validator starts on.
     validator_binary: PathBuf,
     /// Resolved notifier binary (auto-detecting `ika-node` or `ika-notifier`).
@@ -88,6 +122,7 @@ impl ClusterBuilder {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: DEFAULT_EPOCH_DURATION_MS,
             genesis_protocol_version: None,
+            min_validator_count: None,
             validator_binary,
             notifier_binary,
             sui_binary,
@@ -96,8 +131,17 @@ impl ClusterBuilder {
     }
 
     pub fn with_num_validators(mut self, n: usize) -> Self {
-        assert!(n <= 4, "harness caps validators at 4");
+        // Every validator runs full class-groups crypto; past ~8 concurrent
+        // processes a developer machine starves and epochs stop advancing.
+        assert!(n <= 8, "harness caps validators at 8");
         self.num_validators = n;
+        self
+    }
+
+    /// Genesis `min_validator_count` override (protocol default is 4).
+    /// Required by scenarios that shrink the committee below the default.
+    pub fn with_min_validator_count(mut self, n: u64) -> Self {
+        self.min_validator_count = Some(n);
         self
     }
 
@@ -158,6 +202,9 @@ impl ClusterBuilder {
         if let Some(v) = self.genesis_protocol_version {
             initiation_parameters.protocol_version = v.as_u64();
         }
+        if let Some(n) = self.min_validator_count {
+            initiation_parameters.min_validator_count = n;
+        }
         // `sui move build`/publish writes `Pub.localnet.toml` into the cwd, keyed
         // to the chain id. Across runs a fresh `--force-regenesis` chain rejects
         // a stale pubfile. `init_ika_on_sui` (unlike `IkaTestClusterBuilder`)
@@ -176,15 +223,27 @@ impl ClusterBuilder {
         if let Some(cwd) = &original_cwd {
             let _ = std::env::set_current_dir(cwd);
         }
-        let (
-            ika_package_id,
-            ika_common_package_id,
-            ika_dwallet_2pc_mpc_package_id,
-            ika_system_package_id,
-            ika_system_object_id,
-            ika_dwallet_coordinator_object_id,
-            publisher_keypair,
-        ) = init_result.context("init_ika_on_sui")?;
+        let bootstrap = init_result.context("init_ika_on_sui")?;
+        let ika_package_id = bootstrap.packages.ika_package_id;
+        let ika_common_package_id = bootstrap.packages.ika_common_package_id;
+        let ika_dwallet_2pc_mpc_package_id = bootstrap.packages.ika_dwallet_2pc_mpc_package_id;
+        let ika_system_package_id = bootstrap.packages.ika_system_package_id;
+        let ika_system_object_id = bootstrap.system.ika_system_object_id;
+        let ika_dwallet_coordinator_object_id = bootstrap.system.ika_dwallet_coordinator_object_id;
+        let publisher_keypair = bootstrap.publisher_keypair;
+
+        // On-chain identity per validator slot, aligned with the process vec
+        // built below (bootstrap registration preserves config order).
+        let committee: Vec<ValidatorSlot> = validator_init_configs
+            .iter()
+            .zip(bootstrap.system.validator_ids.iter())
+            .zip(bootstrap.system.validator_cap_ids.iter())
+            .map(|((init, validator_id), validator_cap_id)| ValidatorSlot {
+                address: (&init.account_key_pair.public()).into(),
+                validator_id: *validator_id,
+                validator_cap_id: *validator_cap_id,
+            })
+            .collect();
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
         let mut validators = Vec::with_capacity(self.num_validators);
@@ -266,9 +325,61 @@ impl ClusterBuilder {
             ika_client,
             rpc_url,
             publisher_keypair,
+            committee,
+            packages: bootstrap.packages,
+            system: bootstrap.system,
+            wallet: bootstrap.wallet_context,
+            publisher_address: bootstrap.publisher_address,
+            base,
             _base_dir: base_dir,
         })
     }
+}
+
+/// Retry a transaction-submitting expression on transient Sui
+/// object-version contention.
+///
+/// The notifier process signs advance-epoch transactions with the same
+/// publisher key this harness uses for staking, so the publisher's owned
+/// objects (gas coins, the IKA supply coin) advance version under
+/// concurrent submission. A tx built against a just-superseded version is
+/// rejected by Sui as "non-retriable" for that exact version even though
+/// rebuilding against the current version succeeds, so each retry
+/// re-evaluates `$submit`, which re-resolves its object refs. Same
+/// pattern as `ika-test-cluster`'s macro of the same name.
+macro_rules! retry_on_object_contention {
+    ($label:expr, $submit:expr) => {{
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut out = None;
+        for attempt in 0..10 {
+            match $submit {
+                Ok(value) => {
+                    out = Some(value);
+                    break;
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let is_retriable_contention = msg.contains("unavailable for consumption")
+                        || msg.contains("Transaction needs to be rebuilt")
+                        || msg.contains("already locked by a different transaction");
+                    tracing::warn!(
+                        attempt,
+                        is_retriable_contention,
+                        "{} tx failed: {e}",
+                        $label
+                    );
+                    if !is_retriable_contention {
+                        return Err(anyhow::anyhow!("{} tx failed: {e}", $label));
+                    }
+                    last_err = Some(anyhow::anyhow!("{} tx failed: {e}", $label));
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+        out.ok_or_else(|| {
+            last_err.unwrap_or_else(|| anyhow::anyhow!("{}: out of retries", $label))
+        })?
+    }};
 }
 
 impl ClusterOfProcesses {
@@ -347,6 +458,149 @@ impl ClusterOfProcesses {
     pub fn ika_client(&self) -> &IkaClient<SuiSdkClient> {
         &self.ika_client
     }
+
+    /// Number of members in the on-chain active committee for the current
+    /// epoch. Committee churn lands at epoch boundaries, so callers assert
+    /// this right after a `wait_for_epoch`.
+    pub async fn active_committee_size(&self) -> Result<usize> {
+        let (_, SystemInner::V1(inner)) = self
+            .ika_client
+            .get_system_inner()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_system_inner: {e}"))?;
+        Ok(inner.validator_set.active_committee.members.len())
+    }
+
+    /// Run the full join flow for a brand-new validator: generate keys,
+    /// faucet-fund its address, register it as a candidate (this puts its
+    /// class-groups MPC data on chain), stake the minimum joining stake from
+    /// the publisher's IKA supply, request activation, then spawn its node
+    /// process on `binary`. The validator enters the active committee at the
+    /// next epoch boundary — callers `wait_for_epoch` after.
+    ///
+    /// Returns the new validator's index in `validators`.
+    pub async fn add_joiner_validator(&mut self, binary: PathBuf) -> Result<usize> {
+        let index = self.validators.len();
+        let mut rng = OsRng;
+        let mut init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
+        init.name = Some(format!("validator-{index}"));
+        let joiner_address: SuiAddress = (&init.account_key_pair.public()).into();
+
+        // The wallet must hold the joiner's account key to sign its
+        // candidate/activation transactions, and the address needs SUI gas.
+        self.wallet
+            .add_account(init.name.clone(), init.account_key_pair.copy())
+            .await;
+        fund_address_from_faucet(joiner_address, self.sui.faucet_url().to_string())
+            .await
+            .context("faucet-fund joiner")?;
+
+        let metadata = init.to_validator_info();
+        let (validator_id, validator_cap_id) = retry_on_object_contention!(
+            "request_add_validator_candidate",
+            request_add_validator_candidate(
+                joiner_address,
+                &mut self.wallet,
+                &metadata,
+                self.packages.ika_system_package_id,
+                self.packages.ika_common_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+            )
+            .await
+        );
+
+        retry_on_object_contention!(
+            "stake_ika",
+            stake_ika(
+                self.publisher_address,
+                &mut self.wallet,
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                self.packages.ika_supply_id,
+                vec![validator_id],
+            )
+            .await
+        );
+
+        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        retry_on_object_contention!(
+            "request_add_validator",
+            request_add_validator(
+                joiner_address,
+                &mut self.wallet,
+                client.clone(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                validator_cap_id,
+            )
+            .await
+        );
+        tracing::info!(index, %joiner_address, %validator_id, "joiner registered on chain");
+
+        let data_dir = self.base.join(format!("validator-{index}"));
+        std::fs::create_dir_all(&data_dir)?;
+        let node_config = ValidatorConfigBuilder::new()
+            .with_config_directory(data_dir.clone())
+            .build(
+                &init,
+                self.rpc_url.clone(),
+                self.packages.ika_package_id,
+                self.packages.ika_common_package_id,
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.ika_dwallet_coordinator_object_id,
+            );
+        let proc = spawn_node(index, binary, &node_config, data_dir).await?;
+        self.validators.push(proc);
+        self.committee.push(ValidatorSlot {
+            address: joiner_address,
+            validator_id,
+            validator_cap_id,
+        });
+        Ok(index)
+    }
+
+    /// Submit `system::request_remove_validator` for the validator at
+    /// `index`. The validator stays in the active set (and its process keeps
+    /// running) until the next epoch boundary; pair with `wait_for_epoch`
+    /// then [`Self::stop_validator`] to actually shrink the running cluster.
+    pub async fn remove_validator(&mut self, index: usize) -> Result<()> {
+        let slot = self
+            .committee
+            .get(index)
+            .with_context(|| format!("validator index {index} out of range"))?
+            .clone();
+        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        retry_on_object_contention!(
+            "request_remove_validator",
+            request_remove_validator(
+                slot.address,
+                &mut self.wallet,
+                client.clone(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                slot.validator_cap_id,
+            )
+            .await
+        );
+        tracing::info!(index, address = %slot.address, "validator removal requested on chain");
+        Ok(())
+    }
+
+    /// Stop the validator process at `index` (after it has left the
+    /// committee — stopping a current committee member stalls consensus).
+    pub async fn stop_validator(&mut self, index: usize) -> Result<()> {
+        self.validators
+            .get_mut(index)
+            .with_context(|| format!("validator index {index} out of range"))?
+            .stop()
+            .await
+    }
 }
 
 /// Serialize a `NodeConfig` to YAML in its data dir and spawn it as a child.
@@ -368,8 +622,15 @@ async fn spawn_node(
         node_config.admin_interface_port,
     );
     let log_path = data_dir.join("node.log");
-    let mut proc =
-        ValidatorProcess::new(index, binary, config_path, data_dir, admin_addr, log_path);
+    let mut proc = ValidatorProcess::new(
+        index,
+        binary,
+        config_path,
+        data_dir,
+        admin_addr,
+        node_config.metrics_address.port(),
+        log_path,
+    );
     proc.start().await?;
     Ok(proc)
 }

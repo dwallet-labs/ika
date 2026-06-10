@@ -25,6 +25,8 @@ use ika_protocol_config::ProtocolVersion;
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
 use crate::cluster::{ClusterBuilder, ClusterOfProcesses};
+use crate::mpc_timings::{self, TimingSnapshot};
+use crate::workload::WorkloadDriver;
 
 /// One ordered step in a scenario.
 #[derive(Clone, Debug)]
@@ -42,6 +44,42 @@ pub enum Step {
         buffer_bps: u64,
     },
     ExpectProtocolVersionAtLeast(u64),
+    /// Register a brand-new validator on chain (candidate → stake → join) and
+    /// spawn its process on the given binary. It enters the active committee
+    /// at the next epoch boundary.
+    JoinValidator(BinarySpec),
+    /// Submit on-chain removal for the validator at `index`. It leaves the
+    /// committee at the next epoch boundary; its process keeps running until
+    /// an explicit `StopValidator`.
+    RemoveValidator {
+        index: usize,
+    },
+    /// Stop the process of a validator that already left the committee.
+    StopValidator {
+        index: usize,
+    },
+    /// Assert the on-chain active committee has exactly this many members.
+    ExpectCommitteeSize(usize),
+    /// Scrape every running validator's MPC duration metrics into a labeled
+    /// snapshot, printed immediately and compared against the other
+    /// snapshots at the end of the run.
+    RecordMpcTimings {
+        label: String,
+    },
+    /// Drive a full DKG → Presign → Sign dWallet lifecycle through the `ika`
+    /// CLI (requires `with_ika_cli`). Generates real dwallet MPC sessions so
+    /// a following `RecordMpcTimings` has per-protocol numbers to report.
+    RunWorkload {
+        label: String,
+    },
+}
+
+/// What a scenario run produced beyond pass/fail: the labeled MPC timing
+/// snapshots, in recording order. The comparison between consecutive
+/// snapshots is printed by `run` itself; tests can also inspect the raw
+/// numbers here.
+pub struct ScenarioReport {
+    pub timing_snapshots: Vec<TimingSnapshot>,
 }
 
 /// A scenario: a validator count, the binaries it can resolve, and an ordered
@@ -61,6 +99,10 @@ pub struct Scenario {
     /// Persistent data dir for the cluster. When `None` a temp dir is used
     /// (cleaned on drop — set this to keep node logs after a failure).
     pub base_dir: Option<PathBuf>,
+    /// Genesis `min_validator_count` override (protocol default 4).
+    pub min_validator_count: Option<u64>,
+    /// Path to the `ika` CLI binary; required by `RunWorkload` steps.
+    pub ika_cli: Option<PathBuf>,
 }
 
 impl Scenario {
@@ -79,7 +121,15 @@ impl Scenario {
             epoch_timeout: Duration::from_secs(600),
             epoch_duration_ms: DEFAULT_EPOCH_DURATION_MS,
             base_dir: None,
+            min_validator_count: None,
+            ika_cli: None,
         }
+    }
+
+    /// Path to the `ika` CLI binary; required by `run_workload` steps.
+    pub fn with_ika_cli(mut self, path: PathBuf) -> Self {
+        self.ika_cli = Some(path);
+        self
     }
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
@@ -128,12 +178,54 @@ impl Scenario {
         self
     }
 
+    pub fn join_validator(mut self, spec: BinarySpec) -> Self {
+        self.steps.push(Step::JoinValidator(spec));
+        self
+    }
+
+    pub fn remove_validator(mut self, index: usize) -> Self {
+        self.steps.push(Step::RemoveValidator { index });
+        self
+    }
+
+    pub fn stop_validator(mut self, index: usize) -> Self {
+        self.steps.push(Step::StopValidator { index });
+        self
+    }
+
+    pub fn expect_committee_size(mut self, n: usize) -> Self {
+        self.steps.push(Step::ExpectCommitteeSize(n));
+        self
+    }
+
+    pub fn record_mpc_timings(mut self, label: impl Into<String>) -> Self {
+        self.steps.push(Step::RecordMpcTimings {
+            label: label.into(),
+        });
+        self
+    }
+
+    pub fn run_workload(mut self, label: impl Into<String>) -> Self {
+        self.steps.push(Step::RunWorkload {
+            label: label.into(),
+        });
+        self
+    }
+
+    /// Genesis `min_validator_count` override, for scenarios that shrink the
+    /// committee below the protocol default of 4.
+    pub fn with_min_validator_count(mut self, n: u64) -> Self {
+        self.min_validator_count = Some(n);
+        self
+    }
+
     /// Resolve binaries, bring up the cluster, and execute the steps in order.
     /// Binary resolution (a `cargo build` for git refs) runs on a blocking
     /// thread so it doesn't stall the async runtime.
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<ScenarioReport> {
         let resolver = BinaryResolver::new(self.repo.clone(), BinaryResolver::default_cache_root());
         let mut cluster: Option<ClusterOfProcesses> = None;
+        let mut timing_snapshots: Vec<TimingSnapshot> = Vec::new();
 
         for step in &self.steps {
             match step {
@@ -150,6 +242,9 @@ impl Scenario {
                     .with_genesis_protocol_version(ProtocolVersion::MIN);
                     if let Some(dir) = &self.base_dir {
                         builder = builder.with_base_dir(dir.clone());
+                    }
+                    if let Some(n) = self.min_validator_count {
+                        builder = builder.with_min_validator_count(n);
                     }
                     let built = builder.build().await.context("bring up cluster")?;
                     cluster = Some(built);
@@ -197,9 +292,68 @@ impl Scenario {
                         "protocol version assertion passed"
                     );
                 }
+                Step::JoinValidator(spec) => {
+                    let binary = resolve(&resolver, spec).await?;
+                    let c = cluster.as_mut().context("JoinValidator before StartAll")?;
+                    let index = c.add_joiner_validator(binary).await?;
+                    tracing::info!(index, spec = %spec.label(), "joiner validator spawned");
+                }
+                Step::RemoveValidator { index } => {
+                    let c = cluster
+                        .as_mut()
+                        .context("RemoveValidator before StartAll")?;
+                    c.remove_validator(*index).await?;
+                }
+                Step::StopValidator { index } => {
+                    let c = cluster.as_mut().context("StopValidator before StartAll")?;
+                    c.stop_validator(*index).await?;
+                }
+                Step::ExpectCommitteeSize(expected) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectCommitteeSize before StartAll")?;
+                    let got = c.active_committee_size().await?;
+                    if got != *expected {
+                        bail!("active committee size {got} != expected {expected}");
+                    }
+                    tracing::info!(got, "committee size assertion passed");
+                }
+                Step::RecordMpcTimings { label } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("RecordMpcTimings before StartAll")?;
+                    let snapshot = mpc_timings::record_snapshot(c, label.clone()).await?;
+                    timing_snapshots.push(snapshot);
+                }
+                Step::RunWorkload { label } => {
+                    let c = cluster.as_ref().context("RunWorkload before StartAll")?;
+                    let ika_cli = self
+                        .ika_cli
+                        .as_ref()
+                        .context("RunWorkload requires with_ika_cli")?;
+                    // A fresh driver per step: its own user key + funding, so
+                    // workloads in different epochs never contend on objects.
+                    let driver = WorkloadDriver::new(
+                        ika_cli.clone(),
+                        c.rpc_url().to_string(),
+                        c.faucet_url().to_string(),
+                        c.network_config().clone(),
+                        c.publisher_keypair().copy(),
+                    )
+                    .await
+                    .context("build workload driver")?;
+                    let outcome = driver
+                        .run_dwallet_lifecycle()
+                        .await
+                        .with_context(|| format!("workload [{label}]"))?;
+                    tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
+                }
             }
         }
-        Ok(())
+        if timing_snapshots.len() >= 2 {
+            println!("{}", mpc_timings::render_comparison(&timing_snapshots));
+        }
+        Ok(ScenarioReport { timing_snapshots })
     }
 }
 

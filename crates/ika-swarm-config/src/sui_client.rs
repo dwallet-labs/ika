@@ -113,6 +113,38 @@ pub struct InitializedIkaSystem {
     pub validator_cap_ids: Vec<ObjectID>,
 }
 
+/// Everything [`init_ika_on_sui`] set up. The full package/system state and the
+/// live wallet (publisher + all validator account keys imported, all addresses
+/// funded) are kept so post-bootstrap flows — validator join/leave, extra
+/// staking, protocol-cap operations — can compose new transactions without
+/// re-deriving any of it.
+pub struct IkaSuiBootstrap {
+    pub packages: PublishedIkaPackages,
+    pub system: InitializedIkaSystem,
+    pub publisher_address: SuiAddress,
+    pub publisher_keypair: SuiKeyPair,
+    pub wallet_context: WalletContext,
+}
+
+/// Fund `address` with SUI gas from the localnet faucet, tolerating the known
+/// faucet-API quirk where a successful drip surfaces as a "200 OK" error (the
+/// same workaround `init_ika_on_sui` applies to its bulk funding).
+pub async fn fund_address_from_faucet(
+    address: SuiAddress,
+    sui_faucet_url: String,
+) -> Result<(), anyhow::Error> {
+    request_tokens_from_faucet(address, sui_faucet_url)
+        .await
+        .map(|_| ())
+        .or_else(|e| {
+            if e.to_string().contains("200 OK") {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+}
+
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
 
@@ -165,18 +197,7 @@ pub async fn init_ika_on_sui(
     sui_fullnode_rpc_url: String,
     sui_faucet_url: String,
     initiation_parameters: InitiationParameters,
-) -> Result<
-    (
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        SuiKeyPair,
-    ),
-    anyhow::Error,
-> {
+) -> Result<IkaSuiBootstrap, anyhow::Error> {
     //let config_dir = ika_config_dir()?;
     let config_dir = tempfile::tempdir()?.keep();
     let config_path = config_dir.join(SUI_CLIENT_CONFIG);
@@ -286,15 +307,13 @@ pub async fn init_ika_on_sui(
     // library callers (tests) don't emit stray files.
     std::env::set_current_dir(contract_paths.current_working_dir)?;
 
-    Ok((
-        packages.ika_package_id,
-        packages.ika_common_package_id,
-        packages.ika_dwallet_2pc_mpc_package_id,
-        packages.ika_system_package_id,
-        system.ika_system_object_id,
-        system.ika_dwallet_coordinator_object_id,
+    Ok(IkaSuiBootstrap {
+        packages,
+        system,
+        publisher_address,
         publisher_keypair,
-    ))
+        wallet_context: context,
+    })
 }
 
 /// Publish the four Ika Move packages and mint the initial IKA supply.
@@ -1306,8 +1325,8 @@ pub async fn request_add_validator(
 }
 
 /// Sign and submit `system::request_remove_validator` as `validator_address`.
-/// Mirrors [`request_add_validator`] — explicit sender + explicit shared-version
-/// + explicit cap so callers can drive removal without touching the active
+/// Mirrors [`request_add_validator`] — explicit sender, explicit shared-version,
+/// and explicit cap so callers can drive removal without touching the active
 /// wallet address. The validator stays in the active set until the next epoch
 /// boundary; the on-chain logic moves it out at the next reconfiguration.
 pub async fn request_remove_validator(
