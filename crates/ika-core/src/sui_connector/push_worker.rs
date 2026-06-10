@@ -300,6 +300,16 @@ impl IkaCheckpointPusher {
             peer_count = peer_ids.len(),
             "fanning out PushVerifiedObjects"
         );
+        // PushVerifiedObjectsRequest is not Clone (proofs aren't Clone), so
+        // each peer gets a fresh value decoded from these bytes. Encode once
+        // up front; the per-peer decode is the cheap half of the round-trip.
+        let push_bytes = match bcs::to_bytes(&push) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!(seq, error = ?e, "failed to encode push payload; skipping fanout");
+                return;
+            }
+        };
         for peer_id in peer_ids {
             if self.is_known_no_handler(&peer_id) {
                 self.metrics.pusher_fanout_skipped_no_handler_total.inc();
@@ -309,15 +319,12 @@ impl IkaCheckpointPusher {
                 continue;
             };
             let mut client = SuiStateMirrorClient::new(peer);
-            // PushVerifiedObjectsRequest is not Clone (proofs aren't Clone),
-            // so re-encode per peer. Cheap relative to the round-trip.
-            let req_value = match bcs::to_bytes(&push)
-                .and_then(|bytes| bcs::from_bytes::<PushVerifiedObjectsRequest>(&bytes))
-            {
+            let req_value = match bcs::from_bytes::<PushVerifiedObjectsRequest>(&push_bytes) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!(seq, error = ?e, "failed to clone push payload");
-                    return;
+                    // One peer's clone failing must not starve the rest.
+                    warn!(seq, error = ?e, "failed to decode push payload clone");
+                    continue;
                 }
             };
             let req = Request::new(req_value).with_timeout(Duration::from_secs(30));
