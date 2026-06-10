@@ -23,10 +23,10 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "ika localnet epoch duration in ms"
+        description: "ika localnet epoch duration in ms (15 min default: epoch phases run 3-6x slower on the runner pods than on a workstation, and too-short epochs leave no capacity between reconfigurations for user sessions)"
         type: string
         required: false
-        default: "300000"
+        default: "900000"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
