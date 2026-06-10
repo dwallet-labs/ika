@@ -1,11 +1,29 @@
 name: Integration Tests CI
 
+# Manually triggered. Runs the Rust dwallet-MPC integration tests (real
+# class-groups crypto, in-process consensus harness) on the `ika-k8s-large`
+# self-hosted runner. `scope: all` widens to the entire workspace test suite.
+
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "Which Rust tests to run"
+        type: choice
+        required: false
+        default: "integration"
+        options:
+          - integration
+          - all
+      test_threads:
+        description: "Concurrent test count (empty = harness default; the runner is dedicated, so parallel is fine)"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   RUST_BACKTRACE: 1
@@ -21,8 +39,9 @@ env:
 
 jobs:
   run-tests:
-    name: Run Integration Tests
-    runs-on: ubuntu-latest
+    name: Run ${{ inputs.scope }} tests
+    runs-on: ika-k8s-large
+    timeout-minutes: 180
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -37,8 +56,41 @@ jobs:
         with:
           toolchain: ${{ env.rust_stable }}
           targets: x86_64-unknown-linux-gnu
-      - name: Install Target
-        run: rustup target add x86_64-unknown-linux-gnu
+
+      - name: Install build dependencies
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          $SUDO apt-get update && $SUDO apt-get install -y cmake clang pkg-config libssl-dev curl
+
       - uses: Swatinem/rust-cache@v2
-      - name: Run Integration Tests
-        run: cargo test -p ika-core --lib dwallet_mpc::integration_tests --release --features test-utils --color=always -- --nocapture
+
+      - name: Run tests
+        env:
+          SCOPE: ${{ inputs.scope }}
+          TEST_THREADS: ${{ inputs.test_threads }}
+        run: |
+          set -o pipefail
+          THREADS=""
+          if [ -n "$TEST_THREADS" ]; then
+            THREADS="--test-threads=$TEST_THREADS"
+          fi
+          if [ "$SCOPE" = "all" ]; then
+            cargo test --release --workspace --features test-utils --color=always -- \
+              $THREADS --nocapture 2>&1 | tee rust-tests.log
+          else
+            cargo test -p ika-core --lib dwallet_mpc::integration_tests --release \
+              --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
+          fi
+
+      - name: Summarize results
+        if: always()
+        run: |
+          grep -E "^test .*(ok|FAILED)|test result" rust-tests.log | tail -60 || true
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tests-log
+          path: rust-tests.log
+          retention-days: 7

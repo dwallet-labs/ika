@@ -1,9 +1,15 @@
 name: Test Cluster
 
 # Manually triggered. Runs the in-process Sui + ika swarm integration tests
-# from `crates/ika-test-cluster/`. This is the `#[tokio::test]` path: real
-# parallel crypto, fast wall time, no msim determinism. The slower `#[sim_test]`
-# variant lives in `.github/workflows/simtest.yaml`.
+# from `crates/ika-test-cluster/` on the `ika-k8s-large` self-hosted runner.
+# This is the `#[tokio::test]` path: real parallel crypto, fast wall time, no
+# msim determinism. The slower `#[sim_test]` variant lives in
+# `.github/workflows/simtest.yaml`.
+#
+# Default runs the FULL cluster suite serialized (`--test-threads=1`): each
+# test boots a whole 4-validator network, and concurrent clusters contend on
+# CPU hard enough to produce false timeout failures even on large machines.
+# Crank `test_threads` up only if the runner has headroom to spare.
 #
 # See the "## Testing" section in CLAUDE.md for the strategy split between
 # tokio and sim_test.
@@ -17,10 +23,15 @@ on:
         required: false
         default: "ika-test-cluster"
       test_filter:
-        description: "Test name filter passed to cargo test"
+        description: "Test name filter passed to cargo test (empty = full suite)"
         type: string
         required: false
-        default: "cluster_boots_with_four_validators"
+        default: ""
+      test_threads:
+        description: "Concurrent test count (1 = serialized, recommended)"
+        type: string
+        required: false
+        default: "1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,16 +49,11 @@ env:
 jobs:
   test-cluster:
     name: cargo test --release
-    runs-on: ubuntu-latest
-    # The full bootstrap (Sui chain → publish 4 ika packages → initialize →
-    # swarm launch) runs in ~80 s locally with parallel crypto on. CI runners
-    # are slower; 60 min is generous.
-    timeout-minutes: 60
+    runs-on: ika-k8s-large
+    # The full suite serialized is ~12 tests x 2-30 min each (the 5-epoch
+    # churn test alone runs ~30 min); budget generously.
+    timeout-minutes: 240
     steps:
-      - name: Clean runner disk
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -62,7 +68,9 @@ jobs:
           toolchain: ${{ env.rust_stable }}
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          $SUDO apt-get update && $SUDO apt-get install -y cmake clang pkg-config libssl-dev curl
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -72,5 +80,24 @@ jobs:
           prefix-key: "test-cluster"
 
       - name: Run test cluster
+        env:
+          PACKAGE: ${{ inputs.package }}
+          TEST_FILTER: ${{ inputs.test_filter }}
+          TEST_THREADS: ${{ inputs.test_threads }}
         run: |
-          cargo test --release -p ${{ inputs.package }} ${{ inputs.test_filter }} -- --nocapture
+          set -o pipefail
+          cargo test --release -p "$PACKAGE" $TEST_FILTER -- \
+            --test-threads="$TEST_THREADS" --nocapture 2>&1 | tee cluster-tests.log
+
+      - name: Summarize results
+        if: always()
+        run: |
+          grep -E "^test .*(ok|FAILED)|test result" cluster-tests.log | tail -40 || true
+
+      - name: Upload test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-tests-log
+          path: cluster-tests.log
+          retention-days: 7
