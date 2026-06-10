@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::Config;
+use ika_types::ika_coin::INKU_PER_IKA;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use rand::rngs::OsRng;
 use serde::Serialize;
@@ -35,6 +36,10 @@ use sui_types::transaction::Transaction;
 
 const ENV_ALIAS: &str = "localnet";
 const FUND_GAS_BUDGET: u64 = 100_000_000;
+
+/// IKA granted to each workload user for dWallet session fees. Generous
+/// relative to the fees, negligible relative to the genesis supply.
+const WORKLOAD_USER_IKA_INKU: u64 = 1_000 * INKU_PER_IKA;
 
 /// The `ika dwallet ...` config-file wrapper: `{ envs: { <alias>: IkaNetworkConfig } }`.
 #[derive(Serialize)]
@@ -68,9 +73,9 @@ pub struct WorkloadDriver {
 impl WorkloadDriver {
     /// Set up a **dedicated** workload user (its own SUI gas + IKA coin) so it
     /// never contends with the notifier, which submits from the publisher key.
-    /// Generates a fresh key, faucet-funds it, and transfers one IKA coin from
-    /// the publisher; then writes the user's keystore + Sui `client.yaml` +
-    /// `ika_sui_config.yaml`.
+    /// Generates a fresh key, faucet-funds it, and splits an IKA allowance off
+    /// the publisher's coin; then writes the user's keystore + Sui
+    /// `client.yaml` + `ika_sui_config.yaml`.
     pub async fn new(
         ika_binary: PathBuf,
         rpc_url: String,
@@ -372,10 +377,13 @@ async fn faucet_sui(faucet_url: &str, recipient: SuiAddress) -> Result<()> {
     Ok(())
 }
 
-/// Transfer one of the publisher's IKA coins to `recipient` so the workload user
-/// can pay dWallet session fees from its own (uncontended) coin. Retries a few
-/// times since this single setup txn shares the publisher's gas with the
-/// notifier.
+/// Split a fixed IKA amount off one of the publisher's IKA coins to
+/// `recipient` so the workload user can pay dWallet session fees from its own
+/// (uncontended) coin. Must NOT transfer a whole coin: the publisher's first
+/// IKA coin is the genesis supply coin (`ika_supply_id`), which later joiner
+/// staking splits from — moving it away breaks every subsequent
+/// `stake_ika`. Retries a few times since this single setup txn shares the
+/// publisher's gas with the notifier.
 async fn transfer_one_ika(
     rpc_url: &str,
     publisher: &SuiKeyPair,
@@ -401,12 +409,13 @@ async fn transfer_one_ika(
         };
         let tx_data = client
             .transaction_builder()
-            .transfer_object(
+            .pay(
                 publisher_address,
-                ika_coin,
+                vec![ika_coin],
+                vec![recipient],
+                vec![WORKLOAD_USER_IKA_INKU],
                 None,
                 FUND_GAS_BUDGET,
-                recipient,
             )
             .await?;
         let signature = Signature::new_secure(
