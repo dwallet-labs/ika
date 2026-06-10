@@ -2608,17 +2608,25 @@ impl IkaNode {
         let started_at = std::time::Instant::now();
         let mut retries: u64 = 0;
 
+        // The verified anchor is obtained ONCE and reused across iterations:
+        // the cert is immutable for the epoch, so re-fetching/re-verifying its
+        // committee signatures every second would be pure waste (and on the
+        // fetch path, a per-second P2P hammering of converging peers).
+        let mut anchor_cert: Option<CertifiedHandoffAttestation> = None;
         loop {
             // Condition 1: the cross-epoch trust anchor — the `cur_epoch`
             // handoff cert — is present + verified. `prepare_handoff_anchor`
             // returns it (re-verified) when already held, fetches + verifies
-            // + persists it inline when missing, and for a joiner also
-            // fetches + caches the outputs the cert certifies into the local
+            // + persists it inline when missing, and also fetches + caches
+            // the certified outputs this node is missing into the local
             // digest slice condition 2 reads. `None` means the anchor is not
-            // yet confirmed (propagation lag) — re-attempt.
-            let cert = self
-                .prepare_handoff_anchor(cur_epoch, cur_epoch_store, new_epoch_store)
-                .await;
+            // yet confirmed (propagation lag) — re-attempt next iteration.
+            if anchor_cert.is_none() {
+                anchor_cert = self
+                    .prepare_handoff_anchor(cur_epoch, cur_epoch_store, new_epoch_store)
+                    .await;
+            }
+            let cert = anchor_cert.as_ref();
 
             // Condition 2: every network-key reconfiguration output the cert
             // certifies is held locally with a digest matching the cert.
@@ -2632,7 +2640,7 @@ impl IkaNode {
             let local_reconfiguration_digests = cur_epoch_store
                 .get_network_reconfiguration_output_digests_for_epoch(cur_epoch)
                 .unwrap_or_default();
-            let ready = cert.as_ref().is_some_and(|cert| {
+            let ready = cert.is_some_and(|cert| {
                 all_cert_reconfiguration_outputs_held_locally(cert, &local_reconfiguration_digests)
             });
 
@@ -2653,6 +2661,25 @@ impl IkaNode {
 
             retries += 1;
             self.metrics.handoff_prepare_retries_total.inc();
+
+            // Anchor held but some certified output still missing locally:
+            // retry fetching JUST the missing ones (the local-presence
+            // precheck inside skips everything already held, so this is not
+            // a refetch of held blobs).
+            if let Some(cert) = cert {
+                let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
+                    .epoch_start_state()
+                    .get_authority_names_to_peer_ids()
+                    .into_values()
+                    .collect();
+                install_joiner_network_key_outputs(
+                    cert,
+                    &self.p2p_network,
+                    &peer_ids,
+                    new_epoch_store,
+                )
+                .await;
+            }
 
             // Surface the breakdown roughly every 10s so a hang is never
             // silent on a dashboard or in the logs.
@@ -2728,18 +2755,38 @@ impl IkaNode {
 /// that digest (the serving peer is untrusted and `fetch_blob` does not
 /// check), and cache it locally so the node can instantiate the key.
 /// Best-effort and idempotent — a content-addressed re-cache is a no-op.
+///
+/// Items whose certified output is ALREADY held locally (the local digest
+/// equals the cert's) are skipped before any network I/O: a continuing
+/// validator holds every output it computed, so without this precheck each
+/// epoch boundary would re-download multi-MB blobs from peers that are
+/// busy converging the same handoff.
 async fn install_joiner_network_key_outputs(
     cert: &CertifiedHandoffAttestation,
     network: &Network,
     peers: &[PeerId],
     epoch_store: &Arc<AuthorityPerEpochStore>,
 ) {
+    let local_dkg_digests = epoch_store
+        .get_network_dkg_output_digests()
+        .unwrap_or_default();
+    let local_reconfiguration_digests = epoch_store
+        .get_network_reconfiguration_output_digests_for_epoch(cert.attestation.epoch)
+        .unwrap_or_default();
     for (item_key, expected_digest) in &cert.attestation.items {
         let (key_id, is_reconfiguration) = match item_key {
             HandoffItemKey::NetworkDkgOutput { key_id } => (*key_id, false),
             HandoffItemKey::NetworkReconfigurationOutput { key_id } => (*key_id, true),
             HandoffItemKey::ValidatorMpcData { .. } => continue,
         };
+        let held_locally = if is_reconfiguration {
+            local_reconfiguration_digests.get(&key_id) == Some(expected_digest)
+        } else {
+            local_dkg_digests.get(&key_id) == Some(expected_digest)
+        };
+        if held_locally {
+            continue;
+        }
         let mut verified_bytes = None;
         for peer in peers {
             match fetch_blob(network, *peer, *expected_digest).await {

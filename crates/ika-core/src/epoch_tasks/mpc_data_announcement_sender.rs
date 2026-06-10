@@ -321,6 +321,25 @@ impl MpcDataAnnouncementSender {
         if let Err(e) = self.blob_cache.insert(digest, blob) {
             warn!(error = ?e, "failed to persist validator mpc_data blob; peers won't serve it");
         }
+        // Restart-safe: if this epoch's table already holds OUR announcement
+        // for the same blob (the blob is seed-deterministic, so the digest
+        // matching means it's the same announcement), reuse it — timestamp
+        // included. Stamping a fresh `now_ms()` after a restart breaks
+        // confirmation if the clock regressed (NTP step across the reboot):
+        // the table keeps only strictly-newer timestamps, so every
+        // re-submission would drop and `announcement_confirmed` (which
+        // compares for equality against the cached timestamp) would stay
+        // false for the rest of the epoch — withholding our ready signal and
+        // re-submitting the full blob to consensus every tick.
+        if let Some(epoch_store) = self.epoch_store.upgrade()
+            && let Ok(Some(stored)) =
+                epoch_store.get_validator_mpc_data_announcement(&self.authority)
+            && stored.blob_hash == digest
+            && stored.epoch == self.epoch_id
+        {
+            *self.cached_announcement.lock().expect("mutex poisoned") = Some(stored.clone());
+            return Ok(stored);
+        }
         let timestamp_ms = now_ms().map_err(DwalletMPCError::IkaError)?;
         if timestamp_ms == 0 {
             return Err(DwalletMPCError::IkaError(IkaError::Generic {

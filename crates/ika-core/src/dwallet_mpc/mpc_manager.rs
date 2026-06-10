@@ -568,18 +568,30 @@ impl DWalletMPCManager {
         &mut self,
         overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
     ) {
-        let cert = self.epoch_id.checked_sub(1).and_then(|prior_epoch| {
-            match self
+        // A cert READ ERROR must not be conflated with a genuinely-absent
+        // cert: `cert == None` sends a reconfigured key down the unverified
+        // v3->v4-boundary adoption path below, silently bypassing the
+        // cert-digest gate. A transient store error therefore skips adoption
+        // entirely for this tick (the service loop retries every round)
+        // rather than degrading the security gate to blind adoption.
+        let cert = match self.epoch_id.checked_sub(1) {
+            Some(prior_epoch) => match self
                 .epoch_store
                 .get_certified_handoff_attestation(prior_epoch)
             {
                 Ok(cert) => cert,
                 Err(e) => {
-                    warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
-                    None
+                    warn!(
+                        error = ?e,
+                        prior_epoch,
+                        "failed to read the handoff cert for instantiation — skipping \
+                         network-key adoption this tick (retrying next round)"
+                    );
+                    return;
                 }
-            }
-        });
+            },
+            None => None,
+        };
         let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         if let Some(cert) = &cert {
