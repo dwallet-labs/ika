@@ -52,6 +52,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
+      - name: Runner resources
+        run: |
+          # Surface what this pod ACTUALLY gets — the scale set advertises up
+          # to 80 vCPUs, but a low cgroup quota (requests/limits mismatch) or
+          # node oversubscription silently throttles the crypto workloads.
+          echo "nproc: $(nproc)"
+          echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo n/a)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo n/a)"
+          free -g 2>/dev/null || true
+          uptime || true
+
       - name: Setup SSH
         uses: ./.github/actions/setup-ssh
         with:
