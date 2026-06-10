@@ -529,11 +529,30 @@ impl IkaNode {
             )
             .await
             .map_err(|e| anyhow!("build OCS connector stack (peer-only): {e}"))?;
-            if let Err(e) = stack.ratchet.ratchet_to_current_epoch().await {
-                warn!(
-                    error = ?e,
-                    "initial ratchet to current epoch (peer-only) failed; periodic ratchet will retry"
-                );
+            // A peer-only node cannot read any Sui state until its committee
+            // head is current: the bootstrap reads below verify every object
+            // against the committee store, and the periodic ratchet task is
+            // only spawned after those reads complete — so a stale head here
+            // has nothing to heal it and the reads retry forever. (The
+            // mirrored-with-fallback path tolerates a failed initial ratchet
+            // because its bootstrap reads go over direct gRPC instead.)
+            // Retry with backoff until the ratchet succeeds; the relay peer
+            // was reachable moments ago in wait_for_specific_peers.
+            let mut ratchet_backoff = std::time::Duration::from_secs(1);
+            loop {
+                match stack.ratchet.ratchet_to_current_epoch().await {
+                    Ok(()) => break,
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            retry_in = ?ratchet_backoff,
+                            "initial ratchet to current epoch (peer-only) failed; retrying"
+                        );
+                        tokio::time::sleep(ratchet_backoff).await;
+                        ratchet_backoff =
+                            (ratchet_backoff * 2).min(std::time::Duration::from_secs(10));
+                    }
+                }
             }
             let relay = stack.ratchet.transport().clone();
             let verified: Arc<dyn ika_sui_client::transport::SuiTransport> =
