@@ -35,6 +35,7 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::handoff::HandoffItemKey;
+use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
     DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
@@ -385,6 +386,10 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Recovery net: cache quorum-agreed network-key outputs
+                    // locally even when this validator didn't produce them
+                    // (see `cache_network_key_output_from_quorum`).
+                    self.cache_network_key_output_from_quorum(&output_result);
                     // Read counterparty_chain before completing (which removes session data).
                     let counterparty_chain = self
                         .sessions
@@ -416,6 +421,100 @@ impl DWalletMPCManager {
         }
 
         (agreed_outputs, completed_sessions)
+    }
+
+    /// Recovery net for network-key outputs: caches the quorum-agreed DKG /
+    /// reconfiguration output bytes locally even when this validator did not
+    /// compute them itself.
+    ///
+    /// The producer-side cache (the `Finalize` arm in `dwallet_mpc_service`)
+    /// runs only for sessions this validator computed locally to completion.
+    /// A validator that restarted mid-session (replay marks the session
+    /// completed from the quorum output and never re-runs the computation),
+    /// or whose own computation finished after it processed the quorum round
+    /// (the `Finalize` result is dropped for non-active sessions), would
+    /// otherwise NEVER hold the output locally — leaving its off-chain
+    /// overlay empty for the key, withholding its EndOfPublish vote
+    /// (`snapshot_ready_for_signing` requires the local digest), and under
+    /// v4 there is no chain fallback to heal it (observed live as a wedged
+    /// genesis: one validator missing the DKG output blocked the epoch from
+    /// ever closing).
+    ///
+    /// The bytes are the stake-quorum-agreed value from consensus — the same
+    /// canonical output every peer holds — so caching them is safe. Chunked
+    /// outputs (`slice_public_output_into_messages` splits large outputs
+    /// across several message kinds, in order) are reassembled by
+    /// concatenation. The cache is content-addressed, so on the validators
+    /// that DID compute locally this is a no-op re-cache of identical bytes.
+    /// Reconfiguration outputs are keyed by this manager's epoch — the
+    /// reconfiguration session's own epoch, matching the producer side's
+    /// `session_request.epoch` keying (system sessions are always
+    /// current-epoch).
+    fn cache_network_key_output_from_quorum(&self, output: &DWalletMPCOutputKind) {
+        if !self.epoch_store.off_chain_validator_metadata_enabled() {
+            return;
+        }
+        let DWalletMPCOutputKind::External { output: kinds } = output else {
+            return;
+        };
+        let mut dkg_outputs: HashMap<ObjectID, Vec<u8>> = HashMap::new();
+        let mut reconfiguration_outputs: HashMap<ObjectID, Vec<u8>> = HashMap::new();
+        for kind in kinds {
+            match kind {
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(chunk)
+                    if !chunk.rejected =>
+                {
+                    if let Ok(key_id) =
+                        ObjectID::from_bytes(&chunk.dwallet_network_encryption_key_id)
+                    {
+                        dkg_outputs
+                            .entry(key_id)
+                            .or_default()
+                            .extend_from_slice(&chunk.public_output);
+                    }
+                }
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
+                    chunk,
+                ) if !chunk.rejected => {
+                    if let Ok(key_id) =
+                        ObjectID::from_bytes(&chunk.dwallet_network_encryption_key_id)
+                    {
+                        reconfiguration_outputs
+                            .entry(key_id)
+                            .or_default()
+                            .extend_from_slice(&chunk.public_output);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (key_id, bytes) in dkg_outputs {
+            if bytes.is_empty() {
+                continue;
+            }
+            if let Err(e) = self.epoch_store.cache_network_dkg_output(key_id, &bytes) {
+                warn!(
+                    error = ?e,
+                    ?key_id,
+                    "failed to cache quorum-agreed network DKG output"
+                );
+            }
+        }
+        for (key_id, bytes) in reconfiguration_outputs {
+            if bytes.is_empty() {
+                continue;
+            }
+            if let Err(e) =
+                self.epoch_store
+                    .cache_network_reconfiguration_output(key_id, self.epoch_id, &bytes)
+            {
+                warn!(
+                    error = ?e,
+                    ?key_id,
+                    "failed to cache quorum-agreed network reconfiguration output"
+                );
+            }
+        }
     }
 
     /// Handle idle status and chain observation updates for a consensus round.
