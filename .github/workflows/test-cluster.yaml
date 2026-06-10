@@ -32,6 +32,11 @@ on:
         type: string
         required: false
         default: "1"
+      rustflags:
+        description: "Extra RUSTFLAGS (e.g. '-C target-cpu=native' — baseline x86-64 codegen lacks the BMI2/ADX carry-chain instructions the class-groups bignum arithmetic wants)"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -113,8 +118,14 @@ jobs:
           PACKAGE: ${{ inputs.package }}
           TEST_FILTER: ${{ inputs.test_filter }}
           TEST_THREADS: ${{ inputs.test_threads }}
+          EXTRA_RUSTFLAGS: ${{ inputs.rustflags }}
         run: |
           set -o pipefail
+          # RUSTFLAGS env overrides .cargo/config build.rustflags entirely, so
+          # when extra flags are requested, re-include the config defaults.
+          if [ -n "$EXTRA_RUSTFLAGS" ]; then
+            export RUSTFLAGS="-C force-frame-pointers=yes -C force-unwind-tables=yes $EXTRA_RUSTFLAGS"
+          fi
           cargo test --release -p "$PACKAGE" $TEST_FILTER -- \
             --test-threads="$TEST_THREADS" --nocapture 2>&1 | tee cluster-tests.log
 
