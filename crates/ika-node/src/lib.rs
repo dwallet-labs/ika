@@ -482,10 +482,19 @@ impl IkaNode {
             // bootstrap just below — over the relay through a verified
             // `sui_client`. Network + stack are stashed and reused below.
             //
-            // The committee isn't known yet, so `is_notifier` can't be derived
-            // from it; a peer-only node is never the notifier, so
-            // `mode.is_notifier()` (false for a validator) is correct. No mirror
-            // server: peer-only nodes consume the relay, they don't serve it.
+            // `is_notifier` here gates state_sync's *pull* behavior: when true
+            // the node actively pulls checkpoint summaries from peers (what
+            // non-committee nodes need — committee members get them via
+            // consensus). The normal path derives it from committee
+            // membership (`!authority_exists`), but the committee isn't
+            // readable yet at this point — reading it is exactly what this
+            // network is being built for. `mode.is_notifier()` (false for a
+            // validator) assumes the peer-only validator IS in the committee,
+            // which holds for every supported peer-only deployment today; a
+            // peer-only *joiner* (not yet in the committee) would need
+            // pull-mode state sync and is not supported on this path yet.
+            // No mirror server: peer-only nodes consume the relay, they
+            // don't serve it.
             let p2p = Self::create_p2p_network(
                 &config,
                 state_sync_store.clone(),
