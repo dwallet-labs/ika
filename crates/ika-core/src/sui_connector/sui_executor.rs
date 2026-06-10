@@ -879,6 +879,14 @@ where
                 // the cached gas ref survives the failure and every retry
                 // rebuilds the identical stale tx until the one-hour panic,
                 // wedging checkpoint submission.
+                //
+                // Match the variant payload — do NOT pass `err.to_string()`
+                // and especially not clippy's `unnecessary_to_owned`
+                // "simplification" of it, `err.as_ref()`: `IkaError` derives
+                // strum's `AsRefStr`, so `as_ref()` returns only the variant
+                // name ("SuiClientTxFailureGeneric"), which never contains
+                // the rejection markers — it compiles fine and silently
+                // disables this recovery.
                 if let IkaError::SuiClientTxFailureGeneric(_, message) = &err {
                     state.handle_possible_stale_gas_rejection(message);
                 }
