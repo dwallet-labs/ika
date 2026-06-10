@@ -880,7 +880,18 @@ pub(crate) fn send_advance_results_between_parties(
 /// At 100ms per iteration, this gives ~180 seconds before failing.
 /// The generous limit accounts for rayon thread pool contention when
 /// the full integration test suite runs in a single process.
+/// Overridable via `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` — CI
+/// runners are slower and more contended than workstations, and a
+/// wall-clock budget calibrated for the latter falsely fails healthy
+/// MPC flows on the former.
 const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
+
+fn max_computation_wait_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_COMPUTATION_WAIT_ITERATIONS)
+}
 
 /// Wait for all parties' in-flight rayon computations to complete.
 ///
@@ -893,7 +904,8 @@ const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
 /// real wall-clock time plus tokio runtime polls to deliver their results
 /// through the completion channel.
 pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState) {
-    for iteration in 0..MAX_COMPUTATION_WAIT_ITERATIONS {
+    let max_iterations = max_computation_wait_iterations();
+    for iteration in 0..max_iterations {
         let all_idle = test_state.dwallet_mpc_services.iter().all(|s| {
             s.dwallet_mpc_manager()
                 .cryptographic_computations_orchestrator
@@ -920,7 +932,7 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
     }
     panic!(
         "Rayon computations did not complete within {} seconds",
-        MAX_COMPUTATION_WAIT_ITERATIONS / 10
+        max_iterations / 10
     );
 }
 
@@ -946,7 +958,16 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
 /// At 100ms per iteration, this gives ~60 seconds before failing.
 /// This needs to be long enough to complete internal presign sessions
 /// which run in parallel and can be CPU-intensive.
+/// Overridable via `IKA_TEST_MAX_PARTY_ITERATIONS` (see
+/// `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` above for why).
 const MAX_PARTY_ITERATIONS: usize = 600;
+
+fn max_party_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_PARTY_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_PARTY_ITERATIONS)
+}
 
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
     committee: &Committee,
@@ -967,13 +988,13 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
         vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         iterations += 1;
-        if iterations >= MAX_PARTY_ITERATIONS {
+        if iterations >= max_party_iterations() {
             panic!(
                 "Party advancement did not complete after {} iterations (~{} seconds). \
                 Completed {}/{} parties. Completed: {:?}, Expected: {:?}. \
                 This likely indicates a bug in the test or the MPC flow.",
-                MAX_PARTY_ITERATIONS,
-                MAX_PARTY_ITERATIONS / 10,
+                max_party_iterations(),
+                max_party_iterations() / 10,
                 completed_parties.len(),
                 parties_to_advance.len(),
                 completed_parties,
