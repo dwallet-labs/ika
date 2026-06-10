@@ -310,6 +310,15 @@ pub struct ProtocolConfig {
     /// validators must agree on it or they fork on the close round.
     end_of_publish_grace_rounds: Option<u64>,
 
+    /// Number of additional consensus leader rounds the mpc_data freeze is
+    /// deferred after a stake-quorum of `EpochMpcDataReadySignal`s is
+    /// observed, unless full coverage (every committee member signaled and
+    /// no announcer is excluded) is reached first. Gives slower validators'
+    /// mpc_data blobs time to propagate — measured in consensus progress,
+    /// not wall-clock — before the input set is pinned. A protocol
+    /// constant: all validators must agree on it or their frozen sets fork.
+    mpc_data_freeze_grace_rounds: Option<u64>,
+
     // === Network Owned Address (NOA) Sign Presign Configuration (per algorithm) ===
     // Pool minimum sizes
     network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Option<u64>,
@@ -614,6 +623,7 @@ impl ProtocolConfig {
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
             end_of_publish_grace_rounds: Some(50),
+            mpc_data_freeze_grace_rounds: Some(50),
 
             // === Network Owned Address (NOA) Presign Configuration (per algorithm) ===
             // Non-EdDSA algorithms use the same defaults as their internal presign counterparts.

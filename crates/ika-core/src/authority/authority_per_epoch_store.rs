@@ -398,20 +398,11 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     /// Returns whether the epoch-wide `mpc_data` input set has been
     /// frozen. Network DKG and reconfiguration session kickoff defers
-    /// until this is `true`.
+    /// until this is `true`. The freeze itself is decided at the consensus
+    /// commit boundary (see
+    /// `process_consensus_transactions_and_commit_boundary`), so the frozen
+    /// set is a deterministic function of the consensus sequence.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
-
-    /// Freezes the epoch-wide `mpc_data` input set IF a stake-quorum of
-    /// `EpochMpcDataReadySignal`s has been recorded — the "+ quorum" half
-    /// of the freeze condition. Called from the network DKG /
-    /// reconfiguration session gate (the "dkg or reconfig in progress"
-    /// half), so the freeze fires only once such a session actually starts
-    /// AND quorum coverage exists, rather than prematurely at epoch start
-    /// on a wall-clock ready-signal deadline — which the long genesis-DKG
-    /// transition consumes, locking the freeze at sub-full coverage before
-    /// slower validators' mpc_data has propagated. Idempotent (locks once);
-    /// returns whether the mpc_data is frozen afterward.
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool>;
 
     /// Reflects the per-epoch `protocol_config` flag that gates
     /// the entire off-chain validator-metadata pipeline. When
@@ -755,23 +746,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
     }
 
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool> {
-        let tables = self.tables()?;
-        if tables.frozen_validator_mpc_data_input_set.is_empty() {
-            let committee = self.committee();
-            let total_stake: u64 = tables
-                .epoch_mpc_data_ready_signals
-                .safe_iter()
-                .filter_map(Result::ok)
-                .map(|(authority, _)| committee.weight(&authority))
-                .sum();
-            if total_stake >= committee.quorum_threshold() {
-                self.freeze_mpc_data_if_first(&tables)?;
-            }
-        }
-        Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
-    }
-
     fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.protocol_config()
             .off_chain_validator_metadata_enabled()
@@ -1036,6 +1010,14 @@ pub struct AuthorityEpochTables {
     /// restarted validator does not re-emit the close at a later commit
     /// (which would fork its checkpoint stream from peers).
     epoch_close_emitted: DBMap<u64, ()>,
+
+    /// Single-entry (key `0`) record of the consensus leader round at which
+    /// a stake-quorum of `EpochMpcDataReadySignal`s was first observed this
+    /// epoch. Anchors the `mpc_data_freeze_grace_rounds` (protocol config)
+    /// freeze grace; written atomically with the observing commit's batch so
+    /// every validator (including one restarting mid-grace) freezes at the
+    /// same round on the same signal set.
+    mpc_data_ready_quorum_round: DBMap<u64, u64>,
 
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
@@ -3050,14 +3032,15 @@ impl AuthorityPerEpochStore {
             .epoch_mpc_data_ready_signals
             .insert(&signal.authority, &canonical)?;
 
-        // NOTE: recording a ready-signal no longer triggers the freeze.
-        // The freeze is now gated on a network DKG/reconfiguration session
-        // actually starting (see `freeze_mpc_data_if_quorum`, called from
-        // the session gate in `mpc_session.rs`) so it fires mid-epoch with
-        // full coverage rather than at epoch start on the first quorum —
-        // when slower validators' mpc_data hasn't propagated yet. Signals
-        // keep accruing here (and validators re-emit as their coverage
-        // grows) so the deferred freeze captures the complete set.
+        // NOTE: recording a ready-signal does not trigger the freeze.
+        // The freeze is decided at the consensus commit boundary (see
+        // `process_consensus_transactions_and_commit_boundary`): once a
+        // stake-quorum of signals is in, it fires at full coverage or after
+        // `mpc_data_freeze_grace_rounds` of consensus progress — never at
+        // the first quorum, when slower validators' mpc_data hasn't
+        // propagated yet. Signals keep accruing here (and validators
+        // re-emit as their coverage grows) so the deferred freeze captures
+        // the complete set.
         Ok(())
     }
 
@@ -3065,9 +3048,10 @@ impl AuthorityPerEpochStore {
     /// the frozen working set + excluded set. Idempotent on a
     /// non-empty frozen table.
     ///
-    /// Fired (via `freeze_mpc_data_if_quorum`) once a network DKG /
-    /// reconfiguration session starts AND a stake-quorum of
-    /// `EpochMpcDataReadySignal`s has been recorded. For each
+    /// Fired from the consensus commit boundary once a stake-quorum of
+    /// `EpochMpcDataReadySignal`s has been recorded AND coverage is full
+    /// (or the freeze grace elapsed) — see the freeze block in
+    /// `process_consensus_transactions_and_commit_boundary`. For each
     /// validator V that announced this epoch:
     /// - sum the stake of every signer whose `validated_peers`
     ///   contains V,
@@ -3764,6 +3748,71 @@ impl AuthorityPerEpochStore {
                         close_round = consensus_commit_info.round,
                         all_voted,
                         "EndOfPublish grace elapsed — closing the epoch",
+                    );
+                }
+            }
+        }
+
+        // mpc_data freeze (v4 only): decided HERE, at the commit boundary,
+        // so the frozen set is a deterministic function of the consensus
+        // sequence — every validator evaluates the same ready-signal table
+        // at the same commit. (Triggering the freeze from the wall-clock
+        // MPC-service loop let two validators tally different signal sets —
+        // re-emits land between their service ticks — and the divergent
+        // frozen/excluded sets fork the handoff items and the
+        // reconfiguration participant set.) Freeze once a stake-quorum of
+        // ready-signals is in AND either:
+        //   - full coverage: every committee member has signaled and the
+        //     freeze partition excludes no announcer (nothing left to wait
+        //     for), or
+        //   - the grace elapsed: `mpc_data_freeze_grace_rounds` (protocol
+        //     config) leader rounds past the quorum-observing round —
+        //     consensus progress, not wall-clock — giving slower
+        //     validators' blobs time to propagate before the set is pinned.
+        if self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+            && !self.is_mpc_data_frozen().unwrap_or(false)
+        {
+            let tables = self.tables()?;
+            let mut signals: std::collections::BTreeMap<
+                AuthorityName,
+                Vec<(AuthorityName, [u8; 32])>,
+            > = std::collections::BTreeMap::new();
+            for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
+                let (signer, signal) = entry?;
+                signals.insert(signer, signal.validated_peers);
+            }
+            let committee = self.committee();
+            let signal_stake: u64 = signals
+                .keys()
+                .map(|authority| committee.weight(authority))
+                .sum();
+            if signal_stake >= committee.quorum_threshold() {
+                let quorum_round = match tables.mpc_data_ready_quorum_round.get(&0)? {
+                    Some(round) => round,
+                    None => {
+                        output.set_mpc_data_ready_quorum_round(consensus_commit_info.round);
+                        consensus_commit_info.round
+                    }
+                };
+                let partition = crate::validator_metadata::compute_freeze_partition(
+                    &signals,
+                    |authority| committee.weight(authority),
+                    committee.quorum_threshold(),
+                );
+                let full_coverage =
+                    signals.len() >= committee.num_members() && partition.excluded.is_empty();
+                let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
+                    >= self.protocol_config().mpc_data_freeze_grace_rounds();
+                if full_coverage || grace_elapsed {
+                    self.freeze_mpc_data_if_first(&tables)?;
+                    info!(
+                        validator = ?self.name,
+                        quorum_round,
+                        freeze_round = consensus_commit_info.round,
+                        full_coverage,
+                        "mpc_data ready — freezing the input set at the commit boundary",
                     );
                 }
             }
@@ -4518,6 +4567,10 @@ pub(crate) struct ConsensusCommitOutput {
     /// restored to `RejectAllTx` on epoch-store open) nor loses it (a crash
     /// before the batch commit replays the whole commit deterministically).
     epoch_close_emitted: bool,
+    /// First commit round at which the mpc_data ready-signal stake quorum
+    /// was observed (the freeze-grace anchor). Same atomicity rationale as
+    /// `end_of_publish_quorum_round`.
+    mpc_data_ready_quorum_round: Option<u64>,
 }
 
 impl ConsensusCommitOutput {
@@ -4538,6 +4591,10 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_epoch_close_emitted(&mut self) {
         self.epoch_close_emitted = true;
+    }
+
+    pub(crate) fn set_mpc_data_ready_quorum_round(&mut self, round: u64) {
+        self.mpc_data_ready_quorum_round = Some(round);
     }
 
     pub(crate) fn set_dwallet_mpc_round_outputs(&mut self, new_value: Vec<DWalletMPCOutput>) {
@@ -4688,6 +4745,9 @@ impl ConsensusCommitOutput {
         }
         if self.epoch_close_emitted {
             batch.insert_batch(&tables.epoch_close_emitted, [(0u64, ())])?;
+        }
+        if let Some(round) = self.mpc_data_ready_quorum_round {
+            batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
         }
 
         batch.insert_batch(

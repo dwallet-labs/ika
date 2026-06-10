@@ -452,13 +452,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(true)
     }
 
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool> {
-        // Testing impl: report frozen for the same reason as
-        // `is_mpc_data_frozen` — the DKG/reconfiguration session gate
-        // calls this, and tests don't drive the real ready-signal flow.
-        Ok(true)
-    }
-
     fn off_chain_validator_metadata_enabled(&self) -> bool {
         // Tests exercise the off-chain pipeline regardless of
         // protocol-config version, so report enabled.
