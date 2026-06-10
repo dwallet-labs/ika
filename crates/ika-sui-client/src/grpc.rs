@@ -3,10 +3,11 @@
 
 //! Direct gRPC implementation of [`SuiTransport`].
 //!
-//! Wraps [`sui_rpc_api::Client`]. Many of its methods take `&mut self`
-//! internally so we hold the client behind a [`tokio::sync::Mutex`].
-
-use std::sync::Arc;
+//! Wraps [`sui_rpc_api::Client`]. Many of its methods take `&mut self`, but
+//! the client is a cheap `Clone` over a tonic channel (clone-per-request is
+//! tonic's intended concurrency model), so each call clones its own handle.
+//! Do NOT put the client behind a Mutex held across the call — that would
+//! serialize every Sui read/write on the node behind one in-flight RPC.
 
 use async_trait::async_trait;
 use sui_rpc_api::Client as SuiRpcClient;
@@ -18,14 +19,13 @@ use sui_types::gas_coin::GasCoin;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
 use sui_types::transaction::Transaction;
-use tokio::sync::Mutex;
 
 use crate::transport::{
     DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction, SuiTransport, TransportError,
 };
 
 pub struct SuiGrpcClient {
-    rpc: Arc<Mutex<SuiRpcClient>>,
+    rpc: SuiRpcClient,
     endpoint: String,
 }
 
@@ -35,10 +35,7 @@ impl SuiGrpcClient {
         let endpoint = endpoint.into();
         let rpc = SuiRpcClient::new(endpoint.as_str())
             .map_err(|e| TransportError::Network(format!("connect {endpoint}: {e}")))?;
-        let client = Self {
-            rpc: Arc::new(Mutex::new(rpc)),
-            endpoint,
-        };
+        let client = Self { rpc, endpoint };
         let _ = client.get_chain_identifier().await?;
         Ok(client)
     }
@@ -101,7 +98,7 @@ fn convert_dynamic_field(
 impl SuiTransport for SuiGrpcClient {
     // -- chain metadata ---------------------------------------------------------------------
     async fn get_chain_identifier(&self) -> Result<String, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         rpc.get_chain_identifier()
             .await
             .map(|c| c.to_string())
@@ -109,12 +106,12 @@ impl SuiTransport for SuiGrpcClient {
     }
 
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         rpc.get_current_epoch().await.map_err(Self::rpc_err)
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         rpc.get_reference_gas_price().await.map_err(Self::rpc_err)
     }
 
@@ -122,13 +119,13 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         epoch: Option<u64>,
     ) -> Result<sui_types::committee::Committee, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         rpc.get_committee(epoch).await.map_err(Self::rpc_err)
     }
 
     // -- checkpoints ------------------------------------------------------------------------
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         rpc.get_latest_checkpoint().await.map_err(Self::rpc_err)
     }
 
@@ -136,7 +133,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<CheckpointData, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         let checkpoint = rpc
             .get_full_checkpoint(seq)
             .await
@@ -149,7 +146,7 @@ impl SuiTransport for SuiGrpcClient {
         digest: sui_types::digests::CheckpointDigest,
     ) -> Result<CertifiedCheckpointSummary, TransportError> {
         use sui_rpc_api::proto::sui::rpc::v2::{GetCheckpointRequest, get_checkpoint_request};
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         // sui-rpc-api's Client only exposes seq-based lookup at the high
         // level; drop down to the proto for digest-based lookup. Field
         // mask narrowed to summary+signature — we don't need the full
@@ -196,7 +193,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         epoch: u64,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         let mut request = proto::GetEpochRequest::default();
         request.epoch = Some(epoch);
         let response = rpc
@@ -217,7 +214,7 @@ impl SuiTransport for SuiGrpcClient {
 
     // -- objects ----------------------------------------------------------------------------
     async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         rpc.get_object(id).await.map_err(Self::rpc_status_err)
     }
 
@@ -226,14 +223,14 @@ impl SuiTransport for SuiGrpcClient {
         id: ObjectID,
         version: SequenceNumber,
     ) -> Result<Object, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         rpc.get_object_with_version(id, version)
             .await
             .map_err(Self::rpc_status_err)
     }
 
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         rpc.batch_get_objects(ids)
             .await
             .map_err(Self::rpc_status_err)
@@ -243,7 +240,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         address: SuiAddress,
     ) -> Result<Vec<ObjectRef>, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         let mut refs = Vec::new();
         let mut page_token = None;
         loop {
@@ -271,7 +268,7 @@ impl SuiTransport for SuiGrpcClient {
         page_size: Option<u32>,
         page_token: Option<Vec<u8>>,
     ) -> Result<DynamicFieldPage, TransportError> {
-        let rpc = self.rpc.lock().await;
+        let rpc = self.rpc.clone();
         let page_token = page_token.map(bytes::Bytes::from);
         let response = rpc
             .get_dynamic_fields(parent, page_size, page_token)
@@ -294,7 +291,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         rpc.get_transaction(&tx).await.map_err(Self::rpc_status_err)
     }
 
@@ -302,7 +299,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         tx: TransactionDigest,
     ) -> Result<CheckpointSequenceNumber, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         let executed = rpc
             .get_transaction(&tx)
             .await
@@ -316,7 +313,7 @@ impl SuiTransport for SuiGrpcClient {
         &self,
         tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError> {
-        let mut rpc = self.rpc.lock().await;
+        let mut rpc = self.rpc.clone();
         let executed = rpc.execute_transaction(tx).await.map_err(Self::rpc_err)?;
         Ok(SubmittedTransaction {
             digest: *tx.digest(),
