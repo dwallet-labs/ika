@@ -32,29 +32,30 @@
 //! supported path anyway (a v4 *genesis* DKG is rejected forever; the network
 //! must upgrade into v4).
 //!
-//! On the OLD binary: the literal `mainnet-v1.1.8` ika-node is **not** usable
-//! in *this harness* — the harness generates genesis with dev tooling, whose
-//! class-groups key encoding (`dwallet-labs/cryptography-private`) the v1.1.8
-//! binary (`dwallet-labs/inkrypto`) cannot parse, so it panics in
-//! `verify_validator_keys` at boot. That is a harness-direction artifact, not
-//! a production gap: the production direction — the NEW binary reading
-//! v1.1.8-era on-chain state — is handled in the binary itself
-//! (`decode_validator_encryption_keys` accepts both the bare v1.1.8 key shape
-//! and the post-#1707 bundle, and key *publication* is gated on the protocol
-//! version so mixed committees keep interoperating). To exercise a
-//! *successful* heterogeneous upgrade we use an OLD binary that shares dev's
-//! crypto but is pinned to `MAX_PROTOCOL_VERSION = 3` (a one-line build of
-//! dev) — genuinely a different compiled binary, differing only in the
-//! protocol version it advertises, which is the realistic minimal upgrade.
+//! On the OLD binary: this test uses a build of *this branch* pinned to
+//! `MAX_PROTOCOL_VERSION = 3` (a one-line patch) — genuinely a different
+//! compiled binary, differing only in the protocol version it advertises.
+//! That keeps the OLD and NEW binaries wire-compatible mid-epoch, which is
+//! what lets this test do a *rolling* swap with mixed-binary committees
+//! exchanging consensus + MPC messages. The literal `mainnet-v1.1.8` binary
+//! also boots and runs in this harness (the harness registers the bare
+//! v1.1.8 class-groups key shape at genesis) — see `v118_upgrade.rs` for
+//! that rehearsal, which swaps *atomically* instead: mixed 1.1.8/local
+//! committees are not guaranteed MPC-wire-compatible, so the rolling-swap
+//! variant is only valid between builds of the same branch.
 //!
-//! Genesis writes an **empty** `GlobalPresignConfig` (the mainnet-v1.1.8
-//! on-chain state): the v3 workload's ECDSA presign must run per-dWallet,
-//! because global presigns are served exclusively from the validators'
-//! internal pool, which only fills once `internal_presign_sessions` activates
-//! at protocol v4. The full config is applied right after the v4 upgrade is
-//! confirmed — the same operational ordering a real mainnet rollout must
-//! follow (`set_global_presign_config` only after v4 activates, or ECDSA
-//! presigns stall network-wide until it does).
+//! Genesis writes an **empty** `GlobalPresignConfig` — a harness
+//! arrangement, *not* the mainnet state (mainnet's config is populated; the
+//! mainnet-faithful genesis is exercised in `v118_upgrade.rs`). The empty
+//! config routes the v3 workload's presign **per-dWallet** — the only place
+//! the harness exercises the targeted-presign path at all (a populated
+//! config makes it unreachable). It also keeps the test independent of the
+//! pre-activation global-presign fallback in `handle_mpc_request`: a v3-pin
+//! OLD binary built before that fallback serves global presigns only from
+//! the internal pool, which doesn't fill until `internal_presign_sessions`
+//! activates at v4. The full config is applied right after the v4 upgrade
+//! is confirmed, which makes the v4 workload exercise the global-presign
+//! path.
 //!
 //! Opt-in (real binaries + long-running), via `RUN_CROSS_BINARY=1`:
 //!
@@ -126,10 +127,12 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         // default min_validator_count = 4 would reject it at genesis.
         .with_min_validator_count(3)
         .with_ika_cli(ika_cli)
-        // Empty config at genesis (the mainnet-v1.1.8 state): the v3 workload
-        // must presign per-dWallet — global presigns are only servable once
-        // the internal pool fills at protocol v4. The full config is applied
-        // below, after the upgrade is confirmed.
+        // Empty config at genesis: routes the v3 workload's presign
+        // per-dWallet — the harness's only targeted-presign coverage. A
+        // harness arrangement, not the mainnet state (the mainnet-shape
+        // populated config is exercised in v118_upgrade.rs; see the doc
+        // comment). The full config is applied below, after the upgrade is
+        // confirmed.
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Empty)
         .start_all(old)
         // The genesis network DKG runs *during* epoch 1; the epoch cannot
@@ -156,10 +159,10 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         .wait_for_epoch(3)
         .expect_protocol_version_at_least(4)
         .expect_committee_size(3)
-        // v4 is live, so the internal presign pool fills from here on — now
-        // (and only now) route production curves/algorithms to global presign.
-        // Mirrors the real mainnet rollout ordering, and makes the v4
-        // workload below exercise the global-presign path.
+        // v4 is live, so the internal presign pool fills from here on —
+        // routing production curves/algorithms to global presign is now
+        // servable, and the v4 workload below exercises the global-presign
+        // path.
         .set_global_presign_config()
         // Out of the committee since the boundary; now safe to stop.
         .stop_validator(3)

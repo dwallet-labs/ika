@@ -654,19 +654,23 @@ fn new_curve_to_signature_algorithm_vecmap(
 /// upgraded deployments).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GenesisGlobalPresignConfig {
-    /// Route the production curve/algorithm set to global presign. Global
-    /// presign requests are served exclusively from the validators' internal
-    /// presign pool, which only fills once `internal_presign_sessions` turns
-    /// on (protocol version >= 4) — so this is only correct when the genesis
-    /// protocol version is already >= 4, or when no presign is requested
-    /// before the network upgrades to it.
+    /// Route the production curve/algorithm set to global presign — the
+    /// actual mainnet on-chain state (verified: mainnet's
+    /// `GlobalPresignConfig` holds exactly these maps). Servable at every
+    /// protocol version: at v4+ from the validators' internal presign pool
+    /// (`internal_presign_sessions`), below that as a user-requested MPC
+    /// session — the 1.1.8 behavior, which this branch retains as the
+    /// pre-activation fallback in `handle_mpc_request` (the `v118_upgrade`
+    /// rehearsal exercises both serving modes across its swap).
     Full,
-    /// Empty config: every curve/algorithm allows per-dWallet presign — the
-    /// mainnet-v1.1.8 on-chain state (and what `migrate()` creates). Use for
-    /// genesis-at-v3 scenarios that exercise presigns before the upgrade,
-    /// then apply the full config post-upgrade via
-    /// [`set_global_presign_config`] — same ordering a real mainnet rollout
-    /// must follow, or ECDSA presigns stall until protocol v4 activates.
+    /// Empty config: every curve/algorithm allows per-dWallet presign —
+    /// what `migrate()` creates, *not* the mainnet state (mainnet's config
+    /// is the populated [`Self::Full`] shape). A harness arrangement that
+    /// routes workload presigns through the per-dWallet (targeted) path —
+    /// the only coverage of that path, since a populated config makes it
+    /// unreachable. The cross-binary churn test genesises with this and
+    /// applies the full config after its upgrade via
+    /// [`set_global_presign_config`].
     Empty,
 }
 
