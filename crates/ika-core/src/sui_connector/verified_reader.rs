@@ -167,6 +167,86 @@ impl OcsVerifiedReader {
         result
     }
 
+    /// Batch counterpart of [`Self::verified_object`]: one provider
+    /// round-trip for all `ids`, then the same per-object guarantees —
+    /// freshness against the monotonic observed head, inclusion proof
+    /// against a BLS-verified summary (verified once per distinct
+    /// checkpoint, as in [`Self::verified_bag_page`]), high-water version
+    /// tracking, and cache shadow-population. Errors if any id is missing
+    /// from the response: callers ask for objects that must exist (e.g.
+    /// the validator set), so a hole is a failed read, not an empty slot.
+    pub async fn verified_objects(
+        &self,
+        ids: &[ObjectID],
+    ) -> Result<Vec<VerifiedObject>, ReaderError> {
+        let started = std::time::Instant::now();
+        let resp = self.provider.batch_verified_objects(ids).await?;
+        self.note_upstream_head(resp.claimed_latest_checkpoint_seq);
+        let observed_head = self.observed_upstream_head.load(Ordering::Relaxed);
+
+        let mut verified_summaries: HashMap<CheckpointSequenceNumber, VerifiedCheckpoint> =
+            HashMap::new();
+        let mut out = Vec::with_capacity(ids.len());
+        for (id, slot) in ids.iter().zip(resp.results) {
+            let entry = slot.ok_or_else(|| {
+                ReaderError::Transport(TransportError::NotFound(format!(
+                    "object {id} missing from batch response"
+                )))
+            })?;
+            if entry.object.id() != *id {
+                let entry_result: Result<(), ReaderError> =
+                    Err(ReaderError::InvalidProof(format!(
+                        "batch response slot for {id} carries object {}",
+                        entry.object.id()
+                    )));
+                self.record_verify_outcome_unit("batch_objects", &entry_result);
+                entry_result?;
+            }
+            let seq = entry.checkpoint_seq;
+            self.check_freshness(seq, observed_head)?;
+            if !verified_summaries.contains_key(&seq) {
+                let summary = resp
+                    .summaries
+                    .get(&seq)
+                    .ok_or_else(|| {
+                        ReaderError::Decode(format!("missing summary {seq} for batch entry {id}"))
+                    })?
+                    .clone();
+                let verified_summary = self.verify_summary(summary)?;
+                verified_summaries.insert(seq, verified_summary);
+            }
+            // unwrap: inserted just above for this `seq`.
+            let verified_summary = verified_summaries.get(&seq).expect("summary present");
+
+            let cache_proof = clone_inclusion_proof(&entry.proof);
+            let cache_object = entry.object.clone();
+            let entry_result =
+                self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
+            self.record_verify_outcome_unit("batch_objects", &entry_result);
+            entry_result?;
+            self.record_high_water(entry.object.id(), entry.object.version())?;
+            if let Some(proof) = cache_proof {
+                let cache_summary = resp
+                    .summaries
+                    .get(&seq)
+                    .expect("summary present for entry")
+                    .clone();
+                let cache_entry = VerifiedObjectEntry {
+                    object: cache_object,
+                    checkpoint_seq: seq,
+                    proof,
+                };
+                self.cache.absorb_entries(&cache_summary, &[cache_entry]);
+            }
+            out.push(VerifiedObject {
+                object: entry.object,
+                source_checkpoint_seq: seq,
+            });
+        }
+        self.observe_verify_latency("batch_objects", started);
+        Ok(out)
+    }
+
     /// Cache-first fast path for [`Self::verified_object`]. Returns `Some`
     /// only when the object is present in the locally pusher-populated
     /// cache and passes version-monotonicity. The cache only ever holds

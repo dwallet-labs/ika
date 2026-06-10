@@ -148,17 +148,11 @@ impl SuiTransport for VerifiedSuiTransport {
         Err(Self::unreachable("get_object_with_version"))
     }
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
-        let mut objects = Vec::with_capacity(ids.len());
-        for id in ids {
-            objects.push(
-                self.reader
-                    .verified_object(*id)
-                    .await
-                    .map(|verified| verified.object)
-                    .map_err(Self::read_err)?,
-            );
-        }
-        Ok(objects)
+        self.reader
+            .verified_objects(ids)
+            .await
+            .map(|verified| verified.into_iter().map(|v| v.object).collect())
+            .map_err(Self::read_err)
     }
     async fn list_owned_gas_coins(
         &self,
