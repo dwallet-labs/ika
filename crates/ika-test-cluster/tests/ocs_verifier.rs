@@ -24,10 +24,64 @@
 //! never receive the session requests and these waits would time out.
 
 use ika_protocol_config::ProtocolVersion;
-use ika_test_cluster::IkaTestClusterBuilder;
+use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder};
 
 /// dWallet curve id for secp256k1 (matches the on-chain enum discriminant).
 const DWALLET_CURVE_SECP256K1: u32 = 0;
+
+/// The shared end-to-end assertion all three topology tests drive:
+///
+/// 1. Bootstrap completes (`wait_for_epoch(1)`) — the committee installed
+///    from the genesis anchor, the OCS verified reader feeding the pump.
+/// 2. Network-encryption-key DKG completes — a *system* session delivered
+///    by the pump from the verified system bag.
+/// 3. A user dWallet DKG completes — a *user* session, proving verified
+///    coordinator reads + user-bag ingestion.
+/// 4. The cluster crosses an epoch boundary — the Sui-committee ratchet and
+///    verified System/Coordinator reads across reconfiguration.
+///
+/// `topology` names the read path under test so a timeout's panic message
+/// points at the right suspect.
+async fn drive_dkg_and_epoch_advance(cluster: &mut IkaTestCluster, topology: &str) {
+    cluster.wait_for_epoch(1).await;
+
+    let (network_key_id, network_dkg_public_output) =
+        cluster.wait_for_network_key().await.unwrap_or_else(|e| {
+            panic!(
+                "[{topology}] network key DKG did not complete — \
+                 system-event ingestion likely broken: {e:?}"
+            )
+        });
+
+    let user_key = cluster
+        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [7u8; 32])
+        .await
+        .expect("register_user_encryption_key failed");
+
+    let ika_coin_id = cluster.packages.ika_supply_id;
+    let dkg_handle = cluster
+        .request_user_dwallet_dkg(
+            DWALLET_CURVE_SECP256K1,
+            network_key_id,
+            network_dkg_public_output,
+            &user_key,
+            ika_coin_id,
+        )
+        .await
+        .expect("request_user_dwallet_dkg failed");
+
+    cluster
+        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "[{topology}] user dWallet DKG did not complete — \
+                 user-event ingestion likely broken: {e:?}"
+            )
+        });
+
+    cluster.wait_for_epoch(2).await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ocs_verifier_v4_drives_user_dkg_and_epoch_advance() {
@@ -49,45 +103,7 @@ async fn ocs_verifier_v4_drives_user_dkg_and_epoch_advance() {
         .await
         .expect("IkaTestClusterBuilder::build() failed");
 
-    // Bootstrap completes: committee installed from the genesis anchor, the
-    // OCS verified reader is feeding the BagEventPump.
-    cluster.wait_for_epoch(1).await;
-
-    // (1) System session via OCS: the network-encryption-key DKG ran because
-    // the pump delivered its session event from the verified system bag.
-    let (network_key_id, network_dkg_public_output) = cluster
-        .wait_for_network_key()
-        .await
-        .expect("network key DKG did not complete — OCS system-event ingestion likely broken");
-
-    // (2) User session via OCS: register a user encryption key and run a
-    // dWallet DKG. Completion proves the pump delivered the user-bag session
-    // event and the verified reads of the coordinator inner succeeded.
-    let user_key = cluster
-        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [7u8; 32])
-        .await
-        .expect("register_user_encryption_key failed");
-
-    let ika_coin_id = cluster.packages.ika_supply_id;
-    let dkg_handle = cluster
-        .request_user_dwallet_dkg(
-            DWALLET_CURVE_SECP256K1,
-            network_key_id,
-            network_dkg_public_output,
-            &user_key,
-            ika_coin_id,
-        )
-        .await
-        .expect("request_user_dwallet_dkg failed");
-
-    cluster
-        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
-        .await
-        .expect("user dWallet DKG did not complete — OCS user-event ingestion likely broken");
-
-    // (3) Cross an epoch boundary: exercises the Sui-committee ratchet and
-    // verified System/Coordinator reads across reconfiguration.
-    cluster.wait_for_epoch(2).await;
+    drive_dkg_and_epoch_advance(&mut cluster, "direct").await;
 }
 
 /// Same end-to-end OCS path, but with a *mirrored* read topology: only the
@@ -128,44 +144,9 @@ async fn ocs_verifier_v4_mirrored_relay_drives_user_dkg_and_epoch_advance() {
         .await
         .expect("IkaTestClusterBuilder::build() failed");
 
-    // Bootstrap completes for both direct and mirrored validators: the mirrored
-    // ones waited for a direct peer, then built their OCS stack on the relay.
-    cluster.wait_for_epoch(1).await;
-
-    // (1) System session via OCS: network-encryption-key DKG. Reaching quorum
-    // here already needs a mirrored validator's relay reads to succeed.
-    let (network_key_id, network_dkg_public_output) = cluster.wait_for_network_key().await.expect(
-        "network key DKG did not complete — OCS relay system-event ingestion likely broken",
-    );
-
-    // (2) User session via OCS over the relay: register a user encryption key
-    // and run a dWallet DKG to completion.
-    let user_key = cluster
-        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [7u8; 32])
-        .await
-        .expect("register_user_encryption_key failed");
-
-    let ika_coin_id = cluster.packages.ika_supply_id;
-    let dkg_handle = cluster
-        .request_user_dwallet_dkg(
-            DWALLET_CURVE_SECP256K1,
-            network_key_id,
-            network_dkg_public_output,
-            &user_key,
-            ika_coin_id,
-        )
-        .await
-        .expect("request_user_dwallet_dkg failed");
-
-    cluster
-        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
-        .await
-        .expect("user dWallet DKG did not complete — OCS relay user-event ingestion likely broken");
-
-    // (3) Cross an epoch boundary: the mirrored validators ratchet their Sui
-    // committee and re-read System/Coordinator state across reconfiguration,
-    // all through the relay.
-    cluster.wait_for_epoch(2).await;
+    // With four validators the MPC quorum is three, so completing the DKGs
+    // requires a mirrored validator's relay reads to have succeeded.
+    drive_dkg_and_epoch_advance(&mut cluster, "mirrored-relay").await;
 }
 
 /// Same end-to-end OCS path, but with *peer-only* mirrored validators: the two
@@ -210,41 +191,9 @@ async fn ocs_verifier_v4_peer_only_validator_drives_user_dkg_and_epoch_advance()
 
     // Reaching epoch 1 already proves the peer-only validators bootstrapped:
     // with no direct uplink, each had to build its p2p network + OCS relay
-    // reader first, then read its committee + epoch-start state over the relay.
-    cluster.wait_for_epoch(1).await;
-
-    // (1) System session via the relay: the network-encryption-key DKG reached
-    // quorum, which needs a peer-only validator's relay reads to succeed.
-    let (network_key_id, network_dkg_public_output) = cluster.wait_for_network_key().await.expect(
-        "network key DKG did not complete — peer-only relay bootstrap/system reads likely broken",
-    );
-
-    // (2) User session via the relay: register a user encryption key and run a
-    // dWallet DKG to completion.
-    let user_key = cluster
-        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [7u8; 32])
-        .await
-        .expect("register_user_encryption_key failed");
-
-    let ika_coin_id = cluster.packages.ika_supply_id;
-    let dkg_handle = cluster
-        .request_user_dwallet_dkg(
-            DWALLET_CURVE_SECP256K1,
-            network_key_id,
-            network_dkg_public_output,
-            &user_key,
-            ika_coin_id,
-        )
-        .await
-        .expect("request_user_dwallet_dkg failed");
-
-    cluster
-        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
-        .await
-        .expect("user dWallet DKG did not complete — peer-only relay user reads likely broken");
-
-    // (3) Cross an epoch boundary: the peer-only validators ratchet their Sui
-    // committee and re-read System/Coordinator state across reconfiguration,
-    // entirely over the relay.
-    cluster.wait_for_epoch(2).await;
+    // reader first, then read its committee + epoch-start state over the
+    // relay. The DKGs then need a peer-only validator's relay reads for
+    // quorum (three of four), and the epoch advance exercises their
+    // committee ratchet — entirely over the relay.
+    drive_dkg_and_epoch_advance(&mut cluster, "peer-only").await;
 }
