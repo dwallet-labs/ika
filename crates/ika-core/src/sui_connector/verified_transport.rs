@@ -13,14 +13,23 @@
 //! [`SuiTransport`] the gRPC backend expects:
 //!
 //! - **objects + dynamic fields** are served by [`OcsVerifiedReader`], whose
-//!   `verified_object_untracked` / `verified_bag_page` check each object against
-//!   the committee via an inclusion proof. (`_untracked` so these reads don't
-//!   perturb the high-water marks the `BagEventPump` relies on.) The gRPC
-//!   backend's high-level reads (`get_system_inner`,
-//!   `get_dwallet_coordinator_inner`, the table walks) decompose into exactly
-//!   `get_object` + `list_dynamic_fields` + `batch_get_objects`, so layering the
-//!   stock backend over this transport yields verified high-level reads for
-//!   free.
+//!   `verified_object` / `verified_bag_page` check each object against the
+//!   committee via an inclusion proof. Object reads are *version-tracked*
+//!   (the reader's per-object high-water mark): an inclusion proof only shows
+//!   the object existed at *some* checkpoint, so without monotonicity a
+//!   malicious relay could replay an older proof-valid state — and the
+//!   high-water mark is the reader's designated freshness defense (no
+//!   checkpoint-distance bound is configured; see the reader construction in
+//!   `setup.rs`). Tracking is memory-safe here because every id on this path
+//!   is long-lived (the System/Coordinator wrappers, their versioned inners,
+//!   validator objects, table entries); the short-lived session-event bag
+//!   children never flow through `get_object` — the legacy uncompleted-events
+//!   walk that would fetch them is gated off whenever the OCS stack (and thus
+//!   this transport) exists. The gRPC backend's high-level reads
+//!   (`get_system_inner`, `get_dwallet_coordinator_inner`, the table walks)
+//!   decompose into exactly `get_object` + `list_dynamic_fields` +
+//!   `batch_get_objects`, so layering the stock backend over this transport
+//!   yields verified high-level reads for free.
 //! - **chain metadata + checkpoints** (`get_chain_identifier`,
 //!   `get_reference_gas_price`, the checkpoint lookups, `get_transaction_checkpoint`)
 //!   pass through to the relay transport (`SuiMirrorTransport`), which already
@@ -119,10 +128,10 @@ impl SuiTransport for VerifiedSuiTransport {
         self.relay.last_checkpoint_of_epoch(epoch).await
     }
 
-    // -- objects: verified reader -------------------------------------------------------------
+    // -- objects: verified reader (version-tracked; see module docs) ---------------------------
     async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError> {
         self.reader
-            .verified_object_untracked(id)
+            .verified_object(id)
             .await
             .map(|verified| verified.object)
             .map_err(Self::read_err)
@@ -143,7 +152,7 @@ impl SuiTransport for VerifiedSuiTransport {
         for id in ids {
             objects.push(
                 self.reader
-                    .verified_object_untracked(*id)
+                    .verified_object(*id)
                     .await
                     .map(|verified| verified.object)
                     .map_err(Self::read_err)?,
