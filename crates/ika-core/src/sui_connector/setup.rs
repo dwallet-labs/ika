@@ -136,11 +136,26 @@ pub fn resolve_bootstrap_plan(
     chain: SuiChainIdentifier,
     perpetual: &AuthorityPerpetualTables,
 ) -> Result<BootstrapPlan, SetupError> {
-    if perpetual
+    if let Some(head) = perpetual
         .highest_sui_committee_epoch()
         .map_err(SetupError::Ika)?
-        .is_some()
     {
+        // Perpetual committee state always wins over a configured anchor:
+        // the anchor is a first-boot seed, and configs carry it forever, so
+        // re-reading it on every restart would re-anchor the node each time.
+        // The flip side: an operator re-anchoring to recover from
+        // ProofChainBroken must clear the OCS committee tables for the new
+        // anchor to take effect — say so out loud instead of silently
+        // ignoring their config change.
+        if cfg.sui_trusted_anchor.is_some() || cfg.sui_unsafe_genesis_committee.is_some() {
+            tracing::info!(
+                perpetual_head_epoch = head,
+                "OCS bootstrap: using the perpetual committee chain; the configured \
+                 trust anchor is only read on first boot. To force a re-anchor \
+                 (e.g. after ProofChainBroken), clear the node's OCS committee \
+                 tables so the next boot re-seeds from the configured anchor."
+            );
+        }
         return Ok(BootstrapPlan::Hydrated);
     }
     let override_anchor = cfg.sui_trusted_anchor;
