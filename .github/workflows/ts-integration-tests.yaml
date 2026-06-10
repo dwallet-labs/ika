@@ -109,6 +109,13 @@ jobs:
           node-version: 22.x
           cache: "pnpm"
 
+      # `pnpm install` runs the ika-wasm package's `prepare` script, which
+      # builds the Rust->WASM bindings with wasm-pack.
+      - name: Install wasm pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "latest"
+
       # The Cargo workspace pins Sui to mainnet-v1.70.2; a mismatched local
       # sui completes DKG but stalls reconfiguration, so pin the binary too.
       - name: Install Sui mainnet-v1.70.2
