@@ -1094,9 +1094,19 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
         network_key_id: &sui_types::base_types::ObjectID,
     ) -> Option<Vec<u8>>;
 
+    /// The reconfiguration output FOR epoch `for_epoch` — the output
+    /// whose shares are encrypted to `for_epoch`'s committee, i.e.
+    /// the one produced by the reconfiguration session that ran in
+    /// `for_epoch - 1`. This mirrors the on-chain
+    /// `reconfiguration_public_outputs` table, which is keyed by
+    /// target epoch and read at the current epoch. Serving a
+    /// "latest" output regardless of epoch is wrong: mid-epoch, the
+    /// latest output targets the NEXT epoch's party IDs and fails
+    /// decryption under the current epoch's identity.
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
+        for_epoch: EpochId,
     ) -> Option<Vec<u8>>;
 }
 
@@ -1145,10 +1155,11 @@ impl NetworkKeyBlobSource for EpochStoreBlobSource {
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
+        for_epoch: EpochId,
     ) -> Option<Vec<u8>> {
         self.inner
             .upgrade()
-            .and_then(|store| store.network_reconfiguration_output_blob(network_key_id))
+            .and_then(|store| store.network_reconfiguration_output_blob(network_key_id, for_epoch))
     }
 }
 
@@ -1243,11 +1254,12 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
 }
 
 /// In-memory `NetworkKeyBlobSource` for tests and as a typed
-/// empty default. Keyed by `network_key_id`.
+/// empty default. DKG outputs keyed by `network_key_id`;
+/// reconfiguration outputs keyed by `(network_key_id, target_epoch)`.
 #[derive(Default)]
 pub struct StaticNetworkKeyBlobSource {
     dkg: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
-    reconfig: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
+    reconfig: BTreeMap<(sui_types::base_types::ObjectID, EpochId), Vec<u8>>,
 }
 
 impl StaticNetworkKeyBlobSource {
@@ -1257,6 +1269,15 @@ impl StaticNetworkKeyBlobSource {
 
     pub fn insert_dkg(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
         self.dkg.insert(key_id, bytes);
+    }
+
+    pub fn insert_reconfig(
+        &mut self,
+        key_id: sui_types::base_types::ObjectID,
+        for_epoch: EpochId,
+        bytes: Vec<u8>,
+    ) {
+        self.reconfig.insert((key_id, for_epoch), bytes);
     }
 }
 
@@ -1271,8 +1292,9 @@ impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
+        for_epoch: EpochId,
     ) -> Option<Vec<u8>> {
-        self.reconfig.get(network_key_id).cloned()
+        self.reconfig.get(&(*network_key_id, for_epoch)).cloned()
     }
 }
 
@@ -1284,6 +1306,16 @@ impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {
 ///    `current_reconfiguration_public_output`). If `source` doesn't
 ///    have a blob, the corresponding field on `chain_data` is used
 ///    as the fallback.
+///
+/// The reconfiguration blob is requested FOR `chain_data.current_epoch`
+/// — the same target-epoch semantics as the on-chain read that
+/// produced `chain_data` — so the overlay can never substitute an
+/// output dealt to a different epoch's committee. In particular, at
+/// the first off-chain epoch after the v3→v4 upgrade no off-chain
+/// output targets the current epoch (it was produced under v3), so
+/// the chain copy is used; and mid-epoch, the freshly-produced
+/// output targeting the NEXT epoch is invisible to the current
+/// epoch's request.
 ///
 /// The chain blob is read by the caller and stitched into
 /// `chain_data` already; this function just chooses whether to
@@ -1298,7 +1330,7 @@ pub fn fetch_network_key_data_with_off_chain_blobs(
         .network_dkg_output_blob(&chain_data.id)
         .unwrap_or(chain_data.network_dkg_public_output);
     let current_reconfiguration_public_output = source
-        .network_reconfiguration_output_blob(&chain_data.id)
+        .network_reconfiguration_output_blob(&chain_data.id, chain_data.current_epoch)
         .unwrap_or(chain_data.current_reconfiguration_public_output);
     ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
         id: chain_data.id,
@@ -2568,16 +2600,46 @@ mod tests {
 
         let mut source = StaticNetworkKeyBlobSource::new();
         source.insert_dkg(key_id, vec![0x11; 8]);
-        // No reconfig blob in source → caller should keep chain's
-        // reconfig bytes.
+        source.insert_reconfig(key_id, 5, vec![0x22; 8]);
 
         let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
         assert_eq!(merged.id, key_id);
         assert_eq!(merged.current_epoch, 5);
         assert_eq!(merged.dkg_at_epoch, 3);
         assert_eq!(merged.network_dkg_public_output, vec![0x11; 8]);
-        assert_eq!(merged.current_reconfiguration_public_output, vec![0xDD; 16]);
+        assert_eq!(merged.current_reconfiguration_public_output, vec![0x22; 8]);
         assert_eq!(merged.state, chain.state);
+    }
+
+    #[test]
+    fn fetch_network_key_data_ignores_reconfig_output_for_other_epochs() {
+        use ika_types::messages_dwallet_mpc::{
+            DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
+        };
+        let key_id = ObjectID::random();
+        let chain = DWalletNetworkEncryptionKeyData {
+            id: key_id,
+            current_epoch: 5,
+            dkg_at_epoch: 3,
+            network_dkg_public_output: vec![0xCC; 16],
+            current_reconfiguration_public_output: vec![0xDD; 16],
+            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
+        };
+
+        let mut source = StaticNetworkKeyBlobSource::new();
+        // The mid-epoch hazard: the freshly-produced output targeting
+        // the NEXT epoch's committee. It must be invisible to the
+        // current epoch's request — adopting it here is exactly the
+        // ClassGroup(Decryption) failure (shares encrypted to
+        // next-epoch party IDs, decrypted with current-epoch
+        // identity).
+        source.insert_reconfig(key_id, 6, vec![0xEE; 8]);
+        // And a stale prior-epoch output, equally wrong.
+        source.insert_reconfig(key_id, 4, vec![0xFF; 8]);
+
+        let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
+        // Neither overlaid — chain's epoch-5 bytes kept.
+        assert_eq!(merged.current_reconfiguration_public_output, vec![0xDD; 16]);
     }
 
     #[test]

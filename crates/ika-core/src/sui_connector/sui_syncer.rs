@@ -774,11 +774,19 @@ where
                         // EndOfPublish vote (`snapshot_ready_for_signing`
                         // requires a non-empty reconfiguration output),
                         // stalling reconfiguration.
+                        // A key DKG'd THIS epoch has no reconfiguration
+                        // output FOR this epoch by construction (its
+                        // first reconfiguration, even when already
+                        // completed, targets the NEXT epoch's committee
+                        // — same special case the chain read makes), so
+                        // an empty output is final for the epoch, not a
+                        // not-yet-cached race to retry.
                         let reconfiguration_output_missing =
                             matches!(
                                 merged.state,
                                 DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-                            ) && merged.current_reconfiguration_public_output.is_empty();
+                            ) && merged.current_reconfiguration_public_output.is_empty()
+                                && merged.dkg_at_epoch != current_epoch;
                         let overlay_incomplete = off_chain_on
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);

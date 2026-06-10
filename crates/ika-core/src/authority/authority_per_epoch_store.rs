@@ -692,11 +692,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        self.cache_protocol_output(
-            ProtocolOutputKind::Dkg,
-            dwallet_network_encryption_key_id,
-            output_bytes,
-        )
+        self.cache_protocol_output(dwallet_network_encryption_key_id, output_bytes)
     }
 
     fn cache_network_reconfiguration_output(
@@ -705,25 +701,30 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         reconfiguration_epoch: EpochId,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        // Per-epoch table + perpetual blob/by-key mirror (feeds the
-        // off-chain overlay's by-key lookup). Unchanged.
-        self.cache_protocol_output(
-            ProtocolOutputKind::Reconfiguration,
-            dwallet_network_encryption_key_id,
-            output_bytes,
-        )?;
-        // Epoch-keyed digest for the handoff attestation, keyed by the
-        // reconfiguration session's own epoch (deterministic across
-        // validators) rather than the wall-clock epoch the per-epoch
-        // table above is implicitly bound to. This is the slice the
-        // handoff items builder reads, so a late-finalized output that
-        // crosses the epoch boundary still certifies under the correct
-        // epoch on every validator.
+        // Blob into perpetual `mpc_artifact_blobs` + digest into the
+        // epoch-keyed table, keyed by the reconfiguration session's
+        // own epoch (deterministic across validators) rather than the
+        // wall-clock epoch this validator processed the output in.
+        // That single (epoch, key) index serves both consumers: the
+        // handoff items builder reads the `reconfiguration_epoch`
+        // slice, and the off-chain blob overlay resolves the output
+        // FOR epoch `reconfiguration_epoch + 1` through it. The same
+        // canonical-encoding determinism note as
+        // [`Self::cache_protocol_output`] applies — this digest feeds
+        // the cross-epoch handoff attestation.
         if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
             use fastcrypto::hash::{Blake2b256, HashFunction};
             let mut hasher = Blake2b256::default();
             hasher.update(output_bytes);
             let digest: [u8; 32] = hasher.finalize().into();
+            if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes) {
+                warn!(
+                    error = ?e,
+                    ?dwallet_network_encryption_key_id,
+                    reconfiguration_epoch,
+                    "failed to persist reconfiguration output blob — next epoch's overlay lookup will miss the bytes"
+                );
+            }
             if let Err(e) = perpetual.insert_network_reconfiguration_output_digest_for_epoch(
                 reconfiguration_epoch,
                 dwallet_network_encryption_key_id,
@@ -788,27 +789,36 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     }
 }
 
-/// Discriminator for the two protocol output caches that share an
-/// implementation in [`AuthorityPerEpochStore::cache_protocol_output`].
-#[derive(Copy, Clone)]
-enum ProtocolOutputKind {
-    Dkg,
-    Reconfiguration,
-}
-
 /// Read-only adapter so `validator_metadata::NetworkKeyBlobSource`
 /// can serve protocol output blobs straight out of this validator's
-/// own caches (`network_dkg_output_digests` /
-/// `network_reconfiguration_output_digests` + perpetual
-/// `mpc_artifact_blobs`). Returning `None` causes the caller's
-/// fallback chain-read path to kick in.
+/// own caches (digest indices + perpetual `mpc_artifact_blobs`).
+/// Returning `None` causes the caller's fallback chain-read path to
+/// kick in.
 impl NetworkKeyBlobSource for AuthorityPerEpochStore {
     fn network_dkg_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
-        self.lookup_protocol_output_blob(ProtocolOutputKind::Dkg, network_key_id)
+        self.lookup_network_dkg_output_blob(network_key_id)
     }
 
-    fn network_reconfiguration_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
-        self.lookup_protocol_output_blob(ProtocolOutputKind::Reconfiguration, network_key_id)
+    /// The output FOR `for_epoch` is the one produced by the
+    /// reconfiguration session that ran in `for_epoch - 1`, so the
+    /// digest lives under production epoch `for_epoch - 1` in the
+    /// epoch-keyed perpetual table — exactly mirroring the on-chain
+    /// `reconfiguration_public_outputs[for_epoch]` read. `for_epoch
+    /// == 0` (or a missing entry, e.g. the production epoch ran v3
+    /// or this validator didn't participate in it) returns `None`
+    /// and the caller keeps the chain bytes.
+    fn network_reconfiguration_output_blob(
+        &self,
+        network_key_id: &ObjectID,
+        for_epoch: EpochId,
+    ) -> Option<Vec<u8>> {
+        let production_epoch = for_epoch.checked_sub(1)?;
+        let perpetual = self.perpetual_tables_for_handoff.load_full()?;
+        let digest = perpetual
+            .get_network_reconfiguration_output_digest_for_epoch(production_epoch, network_key_id)
+            .ok()
+            .flatten()?;
+        perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 }
 
@@ -1169,12 +1179,6 @@ pub struct AuthorityEpochTables {
     /// attestation items list. Blob bytes go into the perpetual
     /// `mpc_artifact_blobs` table so peers can fetch them by digest.
     pub(crate) network_dkg_output_digests: DBMap<ObjectID, [u8; 32]>,
-
-    /// Local cache of network reconfiguration output digests for
-    /// this epoch — same shape and lifecycle as
-    /// `network_dkg_output_digests`. Per-epoch (not perpetual)
-    /// because a key's reconfig output is by definition per-epoch.
-    pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -2306,17 +2310,20 @@ impl AuthorityPerEpochStore {
         )
     }
 
-    /// Shared implementation behind `cache_network_dkg_output` and
-    /// `cache_network_reconfiguration_output`. Computes the
+    /// Implementation behind `cache_network_dkg_output`. Computes the
     /// Blake2b256 digest of `output_bytes`, writes the digest into
-    /// the appropriate per-epoch table, and writes the blob into
-    /// perpetual `mpc_artifact_blobs` so the local node can resolve
-    /// the bytes by digest in later epochs (via `EpochStoreBlobSource`,
-    /// which reads perpetual directly). Unlike validator `mpc_data`
-    /// blobs, these network-key outputs are resolved locally — never
-    /// fetched peer-to-peer — so they intentionally do NOT go through
-    /// the `BlobCache` write-through into the in-memory P2P serve store.
-    /// Both writes are idempotent on byte-identical inputs.
+    /// the per-epoch `network_dkg_output_digests` table, and writes
+    /// the blob into perpetual `mpc_artifact_blobs` so the local node
+    /// can resolve the bytes by digest in later epochs (via
+    /// `EpochStoreBlobSource`, which reads perpetual directly). Unlike
+    /// validator `mpc_data` blobs, these network-key outputs are
+    /// resolved locally — never fetched peer-to-peer — so they
+    /// intentionally do NOT go through the `BlobCache` write-through
+    /// into the in-memory P2P serve store. Both writes are idempotent
+    /// on byte-identical inputs. (Reconfiguration outputs take a
+    /// different path — `cache_network_reconfiguration_output` writes
+    /// the epoch-keyed digest table, since those outputs are
+    /// epoch-specific where the DKG output is one-time.)
     ///
     /// DETERMINISM: this digest feeds the cross-epoch handoff
     /// attestation, whose items a quorum of signers must byte-match.
@@ -2328,7 +2335,6 @@ impl AuthorityPerEpochStore {
     /// and cross-reject as `AttestationMismatch` with no other symptom.
     fn cache_protocol_output(
         &self,
-        kind: ProtocolOutputKind,
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
@@ -2337,14 +2343,9 @@ impl AuthorityPerEpochStore {
         hasher.update(output_bytes);
         let digest: [u8; 32] = hasher.finalize().into();
         let tables = self.tables()?;
-        match kind {
-            ProtocolOutputKind::Dkg => tables
-                .network_dkg_output_digests
-                .insert(&dwallet_network_encryption_key_id, &digest)?,
-            ProtocolOutputKind::Reconfiguration => tables
-                .network_reconfiguration_output_digests
-                .insert(&dwallet_network_encryption_key_id, &digest)?,
-        }
+        tables
+            .network_dkg_output_digests
+            .insert(&dwallet_network_encryption_key_id, &digest)?;
         if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
             if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes) {
                 warn!(
@@ -2360,16 +2361,9 @@ impl AuthorityPerEpochStore {
             // returns `None` for any key whose output was produced in
             // a prior epoch, which propagates as `BcsError(Eof)` in
             // `instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output`.
-            let perpetual_insert = match kind {
-                ProtocolOutputKind::Dkg => perpetual
-                    .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest),
-                ProtocolOutputKind::Reconfiguration => perpetual
-                    .insert_network_reconfiguration_output_digest(
-                        dwallet_network_encryption_key_id,
-                        digest,
-                    ),
-            };
-            if let Err(e) = perpetual_insert {
+            if let Err(e) = perpetual
+                .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest)
+            {
                 warn!(
                     error = ?e,
                     ?dwallet_network_encryption_key_id,
@@ -2401,31 +2395,6 @@ impl AuthorityPerEpochStore {
             }
         }
         for entry in tables.network_dkg_output_digests.safe_iter() {
-            let (key_id, digest) = entry.map_err(IkaError::from)?;
-            out.insert(key_id, digest);
-        }
-        Ok(out)
-    }
-
-    /// Returns the merged `key_id -> digest` map of cached network
-    /// reconfiguration outputs. Same precedence as
-    /// [`Self::get_network_dkg_output_digests`].
-    pub fn get_network_reconfiguration_output_digests(
-        &self,
-    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
-        let tables = self.tables()?;
-        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
-            std::collections::BTreeMap::new();
-        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            for entry in perpetual
-                .network_reconfiguration_output_digests_by_key
-                .safe_iter()
-            {
-                let (key_id, digest) = entry.map_err(IkaError::from)?;
-                out.insert(key_id, digest);
-            }
-        }
-        for entry in tables.network_reconfiguration_output_digests.safe_iter() {
             let (key_id, digest) = entry.map_err(IkaError::from)?;
             out.insert(key_id, digest);
         }
@@ -2466,51 +2435,34 @@ impl AuthorityPerEpochStore {
         Ok(out)
     }
 
-    /// Looks up the cached blob for a given network key + protocol
-    /// output kind. Returns `None` only when no digest exists for
-    /// this key/kind in either the per-epoch table or the perpetual
-    /// mirror, or when the digest is known but the perpetual blob
-    /// store doesn't hold the bytes.
+    /// Looks up the cached network DKG output blob for a network key.
+    /// Returns `None` only when no digest exists for this key in
+    /// either the per-epoch table or the perpetual mirror, or when
+    /// the digest is known but the perpetual blob store doesn't hold
+    /// the bytes.
     ///
     /// Lookup precedence:
-    /// 1. Per-epoch `network_*_output_digests` (fresh writes in the
+    /// 1. Per-epoch `network_dkg_output_digests` (fresh writes in the
     ///    current epoch land here first).
-    /// 2. Perpetual `network_*_output_digests_by_key` mirror (covers
-    ///    keys whose output was produced in a prior epoch — the
-    ///    per-epoch table starts empty after each reconfig).
+    /// 2. Perpetual `network_dkg_output_digests_by_key` mirror
+    ///    (covers keys whose DKG ran in a prior epoch — the per-epoch
+    ///    table starts empty after each reconfig).
     /// 3. Perpetual `mpc_artifact_blobs` keyed by the resolved
     ///    digest.
-    fn lookup_protocol_output_blob(
-        &self,
-        kind: ProtocolOutputKind,
-        network_key_id: &ObjectID,
-    ) -> Option<Vec<u8>> {
+    fn lookup_network_dkg_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
         let perpetual = self.perpetual_tables_for_handoff.load_full()?;
         let tables = self.tables().ok()?;
-        let digest = match kind {
-            ProtocolOutputKind::Dkg => tables
-                .network_dkg_output_digests
-                .get(network_key_id)
-                .ok()
-                .flatten()
-                .or_else(|| {
-                    perpetual
-                        .get_network_dkg_output_digest(network_key_id)
-                        .ok()
-                        .flatten()
-                })?,
-            ProtocolOutputKind::Reconfiguration => tables
-                .network_reconfiguration_output_digests
-                .get(network_key_id)
-                .ok()
-                .flatten()
-                .or_else(|| {
-                    perpetual
-                        .get_network_reconfiguration_output_digest(network_key_id)
-                        .ok()
-                        .flatten()
-                })?,
-        };
+        let digest = tables
+            .network_dkg_output_digests
+            .get(network_key_id)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                perpetual
+                    .get_network_dkg_output_digest(network_key_id)
+                    .ok()
+                    .flatten()
+            })?;
         perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 
@@ -4865,33 +4817,5 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected.get(&key_a), Some(&[0x11; 32]));
         assert_eq!(collected.get(&key_b), Some(&[0x22; 32]));
-    }
-
-    #[tokio::test]
-    async fn network_dkg_and_reconfig_caches_are_independent() {
-        // Same key id appearing in both caches doesn't collide —
-        // they're separate tables addressing different artifacts.
-        let tables = create_tables();
-        let key = ObjectID::random();
-        tables
-            .network_dkg_output_digests
-            .insert(&key, &[0xAA; 32])
-            .unwrap();
-        tables
-            .network_reconfiguration_output_digests
-            .insert(&key, &[0xBB; 32])
-            .unwrap();
-
-        assert_eq!(
-            tables.network_dkg_output_digests.get(&key).unwrap(),
-            Some([0xAA; 32])
-        );
-        assert_eq!(
-            tables
-                .network_reconfiguration_output_digests
-                .get(&key)
-                .unwrap(),
-            Some([0xBB; 32])
-        );
     }
 }

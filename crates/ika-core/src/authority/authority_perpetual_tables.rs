@@ -51,12 +51,6 @@ pub struct AuthorityPerpetualTables {
     /// in the originating epoch — this is its perpetual mirror.
     pub(crate) network_dkg_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
 
-    /// Per-key map `network_key_id -> blob digest` for the LATEST
-    /// network reconfiguration output. Reconfig outputs change each
-    /// epoch, but only the most recent one matters for class-groups
-    /// assembly + downstream MPC, so we overwrite on each write.
-    pub(crate) network_reconfiguration_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
-
     /// `(reconfiguration_epoch, network_key_id) -> reconfig output
     /// digest`, keyed by the reconfiguration session's *own* epoch
     /// (the on-chain request event's epoch, identical across
@@ -71,6 +65,12 @@ pub struct AuthorityPerpetualTables {
     /// cross-reject as `AttestationMismatch` — wedging EndOfPublish.
     /// One small entry per (epoch, key); never overwritten, so the
     /// historical slice stays available for late handoff retries.
+    ///
+    /// This is also the index behind the off-chain blob overlay's
+    /// reconfiguration lookup: the output FOR epoch `e` (the one
+    /// `e`'s committee decrypts with) is the one recorded under
+    /// production epoch `e - 1`, mirroring the on-chain
+    /// `reconfiguration_public_outputs` table keyed by target epoch.
     pub(crate) network_reconfiguration_output_digest_by_epoch_and_key:
         DBMap<(EpochId, ObjectID), [u8; 32]>,
 }
@@ -234,26 +234,11 @@ impl AuthorityPerpetualTables {
         Ok(self.network_dkg_output_digests_by_key.get(network_key_id)?)
     }
 
-    /// Records the LATEST known digest of a network key's
-    /// reconfiguration output. Reconfig outputs change every epoch,
-    /// so the table stores only the most recent digest per key —
-    /// downstream class-groups assembly + reconfig MPC only ever
-    /// need the latest.
-    pub fn insert_network_reconfiguration_output_digest(
-        &self,
-        network_key_id: ObjectID,
-        digest: [u8; 32],
-    ) -> IkaResult {
-        self.network_reconfiguration_output_digests_by_key
-            .insert(&network_key_id, &digest)?;
-        Ok(())
-    }
-
     /// Records a reconfiguration output digest under the
     /// reconfiguration session's own epoch (deterministic across
-    /// validators), for the epoch-keyed handoff attestation lookup.
-    /// Distinct from [`Self::insert_network_reconfiguration_output_digest`],
-    /// which keeps only the latest per key for the off-chain overlay.
+    /// validators). Read both by the epoch-keyed handoff attestation
+    /// builder and by the off-chain blob overlay (which resolves the
+    /// output FOR epoch `e` via production epoch `e - 1`).
     pub fn insert_network_reconfiguration_output_digest_for_epoch(
         &self,
         reconfiguration_epoch: EpochId,
@@ -263,15 +248,6 @@ impl AuthorityPerpetualTables {
         self.network_reconfiguration_output_digest_by_epoch_and_key
             .insert(&(reconfiguration_epoch, network_key_id), &digest)?;
         Ok(())
-    }
-
-    pub fn get_network_reconfiguration_output_digest(
-        &self,
-        network_key_id: &ObjectID,
-    ) -> IkaResult<Option<[u8; 32]>> {
-        Ok(self
-            .network_reconfiguration_output_digests_by_key
-            .get(network_key_id)?)
     }
 
     /// Point lookup of the digest recorded by
