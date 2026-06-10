@@ -3,6 +3,7 @@
 
 use crate::network_config::NetworkConfig;
 use crate::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
+use crate::sui_client::GenesisGlobalPresignConfig;
 use crate::validator_initialization_config::ValidatorInitializationConfig;
 use crate::validator_initialization_config::ValidatorInitializationConfigBuilder;
 use ika_config::initiation::InitiationParameters;
@@ -75,6 +76,7 @@ pub struct ConfigBuilder<R = OsRng> {
     // Default to supported_protocol_versions_config, but can be overridden.
     fullnode_supported_protocol_versions_config: Option<ProtocolVersionsConfig>,
     fullnode_run_with_range: Option<RunWithRange>,
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
 }
 
 impl ConfigBuilder {
@@ -101,6 +103,7 @@ impl ConfigBuilder {
             fullnode_count: 0,
             fullnode_supported_protocol_versions_config: None,
             fullnode_run_with_range: None,
+            genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
         }
     }
 
@@ -222,6 +225,14 @@ impl<R> ConfigBuilder<R> {
         self
     }
 
+    pub fn with_genesis_global_presign_config(
+        mut self,
+        genesis_global_presign_config: GenesisGlobalPresignConfig,
+    ) -> Self {
+        self.genesis_global_presign_config = genesis_global_presign_config;
+        self
+    }
+
     pub fn rng<N: rand::RngCore + rand::CryptoRng>(self, rng: N) -> ConfigBuilder<N> {
         ConfigBuilder {
             rng: Some(rng),
@@ -240,6 +251,7 @@ impl<R> ConfigBuilder<R> {
             fullnode_supported_protocol_versions_config: self
                 .fullnode_supported_protocol_versions_config,
             fullnode_run_with_range: self.fullnode_run_with_range,
+            genesis_global_presign_config: self.genesis_global_presign_config,
         }
     }
 }
@@ -329,6 +341,7 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
             self.sui_fullnode_rpc_url.to_string(),
             self.sui_faucet_url.to_string(),
             initiation_parameters,
+            self.genesis_global_presign_config,
         )
         .await?;
         let ika_package_id = bootstrap.packages.ika_package_id;

@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_protocol_config::ProtocolVersion;
+use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
@@ -60,6 +61,12 @@ pub enum Step {
     },
     /// Assert the on-chain active committee has exactly this many members.
     ExpectCommitteeSize(usize),
+    /// Write the production curve/algorithm set into the on-chain
+    /// `GlobalPresignConfig`, routing those presigns to the validators'
+    /// internal pool. Insert after the protocol-v4 upgrade is confirmed —
+    /// the pool only fills with `internal_presign_sessions` on, so setting
+    /// it earlier makes every routed presign unservable.
+    SetGlobalPresignConfig,
     /// Scrape every running validator's MPC duration metrics into a labeled
     /// snapshot, printed immediately and compared against the other
     /// snapshots at the end of the run.
@@ -103,6 +110,11 @@ pub struct Scenario {
     pub min_validator_count: Option<u64>,
     /// Path to the `ika` CLI binary; required by `RunWorkload` steps.
     pub ika_cli: Option<PathBuf>,
+    /// What genesis writes into the on-chain `GlobalPresignConfig`. Scenarios
+    /// that run presigns before the v4 upgrade need `Empty` (the
+    /// mainnet-v1.1.8 state) plus a [`Step::SetGlobalPresignConfig`] after
+    /// the upgrade.
+    pub genesis_global_presign_config: GenesisGlobalPresignConfig,
 }
 
 impl Scenario {
@@ -123,6 +135,7 @@ impl Scenario {
             base_dir: None,
             min_validator_count: None,
             ika_cli: None,
+            genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
         }
     }
 
@@ -219,6 +232,23 @@ impl Scenario {
         self
     }
 
+    /// Override what genesis writes into the on-chain `GlobalPresignConfig`
+    /// (default `Full`). See [`Step::SetGlobalPresignConfig`].
+    pub fn with_genesis_global_presign_config(
+        mut self,
+        config: GenesisGlobalPresignConfig,
+    ) -> Self {
+        self.genesis_global_presign_config = config;
+        self
+    }
+
+    /// Apply the full production `GlobalPresignConfig` on chain. Only valid
+    /// once the network runs protocol v4+.
+    pub fn set_global_presign_config(mut self) -> Self {
+        self.steps.push(Step::SetGlobalPresignConfig);
+        self
+    }
+
     /// Resolve binaries, bring up the cluster, and execute the steps in order.
     /// Binary resolution (a `cargo build` for git refs) runs on a blocking
     /// thread so it doesn't stall the async runtime.
@@ -239,7 +269,8 @@ impl Scenario {
                     )
                     .with_num_validators(self.num_validators)
                     .with_epoch_duration_ms(self.epoch_duration_ms)
-                    .with_genesis_protocol_version(ProtocolVersion::MIN);
+                    .with_genesis_protocol_version(ProtocolVersion::MIN)
+                    .with_genesis_global_presign_config(self.genesis_global_presign_config);
                     if let Some(dir) = &self.base_dir {
                         builder = builder.with_base_dir(dir.clone());
                     }
@@ -317,6 +348,12 @@ impl Scenario {
                         bail!("active committee size {got} != expected {expected}");
                     }
                     tracing::info!(got, "committee size assertion passed");
+                }
+                Step::SetGlobalPresignConfig => {
+                    let c = cluster
+                        .as_mut()
+                        .context("SetGlobalPresignConfig before StartAll")?;
+                    c.set_global_presign_config().await?;
                 }
                 Step::RecordMpcTimings { label } => {
                     let c = cluster

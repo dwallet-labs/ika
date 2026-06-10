@@ -24,8 +24,10 @@ use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
-    InitializedIkaSystem, PublishedIkaPackages, fund_address_from_faucet, init_ika_on_sui,
-    request_add_validator, request_add_validator_candidate, request_remove_validator, stake_ika,
+    GenesisGlobalPresignConfig, InitializedIkaSystem, PublishedIkaPackages,
+    fund_address_from_faucet, init_ika_on_sui, request_add_validator,
+    request_add_validator_candidate, request_remove_validator, set_global_presign_config,
+    stake_ika,
 };
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
@@ -114,6 +116,12 @@ pub struct ClusterBuilder {
     /// Resolved `sui` binary for the localnet.
     sui_binary: PathBuf,
     base_dir: Option<PathBuf>,
+    /// What the genesis bootstrap writes into the on-chain
+    /// `GlobalPresignConfig`. `Full` is only correct when no presign runs
+    /// before protocol v4; genesis-at-v3 scenarios that exercise presigns
+    /// pre-upgrade need `Empty` (the mainnet-v1.1.8 state) and apply the full
+    /// config post-upgrade via [`ClusterOfProcesses::set_global_presign_config`].
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
 }
 
 impl ClusterBuilder {
@@ -127,6 +135,7 @@ impl ClusterBuilder {
             notifier_binary,
             sui_binary,
             base_dir: None,
+            genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
         }
     }
 
@@ -159,6 +168,15 @@ impl ClusterBuilder {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    /// Override the genesis on-chain `GlobalPresignConfig` (default `Full`).
+    pub fn with_genesis_global_presign_config(
+        mut self,
+        config: GenesisGlobalPresignConfig,
+    ) -> Self {
+        self.genesis_global_presign_config = config;
         self
     }
 
@@ -218,6 +236,7 @@ impl ClusterBuilder {
             rpc_url.clone(),
             faucet_url,
             initiation_parameters,
+            self.genesis_global_presign_config,
         )
         .await;
         if let Some(cwd) = &original_cwd {
@@ -589,6 +608,38 @@ impl ClusterOfProcesses {
             .await
         );
         tracing::info!(index, address = %slot.address, "validator removal requested on chain");
+        Ok(())
+    }
+
+    /// Write the production (`Full`) curve/algorithm set into the on-chain
+    /// `GlobalPresignConfig`, routing those presigns to the validators'
+    /// internal pool. Only call once the network runs protocol v4+ (the pool
+    /// only fills with `internal_presign_sessions` on) — the same ordering a
+    /// real mainnet rollout from v1.1.8 must follow.
+    pub async fn set_global_presign_config(&mut self) -> Result<()> {
+        let client = SuiClientBuilder::default().build(&self.rpc_url).await?;
+        let (curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key) =
+            GenesisGlobalPresignConfig::Full.curve_to_signature_algorithm_maps();
+        retry_on_object_contention!(
+            "set_global_presign_config",
+            set_global_presign_config(
+                self.publisher_address,
+                &mut self.wallet,
+                client.clone(),
+                self.packages.ika_system_package_id,
+                self.system.ika_system_object_id,
+                self.system.init_system_shared_version,
+                self.system
+                    .dwallet_2pc_mpc_coordinator_initial_shared_version,
+                self.system.protocol_cap_id,
+                self.packages.ika_dwallet_2pc_mpc_package_id,
+                self.system.ika_dwallet_coordinator_object_id,
+                curve_to_signature_algorithms_for_dkg.clone(),
+                curve_to_signature_algorithms_for_imported_key.clone(),
+            )
+            .await
+        );
+        tracing::info!("global presign config set on chain (full production config)");
         Ok(())
     }
 

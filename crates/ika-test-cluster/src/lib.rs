@@ -25,7 +25,7 @@ use ika_swarm::memory::{Swarm, SwarmBuilder};
 use ika_swarm_config::network_config::NetworkConfig;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
 use ika_swarm_config::sui_client::{
-    ContractPaths, InitializedIkaSystem, PublishedIkaPackages,
+    ContractPaths, GenesisGlobalPresignConfig, InitializedIkaSystem, PublishedIkaPackages,
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap, initialize_ika_system,
     publish_ika_packages, request_add_validator, request_add_validator_candidate,
     request_remove_validator, stake_ika,
@@ -1065,6 +1065,7 @@ impl IkaTestClusterBuilder {
             &validator_initialization_configs,
             &validator_addresses,
             &initiation_parameters,
+            GenesisGlobalPresignConfig::Full,
         )
         .await?;
 

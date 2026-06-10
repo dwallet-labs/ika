@@ -197,6 +197,7 @@ pub async fn init_ika_on_sui(
     sui_fullnode_rpc_url: String,
     sui_faucet_url: String,
     initiation_parameters: InitiationParameters,
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
 ) -> Result<IkaSuiBootstrap, anyhow::Error> {
     //let config_dir = ika_config_dir()?;
     let config_dir = tempfile::tempdir()?.keep();
@@ -296,6 +297,7 @@ pub async fn init_ika_on_sui(
         validator_initialization_configs,
         &validator_addresses,
         &initiation_parameters,
+        genesis_global_presign_config,
     )
     .await?;
 
@@ -398,6 +400,7 @@ pub async fn initialize_ika_system(
     validator_initialization_configs: &[ValidatorInitializationConfig],
     validator_addresses: &[SuiAddress],
     initiation_parameters: &InitiationParameters,
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
 ) -> Result<InitializedIkaSystem, anyhow::Error> {
     let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
         publisher_address,
@@ -515,6 +518,8 @@ pub async fn initialize_ika_system(
         )
         .await?;
     println!("Running `system::initialize` done.");
+    let (curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key) =
+        genesis_global_presign_config.curve_to_signature_algorithm_maps();
     set_global_presign_config(
         publisher_address,
         context,
@@ -526,9 +531,13 @@ pub async fn initialize_ika_system(
         protocol_cap_id,
         packages.ika_dwallet_2pc_mpc_package_id,
         ika_dwallet_coordinator_object_id,
+        curve_to_signature_algorithms_for_dkg,
+        curve_to_signature_algorithms_for_imported_key,
     )
     .await?;
-    println!("Running `system::set_global_presign_config` done.");
+    println!(
+        "Running `system::set_global_presign_config` done. config={genesis_global_presign_config:?}"
+    );
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
@@ -636,6 +645,48 @@ fn new_curve_to_signature_algorithm_vecmap(
     ))
 }
 
+/// What the chain bootstrap writes into the coordinator's on-chain
+/// `GlobalPresignConfig` at genesis.
+///
+/// The config must exist from genesis either way — the coordinator reads it
+/// with a bare dynamic-field `borrow` on every presign request, so a missing
+/// config aborts the request (`migrate()` backfills an empty one only on
+/// upgraded deployments).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenesisGlobalPresignConfig {
+    /// Route the production curve/algorithm set to global presign. Global
+    /// presign requests are served exclusively from the validators' internal
+    /// presign pool, which only fills once `internal_presign_sessions` turns
+    /// on (protocol version >= 4) — so this is only correct when the genesis
+    /// protocol version is already >= 4, or when no presign is requested
+    /// before the network upgrades to it.
+    Full,
+    /// Empty config: every curve/algorithm allows per-dWallet presign — the
+    /// mainnet-v1.1.8 on-chain state (and what `migrate()` creates). Use for
+    /// genesis-at-v3 scenarios that exercise presigns before the upgrade,
+    /// then apply the full config post-upgrade via
+    /// [`set_global_presign_config`] — same ordering a real mainnet rollout
+    /// must follow, or ECDSA presigns stall until protocol v4 activates.
+    Empty,
+}
+
+impl GenesisGlobalPresignConfig {
+    /// The `(for_dkg, for_imported_key)` curve→signature-algorithm maps this
+    /// config writes on chain — the two arguments
+    /// [`set_global_presign_config`] takes.
+    pub fn curve_to_signature_algorithm_maps(
+        self,
+    ) -> (HashMap<u32, Vec<u32>>, HashMap<u32, Vec<u32>>) {
+        match self {
+            GenesisGlobalPresignConfig::Full => (
+                GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
+                GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
+            ),
+            GenesisGlobalPresignConfig::Empty => (HashMap::new(), HashMap::new()),
+        }
+    }
+}
+
 pub async fn set_global_presign_config(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
@@ -647,6 +698,8 @@ pub async fn set_global_presign_config(
     protocol_cap_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_coordinator_object_id: ObjectID,
+    curve_to_signature_algorithms_for_dkg: HashMap<u32, Vec<u32>>,
+    curve_to_signature_algorithms_for_imported_key: HashMap<u32, Vec<u32>>,
 ) -> Result<(), anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
@@ -675,13 +728,11 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(
-        &mut ptb,
-        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
-    )?;
+    let curve_to_signature_algorithms_for_dkg =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, curve_to_signature_algorithms_for_dkg)?;
     let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
+        curve_to_signature_algorithms_for_imported_key,
     )?;
 
     ptb.programmable_move_call(

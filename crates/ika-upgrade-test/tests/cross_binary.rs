@@ -33,16 +33,28 @@
 //! must upgrade into v4).
 //!
 //! On the OLD binary: the literal `mainnet-v1.1.8` ika-node is **not** usable
-//! here — it links `class_groups` from `dwallet-labs/inkrypto` while `dev` links
-//! `dwallet-labs/cryptography-private`, and v4 changed the on-chain
-//! validator-key shape, so a v1.1.8 node cannot parse dev-registered keys (it
-//! panics in `verify_validator_keys`). That incompatibility is itself a finding:
-//! the real v1.1.8 -> dev upgrade is not a naive binary swap (it needs the
-//! dual-pin / backward-compatible handling from `docs/plan-update-crypto-latest.md`).
-//! To exercise a *successful* heterogeneous upgrade we use an OLD binary that
-//! shares dev's crypto but is pinned to `MAX_PROTOCOL_VERSION = 3` (a one-line
-//! build of dev) — genuinely a different compiled binary, differing only in the
+//! in *this harness* — the harness generates genesis with dev tooling, whose
+//! class-groups key encoding (`dwallet-labs/cryptography-private`) the v1.1.8
+//! binary (`dwallet-labs/inkrypto`) cannot parse, so it panics in
+//! `verify_validator_keys` at boot. That is a harness-direction artifact, not
+//! a production gap: the production direction — the NEW binary reading
+//! v1.1.8-era on-chain state — is handled in the binary itself
+//! (`decode_validator_encryption_keys` accepts both the bare v1.1.8 key shape
+//! and the post-#1707 bundle, and key *publication* is gated on the protocol
+//! version so mixed committees keep interoperating). To exercise a
+//! *successful* heterogeneous upgrade we use an OLD binary that shares dev's
+//! crypto but is pinned to `MAX_PROTOCOL_VERSION = 3` (a one-line build of
+//! dev) — genuinely a different compiled binary, differing only in the
 //! protocol version it advertises, which is the realistic minimal upgrade.
+//!
+//! Genesis writes an **empty** `GlobalPresignConfig` (the mainnet-v1.1.8
+//! on-chain state): the v3 workload's ECDSA presign must run per-dWallet,
+//! because global presigns are served exclusively from the validators'
+//! internal pool, which only fills once `internal_presign_sessions` activates
+//! at protocol v4. The full config is applied right after the v4 upgrade is
+//! confirmed — the same operational ordering a real mainnet rollout must
+//! follow (`set_global_presign_config` only after v4 activates, or ECDSA
+//! presigns stall network-wide until it does).
 //!
 //! Opt-in (real binaries + long-running), via `RUN_CROSS_BINARY=1`:
 //!
@@ -61,6 +73,7 @@ use std::path::PathBuf;
 
 use std::time::Duration;
 
+use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
 use ika_upgrade_test::binary::BinarySpec;
 use ika_upgrade_test::scenario::Scenario;
 
@@ -113,6 +126,11 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         // default min_validator_count = 4 would reject it at genesis.
         .with_min_validator_count(3)
         .with_ika_cli(ika_cli)
+        // Empty config at genesis (the mainnet-v1.1.8 state): the v3 workload
+        // must presign per-dWallet — global presigns are only servable once
+        // the internal pool fills at protocol v4. The full config is applied
+        // below, after the upgrade is confirmed.
+        .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Empty)
         .start_all(old)
         // The genesis network DKG runs *during* epoch 1; the epoch cannot
         // advance to 2 until it completes (reconfiguration into epoch 2
@@ -138,6 +156,11 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         .wait_for_epoch(3)
         .expect_protocol_version_at_least(4)
         .expect_committee_size(3)
+        // v4 is live, so the internal presign pool fills from here on — now
+        // (and only now) route production curves/algorithms to global presign.
+        // Mirrors the real mainnet rollout ordering, and makes the v4
+        // workload below exercise the global-presign path.
+        .set_global_presign_config()
         // Out of the committee since the boundary; now safe to stop.
         .stop_validator(3)
         // Two brand-new validators join: candidate -> stake -> activate, node
