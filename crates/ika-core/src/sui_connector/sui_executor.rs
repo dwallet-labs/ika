@@ -668,7 +668,7 @@ where
                 {
                     self.metrics
                         .system_checkpoint_sequence
-                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                        .set(next_system_checkpoint_sequence_number as i64);
 
                     let active_members: BlsCommittee =
                         system_inner.validator_set().clone().active_committee;
@@ -704,7 +704,7 @@ where
                     self.metrics.system_checkpoint_writes_success_total.inc();
                     self.metrics
                         .last_written_system_checkpoint_sequence
-                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                        .set(next_system_checkpoint_sequence_number as i64);
                     last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
                     debug!(
                         "Sui transaction successfully executed for system_checkpoint sequence number: {}",
