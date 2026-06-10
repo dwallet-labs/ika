@@ -161,7 +161,7 @@ impl OcsVerifiedReader {
             return Ok(hit);
         }
         let resp = self.provider.verified_object(id).await?;
-        let result = self.verify_response(resp, /*track_high_water=*/ true);
+        let result = self.verify_response(resp);
         self.record_verify_outcome("object", &result);
         self.observe_verify_latency("object", started);
         result
@@ -223,21 +223,6 @@ impl OcsVerifiedReader {
                 None
             }
         }
-    }
-
-    /// Same as `verified_object` but without recording into the
-    /// high-water map. Used for objects whose ids are short-lived and
-    /// would just churn the map.
-    pub async fn verified_object_untracked(
-        &self,
-        id: ObjectID,
-    ) -> Result<VerifiedObject, ReaderError> {
-        let started = std::time::Instant::now();
-        let resp = self.provider.verified_object(id).await?;
-        let result = self.verify_response(resp, /*track_high_water=*/ false);
-        self.record_verify_outcome("object_untracked", &result);
-        self.observe_verify_latency("object_untracked", started);
-        result
     }
 
     pub async fn verified_bag_page(
@@ -441,23 +426,24 @@ impl OcsVerifiedReader {
         }
     }
 
-    fn verify_response(
-        &self,
-        resp: VerifiedObjectResponse,
-        track_high_water: bool,
-    ) -> Result<VerifiedObject, ReaderError> {
+    fn verify_response(&self, resp: VerifiedObjectResponse) -> Result<VerifiedObject, ReaderError> {
         let proof_seq = *resp.summary.sequence_number();
         self.note_upstream_head(resp.claimed_latest_checkpoint_seq);
-        self.check_freshness(proof_seq, resp.claimed_latest_checkpoint_seq)?;
+        // Freshness is measured against the locally-monotonic observed head,
+        // not the response's claimed head: the claimed head is the relay's
+        // word, so a malicious relay could under-report it to make a stale
+        // proof look fresh. `observed_upstream_head` only ratchets up
+        // (fetch_max in `note_upstream_head`), so once any response has shown
+        // a newer head, no later response can talk us back below it.
+        let observed_head = self.observed_upstream_head.load(Ordering::Relaxed);
+        self.check_freshness(proof_seq, observed_head)?;
         // Clone the proof + summary for cache absorption before the
         // verifier consumes them. The proof isn't `Clone`; bcs round-trip.
         let cache_proof = clone_inclusion_proof(&resp.proof);
         let cache_summary = resp.summary.clone();
         let cache_object = resp.object.clone();
         self.verify_proof_inner(&resp.object, resp.proof, resp.summary)?;
-        if track_high_water {
-            self.record_high_water(resp.object.id(), resp.object.version())?;
-        }
+        self.record_high_water(resp.object.id(), resp.object.version())?;
         // Shadow-populate the cache with the just-verified entry. Step 2
         // only writes; readers still hit the network.
         if let Some(proof) = cache_proof {
