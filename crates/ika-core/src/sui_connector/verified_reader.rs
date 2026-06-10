@@ -23,9 +23,8 @@ use sui_light_client::proof::base::{
     Proof, ProofContents, ProofContentsVerifier, ProofTarget, ProofVerifier,
 };
 use sui_light_client::proof::ocs::{OCSInclusionProof, OCSProof};
-use sui_types::TypeTag;
 use sui_types::base_types::{ObjectID, SequenceNumber};
-use sui_types::dynamic_field::{Field, derive_dynamic_field_id};
+use sui_types::dynamic_field::Field;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointSequenceNumber, VerifiedCheckpoint,
 };
@@ -38,7 +37,7 @@ use ika_network::proof_provider::{ProofProvider, VerifiedBagPageRequest, Verifie
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
 use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner};
 
-use crate::sui_connector::committee_store::CommitteeStore;
+use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use ika_network::proof_provider::VerifiedObjectEntry;
@@ -569,14 +568,14 @@ impl OcsVerifiedReader {
         &self,
         summary: CertifiedCheckpointSummary,
     ) -> Result<VerifiedCheckpoint, ReaderError> {
-        let epoch = summary.epoch();
-        let committee = self
-            .committees
-            .committee(epoch)
-            .ok_or(ReaderError::MissingCommittee(epoch))?;
-        summary
-            .try_into_verified(&committee)
-            .map_err(|e| ReaderError::InvalidProof(format!("summary BLS verify: {e}")))
+        self.committees
+            .verify_summary(summary)
+            .map_err(|e| match e {
+                SummaryVerifyError::MissingCommittee(epoch) => ReaderError::MissingCommittee(epoch),
+                bad @ SummaryVerifyError::BadSignature { .. } => {
+                    ReaderError::InvalidProof(bad.to_string())
+                }
+            })
     }
 
     /// Verify one object's OCS inclusion proof (Merkle path + artifacts-digest
@@ -646,26 +645,20 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
 }
 
 fn move_object_contents(object: &Object) -> Result<&[u8], ReaderError> {
-    object
-        .data
-        .try_as_move()
-        .map(|m| m.contents())
-        .ok_or_else(|| {
-            ReaderError::Decode(format!(
-                "expected Move object, got package at {}",
-                object.id()
-            ))
-        })
+    ika_sui_client::transport::move_object_contents(object).ok_or_else(|| {
+        ReaderError::Decode(format!(
+            "expected Move object, got package at {}",
+            object.id()
+        ))
+    })
 }
 
 /// Derive the dynamic-field child id for a `Field<u64, V>` whose name is
 /// `version`. Used to walk from a versioned outer wrapper (e.g.
 /// `DWalletCoordinator`) into its inner versioned data.
 fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<ObjectID, ReaderError> {
-    let name_bytes = bcs::to_bytes(&version)
-        .map_err(|e| ReaderError::Decode(format!("encode u64 name: {e}")))?;
-    derive_dynamic_field_id(parent, &TypeTag::U64, &name_bytes)
-        .map_err(|e| ReaderError::Decode(format!("derive child id: {e}")))
+    ika_sui_client::transport::derive_versioned_child_id(parent, version)
+        .map_err(ReaderError::Decode)
 }
 
 /// `OCSInclusionProof` isn't `Clone`. We need a copy so the verifier

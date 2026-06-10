@@ -389,6 +389,28 @@ fn parse_peer_id(s: &str) -> Result<PeerId, SetupError> {
     Ok(PeerId(bytes))
 }
 
+/// Parse the configured `sui_state_mirror_peers` into anemo [`PeerId`]s,
+/// warning on (and skipping) malformed entries. Lenient counterpart of the
+/// strict per-entry [`parse_peer_id`] used at stack construction: callers of
+/// this are deciding which peers to *wait for*, where a bad entry should not
+/// abort boot.
+pub fn configured_mirror_peer_ids(cfg: &SuiConnectorConfig) -> Vec<PeerId> {
+    cfg.sui_state_mirror_peers
+        .iter()
+        .filter_map(|raw| match parse_peer_id(raw) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(
+                    peer = %raw,
+                    error = %e,
+                    "skipping malformed sui_state_mirror_peers entry"
+                );
+                None
+            }
+        })
+        .collect()
+}
+
 async fn probe_artifacts_digest(transport: &Arc<dyn SuiTransport>) -> Result<(), SetupError> {
     let summary = transport
         .get_latest_checkpoint()
