@@ -274,6 +274,21 @@ impl AuthorityPerpetualTables {
             .get(network_key_id)?)
     }
 
+    /// Point lookup of the digest recorded by
+    /// [`Self::insert_network_reconfiguration_output_digest_for_epoch`] —
+    /// the digest of the reconfiguration output produced by
+    /// `reconfiguration_epoch`'s reconfiguration session for this key
+    /// (i.e. the output targeting `reconfiguration_epoch + 1`'s committee).
+    pub fn get_network_reconfiguration_output_digest_for_epoch(
+        &self,
+        reconfiguration_epoch: EpochId,
+        network_key_id: &ObjectID,
+    ) -> IkaResult<Option<[u8; 32]>> {
+        Ok(self
+            .network_reconfiguration_output_digest_by_epoch_and_key
+            .get(&(reconfiguration_epoch, *network_key_id))?)
+    }
+
     /// Persists a `CertifiedHandoffAttestation` for the epoch it
     /// attests. Idempotent at the byte level — re-writing the
     /// exact same cert is a no-op. Re-writing a *different* cert

@@ -599,6 +599,41 @@ impl DWalletMPCManager {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
             }
+            // A reconfiguration output recorded under the CURRENT epoch was
+            // produced by this epoch's reconfiguration MPC *for the next
+            // epoch's committee*: its shares are encrypted to the next
+            // committee's party IDs (which need not align with this
+            // epoch's — the on-chain committee order is not stable across
+            // epochs), so instantiating it here, with this epoch's party
+            // ID and access structure, fails decryption. The next epoch's
+            // manager adopts and decrypts it with next-epoch identity at
+            // epoch start. In steady-state v4 the cert anchor below
+            // rejects it anyway (the prior epoch's handoff cert pins the
+            // output produced *for* this epoch); this guard makes the
+            // cert-less v3→v4 boundary path behave the same instead of
+            // blindly adopting the overlay, which flips to the
+            // freshly-cached next-epoch output the moment the mid-epoch
+            // reconfiguration finalizes locally.
+            if !data.current_reconfiguration_public_output.is_empty() {
+                let reconfiguration_digest =
+                    mpc_data_blob_hash(&data.current_reconfiguration_public_output);
+                let produced_this_epoch = self
+                    .epoch_store
+                    .perpetual_tables_handle()
+                    .and_then(|perpetual| {
+                        perpetual
+                            .get_network_reconfiguration_output_digest_for_epoch(
+                                self.epoch_id,
+                                key_id,
+                            )
+                            .ok()
+                            .flatten()
+                    })
+                    .is_some_and(|digest| digest == reconfiguration_digest);
+                if produced_this_epoch {
+                    continue;
+                }
+            }
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
             if data.current_reconfiguration_public_output.is_empty() {
                 // Initial-DKG state: adopt the deterministic local DKG
@@ -1550,6 +1585,28 @@ impl DWalletMPCManager {
                 // unchanged and would otherwise force a wasteful
                 // `update_network_key` pass that re-decrypts the key
                 // shares.
+                // Never re-attempt bytes that already failed, regardless
+                // of which branch below would otherwise select them. The
+                // instantiation/decryption is deterministic, so identical
+                // bytes fail identically; retry only once the bytes change
+                // (the output carrying our share arrives). Without this
+                // guard the `last_instantiated` comparison below re-selects
+                // failing bytes every poll (they differ from the last
+                // *successfully* instantiated ones by definition), burning
+                // a heavy class-groups decrypt per tick and starving the
+                // service loop.
+                if self
+                    .last_failed_network_key_data
+                    .get(key_id)
+                    .is_some_and(|failed| {
+                        failed.network_dkg_public_output == key_data.network_dkg_public_output
+                            && failed.current_reconfiguration_public_output
+                                == key_data.current_reconfiguration_public_output
+                            && failed.state == key_data.state
+                    })
+                {
+                    return false;
+                }
                 if !self
                     .network_keys
                     .network_encryption_keys
@@ -1558,20 +1615,7 @@ impl DWalletMPCManager {
                     return true;
                 }
                 match self.last_instantiated_network_key_data.get(key_id) {
-                    // Never instantiated this key. Attempt it — unless we
-                    // already failed to decrypt these exact bytes. The
-                    // decryption is deterministic, so identical bytes
-                    // would fail identically; retry only once the bytes
-                    // change (the output carrying our share arrives).
-                    None => match self.last_failed_network_key_data.get(key_id) {
-                        None => true,
-                        Some(failed) => {
-                            failed.network_dkg_public_output != key_data.network_dkg_public_output
-                                || failed.current_reconfiguration_public_output
-                                    != key_data.current_reconfiguration_public_output
-                                || failed.state != key_data.state
-                        }
-                    },
+                    None => true,
                     Some(prev) => {
                         prev.network_dkg_public_output != key_data.network_dkg_public_output
                             || prev.current_reconfiguration_public_output
