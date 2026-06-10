@@ -124,6 +124,15 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build ika binary
+        # target-cpu=native: the default x86-64 baseline codegen lacks the
+        # BMI2/ADX carry-chain instructions the class-groups bignum
+        # arithmetic is built around; the localnet validators run all the
+        # MPC crypto, and per-operation latency on the runner was ~16x a
+        # workstation. The runner builds and runs on the same node type, so
+        # native is safe. Config-level rustflags are re-included (RUSTFLAGS
+        # env overrides build.rustflags entirely).
+        env:
+          RUSTFLAGS: "-C force-frame-pointers=yes -C force-unwind-tables=yes -C target-cpu=native"
         run: cargo build --release --bin ika
 
       - name: Install SDK dependencies
