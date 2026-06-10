@@ -1,11 +1,18 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! End-to-end workload check: bring up a single-binary cluster, then drive a
-//! full **DKG → Presign → Sign** dWallet lifecycle (via the `ika` CLI) and
-//! confirm a signature is produced on-chain. Proves the session-lifecycle
-//! invariant the upgrade harness depends on — sessions started in an epoch
-//! actually complete — independently of the cross-binary scenario.
+//! End-to-end workload check: bring up a single-binary cluster at protocol v3,
+//! upgrade it to v4 through the capability vote, then drive a full
+//! **DKG → Presign → Sign** dWallet lifecycle (via the `ika` CLI) and confirm
+//! a signature is produced on-chain. Proves the session-lifecycle invariant
+//! the upgrade harness depends on — sessions started in an epoch actually
+//! complete — independently of the cross-binary scenario.
+//!
+//! Genesis is v3, never v4: at v4 the network DKG needs PVSS keys which only
+//! arrive through the off-chain assembly, and that assembly is
+//! next-committee-only — so a v4 *genesis* DKG is rejected forever (4/4
+//! class-groups keys, 0/4 PVSS). The supported path is genesis v3 → upgrade
+//! into v4, which is also the path mainnet takes.
 //!
 //! Opt-in via `RUN_WORKLOAD_TEST=1`:
 //!
@@ -52,18 +59,17 @@ async fn workload_dkg_presign_sign() {
 
     let cluster = ClusterBuilder::new(validator, notifier, sui)
         .with_num_validators(4)
-        // Genesis at v4 (MAX): `internal_presign_sessions` is a v4 feature, and
-        // without it the global-presign requests pile up but are never run.
-        .with_genesis_protocol_version(ProtocolVersion::MAX)
-        // 4-minute epoch. At v4 the genesis network-key DKG is gated on the
-        // off-chain mpc_data freeze, whose ready-signal — with no next-epoch
-        // committee published yet at genesis — only fires at the freeze
-        // deadline of 3/4 * epoch_duration (so ~3 min here). A 30-min epoch
-        // pushed that to ~22 min, far longer than any client waits. The epoch
-        // can't be too short either: 3/4 * epoch must clear validator
-        // bring-up + announcement recording (~90s), and the dWallet lifecycle
-        // must fit inside the next epoch before its own reconfiguration window.
-        .with_epoch_duration_ms(240_000)
+        // Genesis at v3 (MIN), never v4 — see module docs. The binary supports
+        // v3..=v4 and advertises v4 capability from the start, so the vote
+        // advances the version at an epoch boundary once the buffer-stake
+        // override below lets it tally at bare quorum.
+        .with_genesis_protocol_version(ProtocolVersion::MIN)
+        // 3-minute epoch: at v3 the genesis network DKG is not gated on the
+        // off-chain mpc_data freeze (that gating is v4-only), so the epoch
+        // only needs to clear validator bring-up + announcement recording
+        // (~90s) plus the DKG itself; the dWallet lifecycle must fit inside
+        // a post-upgrade epoch before its own reconfiguration window.
+        .with_epoch_duration_ms(180_000)
         .with_base_dir(base)
         .build()
         .await
@@ -74,13 +80,37 @@ async fn workload_dkg_presign_sign() {
     // the CLI can't derive protocol parameters. The epoch counter advancing to
     // 2 is itself the completion signal: reconfiguration into epoch 2 reshares
     // the genesis key, which can't happen until the genesis DKG finished. So
-    // reaching epoch 2 guarantees the network key is readable (same reasoning as
-    // the cross-binary scenario). Don't drive the lifecycle before then — it
-    // could only fail.
+    // reaching epoch 2 guarantees the v3 network key is readable.
     cluster
         .wait_for_epoch(2, Duration::from_secs(900))
         .await
-        .expect("reach epoch 2 (genesis network DKG + reshare done)");
+        .expect("reach epoch 2 (genesis network DKG + reshare done at v3)");
+
+    // With n=4 the default 50% buffer stake rounds the capability-vote
+    // threshold up to all four validators; a single lagging capability
+    // registration then blocks the upgrade forever. Drop the buffer to a bare
+    // quorum (the realistic behavior on larger committees) so the v3->v4 vote
+    // tallies at the next epoch boundary.
+    let epoch = cluster.current_epoch().await.expect("read current epoch");
+    for proc in &cluster.validators {
+        proc.set_buffer_stake(epoch, 0)
+            .await
+            .unwrap_or_else(|e| panic!("set buffer stake on validator {}: {e}", proc.index));
+    }
+
+    cluster
+        .wait_for_epoch(3, Duration::from_secs(600))
+        .await
+        .expect("reach epoch 3 (crossing the v3->v4 upgrade boundary)");
+
+    let protocol_version = cluster
+        .current_protocol_version()
+        .await
+        .expect("read protocol version");
+    assert!(
+        protocol_version >= 4,
+        "expected protocol v4 after the upgrade boundary, got v{protocol_version}"
+    );
 
     let driver = WorkloadDriver::new(
         ika_cli,
