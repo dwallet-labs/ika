@@ -55,9 +55,10 @@ jobs:
   test-cluster:
     name: cargo test --release
     runs-on: ika-k8s-large
-    # The full suite serialized is ~12 tests x 2-30 min each (the 5-epoch
-    # churn test alone runs ~30 min); budget generously.
-    timeout-minutes: 240
+    # The full suite serialized is ~12 tests x 2-30 min each on a fast
+    # workstation; the runner pods pace 2-7x slower (per-round orchestration
+    # stall under investigation), so the full suite needs 5-7h.
+    timeout-minutes: 420
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -143,7 +144,9 @@ jobs:
           retention-days: 7
 
       - name: Upload test log
-        if: failure()
+        # always: a timeout kill registers as 'cancelled', not 'failure',
+        # and partial results from a long suite must survive it.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cluster-tests-log
