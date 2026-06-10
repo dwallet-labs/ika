@@ -16,10 +16,10 @@ on:
           - integration
           - all
       test_threads:
-        description: "Concurrent test count (empty = harness default; the runner is dedicated, so parallel is fine)"
+        description: "Concurrent test count (default 4 — concurrent tests share one rayon pool; too many queue-starves the per-advancement wall-clock budgets)"
         type: string
         required: false
-        default: ""
+        default: "4"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,6 +36,10 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_LOG: error
+  # The harness's per-advancement wall-clock budgets are calibrated for a
+  # fast workstation; CI pods are slower and shared, so give 10x.
+  IKA_TEST_MAX_PARTY_ITERATIONS: "6000"
+  IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS: "18000"
 
 jobs:
   run-tests:
