@@ -44,6 +44,21 @@ pub enum TransportError {
     Encoding(String),
 }
 
+/// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.
+/// This is how Sui's versioned-object pattern stores the inner struct: a
+/// dynamic field on the wrapper keyed by the wrapper's `version`.
+pub fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<ObjectID, String> {
+    let name_bytes = bcs::to_bytes(&version).map_err(|e| format!("encode u64 name: {e}"))?;
+    sui_types::dynamic_field::derive_dynamic_field_id(parent, &sui_types::TypeTag::U64, &name_bytes)
+        .map_err(|e| format!("derive child id: {e}"))
+}
+
+/// Borrowed BCS contents of a Move object; `None` when the object is a
+/// package. Callers attach their own error context.
+pub fn move_object_contents(object: &Object) -> Option<&[u8]> {
+    object.data.try_as_move().map(|m| m.contents())
+}
+
 /// Lean view of a single dynamic-field entry. Independent of any specific
 /// transport encoding (proto, JSON-RPC, anemo) so that consumers don't bind
 /// to one source.

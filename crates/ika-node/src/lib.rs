@@ -509,15 +509,8 @@ impl IkaNode {
             // Anemo dials seed peers asynchronously; `build_sui_connector_stack`
             // probes the relay at construction, so wait for a configured mirror
             // peer to be reachable first (as the sui-state-mirrored path does).
-            let mirror_peer_ids: Vec<PeerId> = config
-                .sui_connector_config
-                .sui_state_mirror_peers
-                .iter()
-                .filter_map(|s| {
-                    let bytes: [u8; 32] = hex::FromHex::from_hex(s).ok()?;
-                    Some(PeerId(bytes))
-                })
-                .collect();
+            let mirror_peer_ids =
+                sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
             Self::wait_for_specific_peers(
                 &p2p.p2p_network,
                 &mirror_peer_ids,
@@ -734,51 +727,51 @@ impl IkaNode {
             raw_transport_for_pushing,
             mut state_cache_opt,
             push_handler_opt,
-        ) = if is_sui_state_direct {
-            info!("Building OCS verifier stack (sui-state-direct, direct gRPC)");
-            let stack = sui_connector_setup::build_sui_connector_stack(
-                &config.sui_connector_config,
-                perpetual_tables.clone(),
-                None,
-                proof_cache_cfg.clone(),
-                ocs_metrics.clone(),
-                proof_provider_metrics.clone(),
-            )
-            .await
-            .map_err(|e| anyhow!("build OCS connector stack: {e}"))?;
-            match stack.ratchet.ratchet_to_current_epoch().await {
-                Ok(()) => info!(
-                    head_epoch = stack.ratchet.committees().head_epoch(),
-                    "Sui committee ratchet caught up before binding p2p"
-                ),
-                Err(e) => warn!(
-                    error = ?e,
-                    "initial ratchet to current epoch failed; periodic ratchet will retry"
-                ),
+        ) = {
+            // Spread a built stack into the individually-wired component
+            // slots the rest of boot threads around.
+            let unpack = |stack: sui_connector_setup::SuiConnectorStack| {
+                (
+                    Some(stack.reader),
+                    Some(stack.ratchet),
+                    stack.mirror_server,
+                    stack.raw_transport_for_pushing,
+                    Some(stack.state_cache),
+                    stack.push_handler,
+                )
+            };
+            if is_sui_state_direct {
+                info!("Building OCS verifier stack (sui-state-direct, direct gRPC)");
+                let stack = sui_connector_setup::build_sui_connector_stack(
+                    &config.sui_connector_config,
+                    perpetual_tables.clone(),
+                    None,
+                    proof_cache_cfg.clone(),
+                    ocs_metrics.clone(),
+                    proof_provider_metrics.clone(),
+                )
+                .await
+                .map_err(|e| anyhow!("build OCS connector stack: {e}"))?;
+                match stack.ratchet.ratchet_to_current_epoch().await {
+                    Ok(()) => info!(
+                        head_epoch = stack.ratchet.committees().head_epoch(),
+                        "Sui committee ratchet caught up before binding p2p"
+                    ),
+                    Err(e) => warn!(
+                        error = ?e,
+                        "initial ratchet to current epoch failed; periodic ratchet will retry"
+                    ),
+                }
+                unpack(stack)
+            } else if peer_only {
+                // Built before the bootstrap reads (see the transport gate); reuse.
+                let stack = peer_only_stack
+                    .take()
+                    .expect("peer-only OCS stack built in the transport gate above");
+                unpack(stack)
+            } else {
+                (None, None, None, None, None, None)
             }
-            (
-                Some(stack.reader),
-                Some(stack.ratchet),
-                stack.mirror_server,
-                stack.raw_transport_for_pushing,
-                Some(stack.state_cache),
-                stack.push_handler,
-            )
-        } else if peer_only {
-            // Built before the bootstrap reads (see the transport gate); reuse.
-            let stack = peer_only_stack
-                .take()
-                .expect("peer-only OCS stack built in the transport gate above");
-            (
-                Some(stack.reader),
-                Some(stack.ratchet),
-                stack.mirror_server,
-                stack.raw_transport_for_pushing,
-                Some(stack.state_cache),
-                stack.push_handler,
-            )
-        } else {
-            (None, None, None, None, None, None)
         };
 
         let P2pComponents {
@@ -822,15 +815,8 @@ impl IkaNode {
             // runs before any configured sui-state-direct mirror peer is reachable
             // the probe fails with "no peers reachable". Wait specifically for one
             // of the configured `sui_state_mirror_peers` to come online.
-            let mirror_peer_ids: Vec<PeerId> = config
-                .sui_connector_config
-                .sui_state_mirror_peers
-                .iter()
-                .filter_map(|s| {
-                    let bytes: [u8; 32] = hex::FromHex::from_hex(s).ok()?;
-                    Some(PeerId(bytes))
-                })
-                .collect();
+            let mirror_peer_ids =
+                sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
             Self::wait_for_specific_peers(
                 &p2p_network,
                 &mirror_peer_ids,

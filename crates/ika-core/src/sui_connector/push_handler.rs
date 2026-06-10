@@ -23,7 +23,7 @@ use sui_light_client::proof::base::{ProofContents, ProofContentsVerifier, ProofT
 use sui_light_client::proof::ocs::{OCSInclusionProof, OCSProof};
 use tracing::{debug, info, warn};
 
-use crate::sui_connector::committee_store::CommitteeStore;
+use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::OcsVerifyingClient;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
@@ -107,26 +107,19 @@ impl IkaPushHandler {
     /// caller can hand the same value to `cache.absorb_push` on
     /// success without an extra deep clone.
     fn verify(&self, push: &PushVerifiedObjectsRequest) -> Result<usize, (String, &'static str)> {
-        let epoch = push.summary.epoch();
-        let committee = self.committees.committee(epoch).ok_or_else(|| {
-            (
-                format!("no Sui committee for epoch {epoch}"),
-                "missing_committee",
-            )
-        })?;
-
         // Per-summary BLS dedup: every object in a push shares `push.summary`,
         // so BLS-verify it once and reuse the `VerifiedCheckpoint` for each
         // object's (per-entry) inclusion check.
-        let verified_summary = push
-            .summary
-            .clone()
-            .try_into_verified(&committee)
-            .map_err(|e| {
-                (
-                    format!("push summary BLS verify (epoch {epoch}): {e}"),
-                    "bad_proof",
-                )
+        let verified_summary = self
+            .committees
+            .verify_summary(push.summary.clone())
+            .map_err(|e| match e {
+                missing @ SummaryVerifyError::MissingCommittee(_) => {
+                    (missing.to_string(), "missing_committee")
+                }
+                bad @ SummaryVerifyError::BadSignature { .. } => {
+                    (format!("push {bad}"), "bad_proof")
+                }
             })?;
 
         let mut accepted = 0usize;
@@ -295,14 +288,9 @@ fn verify_snapshot(
                     entry.object.id(),
                 )
             })?;
-            let epoch = summary.epoch();
-            let committee = committees
-                .committee(epoch)
-                .ok_or_else(|| format!("no Sui committee for epoch {epoch}"))?;
-            let verified_summary = summary
-                .clone()
-                .try_into_verified(&committee)
-                .map_err(|e| format!("snapshot summary BLS verify (epoch {epoch}): {e}"))?;
+            let verified_summary = committees
+                .verify_summary(summary.clone())
+                .map_err(|e| format!("snapshot: {e}"))?;
             verified_summaries.insert(seq, verified_summary);
         }
         // unwrap: inserted just above for this `seq`.

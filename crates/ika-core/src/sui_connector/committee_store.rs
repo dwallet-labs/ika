@@ -27,10 +27,21 @@ use std::sync::{Arc, RwLock};
 use ika_types::error::{IkaError, IkaResult};
 use sui_light_client::proof::committee::extract_new_committee_info;
 use sui_types::committee::Committee as SuiCommittee;
-use sui_types::messages_checkpoint::CertifiedCheckpointSummary;
+use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, VerifiedCheckpoint};
 use tracing::info;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+
+/// Why [`CommitteeStore::verify_summary`] rejected a summary. The two cases
+/// differ in retriability: a missing committee can resolve once the ratchet
+/// catches up to the summary's epoch; a bad signature never does.
+#[derive(thiserror::Error, Debug)]
+pub enum SummaryVerifyError {
+    #[error("no Sui committee for epoch {0}")]
+    MissingCommittee(u64),
+    #[error("summary BLS verify (epoch {epoch}): {error}")]
+    BadSignature { epoch: u64, error: String },
+}
 
 pub enum CommitteeBootstrap {
     /// Production path: a `CertifiedCheckpointSummary` whose digest the
@@ -144,6 +155,26 @@ impl CommitteeStore {
 
     pub fn committee(&self, sui_epoch: u64) -> Option<SuiCommittee> {
         self.in_memory.read().unwrap().get(&sui_epoch).cloned()
+    }
+
+    /// BLS-verify `summary` against the stored committee for the summary's
+    /// own epoch. The one place where "is this checkpoint signed by a Sui
+    /// committee we trust" is decided; every consumer (reader, push handler,
+    /// snapshot verifier) goes through here so the check can't drift.
+    pub fn verify_summary(
+        &self,
+        summary: CertifiedCheckpointSummary,
+    ) -> Result<VerifiedCheckpoint, SummaryVerifyError> {
+        let epoch = summary.epoch();
+        let committee = self
+            .committee(epoch)
+            .ok_or(SummaryVerifyError::MissingCommittee(epoch))?;
+        summary
+            .try_into_verified(&committee)
+            .map_err(|e| SummaryVerifyError::BadSignature {
+                epoch,
+                error: e.to_string(),
+            })
     }
 
     pub fn head_epoch(&self) -> u64 {

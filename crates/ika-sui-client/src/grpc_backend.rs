@@ -33,7 +33,7 @@ use sui_types::TypeTag;
 use sui_types::base_types::{EpochId, ObjectID, ObjectRef, SuiAddress};
 use sui_types::collection_types::Table;
 use sui_types::digests::TransactionDigest;
-use sui_types::dynamic_field::{Field, derive_dynamic_field_id};
+use sui_types::dynamic_field::Field;
 use sui_types::event::EventID;
 use sui_types::object::{Object, Owner};
 use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
@@ -89,10 +89,8 @@ impl GrpcSuiClient {
 
     /// Deterministically-derived `Field<u64, _>` child id for `(parent, version)`.
     fn versioned_child_id(parent: ObjectID, version: u64) -> Result<ObjectID, GrpcSuiClientError> {
-        let name_bytes = bcs::to_bytes(&version)
-            .map_err(|e| GrpcSuiClientError::decode(format!("encode u64 name: {e}")))?;
-        derive_dynamic_field_id(parent, &TypeTag::U64, &name_bytes)
-            .map_err(|e| GrpcSuiClientError::decode(format!("derive child id: {e}")))
+        crate::transport::derive_versioned_child_id(parent, version)
+            .map_err(GrpcSuiClientError::decode)
     }
 
     /// BCS of the versioned inner object backing `(parent, version)`.
@@ -164,10 +162,8 @@ impl GrpcSuiClient {
 }
 
 fn move_object_contents(object: &Object, id: ObjectID) -> Result<Vec<u8>, GrpcSuiClientError> {
-    object
-        .data
-        .try_as_move()
-        .map(|m| m.contents().to_vec())
+    crate::transport::move_object_contents(object)
+        .map(|contents| contents.to_vec())
         .ok_or_else(|| GrpcSuiClientError::Decode(format!("object {id:?} is not a MoveObject")))
 }
 
