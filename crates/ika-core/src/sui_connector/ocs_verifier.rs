@@ -42,6 +42,11 @@ pub enum OcsError {
          allow_unverified_committee_fallback to accept degraded trust)"
     )]
     ProofChainBroken { epoch: u64 },
+    #[error(
+        "unverified committee fallback returned a committee for epoch {returned} when epoch \
+         {requested} was requested; refusing to install it"
+    )]
+    FallbackEpochMismatch { requested: u64, returned: u64 },
     #[error("ika error: {0}")]
     Ika(String),
 }
@@ -147,6 +152,17 @@ impl OcsVerifyingClient {
                     );
                     self.metrics.unverified_committee_fallback_total.inc();
                     let next = self.transport.get_committee(Some(head + 1)).await?;
+                    // Even in unverified mode the endpoint doesn't get to pick
+                    // the epoch: `install_next` keys the store by the
+                    // committee's own epoch field, so an endpoint returning a
+                    // mislabeled committee could jump the ratchet head past
+                    // epochs that were never installed.
+                    if next.epoch != head + 1 {
+                        return Err(OcsError::FallbackEpochMismatch {
+                            requested: head + 1,
+                            returned: next.epoch,
+                        });
+                    }
                     self.committees.install_next(next, None)?;
                     info!(
                         epoch = head + 1,
