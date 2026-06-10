@@ -84,6 +84,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Start CPU sampler
+        run: |
+          # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
+          # actually consumed; nr_throttled/throttled_usec -> CFS quota
+          # stalls) + loadavg. Answers "does this workload USE the vCPUs"
+          # rather than inferring it from wall-clock.
+          nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
+          echo $! > cpu-sampler.pid
+
       - name: Run tests
         env:
           SCOPE: ${{ inputs.scope }}
@@ -106,6 +115,14 @@ jobs:
         if: always()
         run: |
           grep -E "^test .*(ok|FAILED)|test result" rust-tests.log | tail -60 || true
+
+      - name: Upload CPU sampler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-sampler-${{ github.job }}-${{ github.run_attempt }}
+          path: cpu-sampler.log
+          retention-days: 7
 
       - name: Upload test log
         if: failure()

@@ -132,6 +132,15 @@ jobs:
 
       # `ika start` does NOT spawn Sui itself — it expects a localnet at
       # 127.0.0.1:9000 (and the tests use the faucet at 127.0.0.1:9123).
+      - name: Start CPU sampler
+        run: |
+          # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
+          # actually consumed; nr_throttled/throttled_usec -> CFS quota
+          # stalls) + loadavg. Answers "does this workload USE the vCPUs"
+          # rather than inferring it from wall-clock.
+          nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
+          echo $! > cpu-sampler.pid
+
       - name: Start Sui localnet
         run: |
           RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
@@ -211,6 +220,14 @@ jobs:
           echo "panics: $(grep -ci panicked ika-localnet.log || true)"
           kill "$(cat ika-localnet.pid)" 2>/dev/null || true
           kill "$(cat sui-localnet.pid)" 2>/dev/null || true
+
+      - name: Upload CPU sampler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-sampler-${{ github.job }}-${{ github.run_attempt }}
+          path: cpu-sampler.log
+          retention-days: 7
 
       - name: Upload localnet logs
         if: failure()
