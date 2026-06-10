@@ -312,6 +312,12 @@ pub trait ProofProvider: Send + Sync {
 
 #[derive(Clone, Debug)]
 pub struct ProofCacheConfig {
+    /// Entry-count capacity for the per-checkpoint tree cache. Sized by
+    /// count, not bytes, deliberately: an entry is a checkpoint summary plus
+    /// a `ModifiedObjectTree` (object refs + hashes — tens of KB for a busy
+    /// checkpoint, not the full `CheckpointData`), so 32 entries is a few MB
+    /// worst-case, and `tree_ttl` already bounds residency. Revisit with a
+    /// moka weigher only if entries ever start carrying object contents.
     pub tree_capacity: u64,
     pub tree_ttl: Duration,
     /// LRU capacity for the `tx_digest → checkpoint_seq` map. This mapping is

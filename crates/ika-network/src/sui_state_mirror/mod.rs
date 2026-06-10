@@ -371,6 +371,7 @@ impl SuiStateMirror for Server {
         &self,
         request: Request<PushVerifiedObjectsRequest>,
     ) -> Result<Response<()>, Status> {
+        let started = self.serve_start("push_verified_objects", request.peer_id().copied());
         let handler = self.push_handler.as_ref().ok_or_else(|| {
             Status::new_with_message(
                 StatusCode::NotFound,
@@ -385,6 +386,7 @@ impl SuiStateMirror for Server {
             .handle_pushed_verified_objects(from, request.into_inner())
             .await
             .map_err(Status::internal)?;
+        self.serve_end("push_verified_objects", started);
         Ok(Response::new(()))
     }
 
