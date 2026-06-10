@@ -173,27 +173,27 @@ jobs:
 
       - name: Wait for ika localnet readiness
         run: |
-          # Strict probe: network-key DKG outputs cached (overlay-missing
-          # warnings appeared AND went quiet) AND the mpc_data freeze fired,
-          # stable across 3 consecutive 20s checks. Cap at 40 minutes — the
-          # genesis network-key DKG is class-groups-heavy and takes ~20 min
-          # on a cold runner pod (~6 min on a fast workstation).
-          quiet=0
+          # Positive one-way readiness signals (a "quiet window" heuristic
+          # flaps: every epoch transition emits fresh overlay-missing
+          # warnings while the new reconfiguration output propagates):
+          #   1. the mpc_data freeze fired (commit-boundary decision),
+          #   2. an MPC output reached consensus quorum (the genesis
+          #      network-key DKG completed),
+          #   3. the next committee assembled off-chain.
+          # The tests' own 600s polls absorb any residual convergence. Cap
+          # at 40 minutes — the genesis DKG is class-groups-heavy and takes
+          # ~20 min on a cold/contended runner pod.
           for i in $(seq 1 120); do
             sleep 20
             if ! kill -0 "$(cat ika-localnet.pid)" 2>/dev/null; then
               echo "ika localnet process died"; tail -50 ika-localnet.log; exit 1
             fi
-            total=$(grep -c "overlay missing a required output" ika-localnet.log || true)
-            recent=$(tail -200 ika-localnet.log | grep -c "overlay missing a required output" || true)
             froze=$(grep -c "freezing attestation-validated mpc_data" ika-localnet.log || true)
-            if [ "${total:-0}" -gt 0 ] && [ "${recent:-0}" -eq 0 ] && [ "${froze:-0}" -gt 0 ]; then
-              quiet=$((quiet+1))
-            else
-              quiet=0
-            fi
-            if [ "$quiet" -ge 3 ]; then
-              echo "ika localnet ready after $((i*20))s"; exit 0
+            quorum=$(grep -c "MPC output reached quorum" ika-localnet.log || true)
+            assembled=$(grep -c "assembled committee mpc_data" ika-localnet.log || true)
+            if [ "${froze:-0}" -gt 0 ] && [ "${quorum:-0}" -gt 0 ] && [ "${assembled:-0}" -gt 0 ]; then
+              echo "ika localnet ready after $((i*20))s (freeze=$froze quorum=$quorum assembled=$assembled)"
+              exit 0
             fi
           done
           echo "ika localnet NOT ready after 40 minutes — likely a genesis DKG wedge"
