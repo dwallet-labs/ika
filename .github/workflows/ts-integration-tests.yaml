@@ -22,6 +22,11 @@ on:
         type: string
         required: false
         default: ""
+      localnet_rust_log:
+        description: "RUST_LOG for the ika localnet (instrumentation runs use e.g. warn,ika=info,ika_node=info,ika_core::dwallet_mpc=debug)"
+        type: string
+        required: false
+        default: "warn,ika=info,ika_node=info"
       epoch_duration_ms:
         description: "ika localnet epoch duration in ms (15 min default: epoch phases run 3-6x slower on the runner pods than on a workstation, and too-short epochs leave no capacity between reconfigurations for user sessions)"
         type: string
@@ -170,12 +175,13 @@ jobs:
       - name: Start ika localnet
         env:
           EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+          LOCALNET_RUST_LOG: ${{ inputs.localnet_rust_log }}
         run: |
           case "$EPOCH_DURATION_MS" in
             ''|*[!0-9]*) echo "epoch_duration_ms must be numeric"; exit 1 ;;
           esac
           rm -rf ~/.ika Pub.localnet.toml
-          RUST_LOG=warn,ika=info,ika_node=info RUST_MIN_STACK=67108864 \
+          RUST_LOG="${LOCALNET_RUST_LOG:-warn,ika=info,ika_node=info}" RUST_MIN_STACK=67108864 \
             ./target/release/ika start --force-reinitiation \
             --epoch-duration-ms "$EPOCH_DURATION_MS" > ika-localnet.log 2>&1 &
           echo $! > ika-localnet.pid
@@ -239,7 +245,7 @@ jobs:
           retention-days: 7
 
       - name: Upload localnet logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: localnet-logs
