@@ -91,8 +91,17 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          # Some runner pods lack IPv6 egress while DNS returns AAAA records,
+          # so force IPv4 and retry — apt mirror flakiness otherwise fails the
+          # whole job before any test runs.
           if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
-          $SUDO apt-get update && $SUDO apt-get install -y cmake clang pkg-config libssl-dev curl
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
 
       - uses: Swatinem/rust-cache@v2
         with:
