@@ -1,31 +1,29 @@
 name: TS Integration Tests
 
-# Manually triggered. Runs the TypeScript SDK integration suite against a
-# REAL local ika devnet (sui localnet + `ika start`) on the `ika-k8s-large`
-# self-hosted runner.
+# Manually triggered. Runs the full TypeScript SDK integration suite against
+# a REAL local network — a Sui localnet plus an ika localnet (`ika start`) —
+# on the `ika-k8s-large` self-hosted runner.
 #
-# Each test file runs as its own matrix job with its OWN freshly-booted
-# devnet. This is deliberate: running the heavy files back-to-back on one
-# devnet session accumulates MPC state until signs outrun the SDK's polling
-# (observed repeatedly on shared machines), so per-file isolation is what
-# makes the heavy files (imported-key, all-combinations*) pass reliably.
+# All test files run in dependency order (foundational first) against ONE
+# Sui + ika localnet via `run-integration-tests-sequential.sh`.
 #
-# The devnet readiness probe is strict: the network-key DKG must have cached
-# its outputs (the overlay-missing warnings appeared AND went quiet) and the
-# mpc_data freeze must have fired, sampled over three consecutive checks. A
-# looser probe starts the tests against a still-converging (or genesis-
-# wedged) network and every test times out with "Object does not exist".
+# The localnet readiness probe is strict: the network-key DKG must have
+# cached its outputs (the overlay-missing warnings appeared AND went quiet)
+# and the mpc_data freeze must have fired, sampled over three consecutive
+# checks. A looser probe starts the tests against a still-converging (or
+# genesis-wedged) network and every test times out with "Object does not
+# exist".
 
 on:
   workflow_dispatch:
     inputs:
       test_filter:
-        description: "Single test file to run (empty = full matrix)"
+        description: "Single test file to run (empty = full suite)"
         type: string
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Devnet epoch duration in ms"
+        description: "ika localnet epoch duration in ms"
         type: string
         required: false
         default: "300000"
@@ -44,37 +42,12 @@ env:
   rust_stable: "1.94"
 
 jobs:
-  plan:
-    name: Plan matrix
-    runs-on: ubuntu-latest
-    outputs:
-      files: ${{ steps.plan.outputs.files }}
-    steps:
-      - id: plan
-        env:
-          TEST_FILTER: ${{ inputs.test_filter }}
-        run: |
-          ALL='["dwallet-creation","global-presign","transfer-dwallet","imported-key","make-public-share-and-sign","imported-key-make-public-share-and-sign","dwallet-sign-during-dkg","all-combinations","all-combinations-future-sign"]'
-          if [ -n "$TEST_FILTER" ]; then
-            # Allowlist-validate: the filter must be one of the known files
-            # (also keeps it out of shell/JSON injection territory).
-            if ! echo "$ALL" | grep -q "\"$TEST_FILTER\""; then
-              echo "unknown test file: $TEST_FILTER"; exit 1
-            fi
-            echo "files=[\"$TEST_FILTER\"]" >> "$GITHUB_OUTPUT"
-          else
-            echo "files=$ALL" >> "$GITHUB_OUTPUT"
-          fi
-
   ts-integration:
-    name: ${{ matrix.file }}
-    needs: plan
+    name: TS integration suite
     runs-on: ika-k8s-large
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        file: ${{ fromJSON(needs.plan.outputs.files) }}
+    # Full suite is 9 files x 5-40 min each on one localnet, plus the
+    # release build on a cold cache.
+    timeout-minutes: 360
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -146,11 +119,11 @@ jobs:
       # 127.0.0.1:9000 (and the tests use the faucet at 127.0.0.1:9123).
       - name: Start Sui localnet
         run: |
-          RUST_LOG=error sui start --with-faucet --force-regenesis > sui.log 2>&1 &
-          echo $! > sui.pid
+          RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
+          echo $! > sui-localnet.pid
           for i in $(seq 1 60); do
-            if ! kill -0 "$(cat sui.pid)" 2>/dev/null; then
-              echo "sui process died"; tail -40 sui.log; exit 1
+            if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
+              echo "sui process died"; tail -40 sui-localnet.log; exit 1
             fi
             if curl -s -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
                  -d '{"jsonrpc":"2.0","id":1,"method":"rpc.discover","params":[]}' >/dev/null 2>&1 \
@@ -159,9 +132,9 @@ jobs:
             fi
             sleep 5
           done
-          echo "sui localnet not reachable after 5 minutes"; tail -40 sui.log; exit 1
+          echo "sui localnet not reachable after 5 minutes"; tail -40 sui-localnet.log; exit 1
 
-      - name: Start devnet
+      - name: Start ika localnet
         env:
           EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
         run: |
@@ -171,10 +144,10 @@ jobs:
           rm -rf ~/.ika Pub.localnet.toml
           RUST_LOG=warn,ika=info,ika_node=info RUST_MIN_STACK=67108864 \
             ./target/release/ika start --force-reinitiation \
-            --epoch-duration-ms "$EPOCH_DURATION_MS" > devnet.log 2>&1 &
-          echo $! > devnet.pid
+            --epoch-duration-ms "$EPOCH_DURATION_MS" > ika-localnet.log 2>&1 &
+          echo $! > ika-localnet.pid
 
-      - name: Wait for devnet readiness
+      - name: Wait for ika localnet readiness
         run: |
           # Strict probe: network-key DKG outputs cached (overlay-missing
           # warnings appeared AND went quiet) AND the mpc_data freeze fired,
@@ -182,46 +155,52 @@ jobs:
           quiet=0
           for i in $(seq 1 60); do
             sleep 20
-            if ! kill -0 "$(cat devnet.pid)" 2>/dev/null; then
-              echo "devnet process died"; tail -50 devnet.log; exit 1
+            if ! kill -0 "$(cat ika-localnet.pid)" 2>/dev/null; then
+              echo "ika localnet process died"; tail -50 ika-localnet.log; exit 1
             fi
-            total=$(grep -c "overlay missing a required output" devnet.log || true)
-            recent=$(tail -200 devnet.log | grep -c "overlay missing a required output" || true)
-            froze=$(grep -c "freezing attestation-validated mpc_data" devnet.log || true)
+            total=$(grep -c "overlay missing a required output" ika-localnet.log || true)
+            recent=$(tail -200 ika-localnet.log | grep -c "overlay missing a required output" || true)
+            froze=$(grep -c "freezing attestation-validated mpc_data" ika-localnet.log || true)
             if [ "${total:-0}" -gt 0 ] && [ "${recent:-0}" -eq 0 ] && [ "${froze:-0}" -gt 0 ]; then
               quiet=$((quiet+1))
             else
               quiet=0
             fi
             if [ "$quiet" -ge 3 ]; then
-              echo "devnet ready after $((i*20))s"; exit 0
+              echo "ika localnet ready after $((i*20))s"; exit 0
             fi
           done
-          echo "devnet NOT ready after 20 minutes — likely a genesis DKG wedge"
-          tail -80 devnet.log
+          echo "ika localnet NOT ready after 20 minutes — likely a genesis DKG wedge"
+          tail -80 ika-localnet.log
           exit 1
 
-      - name: Run ${{ matrix.file }}
+      - name: Run integration tests
         working-directory: ./sdk/typescript
         env:
-          TEST_FILE: ${{ matrix.file }}
-        run: ./scripts/run-integration-tests-sequential.sh --timeout 900 --filter "$TEST_FILE"
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          if [ -n "$TEST_FILTER" ]; then
+            ./scripts/run-integration-tests-sequential.sh --timeout 900 --filter "$TEST_FILTER"
+          else
+            ./scripts/run-integration-tests-sequential.sh --timeout 900
+          fi
 
-      - name: Devnet health summary
+      - name: ika localnet health summary
         if: always()
         run: |
-          echo "highest epoch: $(grep -oE 'run_epoch epoch=[0-9]+' devnet.log | grep -oE '[0-9]+' | sort -un | tail -1)"
-          echo "freeze counts: $(grep 'freezing attestation-validated' devnet.log | grep -oE 'frozen=[0-9]+' | sort | uniq -c | tr '\n' ' ')"
-          echo "sign failures: $(grep -cE 'FailedToAdvanceMPC|InvalidParameters' devnet.log || true)"
-          echo "panics: $(grep -ci panicked devnet.log || true)"
-          kill "$(cat devnet.pid)" 2>/dev/null || true
+          echo "highest epoch: $(grep -oE 'run_epoch epoch=[0-9]+' ika-localnet.log | grep -oE '[0-9]+' | sort -un | tail -1)"
+          echo "freeze counts: $(grep 'freezing attestation-validated' ika-localnet.log | grep -oE 'frozen=[0-9]+' | sort | uniq -c | tr '\n' ' ')"
+          echo "sign failures: $(grep -cE 'FailedToAdvanceMPC|InvalidParameters' ika-localnet.log || true)"
+          echo "panics: $(grep -ci panicked ika-localnet.log || true)"
+          kill "$(cat ika-localnet.pid)" 2>/dev/null || true
+          kill "$(cat sui-localnet.pid)" 2>/dev/null || true
 
-      - name: Upload devnet log
+      - name: Upload localnet logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: devnet-log-${{ matrix.file }}
+          name: localnet-logs
           path: |
-            devnet.log
-            sui.log
+            ika-localnet.log
+            sui-localnet.log
           retention-days: 7
