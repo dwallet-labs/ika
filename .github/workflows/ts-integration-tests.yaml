@@ -151,9 +151,11 @@ jobs:
         run: |
           # Strict probe: network-key DKG outputs cached (overlay-missing
           # warnings appeared AND went quiet) AND the mpc_data freeze fired,
-          # stable across 3 consecutive 20s checks. Cap at 20 minutes.
+          # stable across 3 consecutive 20s checks. Cap at 40 minutes — the
+          # genesis network-key DKG is class-groups-heavy and takes ~20 min
+          # on a cold runner pod (~6 min on a fast workstation).
           quiet=0
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             sleep 20
             if ! kill -0 "$(cat ika-localnet.pid)" 2>/dev/null; then
               echo "ika localnet process died"; tail -50 ika-localnet.log; exit 1
@@ -170,7 +172,7 @@ jobs:
               echo "ika localnet ready after $((i*20))s"; exit 0
             fi
           done
-          echo "ika localnet NOT ready after 20 minutes — likely a genesis DKG wedge"
+          echo "ika localnet NOT ready after 40 minutes — likely a genesis DKG wedge"
           tail -80 ika-localnet.log
           exit 1
 
