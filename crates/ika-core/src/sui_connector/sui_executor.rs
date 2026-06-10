@@ -87,6 +87,25 @@ struct NotifierSubmitState {
     min_gas_version: Option<SequenceNumber>,
 }
 
+impl NotifierSubmitState {
+    /// Inspect a submission failure and, if it is a stale-gas rejection,
+    /// drop the cached gas ref and record the rejected version as the
+    /// re-fetch floor. Only a stale-gas rejection means the cached gas ref
+    /// is bad; any other error leaves the cache intact — the gas was fine,
+    /// the tx failed for an unrelated reason, and clearing it would force
+    /// an unnecessary (and possibly stale) fullnode re-fetch.
+    fn handle_possible_stale_gas_rejection(&mut self, error_message: &str) {
+        let is_stale_gas = error_message.contains("unavailable for consumption")
+            || error_message.contains("needs to be rebuilt");
+        if is_stale_gas {
+            if let Some(used) = &self.last_used_gas {
+                self.min_gas_version = used.iter().map(|gas_ref| gas_ref.1).max();
+            }
+            self.gas_coins = None;
+        }
+    }
+}
+
 /// Cap on how long `next_gas_coins` waits for the fullnode to catch up past a
 /// rejected gas version before giving up and using whatever it returns (the
 /// outer `retry_with_max_elapsed_time!` re-attempts). 60 × 500ms = 30s.
@@ -845,29 +864,36 @@ where
             "Submitting a transaction to Sui"
         );
 
-        let tx_response = sui_client
+        let tx_response = match sui_client
             .execute_transaction_block_with_effects(transaction)
-            .await?;
+            .await
+        {
+            Ok(tx_response) => tx_response,
+            Err(err) => {
+                // The fullnode can also reject the tx at submission with a
+                // JSON-RPC error instead of returning a response carrying
+                // `errors` — input-object check failures ("needs to be
+                // rebuilt" / "unavailable for consumption") surface this
+                // way, wrapped in `SuiClientTxFailureGeneric`. Apply the same
+                // stale-gas recovery as the `errors` branch below; otherwise
+                // the cached gas ref survives the failure and every retry
+                // rebuilds the identical stale tx until the one-hour panic,
+                // wedging checkpoint submission.
+                if let IkaError::SuiClientTxFailureGeneric(_, message) = &err {
+                    state.handle_possible_stale_gas_rejection(message);
+                }
+                return Err(err.into());
+            }
+        };
 
         if !tx_response.errors.is_empty() {
             let errors = format!("{:?}", tx_response.errors);
-            // Distinguish a stale-gas rejection from any other pre-execution
-            // error. Only the former means the cached gas ref is stale, so only
-            // then drop it AND record the rejected version as a floor — so the
-            // caller's `retry_with_max_elapsed_time!` re-fetch waits for the
-            // notifier fullnode to advance past it instead of re-serving the
-            // same stale version in a tight loop (which wedged epoch advance).
-            // Other errors leave the gas cache intact: the gas was fine, the tx
-            // failed for an unrelated reason, and clearing it would force an
-            // unnecessary (and possibly stale) fullnode re-fetch.
-            let is_stale_gas = errors.contains("unavailable for consumption")
-                || errors.contains("needs to be rebuilt");
-            if is_stale_gas {
-                if let Some(used) = &state.last_used_gas {
-                    state.min_gas_version = used.iter().map(|gas_ref| gas_ref.1).max();
-                }
-                state.gas_coins = None;
-            }
+            // A stale-gas rejection drops the cached gas ref AND records the
+            // rejected version as a floor — so the caller's
+            // `retry_with_max_elapsed_time!` re-fetch waits for the notifier
+            // fullnode to advance past it instead of re-serving the same
+            // stale version in a tight loop (which wedged epoch advance).
+            state.handle_possible_stale_gas_rejection(&errors);
             return Err(IkaError::SuiClientTxFailureGeneric(tx_response.digest, errors).into());
         }
 
