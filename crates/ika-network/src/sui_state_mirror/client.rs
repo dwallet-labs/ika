@@ -419,13 +419,23 @@ impl SuiTransport for SuiMirrorTransport {
         tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError> {
         // Peer-only submission: forward our own signed tx to a direct peer,
-        // which submits it and returns the committed effects. Trust is
-        // re-derived locally: a relay can't forge a *committed* tx (Sui
-        // rejects any tampered tx, and the digest is deterministic), so after
-        // a successful submit we confirm the tx landed in a checkpoint via the
-        // already-verified `get_transaction_checkpoint` before trusting the
-        // returned effects. A censoring/withholding peer surfaces as a retry,
-        // not as a falsely-committed result.
+        // which submits it and returns the committed effects.
+        //
+        // What IS verified: that the relay echoed our digest, and that the tx
+        // is committed under a checkpoint (`get_transaction_checkpoint`,
+        // itself relay-served and committee-anchored via the ratchet). A
+        // relay can't forge a *committed* tx — Sui rejects any tampered tx
+        // and the digest is deterministic — and a censoring/withholding peer
+        // surfaces as a retry, not a falsely-committed result.
+        //
+        // What is NOT verified: the effects BYTES. They come from the relay's
+        // word; a malicious relay could return fabricated effects (e.g. claim
+        // success for an aborted tx) for a genuinely-committed digest. This
+        // is acceptable today only because no caller reaches this path: the
+        // writer is notifier-gated and notifiers run direct gRPC, so a
+        // peer-only node never submits. Before any real submitter uses this,
+        // the effects must be verified against the committed checkpoint
+        // (effects digest is bound by the checkpoint contents/artifacts).
         let digest = *tx.digest();
         let tx = tx.clone();
         let resp = self

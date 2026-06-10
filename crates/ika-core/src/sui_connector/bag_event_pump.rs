@@ -19,6 +19,14 @@
 //! - **Transient entries**: a session whose bag entry is added and
 //!   removed within a single ~50ms tick is invisible. Consensus catches up
 //!   any locally-missed session.
+//! - **`seen` is in-memory and self-bounding**: each tick *replaces* it with
+//!   the bag's current entry ids, so completed sessions fall out and it never
+//!   outgrows the live bag. The flip side: a restart starts from an empty set
+//!   and re-broadcasts every live entry as "new". That is within the
+//!   consumer's existing contract — the recovery snapshot on
+//!   `uncompleted_requests_sender` re-delivers the same live set every tick,
+//!   so the engine must already dedup by session identifier (and it does:
+//!   in-flight sessions by id, completed ones against the perpetual store).
 
 use std::collections::HashSet;
 use std::sync::Arc;
