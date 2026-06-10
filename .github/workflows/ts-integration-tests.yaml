@@ -1,0 +1,190 @@
+name: TS Integration Tests
+
+# Manually triggered. Runs the TypeScript SDK integration suite against a
+# REAL local ika devnet (sui localnet + `ika start`) on the `ika-k8s-large`
+# self-hosted runner.
+#
+# Each test file runs as its own matrix job with its OWN freshly-booted
+# devnet. This is deliberate: running the heavy files back-to-back on one
+# devnet session accumulates MPC state until signs outrun the SDK's polling
+# (observed repeatedly on shared machines), so per-file isolation is what
+# makes the heavy files (imported-key, all-combinations*) pass reliably.
+#
+# The devnet readiness probe is strict: the network-key DKG must have cached
+# its outputs (the overlay-missing warnings appeared AND went quiet) and the
+# mpc_data freeze must have fired, sampled over three consecutive checks. A
+# looser probe starts the tests against a still-converging (or genesis-
+# wedged) network and every test times out with "Object does not exist".
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "Single test file to run (empty = full matrix)"
+        type: string
+        required: false
+        default: ""
+      epoch_duration_ms:
+        description: "Devnet epoch duration in ms"
+        type: string
+        required: false
+        default: "300000"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: 1
+  rust_stable: "1.94"
+
+jobs:
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.plan.outputs.files }}
+    steps:
+      - id: plan
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          ALL='["dwallet-creation","global-presign","transfer-dwallet","imported-key","make-public-share-and-sign","imported-key-make-public-share-and-sign","dwallet-sign-during-dkg","all-combinations","all-combinations-future-sign"]'
+          if [ -n "$TEST_FILTER" ]; then
+            # Allowlist-validate: the filter must be one of the known files
+            # (also keeps it out of shell/JSON injection territory).
+            if ! echo "$ALL" | grep -q "\"$TEST_FILTER\""; then
+              echo "unknown test file: $TEST_FILTER"; exit 1
+            fi
+            echo "files=[\"$TEST_FILTER\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "files=$ALL" >> "$GITHUB_OUTPUT"
+          fi
+
+  ts-integration:
+    name: ${{ matrix.file }}
+    needs: plan
+    runs-on: ika-k8s-large
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJSON(needs.plan.outputs.files) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+
+      - name: Install build dependencies
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          $SUDO apt-get update && $SUDO apt-get install -y cmake clang pkg-config libssl-dev curl
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "ts-integration"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: "pnpm"
+
+      # The Cargo workspace pins Sui to mainnet-v1.70.2; a mismatched local
+      # sui completes DKG but stalls reconfiguration, so pin the binary too.
+      - name: Install Sui mainnet-v1.70.2
+        run: |
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.70.2/sui-mainnet-v1.70.2-ubuntu-x86_64.tgz > sui.tgz
+          tar -xzf sui.tgz
+          mkdir -p "$HOME/.local/bin"
+          cp ./sui "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build ika binary
+        run: cargo build --release --bin ika
+
+      - name: Install SDK dependencies
+        run: pnpm install
+        working-directory: ./sdk/typescript
+
+      - name: Start devnet
+        env:
+          EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+        run: |
+          case "$EPOCH_DURATION_MS" in
+            ''|*[!0-9]*) echo "epoch_duration_ms must be numeric"; exit 1 ;;
+          esac
+          rm -rf ~/.ika Pub.localnet.toml
+          RUST_LOG=warn,ika=info,ika_node=info RUST_MIN_STACK=67108864 \
+            ./target/release/ika start --force-reinitiation \
+            --epoch-duration-ms "$EPOCH_DURATION_MS" > devnet.log 2>&1 &
+          echo $! > devnet.pid
+
+      - name: Wait for devnet readiness
+        run: |
+          # Strict probe: network-key DKG outputs cached (overlay-missing
+          # warnings appeared AND went quiet) AND the mpc_data freeze fired,
+          # stable across 3 consecutive 20s checks. Cap at 20 minutes.
+          quiet=0
+          for i in $(seq 1 60); do
+            sleep 20
+            if ! kill -0 "$(cat devnet.pid)" 2>/dev/null; then
+              echo "devnet process died"; tail -50 devnet.log; exit 1
+            fi
+            total=$(grep -c "overlay missing a required output" devnet.log || true)
+            recent=$(tail -200 devnet.log | grep -c "overlay missing a required output" || true)
+            froze=$(grep -c "freezing attestation-validated mpc_data" devnet.log || true)
+            if [ "${total:-0}" -gt 0 ] && [ "${recent:-0}" -eq 0 ] && [ "${froze:-0}" -gt 0 ]; then
+              quiet=$((quiet+1))
+            else
+              quiet=0
+            fi
+            if [ "$quiet" -ge 3 ]; then
+              echo "devnet ready after $((i*20))s"; exit 0
+            fi
+          done
+          echo "devnet NOT ready after 20 minutes — likely a genesis DKG wedge"
+          tail -80 devnet.log
+          exit 1
+
+      - name: Run ${{ matrix.file }}
+        working-directory: ./sdk/typescript
+        env:
+          TEST_FILE: ${{ matrix.file }}
+        run: ./scripts/run-integration-tests-sequential.sh --timeout 900 --filter "$TEST_FILE"
+
+      - name: Devnet health summary
+        if: always()
+        run: |
+          echo "highest epoch: $(grep -oE 'run_epoch epoch=[0-9]+' devnet.log | grep -oE '[0-9]+' | sort -un | tail -1)"
+          echo "freeze counts: $(grep 'freezing attestation-validated' devnet.log | grep -oE 'frozen=[0-9]+' | sort | uniq -c | tr '\n' ' ')"
+          echo "sign failures: $(grep -cE 'FailedToAdvanceMPC|InvalidParameters' devnet.log || true)"
+          echo "panics: $(grep -ci panicked devnet.log || true)"
+          kill "$(cat devnet.pid)" 2>/dev/null || true
+
+      - name: Upload devnet log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-log-${{ matrix.file }}
+          path: devnet.log
+          retention-days: 7
