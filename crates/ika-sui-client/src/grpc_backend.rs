@@ -107,7 +107,9 @@ impl GrpcSuiClient {
 
     /// Walk every dynamic field of `parent`, fetch each child object, and
     /// hand its `(object_id, bcs_contents)` to `handle`. Reproduces the
-    /// paginated table walk the JSON-RPC backend performs.
+    /// paginated table walk the JSON-RPC backend performs. Children are
+    /// fetched one batch round-trip per page rather than one per entry —
+    /// on the relay transport a page is one RPC instead of `page.len()`.
     async fn for_each_dynamic_child<F>(
         &self,
         parent: ObjectID,
@@ -122,10 +124,13 @@ impl GrpcSuiClient {
                 .transport
                 .list_dynamic_fields(parent, None, page_token)
                 .await?;
-            for entry in &page.entries {
-                let object = self.transport.get_object(entry.object_id).await?;
-                let contents = move_object_contents(&object, entry.object_id)?;
-                handle(entry.object_id, contents)?;
+            let ids: Vec<ObjectID> = page.entries.iter().map(|entry| entry.object_id).collect();
+            if !ids.is_empty() {
+                let objects = self.transport.batch_get_objects(&ids).await?;
+                for (object, id) in objects.iter().zip(ids.iter()) {
+                    let contents = move_object_contents(object, *id)?;
+                    handle(*id, contents)?;
+                }
             }
             match page.next_page_token {
                 Some(token) => page_token = Some(token),
@@ -457,14 +462,21 @@ impl SuiClientInner for GrpcSuiClient {
         &self,
         validators: Vec<Validator>,
     ) -> Result<Vec<Vec<u8>>, Self::Error> {
-        let mut validator_inners = Vec::with_capacity(validators.len());
-        for validator in validators {
-            let bytes = self
-                .versioned_inner_bcs(validator.inner.id.id.bytes, validator.inner.version)
-                .await?;
-            validator_inners.push(bytes);
-        }
-        Ok(validator_inners)
+        // The inner child ids are derivable locally from (parent, version),
+        // so the whole validator set is one batch round-trip instead of one
+        // per validator.
+        let child_ids = validators
+            .iter()
+            .map(|validator| {
+                Self::versioned_child_id(validator.inner.id.id.bytes, validator.inner.version)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let objects = self.transport.batch_get_objects(&child_ids).await?;
+        objects
+            .iter()
+            .zip(child_ids.iter())
+            .map(|(object, id)| move_object_contents(object, *id))
+            .collect()
     }
 
     async fn get_mutable_shared_arg(
