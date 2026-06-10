@@ -1801,19 +1801,20 @@ impl IkaNode {
                 let perpetual = self.state.perpetual_tables();
                 // Every validator anchors the new epoch on the prior
                 // epoch's handoff cert. A continuing validator that
-                // crossed quorum already persisted it during E-1; anyone
-                // missing it (a joiner, or a continuing validator that
-                // didn't observe quorum) fetches + verifies + persists it
-                // here, so the cross-epoch trust anchor is locally
-                // available for network-key instantiation.
+                // crossed quorum already persisted it during E-1 — that
+                // cert is re-verified before it anchors (a persisted cert
+                // is never trusted blindly); anyone missing it (a joiner,
+                // or a continuing validator that didn't observe quorum)
+                // fetches + verifies + persists it here, so the
+                // cross-epoch trust anchor is locally available for
+                // network-key instantiation.
                 let already_have_cert = perpetual
                     .get_certified_handoff_attestation(prior_epoch)
                     .ok()
                     .flatten()
                     .is_some();
                 match prior_committee {
-                    // Don't already hold the anchor — fetch + verify it.
-                    Some(prior_committee) if !already_have_cert => {
+                    Some(prior_committee) => {
                         let is_joiner = !prior_committee.authority_exists(&self_name);
                         // Consensus pubkeys are fixed at registration, so
                         // the current epoch's active-validator set supplies
@@ -1832,13 +1833,23 @@ impl IkaNode {
                             .get_authority_names_to_peer_ids()
                             .into_values()
                             .collect();
-                        info!(
-                            current_epoch,
-                            prior_epoch,
-                            is_joiner,
-                            "anchoring the new epoch on the prior-epoch handoff cert \
-                             (not held locally; fetching + verifying from peers)"
-                        );
+                        if already_have_cert {
+                            info!(
+                                current_epoch,
+                                prior_epoch,
+                                is_joiner,
+                                "anchoring the new epoch on the locally-persisted prior-epoch \
+                                 handoff cert (re-verifying it before it anchors)"
+                            );
+                        } else {
+                            info!(
+                                current_epoch,
+                                prior_epoch,
+                                is_joiner,
+                                "anchoring the new epoch on the prior-epoch handoff cert \
+                                 (not held locally; fetching + verifying from peers)"
+                            );
+                        }
                         let fetch_network = self.p2p_network.clone();
                         let source_network = self.p2p_network.clone();
                         let fetch_store = cur_epoch_store.clone();
@@ -1879,6 +1890,49 @@ impl IkaNode {
                                     expected_next.iter().copied(),
                                 )
                             });
+                            // Defense in depth — same policy as
+                            // `prepare_handoff_anchor`: a persisted cert is
+                            // ALWAYS re-verified before it anchors, so a
+                            // tampered or corrupted local handoff-cert DB
+                            // can't silently anchor the epoch. On a verified
+                            // persisted cert, (re-)install the outputs it
+                            // certifies (idempotent: digests already held
+                            // locally skip the fetch) and skip the peer fetch.
+                            // (When the cert vanished between the epoch-start
+                            // check and this task, fall through to the peer
+                            // fetch path below.)
+                            if already_have_cert
+                                && let Some(persisted) = cert_perpetual
+                                    .get_certified_handoff_attestation(prior_epoch)
+                                    .ok()
+                                    .flatten()
+                            {
+                                match verify(&persisted) {
+                                    Ok(()) => {
+                                        install_joiner_network_key_outputs(
+                                            &persisted,
+                                            &fetch_network,
+                                            &peer_ids,
+                                            &fetch_store,
+                                        )
+                                        .await;
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            prior_epoch,
+                                            error = ?e,
+                                            "the locally-persisted handoff cert FAILED \
+                                             re-verification at epoch start — the local \
+                                             handoff-cert DB is tampered or corrupted. \
+                                             Halting the node (fail-closed) rather than \
+                                             anchoring the epoch on an unverified cert."
+                                        );
+                                        let _ = fail_closed_shutdown.send(None);
+                                        return;
+                                    }
+                                }
+                            }
                             let source = Arc::new(P2pHandoffCertSource::new(
                                 source_network,
                                 peer_ids.clone(),
@@ -1946,9 +2000,6 @@ impl IkaNode {
                             }
                         }))
                     }
-                    // Already hold the prior-epoch cert in perpetual
-                    // (crossed quorum during E-1) — anchor satisfied.
-                    Some(_) => None,
                     None => {
                         warn_bootstrap_inputs_unavailable(
                             prior_epoch,

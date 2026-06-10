@@ -820,7 +820,7 @@ pub fn default_handoff_items_builders(
 /// legacy / mixed-shape validators read via the chain fallback
 /// (mainnet-v1.1.8 bare class-groups shape) — matching the
 /// `filter_map` semantics in `sui_syncer::new_committee`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OffChainCommitteeBundles {
     pub class_groups: std::collections::HashMap<
         AuthorityName,
@@ -1112,6 +1112,12 @@ pub trait OffChainCommitteeMpcDataSource: Send + Sync + 'static {
         &self,
         committee_authorities: &[AuthorityName],
     ) -> OffChainMpcDataAssembly;
+
+    /// Whether the epoch's mpc_data freeze has fired. Post-freeze,
+    /// `try_assemble_mpc_data` is a pure function of the immutable
+    /// frozen set, so a `Complete` assembly observed while frozen is
+    /// final for the epoch and the caller may stop re-assembling.
+    fn is_frozen(&self) -> bool;
 }
 
 /// Adapter that lets the long-lived `SuiConnectorService` hold a
@@ -1168,7 +1174,18 @@ pub struct EpochStoreMpcDataSource {
     epoch_store:
         std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
     perpetual: Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+    /// Last successful assembly, keyed by the exact `(authority,
+    /// digest)` input pairs. Blobs are content-addressed by digest,
+    /// so identical pairs imply an identical assembly — the cache
+    /// skips the per-tick blob reads + class-groups decode that the
+    /// sync loop would otherwise redo every poll for the rest of the
+    /// epoch.
+    assembled_cache: std::sync::Mutex<Option<CachedAssembly>>,
 }
+
+/// `(input pairs, assembled bundles)` of the last successful
+/// off-chain assembly in [`EpochStoreMpcDataSource`].
+type CachedAssembly = (Vec<(AuthorityName, [u8; 32])>, OffChainCommitteeBundles);
 
 impl EpochStoreMpcDataSource {
     pub fn new(
@@ -1180,6 +1197,7 @@ impl EpochStoreMpcDataSource {
         Self {
             epoch_store,
             perpetual,
+            assembled_cache: std::sync::Mutex::new(None),
         }
     }
 }
@@ -1217,11 +1235,26 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
                     return OffChainMpcDataAssembly::EverythingExcluded;
                 }
             };
+        if let Some((cached_pairs, cached_bundles)) = self
+            .assembled_cache
+            .lock()
+            .expect("assembled_cache lock poisoned")
+            .as_ref()
+            && *cached_pairs == pairs
+        {
+            return OffChainMpcDataAssembly::Complete(cached_bundles.clone());
+        }
         let perpetual = self.perpetual.clone();
         let assembly_pairs: Vec<_> = pairs.clone();
         let result = assemble_committee_mpc_data_off_chain(assembly_pairs, move |digest| {
             perpetual.get_mpc_artifact_blob(digest).ok().flatten()
         });
+        if let OffChainMpcDataAssembly::Complete(ref bundles) = result {
+            *self
+                .assembled_cache
+                .lock()
+                .expect("assembled_cache lock poisoned") = Some((pairs.clone(), bundles.clone()));
+        }
         if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
             let blob_only_missing: Vec<_> = missing
                 .iter()
@@ -1239,6 +1272,14 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
             );
         }
         result
+    }
+
+    fn is_frozen(&self) -> bool {
+        self.epoch_store.upgrade().is_some_and(|store| {
+            store
+                .get_frozen_validator_mpc_data_input_set()
+                .is_ok_and(|frozen| !frozen.is_empty())
+        })
     }
 }
 

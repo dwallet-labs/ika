@@ -322,7 +322,7 @@ export class IkaClient {
 	 * @param dwalletID - The unique identifier of the DWallet to retrieve
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
-	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 600000 — MPC operations legitimately take minutes)
 	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
 	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
 	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
@@ -390,7 +390,7 @@ export class IkaClient {
 	 * @param presignID - The unique identifier of the presign session to retrieve
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
-	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 600000 — MPC operations legitimately take minutes)
 	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
 	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
 	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
@@ -459,7 +459,7 @@ export class IkaClient {
 	 * @param encryptedUserSecretKeyShareID - The unique identifier of the encrypted share to retrieve
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
-	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 600000 — MPC operations legitimately take minutes)
 	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
 	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
 	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)
@@ -601,7 +601,7 @@ export class IkaClient {
 	 * @param signatureAlgorithm - The signature algorithm to use for parsing (must be valid for the curve)
 	 * @param state - The target state to wait for
 	 * @param options - Optional configuration for polling behavior
-	 * @param options.timeout - Maximum time to wait in milliseconds (default: 30000)
+	 * @param options.timeout - Maximum time to wait in milliseconds (default: 600000 — MPC operations legitimately take minutes)
 	 * @param options.interval - Initial polling interval in milliseconds (default: 1000)
 	 * @param options.maxInterval - Maximum polling interval with exponential backoff (default: 5000)
 	 * @param options.backoffMultiplier - Multiplier for exponential backoff (default: 1.5)

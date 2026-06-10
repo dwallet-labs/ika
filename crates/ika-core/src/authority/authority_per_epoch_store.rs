@@ -56,6 +56,7 @@ use crate::system_checkpoints::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use group::PartyID;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_types::digests::MessageDigest;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -711,10 +712,7 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         // crosses the epoch boundary still certifies under the correct
         // epoch on every validator.
         if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            use fastcrypto::hash::{Blake2b256, HashFunction};
-            let mut hasher = Blake2b256::default();
-            hasher.update(output_bytes);
-            let digest: [u8; 32] = hasher.finalize().into();
+            let digest = mpc_data_blob_hash(output_bytes);
             if let Err(e) = perpetual.insert_network_reconfiguration_output_digest_for_epoch(
                 reconfiguration_epoch,
                 dwallet_network_encryption_key_id,
@@ -2354,10 +2352,7 @@ impl AuthorityPerEpochStore {
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        use fastcrypto::hash::{Blake2b256, HashFunction};
-        let mut hasher = Blake2b256::default();
-        hasher.update(output_bytes);
-        let digest: [u8; 32] = hasher.finalize().into();
+        let digest = mpc_data_blob_hash(output_bytes);
         let tables = self.tables()?;
         match kind {
             ProtocolOutputKind::Dkg => tables
@@ -2429,31 +2424,6 @@ impl AuthorityPerEpochStore {
         Ok(out)
     }
 
-    /// Returns the merged `key_id -> digest` map of cached network
-    /// reconfiguration outputs. Same precedence as
-    /// [`Self::get_network_dkg_output_digests`].
-    pub fn get_network_reconfiguration_output_digests(
-        &self,
-    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
-        let tables = self.tables()?;
-        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
-            std::collections::BTreeMap::new();
-        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            for entry in perpetual
-                .network_reconfiguration_output_digests_by_key
-                .safe_iter()
-            {
-                let (key_id, digest) = entry.map_err(IkaError::from)?;
-                out.insert(key_id, digest);
-            }
-        }
-        for entry in tables.network_reconfiguration_output_digests.safe_iter() {
-            let (key_id, digest) = entry.map_err(IkaError::from)?;
-            out.insert(key_id, digest);
-        }
-        Ok(out)
-    }
-
     /// Returns the `key_id -> digest` map of reconfiguration outputs
     /// recorded for `epoch` — the epoch-keyed perpetual slice written by
     /// [`Self::cache_network_reconfiguration_output`] under the
@@ -2472,20 +2442,12 @@ impl AuthorityPerEpochStore {
         &self,
         epoch: EpochId,
     ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
-        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
-            std::collections::BTreeMap::new();
-        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            for entry in perpetual
-                .network_reconfiguration_output_digest_by_epoch_and_key
-                .safe_iter()
-            {
-                let ((entry_epoch, key_id), digest) = entry.map_err(IkaError::from)?;
-                if entry_epoch == epoch {
-                    out.insert(key_id, digest);
-                }
+        match self.perpetual_tables_for_handoff.load_full() {
+            Some(perpetual) => {
+                perpetual.get_network_reconfiguration_output_digests_for_epoch(epoch)
             }
+            None => Ok(std::collections::BTreeMap::new()),
         }
-        Ok(out)
     }
 
     /// Looks up the cached blob for a given network key + protocol

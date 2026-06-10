@@ -308,6 +308,11 @@ where
         >,
     ) {
         let mut poll_interval = Duration::from_secs(10);
+        // Epoch for which a post-freeze (final) committee was already
+        // sent. Post-freeze, the off-chain assembly is a pure function
+        // of the immutable frozen set, so re-assembling and re-sending
+        // every tick is pure waste — skip until the epoch advances.
+        let mut final_committee_sent_for_epoch: Option<EpochId> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -341,8 +346,9 @@ where
             // assembled). This chain signal breaks that cycle. It
             // carries only membership + stake (empty mpc_data crypto maps)
             // — all the freeze emit-gate and joiner watcher read.
+            let next_epoch = system_inner.epoch() + 1;
             let chain_committee = CommitteeMembership {
-                epoch: system_inner.epoch() + 1,
+                epoch: next_epoch,
                 voting_rights: new_next_committee
                     .iter()
                     .map(|(_, (name, stake))| (*name, *stake))
@@ -350,21 +356,42 @@ where
                 quorum_threshold: new_next_bls_committee.quorum_threshold,
                 validity_threshold: new_next_bls_committee.validity_threshold,
             };
-            let _ = chain_next_committee_sender.send(chain_committee);
+            // Only wake receivers when the chain view actually changed;
+            // an unconditional `send` marks the watch changed every tick.
+            chain_next_committee_sender.send_if_modified(|current| {
+                if *current != chain_committee {
+                    *current = chain_committee;
+                    true
+                } else {
+                    false
+                }
+            });
+
+            if final_committee_sent_for_epoch == Some(next_epoch) {
+                continue;
+            }
 
             let off_chain_on = ProtocolConfig::get_for_version(
                 ProtocolVersion::new(system_inner.protocol_version()),
                 Chain::Unknown,
             )
             .off_chain_validator_metadata_enabled();
+            // Snapshot the source once so the freeze probe and the
+            // assembly read the SAME per-epoch store: the freeze flag is
+            // monotonic within a store, so `is_frozen == true` here
+            // guarantees the assembly below used the frozen pairs.
+            let class_groups_snapshot = class_groups_source.load_full();
+            let frozen_at_assembly = class_groups_snapshot
+                .as_ref()
+                .is_some_and(|source| source.is_frozen());
             let committee = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
-                system_inner.epoch() + 1,
+                next_epoch,
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
                 true,
-                class_groups_source.clone(),
+                class_groups_snapshot,
                 off_chain_on,
             )
             .await
@@ -380,6 +407,9 @@ where
                 error!(error=?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
             } else {
                 info!(committee_epoch=?committee_epoch, "The next epoch committee was sent successfully");
+                if frozen_at_assembly {
+                    final_committee_sent_for_epoch = Some(next_epoch);
+                }
             }
         }
     }
@@ -391,10 +421,8 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
-        class_groups_source: Arc<
-            arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
-            >,
+        class_groups_source: Option<
+            Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
         off_chain_on: bool,
     ) -> DwalletMPCResult<Committee> {
@@ -409,7 +437,7 @@ where
         // Under legacy mode (`off_chain_on == false`) we fall
         // through to the chain read below so existing clusters
         // keep working.
-        if let Some(source) = class_groups_source.load_full() {
+        if let Some(source) = class_groups_source {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {

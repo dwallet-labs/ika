@@ -167,6 +167,17 @@ pub(crate) struct DWalletMPCManager {
     /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
     pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
+    /// The `(overlay, cert-present)` input pair of the last completed
+    /// `adopt_cert_verified_keys` pass. The overlay watch publishes a
+    /// fresh `Arc` on every change (never mutates in place) and the
+    /// prior epoch's handoff cert is immutable once present, so an
+    /// identical pair cannot produce new adoptions — the pass (which
+    /// re-hashes multi-MB blobs) is skipped for that tick.
+    last_adoption_input: Option<(
+        Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>,
+        bool,
+    )>,
+
     /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
     /// shape we last passed to `update_network_key`. Used by
     /// `instantiate_agreed_keys_from_voted_data` to distinguish
@@ -327,6 +338,7 @@ impl DWalletMPCManager {
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
             agreed_network_key_data: HashMap::new(),
+            last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
@@ -665,8 +677,16 @@ impl DWalletMPCManager {
     ///   still required as a consistency check.
     pub fn adopt_cert_verified_keys(
         &mut self,
-        overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+        overlay: &Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>,
     ) {
+        // Once a pass ran with the cert present, the same overlay `Arc`
+        // can't yield new adoptions — skip before even the cert DB read.
+        if let Some((last_overlay, cert_was_present)) = &self.last_adoption_input
+            && Arc::ptr_eq(last_overlay, overlay)
+            && *cert_was_present
+        {
+            return;
+        }
         // A cert READ ERROR must not be conflated with a genuinely-absent
         // cert: `cert == None` sends a reconfigured key down the unverified
         // v3->v4-boundary adoption path below, silently bypassing the
@@ -691,6 +711,14 @@ impl DWalletMPCManager {
             },
             None => None,
         };
+        // Same overlay and the cert is still absent — identical inputs
+        // to the last completed pass, nothing new to adopt.
+        if let Some((last_overlay, cert_was_present)) = &self.last_adoption_input
+            && Arc::ptr_eq(last_overlay, overlay)
+            && *cert_was_present == cert.is_some()
+        {
+            return;
+        }
         let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         if let Some(cert) = &cert {
@@ -706,7 +734,7 @@ impl DWalletMPCManager {
                 }
             }
         }
-        for (key_id, data) in overlay {
+        for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
             }
@@ -779,6 +807,7 @@ impl DWalletMPCManager {
             }
             self.agreed_network_key_data.insert(*key_id, data.clone());
         }
+        self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
     }
 
     /// Handle NOA observation messages. Resolves finalization and failure quorums.
