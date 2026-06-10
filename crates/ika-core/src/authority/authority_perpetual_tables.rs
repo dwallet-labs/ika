@@ -103,7 +103,8 @@ pub struct AuthorityPerpetualTables {
 
     /// Cached Sui `CheckpointData` (BCS bytes) keyed by sequence number.
     /// Read-through cache for the OCS verifier and the SuiStateMirror relay.
-    /// Bounded retention is enforced by a background pruner (added in a follow-up PR).
+    /// Bounded retention is enforced in [`Self::put_sui_checkpoint`]: entries
+    /// older than the retention window are range-deleted on insert.
     pub(crate) sui_checkpoint_cache: DBMap<SuiCheckpointSequenceNumber, Vec<u8>>,
 
     /// TX digest → checkpoint sequence index. Avoids a `get_transaction` round-trip
@@ -459,8 +460,27 @@ impl AuthorityPerpetualTables {
     }
 
     pub fn put_sui_checkpoint(&self, seq: SuiCheckpointSequenceNumber, bcs: &[u8]) -> IkaResult {
+        /// Cached checkpoints older than this many sequences below the newest
+        /// insert get range-deleted. The cache only ever serves *recent*
+        /// re-reads (verifier re-walks, relay peers, push-gap recovery), so
+        /// the window just has to comfortably exceed those; anything older is
+        /// re-fetchable from upstream.
+        const RETENTION_SEQS: u64 = 10_000;
+        /// Issue the range-delete once every this many inserts — range
+        /// tombstones are cheap but there's no reason to write one per put.
+        const PRUNE_INTERVAL: u64 = 256;
+
         let mut wb = self.sui_checkpoint_cache.batch();
         wb.insert_batch(&self.sui_checkpoint_cache, [(seq, bcs.to_vec())])?;
+        if seq % PRUNE_INTERVAL == 0 {
+            let cutoff = seq.saturating_sub(RETENTION_SEQS);
+            if cutoff > 0 {
+                // Pruned entries may stay visible until compaction (range
+                // tombstones); harmless for a cache — the point is that disk
+                // usage stops growing without bound.
+                wb.schedule_delete_range(&self.sui_checkpoint_cache, &0, &cutoff)?;
+            }
+        }
         wb.write()?;
         Ok(())
     }
