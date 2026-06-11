@@ -17,6 +17,13 @@
 // Define the `GIT_REVISION` and `VERSION` consts
 bin_version::bin_version!();
 
+// Compiled-in jemalloc as the global allocator (mirrors sui-node):
+// better fragmentation behavior than glibc malloc for long-running
+// RocksDB-heavy processes, and arch-independent.
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
+#[global_allocator]
+static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() {
     // Auto-detect mode from config
     ika_node::run_node(None, VERSION);

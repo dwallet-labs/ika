@@ -156,6 +156,7 @@ indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
 tikv-jemalloc-ctl = "0.5.4"
+tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls"] }
 jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.16.3"
 merlin = { version = "3", default-features = false }
