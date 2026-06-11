@@ -176,12 +176,12 @@ impl ValidatorConfigBuilder {
             )),
             sui_connector_config: SuiConnectorConfig {
                 sui_rpc_url: sui_rpc_url.to_string(),
-                sui_data_source: self.sui_data_source_override.clone().unwrap_or_else(|| {
+                sui_data_source: Some(self.sui_data_source_override.clone().unwrap_or_else(|| {
                     SuiDataSource::SuiStateDirect {
                         url: sui_rpc_url.to_string(),
                         serve_mirror: true,
                     }
-                }),
+                })),
                 sui_state_mirror_peers: self
                     .sui_state_mirror_peers_override
                     .clone()
@@ -410,10 +410,10 @@ impl FullnodeConfigBuilder {
                 sui_rpc_url: sui_rpc_url.to_string(),
                 // Fullnodes don't run the OCS verifier: direct gRPC, no
                 // mirror service, no trusted anchor.
-                sui_data_source: SuiDataSource::SuiStateDirect {
+                sui_data_source: Some(SuiDataSource::SuiStateDirect {
                     url: sui_rpc_url.to_string(),
                     serve_mirror: false,
-                },
+                }),
                 sui_state_mirror_peers: Vec::new(),
                 sui_trusted_anchor: None,
                 sui_unsafe_genesis_committee: None,

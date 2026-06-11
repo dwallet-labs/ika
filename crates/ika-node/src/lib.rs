@@ -420,12 +420,12 @@ impl IkaNode {
         let is_sui_state_direct = ocs_enabled
             && matches!(
                 config.sui_connector_config.sui_data_source,
-                SuiDataSource::SuiStateDirect { .. }
+                Some(SuiDataSource::SuiStateDirect { .. })
             );
         let is_sui_state_mirrored = ocs_enabled
             && matches!(
                 config.sui_connector_config.sui_data_source,
-                SuiDataSource::SuiStateMirrored { .. }
+                Some(SuiDataSource::SuiStateMirrored { .. })
             );
         if !ocs_enabled {
             info!(
@@ -435,31 +435,54 @@ impl IkaNode {
             );
         }
 
-        // `sui_client` transport selection:
+        // `sui_client` transport selection, keyed off the SHAPE of the node's
+        // own config — old-style vs new-style — never off chain state (a
+        // protocol flag must not be able to halt running validators en masse
+        // at an upgrade boundary; transport choice is node-local, and both
+        // read paths consume the same on-chain state):
         //
-        //   * Legacy (pre-OCS) validators drive MPC from Sui events polled over
-        //     JSON-RPC (`query_events`), which the gRPC backend cannot serve.
-        //     They are the only nodes that still need JSON-RPC, so keep exactly
-        //     that case there: no anchor AND validator mode.
+        //   * Old-style config (no `sui-data-source` section): the node
+        //     predates the OCS rollout and its only configured endpoint is
+        //     `sui_rpc_url`. A VALIDATOR on such a config keeps the legacy
+        //     JSON-RPC read path — its MPC events come from `query_events`,
+        //     which gRPC cannot serve. DEPRECATED: Sui is sunsetting JSON-RPC;
+        //     migrate by adding `sui-data-source` plus a trust anchor.
+        //     Notifiers and fullnodes run no event ingestion, so even on an
+        //     old-style config they read gRPC at the same endpoint (Sui
+        //     fullnodes serve both APIs on one port).
         //
-        //   * Everything else uses gRPC. Notifiers — the only nodes that submit
-        //     transactions (gas + writes) — always use a *direct* gRPC uplink to
-        //     their full node, regardless of OCS. Direct validators and
-        //     sui-state-mirrored validators with a fallback URL also use direct
-        //     gRPC.
+        //   * New-style config (`sui-data-source` present): all Sui I/O runs
+        //     over gRPC — direct, mirrored-with-fallback, or peer-only over
+        //     the verified relay (built after the OCS reader + p2p network
+        //     exist; peer-only nodes never submit transactions, so they need
+        //     no direct uplink). Notifiers — the only nodes that submit
+        //     transactions (gas + writes) — always use a direct gRPC uplink.
         //
-        //   * A sui-state-mirrored node WITHOUT a fallback URL is *peer-only*:
-        //     it has no direct full-node connection and reads verified state
-        //     over the relay. Its `sui_client` is a verified-read backend built
-        //     after the OCS reader + p2p network exist, so it can't be
-        //     constructed here. Peer-only nodes never submit transactions (no
-        //     notifier key), so they need no direct uplink.
-        let legacy_json_rpc = !has_anchor && mode.is_validator();
+        // Mixed shapes fail closed here rather than guessing:
+        if has_anchor && config.sui_connector_config.sui_data_source.is_none() {
+            return Err(anyhow!(
+                "a Sui trust anchor is configured but `sui-data-source` is not; the \
+                 anchor-verified OCS path runs over gRPC — add a sui-data-source section"
+            ));
+        }
+        if config.sui_connector_config.sui_data_source.is_some()
+            && mode.is_validator()
+            && !has_anchor
+        {
+            return Err(anyhow!(
+                "`sui-data-source` is set but no Sui trust anchor is configured: a validator on \
+                 the gRPC path has no MPC event source without one (no JSON-RPC `query_events`, \
+                 and the verified BagEventPump requires the anchor); set sui_trusted_anchor (or \
+                 sui_unsafe_genesis_committee on private nets)"
+            ));
+        }
+        let legacy_json_rpc =
+            config.sui_connector_config.sui_data_source.is_none() && mode.is_validator();
         let peer_only = matches!(
             config.sui_connector_config.sui_data_source,
-            SuiDataSource::SuiStateMirrored {
+            Some(SuiDataSource::SuiStateMirrored {
                 fallback_grpc_url: None
-            }
+            })
         );
         // A peer-only validator stands up its p2p network + OCS stack inside the
         // transport gate below (it needs them to read any Sui state), then
@@ -467,6 +490,11 @@ impl IkaNode {
         let mut peer_only_p2p: Option<P2pComponents> = None;
         let mut peer_only_stack: Option<sui_connector_setup::SuiConnectorStack> = None;
         let sui_client = if legacy_json_rpc {
+            warn!(
+                "DEPRECATED: old-style config (no sui-data-source) — this validator reads Sui \
+                 over JSON-RPC, which Sui is sunsetting; migrate by adding sui-data-source plus \
+                 a trust anchor"
+            );
             Arc::new(
                 SuiClient::new(
                     &config.sui_connector_config.sui_rpc_url,
@@ -572,13 +600,16 @@ impl IkaNode {
             client
         } else {
             let grpc_url = match &config.sui_connector_config.sui_data_source {
-                SuiDataSource::SuiStateDirect { url, .. } => url.clone(),
-                SuiDataSource::SuiStateMirrored {
+                Some(SuiDataSource::SuiStateDirect { url, .. }) => url.clone(),
+                Some(SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: Some(url),
-                } => url.clone(),
-                SuiDataSource::SuiStateMirrored {
+                }) => url.clone(),
+                Some(SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: None,
-                } => unreachable!("peer_only is handled in the branch above"),
+                }) => unreachable!("peer_only is handled in the branch above"),
+                // Old-style config on a notifier/fullnode: Sui fullnodes
+                // serve gRPC on the same endpoint as JSON-RPC.
+                None => config.sui_connector_config.sui_rpc_url.clone(),
             };
             Arc::new(SuiClient::new_grpc(&grpc_url, sui_client_metrics, ika_network_config).await?)
         };

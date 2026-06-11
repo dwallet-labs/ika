@@ -11,7 +11,6 @@ use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::system_checkpoints::SystemCheckpointStore;
 use anyhow::anyhow;
 use async_trait::async_trait;
-use futures::{StreamExt, future};
 use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
 use ika_sui_client::{SuiBackend, SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, CommitteeMembership, EpochId};
@@ -24,8 +23,6 @@ use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::Coin;
-use sui_sdk::apis::CoinReadApi;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
 use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
@@ -370,36 +367,6 @@ pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
     );
 
     Transaction::from_data(tx_data, vec![signature])
-}
-
-pub async fn pick_highest_balance_coin(
-    coin_read_api: &CoinReadApi,
-    address: SuiAddress,
-    minimal_amount: u64,
-) -> anyhow::Result<Coin> {
-    let mut highest_balance = 0;
-    let mut highest_balance_coin = None;
-    coin_read_api
-        .get_coins_stream(address, None)
-        .for_each(|coin: Coin| {
-            if coin.balance > highest_balance {
-                highest_balance = coin.balance;
-                highest_balance_coin = Some(coin.clone());
-            }
-            future::ready(())
-        })
-        .await;
-    if highest_balance_coin.is_none() {
-        return Err(anyhow!("No Sui coins found for address {:?}", address));
-    }
-    if highest_balance < minimal_amount {
-        return Err(anyhow!(
-            "Found no single coin that has >= {} balance Sui for address {:?}",
-            minimal_amount,
-            address,
-        ));
-    }
-    Ok(highest_balance_coin.unwrap())
 }
 
 #[cfg(test)]
