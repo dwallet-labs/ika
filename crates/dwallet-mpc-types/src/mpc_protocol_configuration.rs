@@ -151,15 +151,33 @@ lazy_static! {
 ///
 /// This is the canonical source of truth, derived from
 /// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`].
+///
+/// The output is SORTED (curves ascending, algorithms ascending within
+/// each curve): the backing maps are `HashMap`s whose iteration order
+/// differs per process, and consumers iterate these pairs to assign
+/// consensus-deterministic identifiers (e.g. internal-presign session
+/// sequence numbers) — every validator must walk them in the same order
+/// or the derived session identifiers diverge across the committee.
 pub fn supported_curve_to_signature_algorithms()
 -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
-    SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
-        .iter()
-        .filter_map(|(curve_u32, algo_map)| {
-            let curve = try_into_curve(*curve_u32).ok()?;
-            let algorithms: Vec<_> = algo_map
+    let mut curve_ids: Vec<u32> = SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+        .keys()
+        .copied()
+        .collect();
+    curve_ids.sort_unstable();
+    curve_ids
+        .into_iter()
+        .filter_map(|curve_u32| {
+            let curve = try_into_curve(curve_u32).ok()?;
+            let mut algo_ids: Vec<u32> = SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+                [&curve_u32]
                 .keys()
-                .filter_map(|algo_u32| try_into_signature_algorithm(*curve_u32, *algo_u32).ok())
+                .copied()
+                .collect();
+            algo_ids.sort_unstable();
+            let algorithms: Vec<_> = algo_ids
+                .into_iter()
+                .filter_map(|algo_u32| try_into_signature_algorithm(curve_u32, algo_u32).ok())
                 .collect();
             Some((curve, algorithms))
         })

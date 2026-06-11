@@ -1064,7 +1064,12 @@ impl DWalletMPCManager {
                 None => return,
             };
 
-        let agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
+        // Sorted: sequence numbers are assigned from a shared counter as
+        // this loop walks (key, curve, algorithm) combinations, and the
+        // derived session identifiers must match across validators — a
+        // HashMap iteration order is per-process.
+        let mut agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
+        agreed_key_ids.sort_unstable();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
@@ -1191,9 +1196,13 @@ impl DWalletMPCManager {
         };
 
         let session_sequence_number = self.next_internal_presign_sequence_number;
+        // `consensus_round` is logged below for traceability but is
+        // deliberately NOT part of the request/session identifier:
+        // validators reach this point at different rounds (the network
+        // key installs asynchronously), and the identifier must come out
+        // identical on every committee member.
         let request = DWalletSessionRequest::new_internal_presign(
             self.epoch_id,
-            consensus_round,
             session_sequence_number,
             curve,
             signature_algorithm,
