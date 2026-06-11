@@ -16,7 +16,11 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn network_key_received_after_start_event() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    // `init_for_testing` honors RUST_LOG (the plain fmt subscriber caps at
+    // INFO and ignores it), which this test's debugging regularly needs.
+    let _guard = telemetry_subscribers::TelemetryConfig::new()
+        .with_env()
+        .init();
     let (committee, _) = Committee::new_simple_test_committee();
 
     let parties_that_receive_network_key_after_start_event = vec![0, 1];

@@ -475,6 +475,24 @@ impl DWalletMPCService {
                 vec![]
             });
 
+        // Adopt locally-observed network-key outputs (cert-digest-gated)
+        // and spawn instantiation for any not yet installed — once per
+        // ITERATION, not per consensus round: the inputs (overlay watch,
+        // persisted cert) don't depend on round content, and gating this
+        // on fresh rounds deadlocks the key-arrives-after-request
+        // bootstrap (nothing can emit a round WITHOUT the key, and no
+        // round would mean no adoption). The adoption pass early-returns
+        // in O(1) when neither the overlay Arc nor the cert changed.
+        let overlay_snapshot = self
+            .sui_data_requests
+            .network_keys_receiver
+            .borrow()
+            .clone();
+        self.dwallet_mpc_manager
+            .adopt_cert_verified_keys(&overlay_snapshot);
+        self.dwallet_mpc_manager
+            .instantiate_agreed_keys_from_voted_data();
+
         let mut newly_instantiated_network_key_ids =
             self.process_consensus_rounds_from_storage().await;
         // Network-key instantiations complete asynchronously on the rayon
@@ -1225,31 +1243,13 @@ impl DWalletMPCService {
                 }
             }
 
-            // 1f. Adopt this validator's own locally-observed network-key
-            // outputs into the instantiation set, verified against the
-            // prior epoch's handoff cert (the cross-epoch agreement that
-            // gates which keys may be instantiated). Sourced from the
-            // overlay but cert-digest-gated, so a stale/wrong local value
-            // is skipped.
-            // Cheap Arc clone; the borrow guard is dropped before the
-            // instantiation await below.
-            let overlay_snapshot = self
-                .sui_data_requests
-                .network_keys_receiver
-                .borrow()
-                .clone();
-            self.dwallet_mpc_manager
-                .adopt_cert_verified_keys(&overlay_snapshot);
-
-            // 2. Spawn instantiation for any keys we don't have yet, from
-            // the cert-verified local outputs adopted above (the consensus
-            // vote that previously fed this set has been removed). The
-            // instantiations complete asynchronously on the rayon pool and
-            // are collected by the per-iteration poll in
-            // `run_service_loop_iteration` — minutes-scale crypto must not
-            // block round processing.
-            self.dwallet_mpc_manager
-                .instantiate_agreed_keys_from_voted_data();
+            // Network-key adoption + instantiation spawning deliberately do
+            // NOT live in this per-round loop — see the per-ITERATION block
+            // in `run_service_loop_iteration`: their inputs (overlay watch,
+            // persisted cert) don't depend on round content, and gating them
+            // on fresh consensus rounds deadlocks the key-arrives-after-
+            // request bootstrap (no validator can emit a round WITHOUT the
+            // key, and no round means no adoption).
 
             // 3. Instantiate internal presign sessions (now uses agreed values).
             if self.protocol_config.internal_presign_sessions_enabled() {
