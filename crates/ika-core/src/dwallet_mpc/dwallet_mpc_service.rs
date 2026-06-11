@@ -475,7 +475,16 @@ impl DWalletMPCService {
                 vec![]
             });
 
-        let newly_instantiated_network_key_ids = self.process_consensus_rounds_from_storage().await;
+        let mut newly_instantiated_network_key_ids =
+            self.process_consensus_rounds_from_storage().await;
+        // Network-key instantiations complete asynchronously on the rayon
+        // pool; poll them once per ITERATION (not per consensus round) so
+        // a completed key installs even when no new rounds arrived.
+        newly_instantiated_network_key_ids.extend(
+            self.dwallet_mpc_manager
+                .poll_pending_network_key_instantiations()
+                .await,
+        );
 
         self.process_cryptographic_computations().await;
         self.handle_noa_sign_outputs().await;
@@ -1228,14 +1237,15 @@ impl DWalletMPCService {
             self.dwallet_mpc_manager
                 .adopt_cert_verified_keys(&overlay_snapshot);
 
-            // 2. Instantiate any keys we don't have yet, from the
-            // cert-verified local outputs adopted above (the consensus
-            // vote that previously fed this set has been removed).
-            let new_key_ids = self
-                .dwallet_mpc_manager
-                .instantiate_agreed_keys_from_voted_data()
-                .await;
-            accumulated_new_key_ids.extend(new_key_ids);
+            // 2. Spawn instantiation for any keys we don't have yet, from
+            // the cert-verified local outputs adopted above (the consensus
+            // vote that previously fed this set has been removed). The
+            // instantiations complete asynchronously on the rayon pool and
+            // are collected by the per-iteration poll in
+            // `run_service_loop_iteration` — minutes-scale crypto must not
+            // block round processing.
+            self.dwallet_mpc_manager
+                .instantiate_agreed_keys_from_voted_data();
 
             // 3. Instantiate internal presign sessions (now uses agreed values).
             if self.protocol_config.internal_presign_sessions_enabled() {

@@ -206,6 +206,13 @@ pub(crate) async fn create_network_key_test(
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
+    // The instantiation runs on the rayon pool and installs on a later
+    // tick — keep iterating until it lands everywhere.
+    utils::run_service_loops_until_network_key_installed(
+        &mut test_state.dwallet_mpc_services,
+        key_id.unwrap(),
+    )
+    .await;
     // Verify every validator installed the network key before returning.
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         assert!(
@@ -353,6 +360,17 @@ async fn test_two_network_keys_same_epoch_dkg() {
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
+    // Both instantiations complete asynchronously on the rayon pool.
+    utils::run_service_loops_until_network_key_installed(
+        &mut test_state.dwallet_mpc_services,
+        k0_id,
+    )
+    .await;
+    utils::run_service_loops_until_network_key_installed(
+        &mut test_state.dwallet_mpc_services,
+        k1_id,
+    )
+    .await;
 
     for (i, service) in test_state.dwallet_mpc_services.iter().enumerate() {
         let net_keys = &service.dwallet_mpc_manager().network_keys;

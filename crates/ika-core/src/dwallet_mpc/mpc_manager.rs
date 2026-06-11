@@ -11,7 +11,7 @@ use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
     session_input_from_request,
 };
-use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
+use crate::dwallet_mpc::network_dkg::spawn_network_encryption_key_public_data_instantiation;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
@@ -21,7 +21,8 @@ use crate::dwallet_mpc::{
 use crate::dwallet_session_request::DWalletSessionRequest;
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
+    VersionedPresignOutput,
 };
 use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
 use dwallet_rng::RootSeed;
@@ -50,6 +51,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace, warn};
 
 use ika_types::noa_checkpoint::{
@@ -195,6 +197,13 @@ pub(crate) struct DWalletMPCManager {
     /// that carries this validator's share arrives).
     last_failed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
+    /// Network-key instantiations currently running on the rayon pool,
+    /// polled (non-blocking) every service tick. The instantiation is
+    /// minutes-scale on weak hardware; awaiting it inline froze the
+    /// whole MPC service loop — every session on the validator — for
+    /// its full duration at each epoch boundary.
+    pending_network_key_instantiations: HashMap<ObjectID, PendingNetworkKeyInstantiation>,
+
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
     // Different epochs will see repeating values of this variable,
@@ -240,6 +249,14 @@ pub(crate) struct DWalletMPCManager {
     finalized_tx_refs: HashSet<NOACheckpointTxRef>,
     /// (tx_ref, retry_round) pairs that have already reached failure quorum.
     failed_tx_ref_rounds: HashSet<(NOACheckpointTxRef, u32)>,
+}
+
+/// An in-flight network-key instantiation: the input bytes that were
+/// attempted (retained for the failure record, which suppresses retries
+/// on identical bytes) and the receiver its result arrives on.
+struct PendingNetworkKeyInstantiation {
+    attempted: DWalletNetworkEncryptionKeyData,
+    receiver: oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>>,
 }
 
 impl DWalletMPCManager {
@@ -340,6 +357,7 @@ impl DWalletMPCManager {
             agreed_network_key_data: HashMap::new(),
             last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
+            pending_network_key_instantiations: HashMap::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
@@ -1666,80 +1684,46 @@ impl DWalletMPCManager {
         false
     }
 
-    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
-    /// For each key in `agreed_network_key_data` either (a) not yet
-    /// loaded locally, or (b) loaded but with a stale shape compared
-    /// to the latest agreed bytes (typically the reconfig output
-    /// flipping each epoch), runs the instantiation pass. Returns
-    /// the IDs touched.
-    ///
-    /// The `last_instantiated_network_key_data` snapshot prevents
-    /// re-running on every poll: re-instantiation costs a per-curve
-    /// decrypt + key-share regenerate inside `update_network_key`,
-    /// so we only do it when the agreed bytes actually changed.
-    pub(crate) async fn instantiate_agreed_keys_from_voted_data(&mut self) -> Vec<ObjectID> {
-        let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
-            .agreed_network_key_data
-            .iter()
-            .filter(|(key_id, key_data)| {
-                // Filter to: first instantiation OR the *content*
-                // (DKG output, reconfig output, state) has moved
-                // since we last instantiated. Excludes the per-epoch
-                // `current_epoch` field, which flips every epoch
-                // boundary even when the underlying bytes are
-                // unchanged and would otherwise force a wasteful
-                // `update_network_key` pass that re-decrypts the key
-                // shares.
-                if !self
-                    .network_keys
-                    .network_encryption_keys
-                    .contains_key(key_id)
-                {
-                    return true;
-                }
-                match self.last_instantiated_network_key_data.get(key_id) {
-                    // Never instantiated this key. Attempt it — unless we
-                    // already failed to decrypt these exact bytes. The
-                    // decryption is deterministic, so identical bytes
-                    // would fail identically; retry only once the bytes
-                    // change (the output carrying our share arrives).
-                    None => match self.last_failed_network_key_data.get(key_id) {
-                        None => true,
-                        Some(failed) => {
-                            failed.network_dkg_public_output != key_data.network_dkg_public_output
-                                || failed.current_reconfiguration_public_output
-                                    != key_data.current_reconfiguration_public_output
-                                || failed.state != key_data.state
-                        }
-                    },
-                    Some(prev) => {
-                        prev.network_dkg_public_output != key_data.network_dkg_public_output
-                            || prev.current_reconfiguration_public_output
-                                != key_data.current_reconfiguration_public_output
-                            || prev.state != key_data.state
-                    }
-                }
-            })
-            .map(|(key_id, key_data)| (*key_id, key_data.clone()))
-            .collect();
-
+    /// Polls the in-flight network-key instantiations (non-blocking):
+    /// each runs on the rayon pool for up to minutes, and the service
+    /// loop must keep processing sessions in the meantime. Called once
+    /// per service ITERATION — not per consensus round — so a completed
+    /// key installs even when no new consensus rounds arrived. Returns
+    /// the IDs whose instantiation completed and installed this poll.
+    pub(crate) async fn poll_pending_network_key_instantiations(&mut self) -> Vec<ObjectID> {
         let mut new_key_ids = Vec::new();
-
-        for (key_id, key_data) in keys_to_instantiate {
-            info!(key_id=?key_id, "Instantiating agreed network key");
-            // Retained for the failure path (the bytes are moved into
-            // instantiation below) so we can record what failed and skip
-            // re-attempting identical bytes next tick.
-            let attempted = key_data.clone();
-
-            let res =
-                instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
-                    key_data.current_epoch,
-                    self.access_structure.clone(),
-                    key_data,
-                )
-                .await;
-
+        let in_flight_key_ids: Vec<ObjectID> = self
+            .pending_network_key_instantiations
+            .keys()
+            .copied()
+            .collect();
+        for key_id in in_flight_key_ids {
+            let Some(mut pending) = self.pending_network_key_instantiations.remove(&key_id) else {
+                continue;
+            };
+            let res = match pending.receiver.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    // Still computing — put it back and check next tick.
+                    self.pending_network_key_instantiations
+                        .insert(key_id, pending);
+                    continue;
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    // The computation dropped its sender without a result
+                    // (panicked on the rayon pool). Record the attempt so
+                    // identical bytes aren't retried every tick.
+                    warn!(
+                        key_id=?key_id,
+                        "network key instantiation dropped its result channel; \
+                         recording the attempt as failed"
+                    );
+                    self.last_failed_network_key_data
+                        .insert(key_id, pending.attempted);
+                    continue;
+                }
+                Ok(res) => res,
+            };
+            let attempted = pending.attempted;
             match res {
                 Ok(key) => {
                     if key.epoch() != self.epoch_id {
@@ -1841,6 +1825,94 @@ impl DWalletMPCManager {
         }
 
         new_key_ids
+    }
+
+    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
+    /// For each key in `agreed_network_key_data` either (a) not yet
+    /// loaded locally, or (b) loaded but with a stale shape compared
+    /// to the latest agreed bytes (typically the reconfig output
+    /// flipping each epoch), SPAWNS the instantiation on the rayon
+    /// pool — the instantiation is minutes-scale on weak hardware, and
+    /// awaiting it inline froze every session on the validator for its
+    /// full duration at each epoch boundary. Completions are collected
+    /// by [`Self::poll_pending_network_key_instantiations`].
+    ///
+    /// The `last_instantiated_network_key_data` snapshot prevents
+    /// re-running on every poll: re-instantiation costs a per-curve
+    /// decrypt + key-share regenerate inside `update_network_key`,
+    /// so we only do it when the agreed bytes actually changed.
+    pub(crate) fn instantiate_agreed_keys_from_voted_data(&mut self) {
+        let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
+            .agreed_network_key_data
+            .iter()
+            .filter(|(key_id, key_data)| {
+                // An instantiation for this key is already in flight —
+                // don't spawn another; if the agreed bytes moved in the
+                // meantime, the snapshot comparison below re-fires once
+                // the in-flight one completes.
+                if self.pending_network_key_instantiations.contains_key(key_id) {
+                    return false;
+                }
+                // Filter to: first instantiation OR the *content*
+                // (DKG output, reconfig output, state) has moved
+                // since we last instantiated. Excludes the per-epoch
+                // `current_epoch` field, which flips every epoch
+                // boundary even when the underlying bytes are
+                // unchanged and would otherwise force a wasteful
+                // `update_network_key` pass that re-decrypts the key
+                // shares.
+                if !self
+                    .network_keys
+                    .network_encryption_keys
+                    .contains_key(key_id)
+                {
+                    return true;
+                }
+                match self.last_instantiated_network_key_data.get(key_id) {
+                    // Never instantiated this key. Attempt it — unless we
+                    // already failed to decrypt these exact bytes. The
+                    // decryption is deterministic, so identical bytes
+                    // would fail identically; retry only once the bytes
+                    // change (the output carrying our share arrives).
+                    None => match self.last_failed_network_key_data.get(key_id) {
+                        None => true,
+                        Some(failed) => {
+                            failed.network_dkg_public_output != key_data.network_dkg_public_output
+                                || failed.current_reconfiguration_public_output
+                                    != key_data.current_reconfiguration_public_output
+                                || failed.state != key_data.state
+                        }
+                    },
+                    Some(prev) => {
+                        prev.network_dkg_public_output != key_data.network_dkg_public_output
+                            || prev.current_reconfiguration_public_output
+                                != key_data.current_reconfiguration_public_output
+                            || prev.state != key_data.state
+                    }
+                }
+            })
+            .map(|(key_id, key_data)| (*key_id, key_data.clone()))
+            .collect();
+
+        for (key_id, key_data) in keys_to_instantiate {
+            info!(key_id=?key_id, "Instantiating agreed network key");
+            // Retained for the failure path (the bytes are moved into
+            // instantiation below) so we can record what failed and skip
+            // re-attempting identical bytes next tick.
+            let attempted = key_data.clone();
+            let receiver = spawn_network_encryption_key_public_data_instantiation(
+                key_data.current_epoch,
+                self.access_structure.clone(),
+                key_data,
+            );
+            self.pending_network_key_instantiations.insert(
+                key_id,
+                PendingNetworkKeyInstantiation {
+                    attempted,
+                    receiver,
+                },
+            );
+        }
     }
 
     pub(crate) fn handle_output(

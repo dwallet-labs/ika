@@ -308,6 +308,13 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     for service in v3_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
+    // The instantiation runs on the rayon pool and installs on a later
+    // tick — keep iterating until it lands everywhere.
+    utils::run_service_loops_until_network_key_installed(
+        &mut v3_state.dwallet_mpc_services,
+        key_id,
+    )
+    .await;
 
     // Verify every phase-2 validator decoded the V2 DKG output via the
     // wire-stable main-shape PublicOutput type and installed the key.

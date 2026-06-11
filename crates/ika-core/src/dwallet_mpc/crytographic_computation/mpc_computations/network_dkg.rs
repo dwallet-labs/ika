@@ -430,11 +430,18 @@ pub(crate) fn network_dkg_v2_public_input(
     Ok(public_input)
 }
 
-pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
+/// Spawns the network-key public-data instantiation on the rayon pool
+/// and returns the receiver for its result WITHOUT awaiting it. The
+/// instantiation (per-curve protocol + decryption-key-share public
+/// parameters, plus the NOA DKG outputs) is minutes-scale on weak
+/// hardware; the MPC service loop polls the receiver across ticks so
+/// session processing keeps advancing while the key instantiates,
+/// instead of freezing the whole validator pipeline for its duration.
+pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+) -> oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
     // See orchestrator.rs: enter the originating node before any tracing or
@@ -475,8 +482,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     });
 
     key_public_data_receiver
-        .await
-        .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
 /// Per-curve DKG output and public key for network-owned-address signing.

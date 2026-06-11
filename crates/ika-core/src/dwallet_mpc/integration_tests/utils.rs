@@ -969,6 +969,40 @@ fn max_party_iterations() -> usize {
         .unwrap_or(MAX_PARTY_ITERATIONS)
 }
 
+/// Runs service-loop iterations (with 100ms sleeps) until every given
+/// service has `key_id` installed in its `network_keys`. The network-key
+/// instantiation is spawned on the rayon pool and lands on a LATER
+/// service tick — a single post-vote iteration no longer observes it.
+/// Panics after the computation-wait budget.
+pub(crate) async fn run_service_loops_until_network_key_installed(
+    dwallet_mpc_services: &mut [DWalletMPCService],
+    key_id: ObjectID,
+) {
+    let mut iterations = 0usize;
+    loop {
+        let all_installed = dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id)
+                .is_ok()
+        });
+        if all_installed {
+            return;
+        }
+        iterations += 1;
+        if iterations >= max_computation_wait_iterations() {
+            panic!(
+                "network key {key_id:?} was not installed on every party after {iterations} iterations"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for service in dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+}
+
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut [DWalletMPCService],
