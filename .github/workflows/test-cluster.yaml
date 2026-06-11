@@ -6,10 +6,20 @@ name: Test Cluster
 # msim determinism. The slower `#[sim_test]` variant lives in
 # `.github/workflows/simtest.yaml`.
 #
-# Default runs the FULL cluster suite serialized (`--test-threads=1`): each
-# test boots a whole 4-validator network, and concurrent clusters contend on
-# CPU hard enough to produce false timeout failures even on large machines.
-# Crank `test_threads` up only if the runner has headroom to spare.
+# Runs via cargo-nextest with parallel tests. Two facts make this work:
+#   1. nextest runs each test in its OWN PROCESS, which isolates the
+#      `IkaTestClusterBuilder` publish flow's process-global
+#      `set_current_dir` (the `Pub.<env>.toml` parking) — under plain
+#      `cargo test` threads, parallel tests race on cwd and corrupt each
+#      other's contract publishes.
+#   2. Each test cluster only consumes ~2-4 effective CPUs (the
+#      class-groups crypto is serial-chain dominated), so the suite is
+#      latency-bound, not CPU-bound — parallel clusters mostly interleave
+#      waiting, with headroom to spare on an 80-vCPU pod.
+# Concurrent network-key instantiations across clusters DO contend on
+# memory bandwidth (measured ~4.7x degradation at 4-way), which stretches
+# epoch boundaries; the tests' internal epoch-advance deadlines are the
+# thing to watch when raising `test_threads`.
 #
 # See the "## Testing" section in CLAUDE.md for the strategy split between
 # tokio and sim_test.
@@ -23,15 +33,15 @@ on:
         required: false
         default: "ika-test-cluster"
       test_filter:
-        description: "Test name filter passed to cargo test (empty = full suite)"
+        description: "Test name filter passed to nextest (empty = full suite)"
         type: string
         required: false
         default: ""
       test_threads:
-        description: "Concurrent test count (1 = serialized, recommended)"
+        description: "Concurrent test count (nextest process-per-test; each cluster uses ~2-4 effective CPUs)"
         type: string
         required: false
-        default: "1"
+        default: "8"
       rustflags:
         description: "Extra RUSTFLAGS (e.g. '-C target-cpu=native' — baseline x86-64 codegen lacks the BMI2/ADX carry-chain instructions the class-groups bignum arithmetic wants)"
         type: string
@@ -53,11 +63,11 @@ env:
 
 jobs:
   test-cluster:
-    name: cargo test --release
+    name: cargo nextest --release
     runs-on: ika-k8s-large
-    # The full suite serialized is ~12 tests x 2-30 min each on a fast
-    # workstation; the runner pods pace 2-7x slower (per-round orchestration
-    # stall under investigation), so the full suite needs 5-7h.
+    # At 8-way parallelism the wall time approaches the slowest single test
+    # (~1-2h on the runner's ~5x-slower-per-thread class-groups pace); the
+    # generous ceiling covers a cold build cache plus contention outliers.
     timeout-minutes: 420
     steps:
       - name: Checkout repository
@@ -105,6 +115,11 @@ jobs:
           # default release profile.
           prefix-key: "test-cluster"
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Start CPU sampler
         run: |
           # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
@@ -127,13 +142,18 @@ jobs:
           if [ -n "$EXTRA_RUSTFLAGS" ]; then
             export RUSTFLAGS="-C force-frame-pointers=yes -C force-unwind-tables=yes $EXTRA_RUSTFLAGS"
           fi
-          cargo test --release -p "$PACKAGE" $TEST_FILTER -- \
-            --test-threads="$TEST_THREADS" --nocapture 2>&1 | tee cluster-tests.log
+          # nextest: process-per-test (isolates the publish-flow cwd
+          # mutation), captured per-test output (failures replay theirs at
+          # the end — no more multi-GB interleaved logs), and no fail-fast
+          # so one wedged cluster can't hide the rest of the suite's
+          # results. Long tests surface via nextest's default SLOW markers.
+          cargo nextest run --release -p "$PACKAGE" $TEST_FILTER \
+            --test-threads "$TEST_THREADS" --no-fail-fast 2>&1 | tee cluster-tests.log
 
       - name: Summarize results
         if: always()
         run: |
-          grep -E "^test .*(ok|FAILED)|test result" cluster-tests.log | tail -40 || true
+          grep -E "PASS |FAIL |SLOW |Summary" cluster-tests.log | tail -40 || true
 
       - name: Upload CPU sampler log
         if: always()
