@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload CPU sampler log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cpu-sampler-${{ github.job }}-${{ github.run_attempt }}
           path: cpu-sampler.log
@@ -246,7 +246,7 @@ jobs:
 
       - name: Upload localnet logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: localnet-logs
           path: |
