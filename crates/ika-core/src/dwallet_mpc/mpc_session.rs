@@ -535,8 +535,22 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
-            request.protocol_data.is_global_presign()
+        // Global presigns are served from the internal presign pool — but the
+        // pool only exists once `internal_presign_sessions` activates (the
+        // whole request/fulfill pipeline is gated on that flag, see
+        // `next_global_presign_request` in the service). Before activation —
+        // i.e. while running at the previous protocol version right after an
+        // upgrade, with the on-chain `GlobalPresignConfig` already routing
+        // presigns to global — diverting the request here would strand it:
+        // no pool to serve it, no MPC session spawned, and the session is
+        // locked into its epoch (`all_current_epoch_sessions_completed`
+        // blocks `advance_epoch`), wedging the network below the version
+        // that could serve it. So pre-activation, fall through and run the
+        // request as a user-requested MPC session — the pre-pool serving
+        // behavior (the dwallet-output-less presign computation path).
+        if self.protocol_config.internal_presign_sessions_enabled()
+            && let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
+                request.protocol_data.is_global_presign()
         {
             if request.session_sequence_number.is_none() {
                 error!(
