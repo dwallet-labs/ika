@@ -20,6 +20,16 @@ on:
         type: string
         required: false
         default: "4"
+      test_filter:
+        description: "Optional test-name filter for the integration scope (e.g. network_dkg::test_network_dkg_full_flow)"
+        type: string
+        required: false
+        default: ""
+      rust_log:
+        description: "RUST_LOG override for the test run"
+        type: string
+        required: false
+        default: "error"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -101,6 +111,8 @@ jobs:
         env:
           SCOPE: ${{ inputs.scope }}
           TEST_THREADS: ${{ inputs.test_threads }}
+          TEST_FILTER: ${{ inputs.test_filter }}
+          RUST_LOG: ${{ inputs.rust_log || 'error' }}
         run: |
           set -o pipefail
           THREADS=""
@@ -111,7 +123,11 @@ jobs:
             cargo test --release --workspace --features test-utils --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
-            cargo test -p ika-core --lib dwallet_mpc::integration_tests --release \
+            FILTER="dwallet_mpc::integration_tests"
+            if [ -n "$TEST_FILTER" ]; then
+              FILTER="dwallet_mpc::integration_tests::$TEST_FILTER"
+            fi
+            cargo test -p ika-core --lib "$FILTER" --release \
               --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
           fi
 
@@ -129,7 +145,7 @@ jobs:
           retention-days: 7
 
       - name: Upload test log
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rust-tests-log
