@@ -30,9 +30,19 @@ on:
         type: string
         required: false
         default: "error"
+      runner:
+        description: "Runner label (ika-k8s-large, or e.g. ubuntu-latest for a hosted-runner A/B of platform-dependent timings)"
+        type: choice
+        required: false
+        default: "ika-k8s-large"
+        options:
+          - ika-k8s-large
+          - ubuntu-latest
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keyed by runner so a hosted-runner A/B can run concurrently with the
+  # self-hosted measurement instead of queueing behind it.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.runner }}
   cancel-in-progress: false
 
 env:
@@ -54,7 +64,7 @@ env:
 jobs:
   run-tests:
     name: Run ${{ inputs.scope }} tests
-    runs-on: ika-k8s-large
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 180
     steps:
       - name: Checkout Repository
