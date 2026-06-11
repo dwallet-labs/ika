@@ -833,7 +833,11 @@ impl DWalletMPCService {
             panic!("failed to get last consensus round from DB");
         };
 
-        let mut accumulated_new_key_ids = Vec::new();
+        // Always empty since network-key instantiation went async (its
+        // completed IDs surface via the per-iteration poll in
+        // `run_service_loop_iteration`); kept as the epoch-end
+        // early-return value of this function's reads.
+        let accumulated_new_key_ids = Vec::new();
 
         while Some(last_consensus_round) > self.last_read_consensus_round {
             self.number_of_consensus_rounds += 1;

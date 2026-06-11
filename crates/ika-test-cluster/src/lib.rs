@@ -945,6 +945,27 @@ pub struct IkaTestClusterBuilder {
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
 }
 
+/// Cross-process mutex for the port-sensitive boot window. The Sui and
+/// ika swarms pick "available" ports by probing and bind them later, so
+/// two test PROCESSES booting concurrently (nextest runs each test in
+/// its own process) can probe the same free port and the loser dies
+/// with `EADDRINUSE` at node start. A fixed-port listener is a
+/// dependency-free cross-process lock: bind success = lock acquired;
+/// the OS releases it whenever the holder exits — including on panic or
+/// kill — so a dead test can never wedge the rest of the suite. Not
+/// compiled under msim (ports there are simulated per-node; no real
+/// port space to race on).
+#[cfg(not(msim))]
+async fn acquire_cluster_boot_lock() -> std::net::TcpListener {
+    const BOOT_LOCK_PORT: u16 = 48751;
+    loop {
+        match std::net::TcpListener::bind(("127.0.0.1", BOOT_LOCK_PORT)) {
+            Ok(listener) => return listener,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+        }
+    }
+}
+
 impl IkaTestClusterBuilder {
     pub fn new() -> Self {
         Self {
@@ -987,6 +1008,14 @@ impl IkaTestClusterBuilder {
     }
 
     pub async fn build(self) -> Result<IkaTestCluster> {
+        // Serialize the boot window across concurrently-running test
+        // processes (see `acquire_cluster_boot_lock`). Held until every
+        // node's listeners are actually bound (after `swarm.launch()`);
+        // the long-running test body executes unlocked and fully
+        // parallel.
+        #[cfg(not(msim))]
+        let boot_lock = acquire_cluster_boot_lock().await;
+
         let mut test_cluster = TestClusterBuilder::new()
             .with_num_validators(self.num_validators)
             .build()
@@ -1172,6 +1201,11 @@ impl IkaTestClusterBuilder {
             .build()
             .await?;
         swarm.launch().await?;
+
+        // Every listener (Sui swarm + ika swarm) is bound — concurrent
+        // boots can no longer collide with this process's ports.
+        #[cfg(not(msim))]
+        drop(boot_lock);
 
         Ok(IkaTestCluster {
             test_cluster,
