@@ -55,6 +55,14 @@ concurrency:
 
 env:
   RUST_BACKTRACE: 1
+  # Panic backtraces stay on, but eager std::backtrace::Backtrace::capture()
+  # calls are disabled: class-groups constructs backtrace-carrying errors on
+  # the SUCCESS path of every group operation, and with library backtraces
+  # enabled each one is a full DWARF unwind behind a process-global std
+  # mutex - measured at ~5x CPU burn and negative multi-thread scaling on
+  # the class-groups-heavy tests (see specs and the 2026-06-11 CI slowness
+  # investigation).
+  RUST_LIB_BACKTRACE: "0"
   # Change to specific Rust release to pin or `stable` for the latest stable version.
   rust_stable: 1.94
   rust_nightly: nightly
