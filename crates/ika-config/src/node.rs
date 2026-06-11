@@ -256,10 +256,13 @@ fn default_true() -> bool {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SuiConnectorConfig {
-    /// Rpc url for Sui fullnode, used for query stuff and submit transactions.
-    /// Legacy: prefer [`SuiConnectorConfig::sui_data_source`].
-    #[serde(default = "default_sui_rpc_url")]
-    pub sui_rpc_url: String,
+    /// Legacy JSON-RPC url of a Sui fullnode (old-style configs). Ignored
+    /// whenever [`SuiConnectorConfig::sui_data_source`] is present, and
+    /// optional so a migrated config can DROP this field entirely. At least
+    /// one of the two must be set; a config with neither has no Sui endpoint
+    /// and is rejected at startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_rpc_url: Option<String>,
     /// Source of Sui state and tx-submission for this node — the new-style
     /// gRPC config that replaces `sui_rpc_url`. Its PRESENCE is what selects
     /// the read path: a config without it is an old-style (pre-OCS) config,
@@ -429,10 +432,6 @@ pub struct NodeConfig {
 /// default (retention 0), so retention here is the conservative side of an
 /// existing policy, not a new one.
 pub const DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS: u64 = 2;
-
-fn default_sui_rpc_url() -> String {
-    LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string()
-}
 
 fn default_grpc_address() -> Multiaddr {
     "/ip4/0.0.0.0/tcp/8080".parse().unwrap()

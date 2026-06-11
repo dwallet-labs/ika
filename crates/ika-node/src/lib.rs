@@ -458,7 +458,26 @@ impl IkaNode {
         //     no direct uplink). Notifiers — the only nodes that submit
         //     transactions (gas + writes) — always use a direct gRPC uplink.
         //
+        // Transition state: both endpoints configured — the new-style
+        // `sui-data-source` always wins and the legacy field is ignored, so
+        // tell the operator it's safe to delete.
+        if config.sui_connector_config.sui_data_source.is_some()
+            && config.sui_connector_config.sui_rpc_url.is_some()
+        {
+            info!(
+                "`sui-data-source` is set, so the legacy `sui-rpc-url` field is ignored and can \
+                 be removed from the node config"
+            );
+        }
         // Mixed shapes fail closed here rather than guessing:
+        if config.sui_connector_config.sui_data_source.is_none()
+            && config.sui_connector_config.sui_rpc_url.is_none()
+        {
+            return Err(anyhow!(
+                "no Sui endpoint configured: set `sui-data-source` (gRPC; the supported path) — \
+                 the legacy `sui-rpc-url` field alone selects the deprecated JSON-RPC path"
+            ));
+        }
         if has_anchor && config.sui_connector_config.sui_data_source.is_none() {
             return Err(anyhow!(
                 "a Sui trust anchor is configured but `sui-data-source` is not; the \
@@ -495,14 +514,12 @@ impl IkaNode {
                  over JSON-RPC, which Sui is sunsetting; migrate by adding sui-data-source plus \
                  a trust anchor"
             );
-            Arc::new(
-                SuiClient::new(
-                    &config.sui_connector_config.sui_rpc_url,
-                    sui_client_metrics,
-                    ika_network_config,
-                )
-                .await?,
-            )
+            let rpc_url = config
+                .sui_connector_config
+                .sui_rpc_url
+                .as_ref()
+                .expect("the no-endpoint guard above ensures sui_rpc_url on the legacy path");
+            Arc::new(SuiClient::new(rpc_url, sui_client_metrics, ika_network_config).await?)
         } else if peer_only {
             // Peer-only (sui-state-mirrored, no fallback_grpc_url): no direct
             // Sui uplink. Stand up the p2p network + OCS relay stack now, then
@@ -599,18 +616,21 @@ impl IkaNode {
             peer_only_stack = Some(stack);
             client
         } else {
-            let grpc_url = match &config.sui_connector_config.sui_data_source {
-                Some(SuiDataSource::SuiStateDirect { url, .. }) => url.clone(),
-                Some(SuiDataSource::SuiStateMirrored {
-                    fallback_grpc_url: Some(url),
-                }) => url.clone(),
-                Some(SuiDataSource::SuiStateMirrored {
-                    fallback_grpc_url: None,
-                }) => unreachable!("peer_only is handled in the branch above"),
-                // Old-style config on a notifier/fullnode: Sui fullnodes
-                // serve gRPC on the same endpoint as JSON-RPC.
-                None => config.sui_connector_config.sui_rpc_url.clone(),
-            };
+            let grpc_url =
+                match &config.sui_connector_config.sui_data_source {
+                    Some(SuiDataSource::SuiStateDirect { url, .. }) => url.clone(),
+                    Some(SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: Some(url),
+                    }) => url.clone(),
+                    Some(SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: None,
+                    }) => unreachable!("peer_only is handled in the branch above"),
+                    // Old-style config on a notifier/fullnode: Sui fullnodes
+                    // serve gRPC on the same endpoint as JSON-RPC.
+                    None => config.sui_connector_config.sui_rpc_url.clone().expect(
+                        "the no-endpoint guard above ensures sui_rpc_url on old-style configs",
+                    ),
+                };
             Arc::new(SuiClient::new_grpc(&grpc_url, sui_client_metrics, ika_network_config).await?)
         };
 
