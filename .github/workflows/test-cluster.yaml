@@ -11,15 +11,14 @@ name: Test Cluster
 #      `IkaTestClusterBuilder` publish flow's process-global
 #      `set_current_dir` (the `Pub.<env>.toml` parking) — under plain
 #      `cargo test` threads, parallel tests race on cwd and corrupt each
-#      other's contract publishes.
-#   2. Each test cluster only consumes ~2-4 effective CPUs (the
-#      class-groups crypto is serial-chain dominated), so the suite is
-#      latency-bound, not CPU-bound — parallel clusters mostly interleave
-#      waiting, with headroom to spare on an 80-vCPU pod.
-# Concurrent network-key instantiations across clusters DO contend on
-# memory bandwidth (measured ~4.7x degradation at 4-way), which stretches
-# epoch boundaries; the tests' internal epoch-advance deadlines are the
-# thing to watch when raising `test_threads`.
+#      other's contract publishes. (Concurrent boots are serialized by the
+#      builder's cross-process boot lock to avoid port-probe races.)
+#   2. The suite is latency-bound (each cluster spends most wall time
+#      waiting on consensus rounds and epoch timers), so parallel clusters
+#      mostly interleave waiting.
+# MEMORY is the parallelism ceiling, not CPU: each cluster is a full Sui
+# swarm + ika validators (multi-GB); 8-way has OOM-killed the runner pod
+# (96Gi limit) — keep `test_threads` at 4 unless the runner spec grows.
 #
 # See the "## Testing" section in CLAUDE.md for the strategy split between
 # tokio and sim_test.
@@ -38,15 +37,10 @@ on:
         required: false
         default: ""
       test_threads:
-        description: "Concurrent test count (nextest process-per-test; each cluster uses ~2-4 effective CPUs)"
+        description: "Concurrent test count (nextest process-per-test; memory-bound — 8-way OOM-killed the 96Gi runner pod)"
         type: string
         required: false
-        default: "8"
-      rustflags:
-        description: "Extra RUSTFLAGS (e.g. '-C target-cpu=native' — baseline x86-64 codegen lacks the BMI2/ADX carry-chain instructions the class-groups bignum arithmetic wants)"
-        type: string
-        required: false
-        default: ""
+        default: "4"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -73,10 +67,9 @@ jobs:
   test-cluster:
     name: cargo nextest --release
     runs-on: ika-k8s-large
-    # At 8-way parallelism the wall time approaches the slowest single test
-    # (~1-2h on the runner's ~5x-slower-per-thread class-groups pace); the
-    # generous ceiling covers a cold build cache plus contention outliers.
-    timeout-minutes: 420
+    # The full suite at 4-way runs in ~35 minutes; the ceiling covers a
+    # cold build cache plus contention outliers.
+    timeout-minutes: 150
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -142,14 +135,8 @@ jobs:
           PACKAGE: ${{ inputs.package }}
           TEST_FILTER: ${{ inputs.test_filter }}
           TEST_THREADS: ${{ inputs.test_threads }}
-          EXTRA_RUSTFLAGS: ${{ inputs.rustflags }}
         run: |
           set -o pipefail
-          # RUSTFLAGS env overrides .cargo/config build.rustflags entirely, so
-          # when extra flags are requested, re-include the config defaults.
-          if [ -n "$EXTRA_RUSTFLAGS" ]; then
-            export RUSTFLAGS="-C force-frame-pointers=yes -C force-unwind-tables=yes $EXTRA_RUSTFLAGS"
-          fi
           # nextest: process-per-test (isolates the publish-flow cwd
           # mutation), captured per-test output (failures replay theirs at
           # the end — no more multi-GB interleaved logs), and no fail-fast
@@ -177,6 +164,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cluster-tests-log
+          name: cluster-tests-log-${{ github.run_attempt }}
           path: cluster-tests.log
           retention-days: 7

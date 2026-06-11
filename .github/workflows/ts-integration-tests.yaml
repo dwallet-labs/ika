@@ -7,12 +7,11 @@ name: TS Integration Tests
 # All test files run in dependency order (foundational first) against ONE
 # Sui + ika localnet via `run-integration-tests-sequential.sh`.
 #
-# The localnet readiness probe is strict: the network-key DKG must have
-# cached its outputs (the overlay-missing warnings appeared AND went quiet)
-# and the mpc_data freeze must have fired, sampled over three consecutive
-# checks. A looser probe starts the tests against a still-converging (or
-# genesis-wedged) network and every test times out with "Object does not
-# exist".
+# The localnet readiness probe waits for positive one-way signals (the
+# mpc_data freeze fired, the genesis network-key DKG reached quorum, the
+# committee assembled off-chain). A looser probe starts the tests against
+# a still-converging (or genesis-wedged) network and every test times out
+# with "Object does not exist".
 
 on:
   workflow_dispatch:
@@ -28,7 +27,7 @@ on:
         required: false
         default: "warn,ika=info,ika_node=info"
       epoch_duration_ms:
-        description: "ika localnet epoch duration in ms (15 min default: epoch phases run 3-6x slower on the runner pods than on a workstation, and too-short epochs leave no capacity between reconfigurations for user sessions)"
+        description: "ika localnet epoch duration in ms (15 min default: leaves ample capacity for user sessions between reconfigurations; the full suite is validated at this value)"
         type: string
         required: false
         default: "900000"
@@ -62,9 +61,9 @@ jobs:
   ts-integration:
     name: TS integration suite
     runs-on: ika-k8s-large
-    # Full suite is 9 files x 5-40 min each on one localnet, plus the
+    # Full suite is ~60 min on one localnet (readiness ~10 min) plus the
     # release build on a cold cache.
-    timeout-minutes: 360
+    timeout-minutes: 180
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -137,15 +136,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build ika binary
-        # target-cpu=native: the default x86-64 baseline codegen lacks the
-        # BMI2/ADX carry-chain instructions the class-groups bignum
-        # arithmetic is built around; the localnet validators run all the
-        # MPC crypto, and per-operation latency on the runner was ~16x a
-        # workstation. The runner builds and runs on the same node type, so
-        # native is safe. Config-level rustflags are re-included (RUSTFLAGS
-        # env overrides build.rustflags entirely).
-        env:
-          RUSTFLAGS: "-C force-frame-pointers=yes -C force-unwind-tables=yes -C target-cpu=native"
         run: cargo build --release --bin ika
 
       - name: Install SDK dependencies
@@ -203,10 +193,9 @@ jobs:
           #   2. an MPC output reached consensus quorum (the genesis
           #      network-key DKG completed),
           #   3. the next committee assembled off-chain.
-          # The tests' own 600s polls absorb any residual convergence. Cap
-          # at 40 minutes — the genesis DKG is class-groups-heavy and takes
-          # ~20 min on a cold/contended runner pod.
-          for i in $(seq 1 120); do
+          # The tests' own 600s polls absorb any residual convergence.
+          # Readiness lands in ~10 minutes; the 20-minute cap is headroom.
+          for i in $(seq 1 60); do
             sleep 20
             if ! kill -0 "$(cat ika-localnet.pid)" 2>/dev/null; then
               echo "ika localnet process died"; tail -50 ika-localnet.log; exit 1
@@ -219,7 +208,7 @@ jobs:
               exit 0
             fi
           done
-          echo "ika localnet NOT ready after 40 minutes — likely a genesis DKG wedge"
+          echo "ika localnet NOT ready after 20 minutes — likely a genesis DKG wedge"
           tail -80 ika-localnet.log
           exit 1
 

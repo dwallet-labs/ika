@@ -30,27 +30,9 @@ on:
         type: string
         required: false
         default: "error"
-      runner:
-        description: "Runner label (ika-k8s-large, or e.g. ubuntu-latest for a hosted-runner A/B of platform-dependent timings)"
-        type: choice
-        required: false
-        default: "ika-k8s-large"
-        options:
-          - ika-k8s-large
-          - ubuntu-latest
-      allocator:
-        description: "Allocator A/B: preload jemalloc for the test run (the class-groups parameter precomputation is allocation-churn-heavy; glibc malloc is a per-thread and contention suspect)"
-        type: choice
-        required: false
-        default: "glibc"
-        options:
-          - glibc
-          - jemalloc
 
 concurrency:
-  # Keyed by runner so a hosted-runner A/B can run concurrently with the
-  # self-hosted measurement instead of queueing behind it.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.runner }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -72,15 +54,15 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_LOG: error
-  # The harness's per-advancement wall-clock budgets are calibrated for a
-  # fast workstation; CI pods are slower and shared, so give 10x.
+  # Generous safety-net headroom over the harness's per-advancement
+  # wall-clock budgets, for contention outliers on shared runners.
   IKA_TEST_MAX_PARTY_ITERATIONS: "6000"
   IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS: "18000"
 
 jobs:
   run-tests:
     name: Run ${{ inputs.scope }} tests
-    runs-on: ${{ inputs.runner }}
+    runs-on: ika-k8s-large
     timeout-minutes: 180
     steps:
       - name: Checkout Repository
@@ -117,7 +99,7 @@ jobs:
           APT="-o Acquire::ForceIPv4=true"
           for attempt in 1 2 3; do
             $SUDO apt-get $APT update && \
-              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl libjemalloc2 linux-tools-generic && break
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl && break
             echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
           done
           command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
@@ -139,34 +121,16 @@ jobs:
           TEST_THREADS: ${{ inputs.test_threads }}
           TEST_FILTER: ${{ inputs.test_filter }}
           RUST_LOG: ${{ inputs.rust_log || 'error' }}
-          ALLOCATOR: ${{ inputs.allocator }}
         run: |
           set -o pipefail
-          if [ "$ALLOCATOR" = "jemalloc" ]; then
-            JEMALLOC_PATH=$(ldconfig -p | grep -m1 -oE "/[^ ]*libjemalloc\.so[^ ]*" || true)
-            if [ -z "$JEMALLOC_PATH" ]; then echo "libjemalloc not found"; exit 1; fi
-            export LD_PRELOAD="$JEMALLOC_PATH"
-            echo "preloading $JEMALLOC_PATH"
-          fi
           THREADS=""
           if [ -n "$TEST_THREADS" ]; then
             THREADS="--test-threads=$TEST_THREADS"
           fi
-          # Separate the build from the measured run so `time` (and perf,
-          # where the pod allows perf_event_open) count the TEST execution,
-          # not rustc. user-vs-real splits "genuinely burning more cycles"
-          # from "threads blocked (faults/locks)"; instructions-vs-cycles
-          # splits "executing more work" from "same work at lower IPC".
-          PERF=""
-          if command -v perf >/dev/null 2>&1 && perf stat -e instructions true >/dev/null 2>&1; then
-            PERF="perf stat -e task-clock,cycles,instructions,branches,branch-misses,page-faults,context-switches"
-            echo "perf counters available"
-          else
-            echo "perf unavailable; using bash time only"
-          fi
+          # Build first so `time` covers the test execution, not rustc.
           if [ "$SCOPE" = "all" ]; then
             cargo test --release --workspace --features test-utils --color=always --no-run
-            time $PERF cargo test --release --workspace --features test-utils --color=always -- \
+            time cargo test --release --workspace --features test-utils --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
             FILTER="dwallet_mpc::integration_tests"
@@ -175,7 +139,7 @@ jobs:
             fi
             cargo test -p ika-core --lib "$FILTER" --release \
               --features test-utils --color=always --no-run
-            time $PERF cargo test -p ika-core --lib "$FILTER" --release \
+            time cargo test -p ika-core --lib "$FILTER" --release \
               --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
           fi
 
@@ -196,6 +160,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rust-tests-log
+          name: rust-tests-log-${{ github.run_attempt }}
           path: rust-tests.log
           retention-days: 7
