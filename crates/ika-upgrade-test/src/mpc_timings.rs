@@ -120,6 +120,17 @@ pub fn render_snapshot(snapshot: &TimingSnapshot) -> String {
 /// Compare consecutive snapshots and render a per-(protocol, round) ratio
 /// table. Rows whose later/earlier average exceeds [`REGRESSION_FLAG_FACTOR`]
 /// are marked `POSSIBLE REGRESSION`; the inverse is marked `faster`.
+///
+/// After each ratio table, a **window** table isolates the work done
+/// *between* the two snapshots: the scraped averages are cumulative since
+/// each validator process started, so a later snapshot's average blends
+/// everything the process ever ran (e.g. a v3-protocol reshare and a
+/// v4-protocol reshare in one row). The window average
+/// `(sum₂ − sum₁) / (completions₂ − completions₁)` undoes that blend and is
+/// the number to read when a protocol *changed* between the snapshots. Only
+/// meaningful when the same validators are running at both scrapes — a
+/// binary swap resets the counters, so a window across a swap is skipped
+/// (negative delta).
 pub fn render_comparison(snapshots: &[TimingSnapshot]) -> String {
     let mut out = String::new();
     for pair in snapshots.windows(2) {
@@ -160,6 +171,55 @@ pub fn render_comparison(snapshots: &[TimingSnapshot]) -> String {
                 "{protocol:<28} {round:<22} {:>12.1} {:>12.1} {:>7.2}x  {flag}",
                 earlier_row.avg_duration_ms, later_row.avg_duration_ms, ratio
             );
+        }
+
+        let window_rows: Vec<_> = later
+            .rows
+            .iter()
+            .filter_map(|(key, later_row)| {
+                let (earlier_completions, earlier_sum) = earlier
+                    .rows
+                    .get(key)
+                    .map(|row| {
+                        (
+                            row.completions,
+                            row.avg_duration_ms * row.completions as f64,
+                        )
+                    })
+                    .unwrap_or((0, 0.0));
+                // A swap restarts the validators and resets the counters,
+                // making the later count smaller — no meaningful window.
+                let delta_completions = later_row.completions.checked_sub(earlier_completions)?;
+                if delta_completions == 0 {
+                    return None;
+                }
+                let delta_sum =
+                    later_row.avg_duration_ms * later_row.completions as f64 - earlier_sum;
+                // A negative duration sum means the counters reset between
+                // the scrapes (swap/restart) — the window is meaningless.
+                if delta_sum < 0.0 {
+                    return None;
+                }
+                Some((key, delta_completions, delta_sum / delta_completions as f64))
+            })
+            .collect();
+        if !window_rows.is_empty() {
+            let _ = writeln!(
+                out,
+                "=== MPC window [{}] -> [{}] (work done between the snapshots) ===",
+                earlier.label, later.label
+            );
+            let _ = writeln!(
+                out,
+                "{:<28} {:<12} {:<22} {:>12} {:>14}",
+                "protocol", "curve", "round", "completions", "window avg ms"
+            );
+            for ((protocol, curve, round), completions, avg) in window_rows {
+                let _ = writeln!(
+                    out,
+                    "{protocol:<28} {curve:<12} {round:<22} {completions:>12} {avg:>14.1}"
+                );
+            }
         }
     }
     out

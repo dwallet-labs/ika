@@ -194,8 +194,19 @@ async fn v118_atomic_upgrade_to_local_build() {
         .run_workload("local-v4")
         .record_mpc_timings("local-v4")
         // One more boundary: a clean reshare executed end-to-end by the
-        // local build alone.
+        // local build alone — and the first one run *at protocol v4*, i.e.
+        // with the v4 reconfiguration math (`reconfiguration_message_version
+        // = 3`, PVSS HPKE; the epoch 2->3 reshare above still ran the v3
+        // protocol). The snapshot's *window* vs `local-v4` isolates that
+        // v4-math reshare from the cumulative averages.
         .wait_for_epoch(4)
+        .record_mpc_timings("v4-reshare")
+        // Settled v4 lifecycle: pools were filled during epoch 3, the
+        // boundary work is done, so this window prices v4 DKG / pool-served
+        // presign / sign without the pool-fill contention that loaded the
+        // `local-v4` numbers.
+        .run_workload("local-v4-settled")
+        .record_mpc_timings("local-v4-settled")
         .run()
         .await
         .expect("v1.1.8 -> local atomic upgrade rehearsal");
