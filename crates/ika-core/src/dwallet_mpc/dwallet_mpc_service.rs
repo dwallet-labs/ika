@@ -490,19 +490,16 @@ impl DWalletMPCService {
             .clone();
         self.dwallet_mpc_manager
             .adopt_cert_verified_keys(&overlay_snapshot);
-        self.dwallet_mpc_manager
-            .instantiate_agreed_keys_from_voted_data();
+        self.dwallet_mpc_manager.instantiate_adopted_network_keys();
 
-        let mut newly_instantiated_network_key_ids =
-            self.process_consensus_rounds_from_storage().await;
+        self.process_consensus_rounds_from_storage().await;
         // Network-key instantiations complete asynchronously on the rayon
         // pool; poll them once per ITERATION (not per consensus round) so
         // a completed key installs even when no new rounds arrived.
-        newly_instantiated_network_key_ids.extend(
-            self.dwallet_mpc_manager
-                .poll_pending_network_key_instantiations()
-                .await,
-        );
+        let newly_instantiated_network_key_ids = self
+            .dwallet_mpc_manager
+            .poll_pending_network_key_instantiations()
+            .await;
 
         self.process_cryptographic_computations().await;
         self.handle_noa_sign_outputs().await;
@@ -808,17 +805,16 @@ impl DWalletMPCService {
         Ok(rejected_sessions)
     }
 
-    async fn process_consensus_rounds_from_storage(&mut self) -> Vec<ObjectID> {
+    async fn process_consensus_rounds_from_storage(&mut self) {
         // `EpochEnded` from a per-epoch-store read is the normal reconfiguration
         // boundary: the store's tables were swapped out from under this
         // (per-epoch) service while it was mid-iteration. Stop the iteration
         // gracefully — the loop's sleep and the service teardown take over —
         // instead of panicking, which crashed the node and stalled reconfiguration
-        // under churn. `$on_epoch_end` is the value to return (nothing useful is
-        // left to process for the ended epoch); other results pass through to the
-        // caller's existing handling unchanged.
+        // under churn. Nothing useful is left to process for the ended epoch;
+        // other results pass through to the caller's existing handling unchanged.
         macro_rules! stop_on_epoch_end {
-            ($read:expr, $on_epoch_end:expr) => {
+            ($read:expr) => {
                 match $read {
                     Err(IkaError::EpochEnded(ended_epoch)) => {
                         info!(
@@ -826,7 +822,7 @@ impl DWalletMPCService {
                             "epoch ended while reading the per-epoch DWallet MPC store; \
                              stopping this service iteration gracefully"
                         );
-                        return $on_epoch_end;
+                        return;
                     }
                     other => other,
                 }
@@ -835,35 +831,27 @@ impl DWalletMPCService {
 
         // The last consensus round for MPC messages is also the last one for MPC outputs and verified dWallet checkpoint messages,
         // as they are all written in an atomic batch manner as part of committing the consensus commit outputs.
-        let last_consensus_round = if let Ok(last_consensus_round) = stop_on_epoch_end!(
-            self.epoch_store.last_dwallet_mpc_message_round(),
-            Vec::new()
-        ) {
+        let last_consensus_round = if let Ok(last_consensus_round) =
+            stop_on_epoch_end!(self.epoch_store.last_dwallet_mpc_message_round())
+        {
             if let Some(last_consensus_round) = last_consensus_round {
                 last_consensus_round
             } else {
                 info!("No consensus round from DB yet, retrying in {DELAY_NO_ROUNDS_SEC} seconds.");
                 tokio::time::sleep(Duration::from_secs(DELAY_NO_ROUNDS_SEC)).await;
-                return Vec::new();
+                return;
             }
         } else {
             error!("failed to get last consensus round from DB");
             panic!("failed to get last consensus round from DB");
         };
 
-        // Always empty since network-key instantiation went async (its
-        // completed IDs surface via the per-iteration poll in
-        // `run_service_loop_iteration`); kept as the epoch-end
-        // early-return value of this function's reads.
-        let accumulated_new_key_ids = Vec::new();
-
         while Some(last_consensus_round) > self.last_read_consensus_round {
             self.number_of_consensus_rounds += 1;
 
             let mpc_messages = stop_on_epoch_end!(
                 self.epoch_store
-                    .next_dwallet_mpc_message(self.last_read_consensus_round),
-                accumulated_new_key_ids
+                    .next_dwallet_mpc_message(self.last_read_consensus_round)
             );
             let (mpc_messages_consensus_round, mpc_messages) = match mpc_messages {
                 Ok(mpc_messages) => {
@@ -1538,8 +1526,6 @@ impl DWalletMPCService {
                 .set(consensus_round as i64);
             tokio::task::yield_now().await;
         }
-
-        accumulated_new_key_ids
     }
 
     async fn handle_computation_results_and_submit_to_consensus(

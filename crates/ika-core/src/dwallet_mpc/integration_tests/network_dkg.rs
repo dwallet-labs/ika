@@ -193,9 +193,9 @@ pub(crate) async fn create_network_key_test(
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }
-    // Distribute the key data status updates at a fresh round so that
-    // `handle_status_updates` can vote on them and `instantiate_agreed_keys_from_voted_data`
-    // can populate `network_keys` in each party's manager.
+    // Distribute a fresh consensus round so the next service iterations
+    // drive adoption and `instantiate_adopted_network_keys` populates
+    // `network_keys` in each party's manager.
     utils::send_advance_results_between_parties(
         &test_state.committee,
         &mut test_state.sent_consensus_messages_collectors,
@@ -236,7 +236,7 @@ pub(crate) async fn create_network_key_test(
 ///
 /// This exercises the multi-key code paths that the production
 /// off-chain pipeline depends on: the per-key
-/// `agreed_network_key_data` quorum, `instantiate_agreed_keys_from_voted_data`'s
+/// `agreed_network_key_data` quorum, `instantiate_adopted_network_keys`'s
 /// ability to install more than one key per epoch, and the
 /// per-key digest/blob caches.
 #[tokio::test]
@@ -310,10 +310,11 @@ async fn test_two_network_keys_same_epoch_dkg() {
     );
     assert_ne!(k1_bytes, k0_bytes, "K1 output should differ from K0");
 
-    // Publish a snapshot of BOTH keys to the `network_keys` watch
-    // channel so each validator's service-loop iteration sees the
-    // full set when it tallies `NetworkKeyData` votes and runs
-    // `instantiate_agreed_keys_from_voted_data`.
+    // Publish a snapshot of BOTH keys to the `network_keys` overlay
+    // watch channel so each validator's service-loop iteration sees
+    // the full set when `adopt_cert_verified_keys` adopts it
+    // (cert-digest-gated) and `instantiate_adopted_network_keys`
+    // spawns both instantiations on the rayon pool.
     let both_keys = Arc::new(HashMap::from([
         (
             k0_id,
@@ -342,12 +343,14 @@ async fn test_two_network_keys_same_epoch_dkg() {
         let _ = sender.network_keys_sender.send(both_keys.clone());
     });
 
-    // First service-loop pass: each party emits its
-    // `NetworkKeyData` consensus vote for both keys. Second pass
-    // (after `send_advance_results_between_parties` distributes
-    // those votes) reaches quorum and calls
-    // `instantiate_agreed_keys_from_voted_data`, populating
-    // `manager.network_keys`.
+    // These service-loop passes drive the adoption/instantiation
+    // ticks: each iteration runs `adopt_cert_verified_keys` on the
+    // published overlay (cert-digest-gated) and
+    // `instantiate_adopted_network_keys` spawns the instantiation of
+    // both keys on the rayon pool;
+    // `run_service_loops_until_network_key_installed` below polls
+    // further iterations until each key installs on every party,
+    // populating `manager.network_keys`.
     for service in test_state.dwallet_mpc_services.iter_mut() {
         service.run_service_loop_iteration(vec![]).await;
     }

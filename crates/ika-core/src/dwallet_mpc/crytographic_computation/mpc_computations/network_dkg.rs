@@ -31,8 +31,8 @@ use mpc::{
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
-use sui_types::base_types::ObjectID;
 use std::time::Instant;
+use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
 use tracing::{error, info};
 use twopc_mpc::decentralized_party::dkg;
@@ -73,8 +73,9 @@ async fn get_decryption_key_shares_from_public_output(
 ) -> DwalletMPCResult<HashMap<PartyID, SecretKeyShareSizedInteger>> {
     let (key_shares_sender, key_shares_receiver) = oneshot::channel();
 
-    // See orchestrator.rs for the rationale: msim panics when tokio APIs or
-    // tracing fire on a rayon worker thread that has no node context.
+    // msim: rayon worker threads have no simulated-node context, so capture
+    // the originating NodeHandle and enter it before any tracing or tokio
+    // call inside the worker.
     #[cfg(msim)]
     let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
 
@@ -434,10 +435,11 @@ pub(crate) fn network_dkg_v2_public_input(
 /// Spawns the network-key public-data instantiation on the rayon pool
 /// and returns the receiver for its result WITHOUT awaiting it. The
 /// instantiation (per-curve protocol + decryption-key-share public
-/// parameters, plus the NOA DKG outputs) is minutes-scale on weak
-/// hardware; the MPC service loop polls the receiver across ticks so
-/// session processing keeps advancing while the key instantiates,
-/// instead of freezing the whole validator pipeline for its duration.
+/// parameters, plus the NOA DKG outputs) is an expensive, long-running
+/// class-groups computation; the MPC service loop polls the receiver
+/// across ticks so session processing keeps advancing while the key
+/// instantiates, instead of freezing the whole validator pipeline for
+/// its duration.
 pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
@@ -445,8 +447,9 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
 ) -> oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
-    // See orchestrator.rs: enter the originating node before any tracing or
-    // tokio call inside the rayon worker.
+    // msim: rayon worker threads have no simulated-node context, so capture
+    // the originating NodeHandle and enter it before any tracing or tokio
+    // call inside the worker.
     #[cfg(msim)]
     let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
 
@@ -595,10 +598,10 @@ pub(crate) fn build_network_encryption_key_public_data(
     }
 }
 
-/// Times one instantiation sub-call and logs its duration at debug level.
-/// The per-sub-call breakdown localizes a platform-specific slowdown (the
-/// instantiation dominates the epoch-boundary cost on weak hardware) to a
-/// concrete operation instead of a single opaque minutes-long call.
+/// Times one instantiation sub-call and logs its duration at info level.
+/// The instantiation dominates the epoch-boundary cost; the per-sub-call
+/// breakdown localizes any slowdown to a concrete operation instead of
+/// one opaque call.
 fn timed_sub_call<T, E>(label: &str, sub_call: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
     let start = Instant::now();
     let result = sub_call();
@@ -624,8 +627,8 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
     // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
     // Each sub-call is individually timed: the instantiation dominates the
-    // epoch-boundary cost on weak hardware, and the per-sub-call breakdown is
-    // what localizes a platform-specific slowdown to a concrete operation.
+    // epoch-boundary cost, and the per-sub-call breakdown localizes any
+    // slowdown to a concrete operation instead of one opaque call.
     macro_rules! build_from_public_output {
         ($public_output:expr) => {{
             let public_output = $public_output;

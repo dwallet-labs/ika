@@ -166,7 +166,8 @@ pub(crate) struct DWalletMPCManager {
     /// This prevents sending the same request multiple times.
     sent_presign_sequence_numbers: HashSet<u64>,
 
-    /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
+    /// Network-key data adopted by `adopt_cert_verified_keys` (gated by the
+    /// prior epoch's handoff cert); the instantiation input set.
     pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
     /// The `(overlay, cert-present)` input pair of the last completed
@@ -182,7 +183,7 @@ pub(crate) struct DWalletMPCManager {
 
     /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
     /// shape we last passed to `update_network_key`. Used by
-    /// `instantiate_agreed_keys_from_voted_data` to distinguish
+    /// `instantiate_adopted_network_keys` to distinguish
     /// "agreed data hasn't changed since we last instantiated"
     /// from "agreed data was just overwritten by a fresh quorum
     /// (typically the reconfig output flipping)" — only the latter
@@ -199,9 +200,9 @@ pub(crate) struct DWalletMPCManager {
 
     /// Network-key instantiations currently running on the rayon pool,
     /// polled (non-blocking) every service tick. The instantiation is
-    /// minutes-scale on weak hardware; awaiting it inline froze the
-    /// whole MPC service loop — every session on the validator — for
-    /// its full duration at each epoch boundary.
+    /// an expensive, long-running computation; awaiting it inline froze
+    /// the whole MPC service loop — every session on the validator —
+    /// for its full duration at each epoch boundary.
     pending_network_key_instantiations: HashMap<ObjectID, PendingNetworkKeyInstantiation>,
 
     // The sequence number of the next internal presign session.
@@ -1742,7 +1743,7 @@ impl DWalletMPCManager {
                             key_id=?key_id,
                             key_epoch=?key.epoch(),
                             current_epoch=?self.epoch_id,
-                            "Consensus-voted network key epoch does not match current epoch, ignoring"
+                            "Adopted network key epoch does not match current epoch, ignoring"
                         );
                         continue;
                     }
@@ -1843,16 +1844,17 @@ impl DWalletMPCManager {
     /// loaded locally, or (b) loaded but with a stale shape compared
     /// to the latest agreed bytes (typically the reconfig output
     /// flipping each epoch), SPAWNS the instantiation on the rayon
-    /// pool — the instantiation is minutes-scale on weak hardware, and
-    /// awaiting it inline froze every session on the validator for its
-    /// full duration at each epoch boundary. Completions are collected
+    /// pool — the instantiation is an expensive, long-running
+    /// computation, and awaiting it inline froze every session on the
+    /// validator for its full duration at each epoch boundary.
+    /// Completions are collected
     /// by [`Self::poll_pending_network_key_instantiations`].
     ///
     /// The `last_instantiated_network_key_data` snapshot prevents
     /// re-running on every poll: re-instantiation costs a per-curve
     /// decrypt + key-share regenerate inside `update_network_key`,
     /// so we only do it when the agreed bytes actually changed.
-    pub(crate) fn instantiate_agreed_keys_from_voted_data(&mut self) {
+    pub(crate) fn instantiate_adopted_network_keys(&mut self) {
         let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
             .agreed_network_key_data
             .iter()

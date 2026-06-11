@@ -136,6 +136,37 @@ MSIM_DISABLE_WATCHDOG=1 cargo simtest --package ika-test-cluster -- test_swarm_r
 cd sdk/typescript && pnpm test
 ```
 
+### Running suites on CI instead of locally
+
+The heavy suites have dispatchable workflows on the `ika-k8s-large`
+self-hosted runners (80 vCPU; runs at workstation parity). Prefer these
+over hours-long local runs — they parallelize, don't tie up a laptop, and
+upload logs as artifacts (`localnet-logs` / `cluster-tests-log` /
+`rust-tests-log`) for post-mortem:
+
+```bash
+# Rust dwallet-MPC integration tests (45 tests, ~35 min at 4 threads).
+# Optional: test_filter (suffix after dwallet_mpc::integration_tests::),
+# rust_log, scope=all for the whole workspace.
+gh workflow run integration-tests-ci.yaml --ref <branch> \
+  -f test_threads=4 [-f test_filter=network_dkg::test_network_dkg_full_flow]
+
+# Cluster tests (13 in-process Sui+ika swarm tests via nextest,
+# process-per-test, ~35 min at 4 threads; 8-way OOMs the 96Gi pod).
+gh workflow run test-cluster.yaml --ref <branch> [-f test_filter=<name>]
+
+# Full TypeScript SDK integration suite against one Sui + ika localnet
+# (9 files, ~60 min + ~10 min localnet readiness).
+gh workflow run ts-integration-tests.yaml --ref <branch> \
+  [-f test_filter=<file-stem>] [-f localnet_rust_log=...]
+
+# Simtest (msim determinism; slow by design — see below).
+gh workflow run simtest.yaml --ref <branch>
+
+# Watch / fetch results
+gh run watch <run-id> ; gh run download <run-id> -n <artifact>
+```
+
 ### Picking a test type
 
 `IkaTestClusterBuilder` works under both `#[tokio::test]` and `#[sim_test]`
@@ -169,11 +200,15 @@ feature under `cfg(msim)` via `[target.'cfg(not(msim))'.dependencies]` overrides
 `ika-core` and `dwallet-classgroups-types`. That reads backwards but is the
 only direction Cargo accepts — feature unification is additive only, so to
 turn a feature OFF under msim you list the base dep without it and re-add
-it in a `cfg(not(msim))` block. Direct `rayon::spawn_fifo` sites in
-`dwallet_mpc/crytographic_computation/{orchestrator,mpc_computations/network_dkg}.rs`
-also capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter
-it as the first line of the closure. New rayon-from-msim-node code needs
-both patterns.
+it in a `cfg(not(msim))` block. For rayon-from-msim-node code there are two
+patterns: the orchestrator runs computations INLINE under `cfg(msim)`
+(preferred for new code — the capture-and-re-enter guard breaks when the
+node is torn down mid-compute and rayon-core aborts the process), while
+the remaining `rayon::spawn_fifo` sites in
+`dwallet_mpc/crytographic_computation/mpc_computations/network_dkg.rs`
+capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter it
+as the first line of the closure (acceptable only where the spawning node
+provably outlives the computation).
 
 Net effect: class-groups crypto runs sequentially under simtest. The
 single-OS-thread + no-parallelism combination makes the smoke test slow

@@ -880,10 +880,9 @@ pub(crate) fn send_advance_results_between_parties(
 /// At 100ms per iteration, this gives ~180 seconds before failing.
 /// The generous limit accounts for rayon thread pool contention when
 /// the full integration test suite runs in a single process.
-/// Overridable via `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` — CI
-/// runners are slower and more contended than workstations, and a
-/// wall-clock budget calibrated for the latter falsely fails healthy
-/// MPC flows on the former.
+/// Overridable via `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` — lets
+/// slower or heavily-loaded environments extend the budget without
+/// recompiling.
 const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
 
 fn max_computation_wait_iterations() -> usize {
@@ -936,6 +935,40 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
     );
 }
 
+/// Runs service-loop iterations (with 100ms sleeps) until every given
+/// service has `key_id` installed in its `network_keys`. The network-key
+/// instantiation is spawned on the rayon pool and lands on a LATER
+/// service tick — a single post-adoption iteration no longer observes it.
+/// Panics after the computation-wait budget.
+pub(crate) async fn run_service_loops_until_network_key_installed(
+    dwallet_mpc_services: &mut [DWalletMPCService],
+    key_id: ObjectID,
+) {
+    let mut iterations = 0usize;
+    loop {
+        let all_installed = dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id)
+                .is_ok()
+        });
+        if all_installed {
+            return;
+        }
+        iterations += 1;
+        if iterations >= max_computation_wait_iterations() {
+            panic!(
+                "network key {key_id:?} was not installed on every party after {iterations} iterations"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for service in dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+}
+
 pub(crate) async fn advance_all_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut [DWalletMPCService],
@@ -969,40 +1002,6 @@ fn max_party_iterations() -> usize {
         .unwrap_or(MAX_PARTY_ITERATIONS)
 }
 
-/// Runs service-loop iterations (with 100ms sleeps) until every given
-/// service has `key_id` installed in its `network_keys`. The network-key
-/// instantiation is spawned on the rayon pool and lands on a LATER
-/// service tick — a single post-vote iteration no longer observes it.
-/// Panics after the computation-wait budget.
-pub(crate) async fn run_service_loops_until_network_key_installed(
-    dwallet_mpc_services: &mut [DWalletMPCService],
-    key_id: ObjectID,
-) {
-    let mut iterations = 0usize;
-    loop {
-        let all_installed = dwallet_mpc_services.iter().all(|service| {
-            service
-                .dwallet_mpc_manager()
-                .network_keys
-                .get_network_encryption_key_public_data(&key_id)
-                .is_ok()
-        });
-        if all_installed {
-            return;
-        }
-        iterations += 1;
-        if iterations >= max_computation_wait_iterations() {
-            panic!(
-                "network key {key_id:?} was not installed on every party after {iterations} iterations"
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        for service in dwallet_mpc_services.iter_mut() {
-            service.run_service_loop_iteration(vec![]).await;
-        }
-    }
-}
-
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
     committee: &Committee,
     dwallet_mpc_services: &mut [DWalletMPCService],
@@ -1016,7 +1015,7 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut iterations = 0usize;
     // Track per-party newly-instantiated network key IDs so that sessions waiting
     // for a key (in `requests_pending_for_network_key`) are activated as soon as the
-    // key is voted-in through a consensus round, without requiring a second outer-loop
+    // key is adopted and installed, without requiring a second outer-loop
     // iteration.
     let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
         vec![vec![]; committee.voting_rights.len()];
