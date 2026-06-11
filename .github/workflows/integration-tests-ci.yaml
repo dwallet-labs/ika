@@ -109,7 +109,7 @@ jobs:
           APT="-o Acquire::ForceIPv4=true"
           for attempt in 1 2 3; do
             $SUDO apt-get $APT update && \
-              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl libjemalloc2 && break
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl libjemalloc2 linux-tools-generic && break
             echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
           done
           command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
@@ -144,8 +144,21 @@ jobs:
           if [ -n "$TEST_THREADS" ]; then
             THREADS="--test-threads=$TEST_THREADS"
           fi
+          # Separate the build from the measured run so `time` (and perf,
+          # where the pod allows perf_event_open) count the TEST execution,
+          # not rustc. user-vs-real splits "genuinely burning more cycles"
+          # from "threads blocked (faults/locks)"; instructions-vs-cycles
+          # splits "executing more work" from "same work at lower IPC".
+          PERF=""
+          if command -v perf >/dev/null 2>&1 && perf stat -e instructions true >/dev/null 2>&1; then
+            PERF="perf stat -e task-clock,cycles,instructions,branches,branch-misses,page-faults,context-switches"
+            echo "perf counters available"
+          else
+            echo "perf unavailable; using bash time only"
+          fi
           if [ "$SCOPE" = "all" ]; then
-            cargo test --release --workspace --features test-utils --color=always -- \
+            cargo test --release --workspace --features test-utils --color=always --no-run
+            time $PERF cargo test --release --workspace --features test-utils --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
             FILTER="dwallet_mpc::integration_tests"
@@ -153,6 +166,8 @@ jobs:
               FILTER="dwallet_mpc::integration_tests::$TEST_FILTER"
             fi
             cargo test -p ika-core --lib "$FILTER" --release \
+              --features test-utils --color=always --no-run
+            time $PERF cargo test -p ika-core --lib "$FILTER" --release \
               --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
           fi
 
