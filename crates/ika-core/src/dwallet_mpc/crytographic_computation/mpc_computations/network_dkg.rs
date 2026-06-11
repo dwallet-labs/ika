@@ -34,7 +34,7 @@ use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use std::time::Instant;
 use tokio::sync::oneshot;
-use tracing::{debug, error};
+use tracing::{error, info};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
 
@@ -602,7 +602,7 @@ pub(crate) fn build_network_encryption_key_public_data(
 fn timed_sub_call<T, E>(label: &str, sub_call: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
     let start = Instant::now();
     let result = sub_call();
-    debug!(
+    info!(
         sub_call = label,
         elapsed_ms = start.elapsed().as_millis() as u64,
         "network key instantiation sub-call finished"
