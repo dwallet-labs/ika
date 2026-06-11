@@ -91,6 +91,11 @@ pub enum SetupError {
     #[error("sui-state-mirrored configured but no anemo network handed in")]
     MirroredWithoutNetwork,
     #[error(
+        "OCS stack requested but the node config has no `sui-data-source` section \
+         (old-style JSON-RPC config); add a sui-data-source (gRPC) section"
+    )]
+    MissingDataSource,
+    #[error(
         "the Sui chain at the configured endpoint does not advertise \
          CheckpointArtifactsDigest (requires protocol v122+ with \
          include_checkpoint_artifacts_digest_in_summary enabled)"
@@ -194,7 +199,11 @@ pub async fn build_sui_connector_stack(
         Arc<dyn ProofProvider>,
         bool,
         Option<Arc<dyn SuiTransport>>,
-    ) = match &cfg.sui_data_source {
+    ) = match cfg
+        .sui_data_source
+        .as_ref()
+        .ok_or(SetupError::MissingDataSource)?
+    {
         SuiDataSource::SuiStateDirect { url, .. } => {
             let grpc: Arc<dyn SuiTransport> = Arc::new(
                 SuiGrpcClient::new(url)
@@ -341,10 +350,10 @@ pub async fn build_sui_connector_stack(
     let (mirror_server, push_handler) = if mirror_capable
         && matches!(
             cfg.sui_data_source,
-            SuiDataSource::SuiStateDirect {
+            Some(SuiDataSource::SuiStateDirect {
                 serve_mirror: true,
                 ..
-            }
+            })
         ) {
         let handler = Arc::new(IkaPushHandler::new(
             committees,

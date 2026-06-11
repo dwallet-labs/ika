@@ -252,13 +252,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_sui_data_source() -> SuiDataSource {
-    SuiDataSource::SuiStateDirect {
-        url: default_sui_rpc_url(),
-        serve_mirror: true,
-    }
-}
-
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -267,13 +260,16 @@ pub struct SuiConnectorConfig {
     /// Legacy: prefer [`SuiConnectorConfig::sui_data_source`].
     #[serde(default = "default_sui_rpc_url")]
     pub sui_rpc_url: String,
-    /// Source of Sui state and tx-submission for this validator.
-    /// Replaces (and supersedes) `sui_rpc_url` once the OCS verifier path
-    /// is the default. During the transition both are populated; the data
-    /// source reflects the active read path, while `sui_rpc_url` remains
-    /// the JSON-RPC fallback for the legacy `SuiSdkClient`.
-    #[serde(default = "default_sui_data_source")]
-    pub sui_data_source: SuiDataSource,
+    /// Source of Sui state and tx-submission for this node — the new-style
+    /// gRPC config that replaces `sui_rpc_url`. Its PRESENCE is what selects
+    /// the read path: a config without it is an old-style (pre-OCS) config,
+    /// and a validator on one keeps the DEPRECATED legacy JSON-RPC path
+    /// (Sui is sunsetting JSON-RPC — migrate by adding this section plus a
+    /// trust anchor). When present, all Sui I/O runs over gRPC and a
+    /// validator must also configure a trust anchor (its MPC event source on
+    /// this path is the anchor-verified `BagEventPump`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_data_source: Option<SuiDataSource>,
     /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
     /// If empty in `PeerMirror` mode, the connector will try every connected
     /// peer (relying on those that don't implement the service to error fast).
