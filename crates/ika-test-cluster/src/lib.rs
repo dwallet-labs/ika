@@ -76,6 +76,12 @@ pub struct IkaTestCluster {
     /// swarm stores nodes in a HashMap and `validator_nodes()` order is
     /// otherwise unspecified.
     pub validator_names: Vec<ika_types::crypto::AuthorityName>,
+    /// The localnet genesis committee the initial validators were anchored
+    /// on (when `ocs_genesis_anchor` was set). Joiner validators spawned via
+    /// `add_joiner_validator` are seeded with the same anchor so they boot
+    /// the OCS stack too — an anchorless validator fails boot on a
+    /// protocol-v4 chain.
+    pub ocs_genesis_committee: Option<sui_types::committee::Committee>,
 }
 
 /// Handle to a validator that joined the network after the initial
@@ -271,7 +277,11 @@ impl IkaTestCluster {
             .await
         );
 
-        let validator_config = ValidatorConfigBuilder::new().build(
+        let mut joiner_builder = ValidatorConfigBuilder::new();
+        if let Some(committee) = &self.ocs_genesis_committee {
+            joiner_builder = joiner_builder.with_unsafe_genesis_committee(committee.clone());
+        }
+        let validator_config = joiner_builder.build(
             &joiner_init,
             self.sui_rpc_url.clone(),
             self.packages.ika_package_id,
@@ -957,12 +967,14 @@ pub struct IkaTestClusterBuilder {
     /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     /// `Some(v)` must have length `num_validators`.
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
-    /// When true, seed every validator's `sui_unsafe_genesis_committee` with
-    /// the running Sui localnet's epoch-0 committee, so the OCS verifier
-    /// (active at protocol v4) bootstraps and validators ingest MPC session
-    /// events via the OCS `BagEventPump` instead of the legacy JSON-RPC
-    /// event path. Off by default — without an anchor the OCS stack isn't
-    /// built and v4 clusters keep using the legacy path.
+    /// When true (the default), seed every validator's
+    /// `sui_unsafe_genesis_committee` with the running Sui localnet's epoch-0
+    /// committee, so the OCS verifier bootstraps and validators ingest MPC
+    /// session events via the OCS `BagEventPump`. On by default because the
+    /// node refuses to run a validator on the deprecated legacy JSON-RPC
+    /// path against a protocol-v4 chain — an anchorless validator at v4
+    /// fails boot. Opt out (`with_ocs_genesis_anchor(false)`) only for
+    /// pre-v4 protocol versions.
     ocs_genesis_anchor: bool,
     /// Split the OCS read topology: when `Some(k)`, validators `0..k` read Sui
     /// state directly over gRPC (and serve the `SuiStateMirror` relay), while
@@ -1033,7 +1045,7 @@ impl IkaTestClusterBuilder {
             epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
-            ocs_genesis_anchor: false,
+            ocs_genesis_anchor: true,
             sui_state_direct_count: None,
             peer_only_mirrored: false,
         }
@@ -1374,6 +1386,7 @@ impl IkaTestClusterBuilder {
             sui_rpc_url,
             publisher_address,
             validator_names,
+            ocs_genesis_committee,
         })
     }
 }
