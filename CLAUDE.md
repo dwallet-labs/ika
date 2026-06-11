@@ -64,6 +64,16 @@ sdk/
 - `contracts/ika_dwallet_2pc_mpc/sources/coordinator.move` - On-chain MPC coordination
 - `sdk/typescript/src/` - TypeScript SDK source
 
+## Specs
+
+`specs/` holds behavioral specifications for ika subsystems (the
+protocol-level contract: actors, messages, decision rules, invariants).
+**Read the relevant spec before changing a subsystem it covers, and
+update the spec in the same PR as any behavior change.** New consensus
+messages, cross-epoch invariants, or decision rules get a spec (extend
+an existing file or add one). When spec and code disagree, one of them
+has a bug — determine which before changing either.
+
 ## Dependencies
 
 - Use workspace-level dependencies exclusively
