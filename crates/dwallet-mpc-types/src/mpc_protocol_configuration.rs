@@ -7,7 +7,7 @@ use crate::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm, DwalletNetwork
 use group::HashScheme;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Protocol flags for DKG and signing operations
 #[repr(u32)]
@@ -41,8 +41,17 @@ pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 pub const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
 
 lazy_static! {
-    /// Supported curves to signature algorithms to hash schemes
-    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: HashMap<u32, HashMap<u32, Vec<u32>>> = {
+    /// Supported curves to signature algorithms to hash schemes.
+    ///
+    /// MUST be an ordered map (`BTreeMap`), at both nesting levels. Validators
+    /// iterate this map to instantiate internal presign sessions, assigning each
+    /// session a sequence number from a single shared counter in iteration order;
+    /// the sequence number is bound into the session identifier transcript. With
+    /// `HashMap`'s per-process random iteration order, each validator derived
+    /// *different* session identifiers for the same (curve, algorithm) work, so
+    /// those sessions could never reach quorum and the presign pools starved for
+    /// the whole epoch (wedging epoch advance once a user presign request locked).
+    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: BTreeMap<u32, BTreeMap<u32, Vec<u32>>> = {
         vec![
             (
                 0, // Curve: Secp256k1
@@ -150,34 +159,18 @@ lazy_static! {
 /// Returns all supported (curve, signature_algorithms) pairs.
 ///
 /// This is the canonical source of truth, derived from
-/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`].
-///
-/// The output is SORTED (curves ascending, algorithms ascending within
-/// each curve): the backing maps are `HashMap`s whose iteration order
-/// differs per process, and consumers iterate these pairs to assign
-/// consensus-deterministic identifiers (e.g. internal-presign session
-/// sequence numbers) — every validator must walk them in the same order
-/// or the derived session identifiers diverge across the committee.
+/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`] — an
+/// ordered map (see its docs), so the output order is identical on
+/// every validator.
 pub fn supported_curve_to_signature_algorithms()
 -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
-    let mut curve_ids: Vec<u32> = SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
-        .keys()
-        .copied()
-        .collect();
-    curve_ids.sort_unstable();
-    curve_ids
-        .into_iter()
-        .filter_map(|curve_u32| {
-            let curve = try_into_curve(curve_u32).ok()?;
-            let mut algo_ids: Vec<u32> = SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
-                [&curve_u32]
+    SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES
+        .iter()
+        .filter_map(|(curve_u32, algo_map)| {
+            let curve = try_into_curve(*curve_u32).ok()?;
+            let algorithms: Vec<_> = algo_map
                 .keys()
-                .copied()
-                .collect();
-            algo_ids.sort_unstable();
-            let algorithms: Vec<_> = algo_ids
-                .into_iter()
-                .filter_map(|algo_u32| try_into_signature_algorithm(curve_u32, algo_u32).ok())
+                .filter_map(|algo_u32| try_into_signature_algorithm(*curve_u32, *algo_u32).ok())
                 .collect();
             Some((curve, algorithms))
         })

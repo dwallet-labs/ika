@@ -47,7 +47,7 @@ use ika_types::messages_dwallet_mpc::{
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
@@ -1064,12 +1064,14 @@ impl DWalletMPCManager {
                 None => return,
             };
 
-        // Sorted: sequence numbers are assigned from a shared counter as
-        // this loop walks (key, curve, algorithm) combinations, and the
-        // derived session identifiers must match across validators — a
-        // HashMap iteration order is per-process.
-        let mut agreed_key_ids: Vec<_> = self.agreed_network_key_data.keys().copied().collect();
-        agreed_key_ids.sort_unstable();
+        // Ordered (`BTreeSet`) on purpose: the loop below assigns internal presign
+        // session sequence numbers from a single shared counter in iteration order,
+        // and the sequence number is bound into the session identifier. Every
+        // validator must iterate keys (and curves/algorithms — see
+        // `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`) in the same
+        // order, or they derive different session identifiers for the same work
+        // and the sessions never reach quorum.
+        let agreed_key_ids: BTreeSet<_> = self.agreed_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
