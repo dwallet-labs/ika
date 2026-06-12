@@ -1,3 +1,4 @@
+mod computation_results_batch;
 mod create_dwallet;
 mod encrypt_secret_share;
 mod idle_status_voting;

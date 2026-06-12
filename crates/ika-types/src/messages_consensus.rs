@@ -2,20 +2,24 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use crate::crypto::AuthorityName;
+use crate::handoff::HandoffSignatureMessage;
 use crate::message::DWalletCheckpointMessageKind;
 use crate::messages_dwallet_checkpoint::{
     DWalletCheckpointSequenceNumber, DWalletCheckpointSignatureMessage,
 };
 use crate::messages_dwallet_mpc::{
-    ConsensusGlobalPresignRequest, ConsensusNOAObservation, ConsensusNetworkKeyData,
-    DWalletInternalMPCOutput, DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput,
-    IdleStatusUpdate, SessionIdentifier, SuiChainObservationUpdate,
+    ConsensusGlobalPresignRequest, ConsensusNOAObservation, DWalletInternalMPCOutput,
+    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
+    SessionIdentifier, SuiChainObservationUpdate,
 };
 use crate::messages_system_checkpoints::{
     SystemCheckpointSequenceNumber, SystemCheckpointSignatureMessage,
 };
 use crate::supported_protocol_versions::{
     SupportedProtocolVersions, SupportedProtocolVersionsWithHashes,
+};
+use crate::validator_metadata::{
+    EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
 use byteorder::{BigEndian, ReadBytesExt};
 use consensus_types::block::BlockRef;
@@ -75,10 +79,53 @@ pub enum ConsensusTransactionKey {
     SuiChainObservationUpdate(AuthorityName, [u8; 32]),
     /// A global presign request, keyed by authority + session_sequence_number.
     GlobalPresignRequest(AuthorityName, u64),
-    /// Network encryption key data, keyed by authority + key_id.
-    NetworkKeyData(AuthorityName, ObjectID),
     /// An NOA checkpoint observation, keyed by authority + nonce.
     NOAObservation(AuthorityName, [u8; 32]),
+    /// A current-committee validator's self-submitted MPC data
+    /// announcement, keyed by validator + epoch + timestamp_ms. The
+    /// timestamp is the version within (validator, epoch); the
+    /// consensus handler keeps the latest-by-timestamp entry. The
+    /// consensus block author authenticates the validator, so this
+    /// kind carries no payload signature.
+    ValidatorMpcDataAnnouncement(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* timestamp_ms */
+    ),
+    /// A next-epoch joiner's MPC data announcement relayed by a
+    /// current-committee validator. Keyed by the joiner (not the
+    /// relayer) + epoch + timestamp_ms, so two honest relayers
+    /// forwarding the same joiner announcement dedupe. The relayer
+    /// is unauthenticated for the payload (any current-committee
+    /// validator may relay), so the joiner's Ed25519 consensus-key
+    /// signature is verified against its next-epoch consensus pubkey
+    /// before the relay forwards it.
+    RelayedValidatorMpcDataAnnouncement(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* timestamp_ms */
+    ),
+    /// A validator's "I'm ready for this epoch's MPC sessions" vote,
+    /// keyed by signer + epoch + sequence_number. The sequence
+    /// number lets a signer re-emit with a wider `validated_peers`
+    /// set as P2P blob propagation converges; without it, the
+    /// generic same-key dedup at `verify_consensus_transaction`
+    /// would silently drop every emit after the first.
+    EpochMpcDataReadySignal(
+        AuthorityName,
+        u64, /* epoch */
+        u64, /* sequence_number */
+    ),
+    /// V2 of `EndOfPublish`, keyed only by `AuthorityName` (like V1).
+    /// V1 and V2 are *distinct* keys (different enum variants), so
+    /// they do not dedupe against each other — but they never need
+    /// to: the `off_chain_validator_metadata` flag makes emission
+    /// mutually exclusive (the standalone V1 sender exits when the
+    /// flag is on, and V2 is emitted only then), so a given authority
+    /// submits exactly one form per epoch. The bundled handoff
+    /// signature inside V2 is not separately keyed; the consumer
+    /// routes it through the handoff aggregator after extraction.
+    EndOfPublishV2(AuthorityName),
 }
 
 impl Debug for ConsensusTransactionKey {
@@ -161,9 +208,6 @@ impl Debug for ConsensusTransactionKey {
                     seq
                 )
             }
-            ConsensusTransactionKey::NetworkKeyData(authority, key_id) => {
-                write!(f, "NetworkKeyData({:?}, {:?})", authority.concise(), key_id)
-            }
             ConsensusTransactionKey::NOAObservation(authority, nonce) => {
                 write!(
                     f,
@@ -171,6 +215,36 @@ impl Debug for ConsensusTransactionKey {
                     authority.concise(),
                     hex::encode(nonce)
                 )
+            }
+            ConsensusTransactionKey::ValidatorMpcDataAnnouncement(authority, epoch, ts) => {
+                write!(
+                    f,
+                    "ValidatorMpcDataAnnouncement({:?}, epoch={}, ts={})",
+                    authority.concise(),
+                    epoch,
+                    ts
+                )
+            }
+            ConsensusTransactionKey::RelayedValidatorMpcDataAnnouncement(joiner, epoch, ts) => {
+                write!(
+                    f,
+                    "RelayedValidatorMpcDataAnnouncement({:?}, epoch={}, ts={})",
+                    joiner.concise(),
+                    epoch,
+                    ts
+                )
+            }
+            ConsensusTransactionKey::EpochMpcDataReadySignal(authority, epoch, seq) => {
+                write!(
+                    f,
+                    "EpochMpcDataReadySignal({:?}, epoch={}, seq={})",
+                    authority.concise(),
+                    epoch,
+                    seq
+                )
+            }
+            ConsensusTransactionKey::EndOfPublishV2(authority) => {
+                write!(f, "EndOfPublishV2({:?})", authority.concise())
             }
         }
     }
@@ -249,8 +323,54 @@ pub enum ConsensusTransactionKind {
     IdleStatusUpdate(IdleStatusUpdate),
     SuiChainObservationUpdate(SuiChainObservationUpdate),
     GlobalPresignRequest(ConsensusGlobalPresignRequest),
-    NetworkKeyData(ConsensusNetworkKeyData),
     NOAObservation(ConsensusNOAObservation),
+    /// Self-submission by a current-committee validator: the
+    /// announcement (digest + metadata) plus the full mpc_data blob
+    /// carried in-band. No payload signature (the consensus block
+    /// author authenticates the sender). The receiver hash-verifies
+    /// the blob against `announcement.blob_hash` and writes it to the
+    /// local blob store, so every node obtains the bytes via consensus
+    /// replication rather than an out-of-band P2P fetch.
+    ValidatorMpcDataAnnouncement(ValidatorMpcDataAnnouncement, Vec<u8>),
+    /// Relay of a next-epoch joiner's announcement by a
+    /// current-committee validator: carries the joiner's Ed25519
+    /// consensus-key signature (verified against the joiner's
+    /// next-epoch consensus pubkey before the relay forwards it) plus
+    /// the joiner's full mpc_data blob in-band, hash-verified against
+    /// the signed digest. The joiner — not a consensus participant —
+    /// fans its blob out over P2P to current-committee receivers; each
+    /// receiver relays it into consensus here so the bytes reach the
+    /// whole committee via consensus replication.
+    RelayedValidatorMpcDataAnnouncement(SignedValidatorMpcDataAnnouncement, Vec<u8>),
+    EpochMpcDataReadySignal(EpochMpcDataReadySignal),
+    /// V2 of `EndOfPublish` that bundles the validator's signed
+    /// handoff attestation into the same consensus message.
+    ///
+    /// Why a new variant rather than a field on `EndOfPublish`:
+    /// the existing variant has shipped — older peers won't decode
+    /// the extra field. A new variant is wire-additive (older peers
+    /// reject as unknown rather than mis-decoding existing data) and
+    /// lets producers gate emission on the existing
+    /// `off_chain_validator_metadata` protocol flag (which already
+    /// gates the rest of the off-chain pipeline that V2 is part of).
+    ///
+    /// Routing on the consumer side:
+    /// 1. Treat the `authority` as the EndOfPublish sender — same
+    ///    semantics as `EndOfPublish(authority)` for epoch-advance
+    ///    accounting.
+    /// 2. Extract `handoff_signature` and route through the existing
+    ///    `record_handoff_signature` aggregator.
+    ///
+    /// Bundling the handoff signature into the EndOfPublish message
+    /// (rather than sending it as its own consensus transaction)
+    /// ensures it is observed at exactly the consensus point where
+    /// EndOfPublish fires — a standalone handoff message could arrive
+    /// out of order relative to `EndOfPublish` and lead to inconsistent
+    /// aggregator state across the committee.
+    EndOfPublishV2 {
+        authority: AuthorityName,
+        handoff_signature: Box<HandoffSignatureMessage>,
+    },
 }
 
 impl ConsensusTransaction {
@@ -261,6 +381,29 @@ impl ConsensusTransaction {
         Self {
             tracking_id,
             kind: ConsensusTransactionKind::EndOfPublish(authority),
+        }
+    }
+
+    /// V2 of [`Self::new_end_of_publish`] — bundles the validator's
+    /// signed handoff attestation alongside its EndOfPublish vote in a
+    /// single consensus message, so the two always arrive together and
+    /// can't be reordered at peers. Producers emit this in place of
+    /// plain V1 when the `off_chain_validator_metadata` protocol flag
+    /// is on; the consumer side splits the message back into its two
+    /// parts and routes each through the existing v1 processing paths.
+    pub fn new_end_of_publish_v2(
+        authority: AuthorityName,
+        handoff_signature: HandoffSignatureMessage,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        authority.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::EndOfPublishV2 {
+                authority,
+                handoff_signature: Box::new(handoff_signature),
+            },
         }
     }
 
@@ -413,24 +556,6 @@ impl ConsensusTransaction {
         }
     }
 
-    /// Create a new consensus transaction for network encryption key data.
-    pub fn new_network_key_data(
-        authority: AuthorityName,
-        key_data: crate::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData,
-    ) -> Self {
-        let mut hasher = DefaultHasher::new();
-        authority.hash(&mut hasher);
-        key_data.id.hash(&mut hasher);
-        let tracking_id = hasher.finish().to_le_bytes();
-        Self {
-            tracking_id,
-            kind: ConsensusTransactionKind::NetworkKeyData(ConsensusNetworkKeyData {
-                authority,
-                key_data,
-            }),
-        }
-    }
-
     /// Create a new consensus transaction for an NOA checkpoint observation.
     pub fn new_noa_observation(
         authority: AuthorityName,
@@ -444,6 +569,54 @@ impl ConsensusTransaction {
         Self {
             tracking_id,
             kind: ConsensusTransactionKind::NOAObservation(msg),
+        }
+    }
+
+    /// Self-submission by a current-committee validator: the bare
+    /// announcement, no signature. The consensus block author
+    /// authenticates the sender, and `verify_consensus_transaction`
+    /// enforces `sender == announcement.validator`.
+    pub fn new_validator_mpc_data_announcement(
+        announcement: ValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        announcement.validator.hash(&mut hasher);
+        announcement.epoch.hash(&mut hasher);
+        announcement.timestamp_ms.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, blob),
+        }
+    }
+
+    /// Relay of a next-epoch joiner's announcement by a
+    /// current-committee validator. Carries the joiner's Ed25519
+    /// consensus-key signature, verified before forwarding.
+    pub fn new_relayed_validator_mpc_data_announcement(
+        signed: SignedValidatorMpcDataAnnouncement,
+        blob: Vec<u8>,
+    ) -> Self {
+        let mut hasher = DefaultHasher::new();
+        signed.announcement.validator.hash(&mut hasher);
+        signed.announcement.epoch.hash(&mut hasher);
+        signed.announcement.timestamp_ms.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, blob),
+        }
+    }
+
+    pub fn new_epoch_mpc_data_ready_signal(signal: EpochMpcDataReadySignal) -> Self {
+        let mut hasher = DefaultHasher::new();
+        signal.authority.hash(&mut hasher);
+        signal.epoch.hash(&mut hasher);
+        let tracking_id = hasher.finish().to_le_bytes();
+        Self {
+            tracking_id,
+            kind: ConsensusTransactionKind::EpochMpcDataReadySignal(signal),
         }
     }
 
@@ -508,11 +681,32 @@ impl ConsensusTransaction {
                     msg.request.session_sequence_number,
                 )
             }
-            ConsensusTransactionKind::NetworkKeyData(msg) => {
-                ConsensusTransactionKey::NetworkKeyData(msg.authority, msg.key_data.id)
-            }
             ConsensusTransactionKind::NOAObservation(msg) => {
                 ConsensusTransactionKey::NOAObservation(msg.authority, msg.nonce)
+            }
+            ConsensusTransactionKind::ValidatorMpcDataAnnouncement(announcement, _) => {
+                ConsensusTransactionKey::ValidatorMpcDataAnnouncement(
+                    announcement.validator,
+                    announcement.epoch,
+                    announcement.timestamp_ms,
+                )
+            }
+            ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(signed, _) => {
+                ConsensusTransactionKey::RelayedValidatorMpcDataAnnouncement(
+                    signed.announcement.validator,
+                    signed.announcement.epoch,
+                    signed.announcement.timestamp_ms,
+                )
+            }
+            ConsensusTransactionKind::EpochMpcDataReadySignal(signal) => {
+                ConsensusTransactionKey::EpochMpcDataReadySignal(
+                    signal.authority,
+                    signal.epoch,
+                    signal.sequence_number,
+                )
+            }
+            ConsensusTransactionKind::EndOfPublishV2 { authority, .. } => {
+                ConsensusTransactionKey::EndOfPublishV2(*authority)
             }
         }
     }

@@ -34,6 +34,32 @@ pub type StakeUnit = u64;
 
 pub type CommitteeDigest = [u8; 32];
 
+/// A crypto-free snapshot of a committee — membership, stake, and
+/// thresholds, without the class-groups / PVSS key material a full
+/// [`Committee`] carries.
+///
+/// Published on the chain-committee channel, which Sui fills as soon as
+/// it selects the next committee (before the off-chain class-groups
+/// assembly produces the full `Committee`). Its consumers — the freeze
+/// emit-gate and the joiner watcher — need only membership and the
+/// epoch. Keeping it a distinct type makes "read the chain committee
+/// for reconfiguration crypto" — which on a full `Committee` would
+/// silently see empty key maps and drop every share — a compile error
+/// rather than a runtime failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitteeMembership {
+    pub epoch: EpochId,
+    pub voting_rights: Vec<(AuthorityName, StakeUnit)>,
+    pub quorum_threshold: StakeUnit,
+    pub validity_threshold: StakeUnit,
+}
+
+impl CommitteeMembership {
+    pub fn epoch(&self) -> EpochId {
+        self.epoch
+    }
+}
+
 // The voting power, quorum threshold and max voting power are defined in the `voting_power.move` module.
 // We're following the very same convention in the validator binaries.
 

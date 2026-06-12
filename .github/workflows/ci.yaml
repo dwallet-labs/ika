@@ -51,8 +51,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: |
-          # Install build dependencies
-          sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
+          # Install build dependencies. Some runners lack IPv6 egress while
+          # DNS returns AAAA records, so force IPv4 and retry — apt mirror
+          # flakiness otherwise fails the job before the build starts.
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            sudo apt-get $APT update && \
+              sudo apt-get $APT install -y cmake clang pkg-config libssl-dev && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
           RUSTFLAGS="-D warnings" cargo build --bin ika --target x86_64-unknown-linux-gnu
 
   fmt:

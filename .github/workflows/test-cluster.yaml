@@ -1,9 +1,24 @@
 name: Test Cluster
 
 # Manually triggered. Runs the in-process Sui + ika swarm integration tests
-# from `crates/ika-test-cluster/`. This is the `#[tokio::test]` path: real
-# parallel crypto, fast wall time, no msim determinism. The slower `#[sim_test]`
-# variant lives in `.github/workflows/simtest.yaml`.
+# from `crates/ika-test-cluster/` on the `ika-k8s-large` self-hosted runner.
+# This is the `#[tokio::test]` path: real parallel crypto, fast wall time, no
+# msim determinism. The slower `#[sim_test]` variant lives in
+# `.github/workflows/simtest.yaml`.
+#
+# Runs via cargo-nextest with parallel tests. Two facts make this work:
+#   1. nextest runs each test in its OWN PROCESS, which isolates the
+#      `IkaTestClusterBuilder` publish flow's process-global
+#      `set_current_dir` (the `Pub.<env>.toml` parking) — under plain
+#      `cargo test` threads, parallel tests race on cwd and corrupt each
+#      other's contract publishes. (Concurrent boots are serialized by the
+#      builder's cross-process boot lock to avoid port-probe races.)
+#   2. The suite is latency-bound (each cluster spends most wall time
+#      waiting on consensus rounds and epoch timers), so parallel clusters
+#      mostly interleave waiting.
+# MEMORY is the parallelism ceiling, not CPU: each cluster is a full Sui
+# swarm + ika validators (multi-GB); 8-way has OOM-killed the runner pod
+# (96Gi limit) — keep `test_threads` at 4 unless the runner spec grows.
 #
 # See the "## Testing" section in CLAUDE.md for the strategy split between
 # tokio and sim_test.
@@ -17,10 +32,15 @@ on:
         required: false
         default: "ika-test-cluster"
       test_filter:
-        description: "Test name filter passed to cargo test"
+        description: "Test name filter passed to nextest (empty = full suite)"
         type: string
         required: false
-        default: "cluster_boots_with_four_validators"
+        default: ""
+      test_threads:
+        description: "Concurrent test count (nextest process-per-test; memory-bound — 8-way OOM-killed the 96Gi runner pod)"
+        type: string
+        required: false
+        default: "4"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -37,19 +57,25 @@ env:
 
 jobs:
   test-cluster:
-    name: cargo test --release
-    runs-on: ubuntu-latest
-    # The full bootstrap (Sui chain → publish 4 ika packages → initialize →
-    # swarm launch) runs in ~80 s locally with parallel crypto on. CI runners
-    # are slower; 60 min is generous.
-    timeout-minutes: 60
+    name: cargo nextest --release
+    runs-on: ika-k8s-large
+    # The full suite at 4-way runs in ~35 minutes; the ceiling covers a
+    # cold build cache plus contention outliers.
+    timeout-minutes: 150
     steps:
-      - name: Clean runner disk
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Runner resources
+        run: |
+          # Surface what this pod ACTUALLY gets — the scale set advertises up
+          # to 80 vCPUs, but a low cgroup quota (requests/limits mismatch) or
+          # node oversubscription silently throttles the crypto workloads.
+          echo "nproc: $(nproc)"
+          echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo n/a)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo n/a)"
+          free -g 2>/dev/null || true
+          uptime || true
 
       - name: Setup SSH
         uses: ./.github/actions/setup-ssh
@@ -62,7 +88,18 @@ jobs:
           toolchain: ${{ env.rust_stable }}
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
+        run: |
+          # Some runner pods lack IPv6 egress while DNS returns AAAA records,
+          # so force IPv4 and retry — apt mirror flakiness otherwise fails the
+          # whole job before any test runs.
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -71,6 +108,68 @@ jobs:
           # default release profile.
           prefix-key: "test-cluster"
 
-      - name: Run test cluster
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Start CPU sampler
         run: |
-          cargo test --release -p ${{ inputs.package }} ${{ inputs.test_filter }} -- --nocapture
+          # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
+          # actually consumed; nr_throttled/throttled_usec -> CFS quota
+          # stalls) + loadavg. Answers "does this workload USE the vCPUs"
+          # rather than inferring it from wall-clock.
+          nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
+          echo $! > cpu-sampler.pid
+
+      - name: Build test cluster
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          # Compilation in its own step: the Downloaded/Compiling stream is
+          # the majority of this workflow's log volume (~57% measured), and
+          # a separate step collapses in the UI when green, leaving the test
+          # step with only nextest progress and failure replays.
+          cargo nextest run --no-run --release -p "$PACKAGE"
+
+      - name: Run test cluster
+        env:
+          PACKAGE: ${{ inputs.package }}
+          TEST_FILTER: ${{ inputs.test_filter }}
+          TEST_THREADS: ${{ inputs.test_threads }}
+        run: |
+          set -o pipefail
+          # nextest: process-per-test (isolates the publish-flow cwd
+          # mutation), captured per-test output (failures replay theirs at
+          # the end — no more multi-GB interleaved logs), and no fail-fast
+          # so one wedged cluster can't hide the rest of the suite's
+          # results. Long tests surface via nextest's default SLOW markers.
+          # Failure replays stay inline ON PURPOSE: when the runner pod dies
+          # (OOM/eviction) the artifact upload never happens and the live
+          # log is the only surviving evidence.
+          cargo nextest run --release -p "$PACKAGE" $TEST_FILTER \
+            --test-threads "$TEST_THREADS" --no-fail-fast --cargo-quiet \
+            2>&1 | tee cluster-tests.log
+
+      - name: Summarize results
+        if: always()
+        run: |
+          grep -E "PASS |FAIL |SLOW |Summary" cluster-tests.log | tail -40 || true
+
+      - name: Upload CPU sampler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-sampler-${{ github.job }}-${{ github.run_attempt }}
+          path: cpu-sampler.log
+          retention-days: 7
+
+      - name: Upload test log
+        # always: a timeout kill registers as 'cancelled', not 'failure',
+        # and partial results from a long suite must survive it.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-tests-log-${{ github.run_attempt }}
+          path: cluster-tests.log
+          retention-days: 7

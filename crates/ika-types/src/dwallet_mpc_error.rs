@@ -43,6 +43,12 @@ pub enum DwalletMPCError {
     #[error("dWallet MPC Manager error: {0}")]
     MPCManagerError(String),
 
+    #[error(
+        "off-chain class-groups assembly incomplete at epoch {epoch}: {missing} missing — \
+         no chain fallback under v4 off_chain_validator_metadata; retry on the next tick"
+    )]
+    OffChainAssemblyIncomplete { epoch: EpochId, missing: usize },
+
     #[error("missing MPC class groups decryption shares in config")]
     MissingDwalletMPCClassGroupsDecryptionShares,
 

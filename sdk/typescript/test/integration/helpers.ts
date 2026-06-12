@@ -146,8 +146,6 @@ export async function requestPresignForDKG(
 		() =>
 			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presign).toBeDefined();
@@ -261,9 +259,6 @@ export async function waitForDWalletAwaitingSignature(
 	const awaitingKeyHolderSignatureDWallet = await ikaClient.getDWalletInParticularState(
 		dWalletID,
 		'AwaitingKeyHolderSignature',
-		{
-			timeout: 300000,
-		},
 	);
 
 	expect(awaitingKeyHolderSignatureDWallet).toBeDefined();
@@ -285,8 +280,6 @@ export async function acceptUserShareAndActivate(
 	const encryptedUserSecretKeyShare = await retryUntil(
 		() => ikaClient.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareId),
 		(share) => share !== null,
-		30,
-		1000,
 	);
 
 	expect(encryptedUserSecretKeyShare).toBeDefined();
@@ -310,8 +303,6 @@ export async function acceptUserShareAndActivate(
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -377,7 +368,6 @@ export async function runCompleteDKGFlow(
 			curve,
 			signDuringDKGOptions!.signatureAlgorithm,
 			'Completed',
-			{ timeout: 60000, interval: 1000 },
 		);
 
 		expect(signObject).toBeDefined();
@@ -455,11 +445,17 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 
 	expect(dWalletID).toBeDefined();
 
+	// The shared flow goes straight to Active (no intermediate
+	// AwaitingKeyHolderSignature step), so this single wait must cover the
+	// full create -> network-DKG-verify -> activate path. The effective
+	// timeout lives in getDWalletInParticularState's internal poll (the
+	// retryUntil wrapper rethrows the first call's error before its own
+	// loop runs), so pass the zero-trust flow's 5-min budget there — the
+	// default ~60s is too short on slow local networks where class-groups
+	// crypto dominates.
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -556,11 +552,17 @@ export async function runCompleteSharedDKGFlowWithSign(
 
 	expect(dWalletID).toBeDefined();
 
+	// The shared flow goes straight to Active (no intermediate
+	// AwaitingKeyHolderSignature step), so this single wait must cover the
+	// full create -> network-DKG-verify -> activate path. The effective
+	// timeout lives in getDWalletInParticularState's internal poll (the
+	// retryUntil wrapper rethrows the first call's error before its own
+	// loop runs), so pass the zero-trust flow's 5-min budget there — the
+	// default ~60s is too short on slow local networks where class-groups
+	// crypto dominates.
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -625,8 +627,6 @@ export async function runGlobalPresignTest(
 		() =>
 			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presign).toBeDefined();
