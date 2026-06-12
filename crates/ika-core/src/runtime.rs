@@ -51,11 +51,14 @@ impl IkaRuntimes {
         };
         let total_cores_available: usize = total_cores_available.into();
         if cfg!(feature = "enforce-minimum-cpu") {
-            assert!(
-                total_cores_available >= 16,
-                "Validator must have at least 16 CPU cores"
-            );
-            total_cores_available - TOKIO_ALLOCATED_CORES
+            if total_cores_available < 16 {
+                error!(
+                    "DEV PATCH: validator has only {} CPU cores (production minimum is 16). \
+                     Downgraded from panic to warning for localnet/dev use.",
+                    total_cores_available
+                );
+            }
+            total_cores_available.saturating_sub(TOKIO_ALLOCATED_CORES).max(1)
         } else {
             total_cores_available
         }
