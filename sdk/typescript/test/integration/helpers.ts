@@ -146,8 +146,6 @@ export async function requestPresignForDKG(
 		() =>
 			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presign).toBeDefined();
@@ -282,8 +280,6 @@ export async function acceptUserShareAndActivate(
 	const encryptedUserSecretKeyShare = await retryUntil(
 		() => ikaClient.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareId),
 		(share) => share !== null,
-		30,
-		1000,
 	);
 
 	expect(encryptedUserSecretKeyShare).toBeDefined();
@@ -307,8 +303,6 @@ export async function acceptUserShareAndActivate(
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -462,8 +456,6 @@ export async function runCompleteSharedDKGFlow(testName: string, curve: Curve): 
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -571,8 +563,6 @@ export async function runCompleteSharedDKGFlowWithSign(
 	const activeDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	);
 
 	expect(activeDWallet).toBeDefined();
@@ -637,8 +627,6 @@ export async function runGlobalPresignTest(
 		() =>
 			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presign).toBeDefined();

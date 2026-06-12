@@ -200,8 +200,6 @@ async function setupDKGFlow(
 		const activeDWallet = await retryUntil(
 			() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 			(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
-			30,
-			2000,
 		);
 
 		expect(activeDWallet).toBeDefined();
@@ -282,8 +280,6 @@ async function setupDKGFlow(
 		const importedKeyDWallet = (await retryUntil(
 			() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
 			(wallet) => wallet !== null,
-			30,
-			1000,
 		)) as ImportedKeyDWallet;
 
 		expect(importedKeyDWallet).toBeDefined();
@@ -316,8 +312,6 @@ async function setupDKGFlow(
 		const activeDWallet = (await retryUntil(
 			() => ikaClient.getDWalletInParticularState(dWalletID, 'Active'),
 			(wallet) => wallet !== null,
-			30,
-			2000,
 		)) as ImportedKeyDWallet;
 
 		expect(activeDWallet).toBeDefined();
@@ -392,8 +386,6 @@ async function requestAndWaitForPresign(
 		() =>
 			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presignObject).toBeDefined();

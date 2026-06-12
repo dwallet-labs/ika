@@ -216,8 +216,6 @@ async function createImportedKeyDWallet(
 	const importedKeyDWallet = (await retryUntil(
 		() => ikaClient.getDWalletInParticularState(dWalletID, 'AwaitingKeyHolderSignature'),
 		(wallet) => wallet !== null,
-		30,
-		1000,
 	)) as ImportedKeyDWallet;
 
 	expect(importedKeyDWallet).toBeDefined();
@@ -269,8 +267,6 @@ async function acceptAndActivateImportedKeyDWallet(
 	const activeDWallet = (await retryUntil(
 		() => ikaClient.getDWalletInParticularState(importedKeyDWallet.id, 'Active'),
 		(wallet) => wallet !== null,
-		30,
-		2000,
 	)) as ImportedKeyDWallet;
 
 	expect(activeDWallet).toBeDefined();
@@ -326,8 +322,6 @@ async function makeImportedKeyDWalletPublic(
 	const publicDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active'),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
-		30,
-		2000,
 	);
 
 	expect(publicDWallet).toBeDefined();
@@ -399,8 +393,6 @@ async function requestPresignForImportedKey(
 		() =>
 			ikaClient.getPresignInParticularState(parsedPresignEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presign).toBeDefined();
