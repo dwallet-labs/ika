@@ -41,13 +41,13 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
 use tokio::sync::watch::Sender;
 use tokio::time::{self, Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum StopReason {
@@ -56,6 +56,41 @@ pub enum StopReason {
 }
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
+
+/// Serialized submission state for the notifier's single Sui address.
+///
+/// `last_tx_digest` gates submission ordering (wait for the previous tx
+/// to be observed before sending the next). `gas_coins` caches the gas
+/// `ObjectRef` carried by the previous tx's effects so the next tx is
+/// built against the *authoritative* post-tx gas version rather than the
+/// notifier fullnode's `get_gas_objects` view, which lags the validators
+/// by hundreds of versions under checkpoint-heavy load and otherwise
+/// produces "transaction needs to be rebuilt (stale object version)"
+/// rejections that stall epoch advance. Submission is serial (the lock is
+/// held across each `submit_tx_to_sui`), so the cached ref is always the
+/// exact current version when the next tx is built.
+#[derive(Default)]
+struct NotifierSubmitState {
+    last_tx_digest: Option<TransactionDigest>,
+    gas_coins: Option<Vec<ObjectRef>>,
+    /// The gas ref(s) handed to the most recent submission, so a failure can
+    /// learn which version was rejected without threading it back through the
+    /// callers. Submission is serial, so this is unambiguous.
+    last_used_gas: Option<Vec<ObjectRef>>,
+    /// When a tx is rejected for a stale gas version, the rejected version is
+    /// recorded here as a floor: the next `get_gas_objects` re-fetch must
+    /// return a version strictly greater before it is trusted. This stops the
+    /// re-fetch from reusing the same stale version the lagging notifier
+    /// fullnode keeps serving (e.g. after another holder of this address — in
+    /// the in-process test cluster, the shared publisher coin — advanced it),
+    /// which would otherwise re-reject in a tight loop and wedge epoch advance.
+    min_gas_version: Option<SequenceNumber>,
+}
+
+/// Cap on how long `next_gas_coins` waits for the fullnode to catch up past a
+/// rejected gas version before giving up and using whatever it returns (the
+/// outer `retry_with_max_elapsed_time!` re-attempts). 60 × 500ms = 30s.
+const MAX_GAS_REFETCH_ATTEMPTS: u32 = 60;
 
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
@@ -66,7 +101,7 @@ pub struct SuiExecutor<C> {
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
     metrics: Arc<SuiConnectorMetrics>,
-    notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+    notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
 }
 
 struct EpochSwitchState {
@@ -100,7 +135,7 @@ where
             sui_notifier,
             sui_client,
             metrics,
-            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState::default())),
         }
     }
 
@@ -302,10 +337,26 @@ where
             epoch_switch_state.ran_lock_last_session = true;
             info!("Successfully locked last session in current epoch");
         }
-        if coordinator_inner.received_end_of_publish
+        // Mirror the on-chain `all_current_epoch_sessions_completed` assertion in
+        // `sessions_manager::advance_epoch`: the locked user-session batch must be
+        // fully completed AND every system session (network-key DKG/reconfiguration)
+        // must have finished. `received_end_of_publish` is set from a quorum snapshot
+        // and can momentarily precede a freshly-initiated system session (a
+        // `respond_*` on a network-key session chains a new `initiate_system_session`),
+        // so we re-check against the just-synced coordinator state before submitting.
+        // Submitting `advance_epoch` while this is false MoveAborts with
+        // `ENotAllCurrentEpochSessionsCompleted` (code 6); the outer hour-long retry
+        // would then burn out and `panic!` the validator over a transient,
+        // self-clearing condition — dropping the committee below quorum mid-transition
+        // and risking a network-wide wedge. Gating the submission keeps the panic for
+        // genuinely fatal submission failures only.
+        let sessions_manager = &coordinator_inner.sessions_manager;
+        let all_current_epoch_sessions_completed =
+            sessions_manager.all_current_epoch_sessions_completed();
+        let advance_gate_open = coordinator_inner.received_end_of_publish
             && system_inner_v1.received_end_of_publish
-            && !epoch_switch_state.ran_request_advance_epoch
-        {
+            && !epoch_switch_state.ran_request_advance_epoch;
+        if advance_gate_open && all_current_epoch_sessions_completed {
             info!("Calling `process_request_advance_epoch()`");
             let response = retry_with_max_elapsed_time!(
                 Self::process_request_advance_epoch(
@@ -325,6 +376,27 @@ where
             }
             info!("Successfully requested advance epoch");
             epoch_switch_state.ran_request_advance_epoch = true;
+        } else if advance_gate_open {
+            // End-of-publish is in, but sessions are still draining. Hold this
+            // tick (do NOT submit a doomed `advance_epoch`); re-check next tick.
+            debug!(
+                epoch = coordinator_inner.current_epoch,
+                locked = sessions_manager
+                    .locked_last_user_initiated_session_to_complete_in_current_epoch,
+                user_completed = sessions_manager
+                    .user_sessions_keeper
+                    .completed_sessions_count,
+                user_target =
+                    sessions_manager.last_user_initiated_session_to_complete_in_current_epoch,
+                system_started = sessions_manager
+                    .system_sessions_keeper
+                    .started_sessions_count,
+                system_completed = sessions_manager
+                    .system_sessions_keeper
+                    .completed_sessions_count,
+                "end-of-publish received but current-epoch sessions are still completing; \
+                 holding advance_epoch this tick",
+            );
         }
     }
 
@@ -419,7 +491,7 @@ where
                             next_dwallet_checkpoint_sequence_number,
                         ) {
                         Ok(Some(dwallet_checkpoint_message)) => {
-                            info!(
+                            debug!(
                                 ?next_dwallet_checkpoint_sequence_number,
                                 "Processing checkpoint sequence number"
                             );
@@ -442,7 +514,7 @@ where
                             )
                             .expect("Serializing checkpoint message cannot fail");
 
-                            info!(
+                            debug!(
                                 signers_len=?signers_len,
                                 ?signers_bitmap,
                                 "Processing checkpoint with signers"
@@ -467,7 +539,7 @@ where
                                     response.err()
                                 );
                             }
-                            info!(
+                            debug!(
                                 ?next_dwallet_checkpoint_sequence_number,
                                 "Successfully submitted dwallet checkpoint"
                             );
@@ -510,7 +582,7 @@ where
                         bcs::to_bytes::<SystemCheckpointMessage>(&system_checkpoint.into_message())
                             .expect("Serializing `system_checkpoint` message cannot fail");
 
-                    info!("Signers_bitmap: {:?}", signers_bitmap);
+                    debug!("Signers_bitmap: {:?}", signers_bitmap);
                     self.metrics.system_checkpoint_write_requests_total.inc();
                     let response = retry_with_max_elapsed_time!(
                         Self::handle_system_checkpoint_execution_task(
@@ -536,7 +608,7 @@ where
                         .last_written_system_checkpoint_sequence
                         .set(next_dwallet_checkpoint_sequence_number as i64);
                     last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
-                    info!(
+                    debug!(
                         "Sui transaction successfully executed for system_checkpoint sequence number: {}",
                         next_system_checkpoint_sequence_number
                     );
@@ -603,9 +675,10 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         network_encryption_key_ids: Vec<ObjectID>,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -644,10 +717,11 @@ where
         sui_client: &Arc<SuiClient<C>>,
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
         default_pricing_keys: &[PricingInfoKey],
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -695,19 +769,64 @@ where
         Ok(Self::submit_tx_to_sui(notifier_tx_lock, transaction, sui_client).await?)
     }
 
+    /// Returns the gas coins to fund the next notifier tx. Prefers the
+    /// cached `ObjectRef` carried by the previous tx's effects (the
+    /// authoritative post-tx version); falls back to a fresh
+    /// `get_gas_objects` fetch only when nothing is cached yet (first tx
+    /// of the process). See [`NotifierSubmitState`] for why the fullnode
+    /// fetch is avoided on the steady-state path.
+    async fn next_gas_coins(
+        notifier_tx_lock: &Arc<tokio::sync::Mutex<NotifierSubmitState>>,
+        sui_client: &Arc<SuiClient<C>>,
+        address: SuiAddress,
+    ) -> Vec<ObjectRef> {
+        // Fast path: the authoritative ref carried by the prior tx's effects.
+        {
+            let mut state = notifier_tx_lock.lock().await;
+            if let Some(gas) = state.gas_coins.clone() {
+                state.last_used_gas = Some(gas.clone());
+                return gas;
+            }
+        }
+        // Slow path (first tx of the process, or after a stale-gas rejection
+        // cleared the cache): re-fetch from the fullnode. If a prior rejection
+        // recorded a `min_gas_version` floor, wait for the fullnode to catch up
+        // past it before trusting the result — the notifier fullnode lags the
+        // validators, so an immediate re-fetch keeps serving the same stale
+        // version that was just rejected.
+        let mut attempts = 0u32;
+        loop {
+            let gas = sui_client.get_gas_objects(address).await;
+            let mut state = notifier_tx_lock.lock().await;
+            let highest = gas.iter().map(|gas_ref| gas_ref.1).max();
+            let acceptable = match state.min_gas_version {
+                Some(floor) => highest.is_some_and(|version| version > floor),
+                None => true,
+            };
+            if acceptable || attempts >= MAX_GAS_REFETCH_ATTEMPTS {
+                state.min_gas_version = None;
+                state.last_used_gas = Some(gas.clone());
+                return gas;
+            }
+            drop(state);
+            attempts += 1;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     async fn submit_tx_to_sui(
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
         transaction: Transaction,
         sui_client: &Arc<SuiClient<C>>,
     ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
-        let mut last_submitted_tx_digest = notifier_tx_lock.lock().await;
-        if let Some(prev_digest) = *last_submitted_tx_digest {
+        let mut state = notifier_tx_lock.lock().await;
+        if let Some(prev_digest) = state.last_tx_digest {
             while sui_client
                 .get_events_by_tx_digest(prev_digest)
                 .await
                 .is_err()
             {
-                info!(
+                debug!(
                     transaction_digest = ?prev_digest,
                     "The last submitted transaction has not been processed yet, retrying..."
                 );
@@ -715,13 +834,13 @@ where
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
-            info!(
+            debug!(
             transaction_digest = ?prev_digest,
             "The last submitted transaction has been processed, submitting the next one",
                         );
         }
 
-        info!(
+        debug!(
             transaction_digest = ?transaction.digest(),
             "Submitting a transaction to Sui"
         );
@@ -731,20 +850,47 @@ where
             .await?;
 
         if !tx_response.errors.is_empty() {
-            return Err(IkaError::SuiClientTxFailureGeneric(
-                tx_response.digest,
-                format!("{:?}", tx_response.errors),
-            )
-            .into());
+            let errors = format!("{:?}", tx_response.errors);
+            // Distinguish a stale-gas rejection from any other pre-execution
+            // error. Only the former means the cached gas ref is stale, so only
+            // then drop it AND record the rejected version as a floor — so the
+            // caller's `retry_with_max_elapsed_time!` re-fetch waits for the
+            // notifier fullnode to advance past it instead of re-serving the
+            // same stale version in a tight loop (which wedged epoch advance).
+            // Other errors leave the gas cache intact: the gas was fine, the tx
+            // failed for an unrelated reason, and clearing it would force an
+            // unnecessary (and possibly stale) fullnode re-fetch.
+            let is_stale_gas = errors.contains("unavailable for consumption")
+                || errors.contains("needs to be rebuilt");
+            if is_stale_gas {
+                if let Some(used) = &state.last_used_gas {
+                    state.min_gas_version = used.iter().map(|gas_ref| gas_ref.1).max();
+                }
+                state.gas_coins = None;
+            }
+            return Err(IkaError::SuiClientTxFailureGeneric(tx_response.digest, errors).into());
         }
 
         let Some(tx_effects) = tx_response.effects.clone() else {
+            // No effects to derive the post-tx gas version from; treat the
+            // cached ref as unreliable and re-fetch on retry.
+            state.gas_coins = None;
             return Err(IkaError::SuiClientTxFailureGeneric(
                 tx_response.digest,
                 "Transaction effects are missing".to_string(),
             )
             .into());
         };
+
+        // The tx executed (effects are present), so the gas coin advanced
+        // to a new version regardless of move success/abort. Cache that
+        // authoritative ref for the next tx instead of re-reading the
+        // notifier fullnode, which lags under load and yields stale gas
+        // versions that get rejected and stall epoch advance.
+        state.gas_coins = Some(vec![tx_effects.gas_object().reference.to_object_ref()]);
+        // The cached ref is now authoritative again; drop any stale-version
+        // floor a prior rejection left so a future re-fetch isn't over-gated.
+        state.min_gas_version = None;
 
         if let SuiExecutionStatus::Failure { error } = tx_effects.status() {
             return Err(IkaError::SuiClientTxFailureGeneric(
@@ -756,7 +902,7 @@ where
             .into());
         };
 
-        *last_submitted_tx_digest = Some(tx_response.digest);
+        state.last_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
@@ -765,10 +911,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_mid_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -838,10 +985,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Process `lock_last_active_session_sequence_number()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -904,10 +1052,11 @@ where
         ika_dwallet_2pc_mpc_package_id: ObjectID,
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         info!("Running `process_request_advance_epoch()`");
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // let gas_coin = gas_coins
         //     .first()
         //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
@@ -981,11 +1130,12 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<SuiTransactionBlockResponse> {
         let mut ptb = ProgrammableTransactionBuilder::new();
 
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         //merge_gas_coins(&mut ptb, &gas_coins)?;
         // let gas_coin = gas_coins
         //     .first()
@@ -1067,11 +1217,12 @@ where
         sui_notifier: &SuiNotifier,
         sui_client: &Arc<SuiClient<C>>,
         metrics: &Arc<SuiConnectorMetrics>,
-        notifier_tx_lock: Arc<tokio::sync::Mutex<Option<TransactionDigest>>>,
+        notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
     ) -> IkaResult<()> {
         let mut ptb = ProgrammableTransactionBuilder::new();
 
-        let gas_coins = sui_client.get_gas_objects(sui_notifier.sui_address).await;
+        let gas_coins =
+            Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // merge_gas_coins(&mut ptb, &gas_coins)?;
         // let gas_coin = gas_coins
         //     .first()

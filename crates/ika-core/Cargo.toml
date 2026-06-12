@@ -85,7 +85,7 @@ dwallet-mpc-centralized-party = { path = "../dwallet-mpc-centralized-party" }
 [dev-dependencies]
 ika-types = {workspace = true, features = ["test_helpers"]}
 class_groups = { workspace = true, features = ["threshold", "test_helpers"]}
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 base64 = "0.22.1"
 
 [target.'cfg(not(target_env = "msvc"))'.dev-dependencies]

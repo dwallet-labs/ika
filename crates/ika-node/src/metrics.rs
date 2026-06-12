@@ -1,11 +1,42 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
-use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
+use prometheus::{
+    Histogram, IntCounter, IntCounterVec, IntGauge, Registry, register_histogram_with_registry,
+    register_int_counter_vec_with_registry, register_int_counter_with_registry,
+    register_int_gauge_with_registry,
+};
 
 pub struct IkaNodeMetrics {
     pub current_protocol_version: IntGauge,
     pub binary_max_protocol_version: IntGauge,
     pub configured_max_protocol_version: IntGauge,
+
+    /// 1 while the prepare-then-start barrier is blocking the new epoch's
+    /// MPC components on full verified handoff data; 0 otherwise. A value
+    /// stuck at 1 is the dashboard signal that a validator is wedged
+    /// waiting for handoff data and is not signing.
+    pub handoff_prepare_waiting: IntGauge,
+    /// Number of prepare-then-start barrier poll iterations spent waiting
+    /// for handoff data.
+    pub handoff_prepare_retries_total: IntCounter,
+    /// Wall-clock seconds spent inside the prepare-then-start barrier.
+    /// Observed only on successful barrier exit, so this trends the
+    /// distribution of completed (possibly slow) waits — stuck-barrier
+    /// alerting is `handoff_prepare_waiting` + `handoff_prepare_retries_total`.
+    pub handoff_prepare_duration_seconds: Histogram,
+
+    /// Joiner/anchor bootstrap cert-fetch outcomes, by outcome
+    /// (`verified` / `rejected` / `unavailable`). `rejected` fail-closes
+    /// the node, so its durable value is the `verified` epoch-cadence
+    /// sanity check and `unavailable` wedge-cause attribution.
+    pub joiner_bootstrap_outcomes_total: IntCounterVec,
+
+    /// P2P mpc_data blob fetch outcomes, by result (`ok` / `not_found` /
+    /// `hash_mismatch` / `decode_failed` / `cache_insert_failed` /
+    /// `transport_error`). `decode_failed` is the announcer-byzantine
+    /// signal; a high `transport_error` rate explains slow ready-signal
+    /// coverage.
+    pub mpc_data_blob_fetch_total: IntCounterVec,
 }
 
 impl IkaNodeMetrics {
@@ -26,6 +57,47 @@ impl IkaNodeMetrics {
             configured_max_protocol_version: register_int_gauge_with_registry!(
                 "ika_configured_max_protocol_version",
                 "Max protocol version configured in the node config",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_waiting: register_int_gauge_with_registry!(
+                "ika_handoff_prepare_waiting",
+                "1 while the prepare-then-start barrier is blocking the new epoch's MPC \
+                 components on full verified handoff data; 0 otherwise",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_retries_total: register_int_counter_with_registry!(
+                "ika_handoff_prepare_retries_total",
+                "Number of prepare-then-start barrier poll iterations spent waiting for \
+                 handoff data",
+                registry,
+            )
+            .unwrap(),
+            handoff_prepare_duration_seconds: register_histogram_with_registry!(
+                "ika_handoff_prepare_duration_seconds",
+                "Wall-clock seconds spent inside the prepare-then-start barrier",
+                // Barrier waits are legitimately minutes (cert fetch + blob
+                // convergence at the epoch boundary); the prometheus default
+                // buckets top out at 10s and would collapse every slow exit
+                // into +Inf.
+                vec![
+                    1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1200.0, 1800.0
+                ],
+                registry,
+            )
+            .unwrap(),
+            joiner_bootstrap_outcomes_total: register_int_counter_vec_with_registry!(
+                "ika_joiner_bootstrap_outcomes_total",
+                "Joiner/anchor bootstrap cert-fetch outcomes",
+                &["outcome"],
+                registry,
+            )
+            .unwrap(),
+            mpc_data_blob_fetch_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_data_blob_fetch_total",
+                "P2P mpc_data blob fetch outcomes",
+                &["result"],
                 registry,
             )
             .unwrap(),

@@ -10,7 +10,7 @@ use anemo_tower::trace::TraceLayer;
 use anyhow::{Result, anyhow};
 use arc_swap::ArcSwap;
 use prometheus::Registry;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,7 +43,9 @@ use ika_config::node_config_metrics::NodeConfigMetrics;
 use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
-use ika_core::authority::authority_per_epoch_store::AuthorityPerEpochStore;
+use ika_core::authority::authority_per_epoch_store::{
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+};
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
     CheckConnection, ConnectionMonitorStatus, ConsensusAdapter, ConsensusAdapterMetrics,
@@ -69,7 +71,7 @@ use sui_macros::{fail_point_async, replay_log};
 use sui_storage::{FileCompression, StorageFormat};
 use sui_types::base_types::EpochId;
 
-use ika_types::committee::Committee;
+use ika_types::committee::{Committee, CommitteeMembership};
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::{AuthorityCapabilitiesV1, ConsensusTransaction};
@@ -113,6 +115,12 @@ pub struct P2pComponents {
     known_peers: HashMap<PeerId, String>,
     discovery_handle: discovery::Handle,
     state_sync_handle: state_sync::Handle,
+    mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
+    /// In-memory cache backing the local Anemo `GetMpcDataBlob`
+    /// server. Producer caches own blob into it on epoch start;
+    /// `PeerBlobFetcher` mirrors fetched peer blobs into it so we
+    /// can serve them to other peers too.
+    mpc_data_blob_store: Arc<ika_network::mpc_artifacts::InMemoryBlobStore>,
 }
 
 #[cfg(msim)]
@@ -150,9 +158,9 @@ use ika_core::dwallet_mpc::dwallet_mpc_service::{
 };
 use ika_core::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use ika_core::epoch::submit_to_consensus::EpochStoreSubmitToConsensus;
+use ika_core::epoch_tasks::end_of_publish_sender::EndOfPublishSender;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
-use ika_core::sui_connector::end_of_publish_sender::EndOfPublishSender;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
 use ika_core::sui_connector::sui_executor::StopReason;
 use ika_core::system_checkpoints::system_checkpoint_output::{
@@ -162,8 +170,10 @@ use ika_core::system_checkpoints::{
     SendSystemCheckpointToStateSync, SubmitSystemCheckpointToConsensus, SystemCheckpointMetrics,
     SystemCheckpointService, SystemCheckpointStore,
 };
+use ika_network::mpc_artifacts::{fetch_blob, mpc_data_blob_hash};
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_sui_client::{SuiClient, SuiConnectorClient};
+use ika_types::handoff::{CertifiedHandoffAttestation, HandoffItemKey};
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, IkaObjectsConfig, IkaPackageConfig};
 #[cfg(msim)]
 use simulator::*;
@@ -192,6 +202,22 @@ pub struct IkaNode {
     sim_state: SimState,
 
     sui_connector_service: Arc<SuiConnectorService>,
+
+    /// Late-bindable holder for the joiner-relay impl mounted on
+    /// the Anemo `SubmitMpcDataAnnouncement` server. Replaced per
+    /// epoch so the relay always points at the current epoch
+    /// store + consensus adapter.
+    mpc_announcement_relay: Arc<ika_network::mpc_artifacts::AnnouncementRelayHandle>,
+
+    /// In-memory cache shared with the Anemo `GetMpcDataBlob`
+    /// server. Producer and `PeerBlobFetcher` push blobs into it so
+    /// the server can respond to peer fetches without a restart.
+    mpc_data_blob_store: Arc<ika_network::mpc_artifacts::InMemoryBlobStore>,
+
+    /// Anemo network handle, retained so per-epoch
+    /// `PeerBlobFetcher` instances can issue `fetch_blob` against
+    /// committee peers without re-deriving the network.
+    p2p_network: Network,
 
     _state_archive_handle: Option<broadcast::Sender<()>>,
 
@@ -418,6 +444,10 @@ impl IkaNode {
             packages_config,
         )?;
 
+        // Allow the per-epoch handoff record path to persist freshly
+        // certified attestations into perpetual storage.
+        epoch_store.install_perpetual_tables_for_handoff(perpetual_tables.clone());
+
         info!("created epoch store");
 
         replay_log!(
@@ -467,6 +497,8 @@ impl IkaNode {
             known_peers,
             discovery_handle,
             state_sync_handle,
+            mpc_announcement_relay,
+            mpc_data_blob_store,
         } = Self::create_p2p_network(
             &config,
             state_sync_store.clone(),
@@ -475,6 +507,7 @@ impl IkaNode {
             archive_readers.clone(),
             &prometheus_registry,
             !epoch_store.committee().authority_exists(&authority_name),
+            perpetual_tables.clone(),
         )?;
 
         // We must explicitly send this instead of relying on the initial value to trigger
@@ -509,7 +542,14 @@ impl IkaNode {
 
         let sui_connector_metrics = SuiConnectorMetrics::new(&registry_service.default_registry());
         let (next_epoch_committee_sender, next_epoch_committee_receiver) =
-            watch::channel::<Committee>(committee);
+            watch::channel::<Committee>(committee.clone());
+        let (chain_next_committee_sender, chain_next_epoch_committee_receiver) =
+            watch::channel(CommitteeMembership {
+                epoch: committee.epoch,
+                voting_rights: committee.voting_rights,
+                quorum_threshold: committee.quorum_threshold,
+                validity_threshold: committee.validity_threshold,
+            });
         let (new_requests_sender, new_requests_receiver) =
             broadcast::channel(EVENTS_CHANNEL_BUFFER_SIZE);
         let (end_of_publish_sender, end_of_publish_receiver) = watch::channel::<Option<u64>>(None);
@@ -537,6 +577,7 @@ impl IkaNode {
             sui_connector_metrics,
             mode,
             next_epoch_committee_sender,
+            chain_next_committee_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
@@ -584,6 +625,7 @@ impl IkaNode {
             network_keys_receiver,
             new_requests_receiver,
             next_epoch_committee_receiver,
+            chain_next_epoch_committee_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
             uncompleted_requests_receiver,
@@ -640,6 +682,9 @@ impl IkaNode {
             sim_state: Default::default(),
 
             sui_connector_service,
+            mpc_announcement_relay,
+            mpc_data_blob_store,
+            p2p_network,
             _state_archive_handle: state_archive_handle,
             shutdown_channel_tx: shutdown_channel,
             noa_dwallet_finalized,
@@ -650,6 +695,27 @@ impl IkaNode {
         let node = Arc::new(node);
         let node_copy = node.clone();
         let sui_client_clone = sui_client.clone();
+
+        // Joiner-side announcement fan-out: a node selected into the
+        // next-epoch committee but not yet in the current one isn't a
+        // consensus participant, so it relays its mpc_data
+        // announcement to current-committee peers over P2P. Runs on
+        // all nodes; it only acts when it observes itself as a true
+        // joiner. Spawned alongside (not inside) reconfiguration
+        // because it must fire mid-epoch when `V_{e+1}` is published,
+        // not at the epoch boundary.
+        let joiner_node = node.clone();
+        // Use the CHAIN next-epoch committee (published before the
+        // off-chain assembly), not the assembled one — otherwise the
+        // joiner can't learn it's a joiner until after the freeze has
+        // already excluded it (see the channel's doc on SuiDataReceivers).
+        let joiner_next_committee_receiver = sui_data_receivers
+            .chain_next_epoch_committee_receiver
+            .clone();
+        spawn_monitored_task!(async move {
+            Self::monitor_joiner_announcements(joiner_node, joiner_next_committee_receiver).await;
+        });
+
         spawn_monitored_task!(async move {
             let result = Self::monitor_reconfiguration(
                 node_copy,
@@ -664,6 +730,134 @@ impl IkaNode {
         });
 
         Ok(node)
+    }
+
+    /// Watches the next-epoch committee and, when this node is a true
+    /// joiner (in `V_{e+1}` but not the current committee), fans its
+    /// signed `ValidatorMpcDataAnnouncement` out to current-committee
+    /// peers via P2P so an honest relayer forwards it into consensus.
+    /// Continuing validators (in both committees) and leaving/observer
+    /// nodes never act — they fall through the membership check.
+    async fn monitor_joiner_announcements(
+        node: Arc<Self>,
+        mut next_epoch_committee_receiver: tokio::sync::watch::Receiver<
+            ika_types::committee::CommitteeMembership,
+        >,
+    ) {
+        use ika_core::blob_cache::BlobCache;
+        use ika_core::epoch_tasks::joiner_announcement_sender::{
+            JoinerAnnouncementSender, JoinerFanoutConfig, P2pAnnouncementFanout,
+        };
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
+
+        // Without a root seed we can't derive our mpc_data blob, so
+        // we can't be a joiner — nothing to do.
+        let Some(root_seed_kp) = node.config.root_seed_key_pair.as_ref() else {
+            return;
+        };
+        let root_seed = root_seed_kp.root_seed().clone();
+        let consensus_keypair = Arc::new(node.config.consensus_key_pair().copy());
+        // Pre-derive our stable, seed-deterministic mpc_data blob once, up
+        // front and off the critical path. The class-groups derivation is
+        // slow; doing it lazily the moment we discover we're a next-epoch
+        // joiner would put it on the narrow committee-publish → freeze-
+        // deadline window and miss the freeze under short epochs. The blob is
+        // identical every epoch (a pure function of the root seed), so one
+        // derivation serves every future joiner announcement.
+        let own_mpc_data_blob = match tokio::task::spawn_blocking({
+            let root_seed = root_seed.clone();
+            move || ika_core::validator_metadata::derive_mpc_data_blob(&root_seed)
+        })
+        .await
+        {
+            Ok(Ok(blob)) => blob,
+            Ok(Err(e)) => {
+                warn!(error = ?e, "joiner monitor: failed to derive own mpc_data blob; not announcing as a joiner");
+                return;
+            }
+            Err(e) => {
+                warn!(error = ?e, "joiner monitor: mpc_data blob derivation task panicked; not announcing as a joiner");
+                return;
+            }
+        };
+        let mut last_handled_next_epoch: Option<u64> = None;
+        loop {
+            let next_committee = next_epoch_committee_receiver.borrow_and_update().clone();
+            let next_epoch = next_committee.epoch();
+            if last_handled_next_epoch != Some(next_epoch) {
+                let epoch_store = node.state.load_epoch_store_one_call_per_task();
+                if epoch_store
+                    .protocol_config()
+                    .off_chain_validator_metadata_enabled()
+                    && next_epoch == epoch_store.epoch() + 1
+                {
+                    let self_name = epoch_store.name;
+                    let in_next = next_committee
+                        .voting_rights
+                        .iter()
+                        .any(|(name, _)| *name == self_name);
+                    let in_current = epoch_store.committee().authority_exists(&self_name);
+                    if in_next && !in_current {
+                        let peer_ids: Vec<anemo::PeerId> = epoch_store
+                            .epoch_start_state()
+                            .get_authority_names_to_peer_ids()
+                            .into_values()
+                            .collect();
+                        let current_committee_size = epoch_store.committee().voting_rights.len();
+                        // f+1 distinct accepting peers ensures at least
+                        // one honest relayer (committee is 3f+1).
+                        let min_accepts = current_committee_size / 3 + 1;
+                        let blob_cache = BlobCache::new(
+                            node.mpc_data_blob_store.clone(),
+                            node.state.perpetual_tables(),
+                        );
+                        let fanout = Arc::new(P2pAnnouncementFanout::new(
+                            node.p2p_network.clone(),
+                            peer_ids,
+                        ));
+                        let sender = JoinerAnnouncementSender::new(
+                            self_name,
+                            next_epoch,
+                            own_mpc_data_blob.clone(),
+                            consensus_keypair.clone(),
+                            blob_cache,
+                            fanout,
+                            JoinerFanoutConfig {
+                                min_accepts,
+                                // Retry briskly: the common early
+                                // rejection is `UnregisteredJoiner`
+                                // during the brief window before each
+                                // relayer's JoinerPubkeyProvider picks
+                                // up the just-published next committee.
+                                // A coarse retry burns most of the
+                                // freeze window, so scale the cadence to
+                                // the epoch length (a no-op at
+                                // production epoch lengths; compressed in
+                                // short test epochs). max_attempts keeps
+                                // a generous bound across the window.
+                                retry_interval:
+                                    ika_core::validator_metadata::epoch_scaled_poll_interval(
+                                        epoch_store.epoch_start_state().epoch_duration_ms(),
+                                        Duration::from_secs(3),
+                                    ),
+                                max_attempts: 100,
+                            },
+                        );
+                        info!(
+                            next_epoch,
+                            "this node is a next-epoch joiner; fanning out its mpc_data announcement"
+                        );
+                        spawn_monitored_task!(async move {
+                            sender.run().await;
+                        });
+                        last_handled_next_epoch = Some(next_epoch);
+                    }
+                }
+            }
+            if next_epoch_committee_receiver.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     pub fn subscribe_to_epoch_change(&self) -> broadcast::Receiver<SystemInner> {
@@ -737,6 +931,7 @@ impl IkaNode {
         archive_readers: ArchiveReaderBalancer,
         prometheus_registry: &Registry,
         is_notifier: bool,
+        perpetual_tables: Arc<AuthorityPerpetualTables>,
     ) -> Result<P2pComponents> {
         let (state_sync, state_sync_server) = state_sync::Builder::new()
             .config(config.p2p_config.state_sync.clone().unwrap_or_default())
@@ -748,6 +943,38 @@ impl IkaNode {
         let (discovery, discovery_server) = discovery::Builder::new(trusted_peer_change_rx)
             .config(config.p2p_config.clone())
             .build();
+
+        // Content-addressed cache of MPC data blobs, hydrated from
+        // perpetual storage so a restart doesn't lose blobs the
+        // validator was serving to peers. Producer caching + cross-
+        // node fetch are wired in later steps; for now this just
+        // serves whatever's been persisted previously.
+        let mpc_data_blob_store =
+            ika_network::mpc_artifacts::InMemoryBlobStore::new_with_metrics(prometheus_registry);
+        for entry in perpetual_tables.iter_mpc_artifact_blobs() {
+            match entry {
+                Ok((digest, bytes)) => mpc_data_blob_store.insert(digest, bytes),
+                Err(e) => warn!(
+                    error = ?e,
+                    "skipping corrupt mpc_artifact_blobs row during hydration"
+                ),
+            }
+        }
+        let mpc_announcement_relay = ika_network::mpc_artifacts::AnnouncementRelayHandle::new();
+        // Serve through a read-through BlobCache: the in-memory hot
+        // cache first, durable perpetual on a miss. The fallback lets
+        // the server return blobs written only to perpetual (e.g. a
+        // network DKG / reconfiguration output cached by the per-epoch
+        // store) without waiting for a restart to re-hydrate.
+        let mpc_blob_cache = ika_core::blob_cache::BlobCache::new(
+            mpc_data_blob_store.clone(),
+            perpetual_tables.clone(),
+        );
+        let validator_metadata_server = ika_network::mpc_artifacts::build_server(
+            mpc_blob_cache,
+            mpc_announcement_relay.clone(),
+            perpetual_tables.clone(),
+        );
 
         let discovery_config = config.p2p_config.discovery.clone().unwrap_or_default();
         let known_peers: HashMap<PeerId, String> = discovery_config
@@ -764,7 +991,8 @@ impl IkaNode {
         let p2p_network = {
             let routes = anemo::Router::new()
                 .add_rpc_service(discovery_server)
-                .add_rpc_service(state_sync_server);
+                .add_rpc_service(state_sync_server)
+                .add_rpc_service(validator_metadata_server);
             let inbound_network_metrics =
                 mysten_network::metrics::NetworkMetrics::new("ika", "inbound", prometheus_registry);
             let outbound_network_metrics = mysten_network::metrics::NetworkMetrics::new(
@@ -870,6 +1098,8 @@ impl IkaNode {
             known_peers,
             discovery_handle,
             state_sync_handle,
+            mpc_announcement_relay,
+            mpc_data_blob_store,
         })
     }
 
@@ -1388,21 +1618,513 @@ impl IkaNode {
                     .await?;
             }
 
-            let end_of_publish_sender_handle =
-                if let Some(components) = &*self.validator_components.lock().await {
-                    let end_of_publish_sender = EndOfPublishSender::new(
-                        Arc::downgrade(&cur_epoch_store),
-                        Arc::new(components.consensus_adapter.clone()),
-                        sui_data_receivers.end_of_publish_receiver.clone(),
-                        cur_epoch_store.epoch(),
-                    );
+            // Off-chain validator-metadata pipeline gate. When the
+            // protocol config flag is off, skip every install/spawn
+            // below — handoff signing, mpc_data announcements,
+            // joiner relay, pubkey updaters, syncer overlay sources.
+            // The tasks themselves also self-gate at the top of
+            // `run()`, but checking once here avoids the spawn churn.
+            let off_chain_metadata_enabled = cur_epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled();
 
+            let (end_of_publish_sender_handle, handoff_signature_sender_handle) = if let Some(
+                components,
+            ) =
+                &*self.validator_components.lock().await
+            {
+                let end_of_publish_sender = EndOfPublishSender::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    Arc::new(components.consensus_adapter.clone()),
+                    sui_data_receivers.end_of_publish_receiver.clone(),
+                    cur_epoch_store.epoch(),
+                );
+                let end_of_publish_handle = Some(tokio::spawn(async move {
+                    end_of_publish_sender.run().await;
+                }));
+
+                let handoff_handle = if off_chain_metadata_enabled {
+                    let consensus_keypair = Arc::new(self.config.consensus_key_pair().copy());
+                    let builders = ika_core::validator_metadata::default_handoff_items_builders(
+                        &cur_epoch_store,
+                    );
+                    let handoff_sender =
+                        ika_core::epoch_tasks::handoff_signature_sender::HandoffSignatureSender::new(
+                            Arc::downgrade(&cur_epoch_store),
+                            cur_epoch_store.epoch(),
+                            Arc::new(components.consensus_adapter.clone()),
+                            sui_data_receivers.end_of_publish_receiver.clone(),
+                            consensus_keypair,
+                            sui_data_receivers.next_epoch_committee_receiver.clone(),
+                            sui_data_receivers.network_keys_receiver.clone(),
+                            builders,
+                        );
                     Some(tokio::spawn(async move {
-                        end_of_publish_sender.run().await;
+                        handoff_sender.run().await;
                     }))
                 } else {
                     None
                 };
+
+                (end_of_publish_handle, handoff_handle)
+            } else {
+                (None, None)
+            };
+
+            // Producer-side broadcaster: announces this validator's
+            // own mpc_data and ready signals so the freeze quorum
+            // can be reached. Without it, no validator publishes its
+            // mpc_data digest and the off-chain freeze never lands,
+            // which leaves the step-14 kickoff gate closed and stalls
+            // network DKG / reconfig.
+            let mpc_data_announcement_handle = if off_chain_metadata_enabled
+                && let Some(components) = &*self.validator_components.lock().await
+                && let Some(root_seed_kp) = self.config.root_seed_key_pair.as_ref()
+            {
+                let blob_cache = ika_core::blob_cache::BlobCache::new(
+                    self.mpc_data_blob_store.clone(),
+                    self.state.perpetual_tables(),
+                );
+                let sender = ika_core::epoch_tasks::mpc_data_announcement_sender::MpcDataAnnouncementSender::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        cur_epoch_store.name,
+                        Arc::new(components.consensus_adapter.clone()),
+                        blob_cache,
+                        root_seed_kp.root_seed().clone(),
+                        // Chain next-epoch committee (pre-assembly) for
+                        // the freeze emit-gate — so the freeze waits for
+                        // joiners that the assembled committee can't yet
+                        // include (see SuiDataReceivers doc).
+                        sui_data_receivers.chain_next_epoch_committee_receiver.clone(),
+                    );
+                let sender = Arc::new(sender);
+                Some(tokio::spawn(async move {
+                    sender.run().await;
+                }))
+            } else {
+                None
+            };
+
+            // Consumer-side fetcher: pulls peer validators' mpc_data
+            // blobs from their Anemo `GetMpcDataBlob` endpoint and
+            // caches them locally so the off-chain validator-mpc_data
+            // assembler can resolve every committee member without a
+            // chain read.
+            let peer_blob_fetcher_handle = if off_chain_metadata_enabled {
+                let authority_names_to_peer_ids = cur_epoch_store
+                    .epoch_start_state()
+                    .get_authority_names_to_peer_ids();
+                let blob_cache = ika_core::blob_cache::BlobCache::new(
+                    self.mpc_data_blob_store.clone(),
+                    self.state.perpetual_tables(),
+                );
+                let fetcher = ika_core::epoch_tasks::peer_blob_fetcher::PeerBlobFetcher::new(
+                    Arc::downgrade(&cur_epoch_store),
+                    cur_epoch_store.epoch(),
+                    cur_epoch_store.name,
+                    blob_cache,
+                    self.p2p_network.clone(),
+                    authority_names_to_peer_ids,
+                    self.metrics.mpc_data_blob_fetch_total.clone(),
+                );
+                let fetcher = Arc::new(fetcher);
+                Some(tokio::spawn(async move {
+                    fetcher.run().await;
+                }))
+            } else {
+                None
+            };
+
+            // Joiner bootstrap verification: a node that is a validator
+            // this epoch (E) but was NOT in the prior committee (E-1) is
+            // a true joiner. Its cross-epoch off-chain trust anchor is
+            // the E-1 handoff cert (signed by the E-1 committee, pinning
+            // the handoff into E). Fetch it from current-committee peers
+            // and verify it (epoch-bound, prior committee, next-committee
+            // pubkey-set hash). Surfaces a tampered/wrong bootstrap; does
+            // not halt on failure.
+            let joiner_bootstrap_handle = if off_chain_metadata_enabled
+                && cur_epoch_store.epoch() >= 1
+            {
+                use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
+                    BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
+                    P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
+                };
+                use ika_core::sui_connector::pubkey_provider_updater::{
+                    fetch_previous_committee, fetch_previous_committee_consensus_pubkeys,
+                };
+                use ika_core::validator_metadata::{
+                    StaticConsensusPubkeyProvider, next_committee_pubkey_set,
+                    verify_joiner_bootstrap_cert,
+                };
+                use ika_types::sui::epoch_start_system::{
+                    EpochStartSystemTrait, EpochStartValidatorInfoTrait,
+                };
+                let current_epoch = cur_epoch_store.epoch();
+                let prior_epoch = current_epoch - 1;
+                let self_name = cur_epoch_store.name;
+                let prior_committee = match self
+                    .state
+                    .committee_store()
+                    .get_committee(&prior_epoch)
+                    .ok()
+                    .flatten()
+                {
+                    Some(committee) => Some(committee),
+                    // A true joiner that never observed/persisted the prior
+                    // epoch has no local committee for it, so the cross-epoch
+                    // trust anchor (and the network-key blob install it gates)
+                    // would be skipped — leaving the joiner's off-chain overlay
+                    // permanently incomplete and wedging the epoch advance.
+                    // Chain-read the prior committee from
+                    // `validator_set.previous_committee` (the same source the
+                    // bootstrap already chain-reads consensus pubkeys from) so
+                    // bootstrap can still run.
+                    None => match fetch_previous_committee(&sui_client, prior_epoch).await {
+                        Ok(committee) => {
+                            info!(
+                                prior_epoch,
+                                "prior committee absent locally; chain-read it for joiner \
+                                 bootstrap from validator_set.previous_committee"
+                            );
+                            Some(Arc::new(committee))
+                        }
+                        Err(error) => {
+                            warn!(
+                                ?error,
+                                prior_epoch,
+                                "failed to chain-read the prior committee for joiner bootstrap"
+                            );
+                            None
+                        }
+                    },
+                };
+                let perpetual = self.state.perpetual_tables();
+                // Every validator anchors the new epoch on the prior
+                // epoch's handoff cert. A continuing validator that
+                // crossed quorum already persisted it during E-1 — that
+                // cert is re-verified before it anchors (a persisted cert
+                // is never trusted blindly); anyone missing it (a joiner,
+                // or a continuing validator that didn't observe quorum)
+                // fetches + verifies + persists it here, so the
+                // cross-epoch trust anchor is locally available for
+                // network-key instantiation.
+                let already_have_cert = perpetual
+                    .get_certified_handoff_attestation(prior_epoch)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                match prior_committee {
+                    Some(prior_committee) => {
+                        let is_joiner = !prior_committee.authority_exists(&self_name);
+                        // Consensus pubkeys are fixed at registration, so
+                        // the current epoch's active-validator set supplies
+                        // the continuing prior-committee signers' keys.
+                        // Members that have since departed the active set
+                        // are resolved from chain inside the task below.
+                        let current_consensus_pubkeys: Vec<_> = cur_epoch_store
+                            .epoch_start_state()
+                            .get_ika_validators()
+                            .into_iter()
+                            .map(|v| (v.authority_name(), v.get_consensus_pubkey()))
+                            .collect();
+                        let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
+                        let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
+                            .epoch_start_state()
+                            .get_authority_names_to_peer_ids()
+                            .into_values()
+                            .collect();
+                        if already_have_cert {
+                            info!(
+                                current_epoch,
+                                prior_epoch,
+                                is_joiner,
+                                "anchoring the new epoch on the locally-persisted prior-epoch \
+                                 handoff cert (re-verifying it before it anchors)"
+                            );
+                        } else {
+                            info!(
+                                current_epoch,
+                                prior_epoch,
+                                is_joiner,
+                                "anchoring the new epoch on the prior-epoch handoff cert \
+                                 (not held locally; fetching + verifying from peers)"
+                            );
+                        }
+                        let fetch_network = self.p2p_network.clone();
+                        let source_network = self.p2p_network.clone();
+                        let fetch_store = cur_epoch_store.clone();
+                        let cert_perpetual = perpetual.clone();
+                        let fail_closed_shutdown = self.shutdown_channel_tx.clone();
+                        let bootstrap_sui_client = sui_client.clone();
+                        let bootstrap_outcomes =
+                            self.metrics.joiner_bootstrap_outcomes_total.clone();
+                        Some(tokio::spawn(async move {
+                            // Resolve the prior committee's consensus
+                            // pubkeys for cert verification. Continuing
+                            // members come from the current active set
+                            // (already in hand); members that departed the
+                            // active set since signing are chain-read by
+                            // object id (their StakingPool persists), so a
+                            // valid cert isn't wrongly Rejected under churn.
+                            // Best-effort: on RPC failure proceed with the
+                            // current set and let the retry loop re-attempt.
+                            let mut consensus_pubkeys = current_consensus_pubkeys;
+                            match fetch_previous_committee_consensus_pubkeys(&bootstrap_sui_client)
+                                .await
+                            {
+                                Ok(prior) => consensus_pubkeys.extend(prior),
+                                Err(e) => warn!(
+                                    error = ?e,
+                                    prior_epoch,
+                                    "failed to chain-read prior-committee consensus pubkeys; \
+                                     proceeding with the current active set only"
+                                ),
+                            }
+                            let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
+                                consensus_pubkeys,
+                            ));
+                            let verify: CertVerifier = Arc::new(move |cert| {
+                                verify_joiner_bootstrap_cert(
+                                    cert,
+                                    prior_epoch,
+                                    &prior_committee,
+                                    provider.as_ref(),
+                                    expected_next.iter().copied(),
+                                )
+                            });
+                            // Defense in depth — same policy as
+                            // `prepare_handoff_anchor`: a persisted cert is
+                            // ALWAYS re-verified before it anchors, so a
+                            // tampered or corrupted local handoff-cert DB
+                            // can't silently anchor the epoch. On a verified
+                            // persisted cert, (re-)install the outputs it
+                            // certifies (idempotent: digests already held
+                            // locally skip the fetch) and skip the peer fetch.
+                            // (When the cert vanished between the epoch-start
+                            // check and this task, fall through to the peer
+                            // fetch path below.)
+                            if already_have_cert
+                                && let Some(persisted) = cert_perpetual
+                                    .get_certified_handoff_attestation(prior_epoch)
+                                    .ok()
+                                    .flatten()
+                            {
+                                match verify(&persisted) {
+                                    Ok(()) => {
+                                        let missing_outputs = install_joiner_network_key_outputs(
+                                            &persisted,
+                                            &fetch_network,
+                                            &peer_ids,
+                                            &fetch_store,
+                                        )
+                                        .await;
+                                        if !missing_outputs.is_empty() {
+                                            warn!(
+                                                prior_epoch,
+                                                missing_key_ids = ?missing_outputs,
+                                                "could not fetch cert-matching network-key \
+                                                 outputs for some keys from any peer; the \
+                                                 prepare barrier will keep retrying"
+                                            );
+                                        }
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            prior_epoch,
+                                            error = ?e,
+                                            "the locally-persisted handoff cert FAILED \
+                                             re-verification at epoch start — the local \
+                                             handoff-cert DB is tampered or corrupted. \
+                                             Halting the node (fail-closed) rather than \
+                                             anchoring the epoch on an unverified cert."
+                                        );
+                                        let _ = fail_closed_shutdown.send(None);
+                                        return;
+                                    }
+                                }
+                            }
+                            let source = Arc::new(P2pHandoffCertSource::new(
+                                source_network,
+                                peer_ids.clone(),
+                            ));
+                            let verifier = JoinerBootstrapVerifier::new(
+                                prior_epoch,
+                                source,
+                                verify,
+                                BootstrapRetryConfig {
+                                    retry_interval: Duration::from_secs(10),
+                                    max_attempts: 30,
+                                },
+                            );
+                            match verifier.run().await {
+                                BootstrapOutcome::Verified(cert) => {
+                                    bootstrap_outcomes.with_label_values(&["verified"]).inc();
+                                    // Persist the verified anchor so
+                                    // network-key instantiation can read
+                                    // it locally and this node can serve
+                                    // it to peers still fetching.
+                                    if let Err(e) = cert_perpetual
+                                        .insert_certified_handoff_attestation(prior_epoch, &cert)
+                                    {
+                                        warn!(
+                                            error = ?e,
+                                            prior_epoch,
+                                            "failed to persist bootstrap handoff cert"
+                                        );
+                                    }
+                                    let missing_outputs = install_joiner_network_key_outputs(
+                                        &cert,
+                                        &fetch_network,
+                                        &peer_ids,
+                                        &fetch_store,
+                                    )
+                                    .await;
+                                    if !missing_outputs.is_empty() {
+                                        // One summary warn for the one-shot
+                                        // bootstrap path (the per-key fetch
+                                        // failures inside log at debug); the
+                                        // prepare barrier keeps retrying.
+                                        warn!(
+                                            prior_epoch,
+                                            missing_key_ids = ?missing_outputs,
+                                            "joiner bootstrap could not fetch cert-matching \
+                                             network-key outputs for some keys from any peer; \
+                                             the prepare barrier will keep retrying"
+                                        );
+                                    }
+                                }
+                                BootstrapOutcome::Rejected => {
+                                    bootstrap_outcomes.with_label_values(&["rejected"]).inc();
+                                    // Fail-closed: peers served certs but
+                                    // NONE verified against the prior
+                                    // committee — a genuine cross-epoch
+                                    // trust-anchor mismatch (a wrong
+                                    // prior-committee view, or every
+                                    // reachable peer serving certs for the
+                                    // wrong committee — a possible eclipse).
+                                    // A single bad peer can't cause this
+                                    // (every peer is tried each round), so
+                                    // refuse to participate on a broken
+                                    // anchor: halt the node so an operator
+                                    // investigates instead of silently
+                                    // limping without a verified handoff.
+                                    error!(
+                                        prior_epoch,
+                                        "cross-epoch bootstrap trust anchor REJECTED — \
+                                         halting the node (fail-closed). Investigate a wrong \
+                                         prior-committee view or peers serving certs for the \
+                                         wrong committee (possible eclipse)."
+                                    );
+                                    let _ = fail_closed_shutdown.send(None);
+                                }
+                                // Benign: no peer served a cert within the
+                                // attempt budget (propagation lag) — already
+                                // logged inside `run()`; the anchor is merely
+                                // unconfirmed, not contradicted.
+                                BootstrapOutcome::Unavailable => {
+                                    bootstrap_outcomes.with_label_values(&["unavailable"]).inc();
+                                }
+                            }
+                        }))
+                    }
+                    None => {
+                        warn_bootstrap_inputs_unavailable(
+                            prior_epoch,
+                            "prior committee not in committee store",
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Installs a `JoinerPubkeyProvider` derived from the
+            // next-epoch committee so the per-epoch store accepts
+            // next-epoch (joiner) `ValidatorMpcDataAnnouncement`s
+            // instead of silently dropping them.
+            let joiner_pubkey_updater_handle = if off_chain_metadata_enabled {
+                let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_next_epoch_committee(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        sui_client.clone(),
+                    );
+                let updater = Arc::new(updater);
+                Some(tokio::spawn(async move {
+                    updater.run().await;
+                }))
+            } else {
+                None
+            };
+
+            // Install the off-chain blob overlay so the network-
+            // keys sync task prefers locally-cached DKG /
+            // reconfiguration output bytes (populated by the
+            // producer cache) over the chain blobs. Replaces the
+            // previous-epoch installation (if any); the `Weak`
+            // adapter naturally expires when the per-epoch store
+            // drops.
+            if off_chain_metadata_enabled {
+                self.sui_connector_service
+                    .install_network_key_blob_source(Box::new(
+                        ika_core::validator_metadata::EpochStoreBlobSource::new(Arc::downgrade(
+                            &cur_epoch_store,
+                        )),
+                    ));
+
+                // Install the off-chain validator-mpc_data assembler so
+                // `sync_next_committee` builds the next `Committee`'s
+                // class_groups_public_keys_and_proofs from validators'
+                // own `mpc_data` announcements + the perpetual blob
+                // store instead of refetching from chain. Falls back
+                // to chain when the off-chain set is `Incomplete`.
+                self.sui_connector_service.install_mpc_data_source(Box::new(
+                    ika_core::validator_metadata::EpochStoreMpcDataSource::new(
+                        Arc::downgrade(&cur_epoch_store),
+                        self.state.perpetual_tables(),
+                    ),
+                ));
+
+                // Install the joiner-announcement relay impl on the
+                // Anemo `SubmitMpcDataAnnouncement` server so a peer
+                // joiner's announcement gets verified locally and
+                // forwarded into consensus instead of being rejected
+                // with "relay not installed".
+                if let Some(components) = &*self.validator_components.lock().await {
+                    self.mpc_announcement_relay.install(Box::new(
+                        ika_core::epoch_tasks::announcement_relay::ConsensusBackedAnnouncementRelay::new(
+                            Arc::downgrade(&cur_epoch_store),
+                            Arc::new(components.consensus_adapter.clone()),
+                            ika_core::blob_cache::BlobCache::new(
+                                self.mpc_data_blob_store.clone(),
+                                self.state.perpetual_tables(),
+                            ),
+                        ),
+                    ));
+                }
+            }
+
+            // Installs a `ConsensusPubkeyProvider` from the current
+            // committee's on-chain `consensus_pubkey_bytes` so the
+            // per-epoch store can verify incoming
+            // `HandoffSignatureMessage`s (otherwise every one drops
+            // as `UnknownSigner`).
+            let consensus_pubkey_updater_handle = if off_chain_metadata_enabled {
+                let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_active_committee(
+                        Arc::downgrade(&cur_epoch_store),
+                        cur_epoch_store.epoch(),
+                        sui_client.clone(),
+                    );
+                let updater = Arc::new(updater);
+                Some(tokio::spawn(async move {
+                    updater.run().await;
+                }))
+            } else {
+                None
+            };
 
             let stop_condition = self
                 .sui_connector_service
@@ -1426,6 +2148,30 @@ impl IkaNode {
                 }
             };
             end_of_publish_sender_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            handoff_signature_sender_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            mpc_data_announcement_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            joiner_pubkey_updater_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            peer_blob_fetcher_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            joiner_bootstrap_handle.map(|handle| {
+                handle.abort();
+                Some(())
+            });
+            consensus_pubkey_updater_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });
@@ -1539,6 +2285,35 @@ impl IkaNode {
 
                 consensus_store_pruner.prune(next_epoch).await;
 
+                // Prepare-then-start barrier. Block here until the full
+                // verified handoff data for the epoch we are entering is
+                // locally present, THEN start the epoch's MPC components.
+                // Otherwise the components start while network-key handoff
+                // data is still arriving asynchronously, and epoch-N sign
+                // rounds run against STALE (epoch N-1) network-key shares,
+                // failing with `FailedToAdvanceMPC(InvalidParameters)`.
+                //
+                // Readiness is decided off the verified handoff cert + this
+                // validator's local reconfiguration-output digest slice (see
+                // `wait_for_handoff_data_ready`), so the barrier needs no
+                // blob-source overlay pre-install here — the per-iteration
+                // install (~line 1991) handles the syncer overlay in the
+                // next loop iteration as before.
+                //
+                // Only a validator in the NEW epoch needs the handoff data,
+                // so only it prepares. A node leaving the committee
+                // (validator last epoch, not this one) must not block on
+                // handoff data it will never use.
+                if self.state.is_validator(&new_epoch_store) {
+                    self.wait_for_handoff_data_ready(
+                        next_epoch,
+                        cur_epoch_store.epoch(),
+                        &cur_epoch_store,
+                        &new_epoch_store,
+                    )
+                    .await;
+                }
+
                 if self.state.is_validator(&new_epoch_store) {
                     // Only restart consensus if this node is still a validator in the new epoch.
                     Some(
@@ -1648,6 +2423,410 @@ impl IkaNode {
         new_epoch_store
     }
 
+    /// Ensures the cross-epoch trust anchor for the epoch we are entering
+    /// is locally present + verified, fetching it inline if it is not.
+    ///
+    /// Every validator anchors the epoch it enters (`anchor_epoch + 1`) on
+    /// the `anchor_epoch` handoff cert — the cert the `anchor_epoch`
+    /// committee produced, pinning the handoff into `anchor_epoch + 1` (it
+    /// certifies the network-key output digests the new epoch inherits and
+    /// binds the hash of the new committee's pubkey set). A continuing
+    /// validator that crossed quorum at `anchor_epoch`'s EndOfPublish has
+    /// already persisted this cert; for anyone missing it (a joiner, or a
+    /// continuing validator that didn't observe quorum) it must be
+    /// fetched + verified + persisted here.
+    ///
+    /// This is the synchronous, inline-awaited sibling of the
+    /// `joiner_bootstrap_handle` task spawned at epoch start: that task
+    /// anchors the *prior* epoch and runs in the *next* loop iteration,
+    /// which is too late for the prepare-then-start barrier at the
+    /// reconfigure seam (the barrier would deadlock waiting on a cert that
+    /// nothing fetches until after the barrier). So the barrier calls this
+    /// directly for `anchor_epoch = cur_epoch`.
+    ///
+    /// `anchor_epoch` here is the *current* epoch, so the committee that
+    /// signed the cert is the one we are still in (`cur_epoch_store`'s
+    /// committee) and whose consensus pubkeys come from the current active
+    /// validator set — no chain read of a departed prior committee is
+    /// needed (unlike the prior-epoch joiner-bootstrap path).
+    ///
+    /// REDUNDANT VERIFICATION (defense in depth): a handoff cert is
+    /// verified TWICE in its lifetime. The first verification is in the
+    /// bootstrap fetch path, before the cert is ever written to the local
+    /// DB. The second is HERE, when the cert is *consumed* to anchor the
+    /// new epoch — a persisted cert is ALWAYS re-verified against the
+    /// signing committee before it is allowed to anchor, so a corrupted or
+    /// tampered local handoff-cert DB cannot silently anchor an epoch on a
+    /// cert that no longer verifies. The same `verify` closure backs both
+    /// the persisted-cert re-check and the fetch path's per-candidate
+    /// verification.
+    ///
+    /// Returns `Some(cert)` — the verified anchor cert — iff one is locally
+    /// present afterward, so the caller can read the output digests it
+    /// certifies without a second DB read. Returns `None` when the anchor
+    /// is not yet confirmed (no peer served a cert within the attempt
+    /// budget — propagation lag, re-attempt) OR after fail-closing (halts
+    /// the node via the shutdown channel) when a persisted cert fails
+    /// re-verification (tampered/corrupted DB), or when peers served certs
+    /// but none verified against the signing committee — a genuine
+    /// cross-epoch trust-anchor mismatch (a possible eclipse), not
+    /// something to limp past.
+    async fn prepare_handoff_anchor(
+        &self,
+        anchor_epoch: EpochId,
+        cur_epoch_store: &AuthorityPerEpochStore,
+        new_epoch_store: &Arc<AuthorityPerEpochStore>,
+    ) -> Option<CertifiedHandoffAttestation> {
+        use ika_core::epoch_tasks::joiner_bootstrap_verifier::{
+            BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
+            P2pHandoffCertSource,
+        };
+        use ika_core::validator_metadata::{
+            StaticConsensusPubkeyProvider, next_committee_pubkey_set, verify_joiner_bootstrap_cert,
+        };
+        use ika_types::sui::epoch_start_system::{
+            EpochStartSystemTrait, EpochStartValidatorInfoTrait,
+        };
+
+        // Build the verification closure FIRST so it can re-verify a
+        // persisted cert as well as back the fetch path. The signing
+        // committee is the one we are still in: `anchor_epoch` is
+        // `cur_epoch`, and `cur_epoch_store.committee()` is exactly that
+        // committee. Its members' consensus pubkeys are fixed at
+        // registration and are in the current active validator set.
+        let signing_committee = cur_epoch_store.committee().as_ref().clone();
+        let consensus_pubkeys: Vec<_> = cur_epoch_store
+            .epoch_start_state()
+            .get_ika_validators()
+            .into_iter()
+            .map(|v| (v.authority_name(), v.get_consensus_pubkey()))
+            .collect();
+        // The cert pins the hash of the committee being handed into —
+        // the epoch we are entering, whose committee is `new_epoch_store`'s.
+        let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
+        let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
+            .epoch_start_state()
+            .get_authority_names_to_peer_ids()
+            .into_values()
+            .collect();
+
+        let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(consensus_pubkeys));
+        let verify: CertVerifier = Arc::new(move |cert| {
+            verify_joiner_bootstrap_cert(
+                cert,
+                anchor_epoch,
+                &signing_committee,
+                provider.as_ref(),
+                expected_next.iter().copied(),
+            )
+        });
+
+        // SECOND verification (the first was before this cert was written
+        // to the DB in the bootstrap path): a persisted cert must NOT
+        // silently anchor an epoch — re-verify it now. A tampered or
+        // corrupted local handoff-cert DB fails here and fail-closes
+        // rather than anchoring the new epoch on a cert that no longer
+        // verifies against the signing committee.
+        if let Some(persisted) = new_epoch_store
+            .get_certified_handoff_attestation(anchor_epoch)
+            .ok()
+            .flatten()
+        {
+            return match verify(&persisted) {
+                Ok(()) => {
+                    // Holding the cert does NOT imply holding the network-key
+                    // outputs it certifies: a lagging validator can adopt the
+                    // cert from a buffered peer-signature quorum (see
+                    // `quorum_attestation_in_buffer`) without ever computing or
+                    // caching those outputs. The barrier's condition 2 requires
+                    // every certified reconfiguration output held locally, so
+                    // fetch + cache them now (idempotent — a no-op when already
+                    // present). Without this a cert-but-no-outputs validator
+                    // blocks at the barrier forever, never enters the epoch, and
+                    // never publishes its mpc_data — wedging the next
+                    // reconfiguration's committee assembly at sub-full coverage.
+                    install_joiner_network_key_outputs(
+                        &persisted,
+                        &self.p2p_network,
+                        &peer_ids,
+                        new_epoch_store,
+                    )
+                    .await;
+                    Some(persisted)
+                }
+                Err(e) => {
+                    error!(
+                        anchor_epoch,
+                        error = ?e,
+                        "prepare-then-start: the locally-persisted handoff cert FAILED \
+                         re-verification — the local handoff-cert DB is tampered or corrupted. \
+                         Halting the node (fail-closed) rather than anchoring the epoch on an \
+                         unverified cert."
+                    );
+                    let _ = self.shutdown_channel_tx.send(None);
+                    None
+                }
+            };
+        }
+
+        // Absent from the DB — fetch + verify + persist + install.
+        info!(
+            anchor_epoch,
+            "prepare-then-start: anchor cert for the epoch being entered is not held locally; \
+             fetching + verifying it inline from peers before starting MPC"
+        );
+
+        let source = Arc::new(P2pHandoffCertSource::new(
+            self.p2p_network.clone(),
+            peer_ids.clone(),
+        ));
+        let verifier = JoinerBootstrapVerifier::new(
+            anchor_epoch,
+            source,
+            verify,
+            BootstrapRetryConfig {
+                retry_interval: Duration::from_secs(10),
+                max_attempts: 30,
+            },
+        );
+
+        match verifier.run().await {
+            BootstrapOutcome::Verified(cert) => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["verified"])
+                    .inc();
+                // Persist the verified anchor so network-key
+                // instantiation can read it locally and this node can
+                // serve it to peers still fetching.
+                if let Err(e) = self
+                    .state
+                    .perpetual_tables()
+                    .insert_certified_handoff_attestation(anchor_epoch, &cert)
+                {
+                    warn!(error = ?e, anchor_epoch, "failed to persist anchor handoff cert");
+                }
+                install_joiner_network_key_outputs(
+                    &cert,
+                    &self.p2p_network,
+                    &peer_ids,
+                    new_epoch_store,
+                )
+                .await;
+                Some(*cert)
+            }
+            BootstrapOutcome::Rejected => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["rejected"])
+                    .inc();
+                // Fail-closed: peers served certs but NONE verified
+                // against the signing committee — a genuine cross-epoch
+                // trust-anchor mismatch (a wrong committee view, or every
+                // reachable peer serving certs for the wrong committee, a
+                // possible eclipse). Refuse to participate on a broken
+                // anchor: halt so an operator investigates rather than
+                // silently entering the epoch on an unverified handoff.
+                error!(
+                    anchor_epoch,
+                    "prepare-then-start: cross-epoch anchor REJECTED — halting the node \
+                     (fail-closed). Investigate a wrong committee view or peers serving certs \
+                     for the wrong committee (possible eclipse)."
+                );
+                let _ = self.shutdown_channel_tx.send(None);
+                None
+            }
+            // No peer served a cert within the attempt budget
+            // (propagation lag) — the anchor is unconfirmed, not
+            // contradicted. The barrier will re-attempt.
+            BootstrapOutcome::Unavailable => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["unavailable"])
+                    .inc();
+                None
+            }
+        }
+    }
+
+    /// Prepare-then-start barrier: blocks until the full handoff data for
+    /// the epoch being entered (`next_epoch`) is locally present AND
+    /// verified, then returns so the new epoch's MPC components may start.
+    ///
+    /// WHY THIS EXISTS: without it, the new epoch's MPC components start
+    /// immediately at the reconfigure seam while the network-key handoff
+    /// data still arrives asynchronously. A validator can then begin
+    /// epoch-N signing with STALE (epoch N-1) network-key shares, and
+    /// threshold sign rounds fail with `FailedToAdvanceMPC(InvalidParameters)`.
+    /// Starting the epoch stale is never acceptable, so this blocks
+    /// INDEFINITELY (no timeout): a stuck validator that is visibly not
+    /// signing is strictly safer than one signing with the wrong shares.
+    ///
+    /// The barrier waits on two conditions, both grounded in off-chain data
+    /// (the verified handoff cert + this validator's local outputs) — no
+    /// chain state, and no dependency on the chain-fed `network_keys_receiver`:
+    ///   1. The cross-epoch trust anchor (the `cur_epoch` handoff cert) is
+    ///      locally present + verified — `prepare_handoff_anchor` returns it,
+    ///      fetching it inline if missing.
+    ///   2. Every `NetworkReconfigurationOutput` item the cert certifies is
+    ///      held locally with a digest matching the cert. The cert's single
+    ///      `epoch` field scopes the whole handoff, so there is no per-key
+    ///      epoch to check — only per-key presence in this validator's
+    ///      reconfiguration-output digest slice (keyed by `cur_epoch`, the
+    ///      reconfiguration session's epoch). A continuing validator caches
+    ///      its own MPC output there; a joiner has `prepare_handoff_anchor`
+    ///      fetch + cache the cert's outputs into the same slice. See
+    ///      `all_cert_reconfiguration_outputs_held_locally`.
+    async fn wait_for_handoff_data_ready(
+        &self,
+        next_epoch: EpochId,
+        cur_epoch: EpochId,
+        cur_epoch_store: &AuthorityPerEpochStore,
+        new_epoch_store: &Arc<AuthorityPerEpochStore>,
+    ) {
+        // Off-chain handoff is the only thing this barrier waits for; when
+        // the protocol flag is off (pre-v4) there is no off-chain handoff
+        // data to wait for, so skip the barrier entirely.
+        if !cur_epoch_store
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+        {
+            return;
+        }
+
+        info!(
+            next_epoch,
+            "prepare-then-start: awaiting full verified handoff data for epoch {next_epoch} \
+             before starting MPC"
+        );
+        self.metrics.handoff_prepare_waiting.set(1);
+        let started_at = std::time::Instant::now();
+        let mut retries: u64 = 0;
+
+        // The verified anchor is obtained ONCE and reused across iterations:
+        // the cert is immutable for the epoch, so re-fetching/re-verifying its
+        // committee signatures every second would be pure waste (and on the
+        // fetch path, a per-second P2P hammering of converging peers).
+        let mut anchor_cert: Option<CertifiedHandoffAttestation> = None;
+        loop {
+            // Condition 1: the cross-epoch trust anchor — the `cur_epoch`
+            // handoff cert — is present + verified. `prepare_handoff_anchor`
+            // returns it (re-verified) when already held, fetches + verifies
+            // + persists it inline when missing, and also fetches + caches
+            // the certified outputs this node is missing into the local
+            // digest slice condition 2 reads. `None` means the anchor is not
+            // yet confirmed (propagation lag) — re-attempt next iteration.
+            if anchor_cert.is_none() {
+                anchor_cert = self
+                    .prepare_handoff_anchor(cur_epoch, cur_epoch_store, new_epoch_store)
+                    .await;
+            }
+            let cert = anchor_cert.as_ref();
+
+            // Condition 2: every network-key reconfiguration output the cert
+            // certifies is held locally with a digest matching the cert.
+            // Grounded entirely in the verified cert (the off-chain anchor)
+            // and this validator's own reconfiguration-output digest slice,
+            // keyed by the reconfiguration session's epoch (`cur_epoch`) — no
+            // chain state, and no per-key epoch (the cert's single epoch
+            // scopes the whole handoff). A read error is treated as not-ready
+            // (empty slice); the periodic WARN below surfaces a persistent
+            // failure.
+            let local_reconfiguration_digests = cur_epoch_store
+                .get_network_reconfiguration_output_digests_for_epoch(cur_epoch)
+                .unwrap_or_default();
+            let ready = cert.is_some_and(|cert| {
+                all_cert_reconfiguration_outputs_held_locally(cert, &local_reconfiguration_digests)
+            });
+
+            if ready {
+                let elapsed = started_at.elapsed();
+                self.metrics.handoff_prepare_waiting.set(0);
+                self.metrics
+                    .handoff_prepare_duration_seconds
+                    .observe(elapsed.as_secs_f64());
+                info!(
+                    next_epoch,
+                    "prepare-then-start: epoch {next_epoch} handoff data ready+verified after \
+                     {}s, {retries} retries; starting MPC",
+                    elapsed.as_secs()
+                );
+                return;
+            }
+
+            retries += 1;
+            self.metrics.handoff_prepare_retries_total.inc();
+
+            // Anchor held but some certified output still missing locally:
+            // retry fetching JUST the missing ones (the local-presence
+            // precheck inside skips everything already held, so this is not
+            // a refetch of held blobs).
+            if let Some(cert) = cert {
+                let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
+                    .epoch_start_state()
+                    .get_authority_names_to_peer_ids()
+                    .into_values()
+                    .collect();
+                install_joiner_network_key_outputs(
+                    cert,
+                    &self.p2p_network,
+                    &peer_ids,
+                    new_epoch_store,
+                )
+                .await;
+            }
+
+            // Surface the breakdown roughly every 10s so a hang is never
+            // silent on a dashboard or in the logs.
+            if retries.is_multiple_of(10) {
+                let (cert_reconfiguration_items, missing_key_ids) = match &cert {
+                    Some(cert) => {
+                        let total = cert
+                            .attestation
+                            .items
+                            .iter()
+                            .filter(|(item, _)| {
+                                matches!(item, HandoffItemKey::NetworkReconfigurationOutput { .. })
+                            })
+                            .count();
+                        let missing: Vec<ObjectID> = cert
+                            .attestation
+                            .items
+                            .iter()
+                            .filter_map(|(item, digest)| match item {
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id }
+                                    if local_reconfiguration_digests.get(key_id)
+                                        != Some(digest) =>
+                                {
+                                    Some(*key_id)
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        (total, missing)
+                    }
+                    None => (0, Vec::new()),
+                };
+                warn!(
+                    next_epoch,
+                    cur_epoch,
+                    have_cert = cert.is_some(),
+                    cert_reconfiguration_items,
+                    missing_locally = missing_key_ids.len(),
+                    missing_key_ids = ?missing_key_ids,
+                    retries,
+                    "prepare-then-start: still awaiting full verified handoff data for epoch \
+                     {next_epoch}"
+                );
+            }
+
+            // Re-check after 1s. No timeout — block indefinitely
+            // (safety-first: never start the epoch without the verified
+            // handoff outputs the cert certifies).
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
     pub fn get_config(&self) -> &NodeConfig {
         &self.config
     }
@@ -1665,6 +2844,101 @@ impl IkaNode {
             .sim_safe_mode_expected
             .store(new_value, Ordering::Relaxed);
     }
+}
+
+/// A freshly-active joiner never computed this epoch's network-key
+/// outputs — it wasn't in the committee that produced them, so it
+/// *receives* them. After its bootstrap cert verifies, fetch each DKG /
+/// reconfiguration output the cert certifies from current-committee
+/// peers (by the cert's item digest), verify the returned bytes against
+/// that digest (the serving peer is untrusted and `fetch_blob` does not
+/// check), and cache it locally so the node can instantiate the key.
+/// Best-effort and idempotent — a content-addressed re-cache is a no-op.
+///
+/// Items whose certified output is ALREADY held locally (the local digest
+/// equals the cert's) are skipped before any network I/O: a continuing
+/// validator holds every output it computed, so without this precheck each
+/// epoch boundary would re-download multi-MB blobs from peers that are
+/// busy converging the same handoff.
+///
+/// Returns the key ids of certified outputs that could NOT be fetched and
+/// installed this pass. Per-key fetch failures log at debug only — the
+/// prepare barrier calls this every second of its 1s retry loop, so the
+/// operator-facing stall signal is the barrier's own every-10th-retry warn
+/// (which carries the missing key ids); one-shot callers (joiner bootstrap)
+/// summarize the returned list themselves.
+async fn install_joiner_network_key_outputs(
+    cert: &CertifiedHandoffAttestation,
+    network: &Network,
+    peers: &[PeerId],
+    epoch_store: &Arc<AuthorityPerEpochStore>,
+) -> Vec<ObjectID> {
+    let mut missing_key_ids: Vec<ObjectID> = Vec::new();
+    let local_dkg_digests = epoch_store
+        .get_network_dkg_output_digests()
+        .unwrap_or_default();
+    let local_reconfiguration_digests = epoch_store
+        .get_network_reconfiguration_output_digests_for_epoch(cert.attestation.epoch)
+        .unwrap_or_default();
+    for (item_key, expected_digest) in &cert.attestation.items {
+        let (key_id, is_reconfiguration) = match item_key {
+            HandoffItemKey::NetworkDkgOutput { key_id } => (*key_id, false),
+            HandoffItemKey::NetworkReconfigurationOutput { key_id } => (*key_id, true),
+            HandoffItemKey::ValidatorMpcData { .. } => continue,
+        };
+        let held_locally = if is_reconfiguration {
+            local_reconfiguration_digests.get(&key_id) == Some(expected_digest)
+        } else {
+            local_dkg_digests.get(&key_id) == Some(expected_digest)
+        };
+        if held_locally {
+            continue;
+        }
+        let mut verified_bytes = None;
+        for peer in peers {
+            match fetch_blob(network, *peer, *expected_digest).await {
+                Ok(Some(bytes)) => {
+                    // `fetch_blob` trusts the serving peer; the network-key
+                    // output digest is `Blake2b256`, identical to
+                    // `mpc_data_blob_hash`, so re-derive and match against
+                    // the cert's item digest before accepting the bytes.
+                    if &mpc_data_blob_hash(&bytes) == expected_digest {
+                        verified_bytes = Some(bytes);
+                        break;
+                    }
+                    debug!(
+                        ?key_id,
+                        ?peer,
+                        "network-key output blob from peer did not match the cert digest; ignoring"
+                    );
+                }
+                Ok(None) => {}
+                Err(e) => debug!(?key_id, error = %e, "network-key output fetch transport error"),
+            }
+        }
+        let Some(bytes) = verified_bytes else {
+            debug!(
+                ?key_id,
+                "could not fetch a cert-matching network-key output from any peer this pass"
+            );
+            missing_key_ids.push(key_id);
+            continue;
+        };
+        let cached = if is_reconfiguration {
+            // Key the digest under the epoch this cert attests — the
+            // epoch whose reconfiguration output the cert certifies —
+            // not the joiner's wall-clock epoch, matching the producer
+            // side's session-epoch keying.
+            epoch_store.cache_network_reconfiguration_output(key_id, cert.attestation.epoch, &bytes)
+        } else {
+            epoch_store.cache_network_dkg_output(key_id, &bytes)
+        };
+        if let Err(e) = cached {
+            warn!(?key_id, error = ?e, "failed to cache fetched joiner network-key output");
+            missing_key_ids.push(key_id);
+        }
+    }
+    missing_key_ids
 }
 
 /// Notify state-sync that a new list of trusted peers are now available.
@@ -1739,4 +3013,132 @@ fn max_tx_per_checkpoint(protocol_config: &ProtocolConfig) -> usize {
 #[cfg(test)]
 fn max_tx_per_checkpoint(_: &ProtocolConfig) -> usize {
     2
+}
+
+/// Readiness predicate for the prepare-then-start barrier's network-key
+/// condition, grounded entirely in the verified handoff cert (the off-chain
+/// cross-epoch trust anchor) and this validator's local reconfiguration-output
+/// digest slice — no chain state.
+///
+/// The cert's single `epoch` field scopes the whole handoff (one cert per
+/// epoch, committee-signed), so there is no per-key epoch to check: every
+/// `NetworkReconfigurationOutput` item is an output of the same reconfiguration
+/// session (the one that ran during `cert.attestation.epoch`). The only per-key
+/// question is presence: for each reconfiguration output the cert certifies,
+/// has this validator locally computed/cached a digest-matching copy? (A
+/// continuing validator caches its own MPC output; a joiner has
+/// `install_joiner_network_key_outputs` fetch + cache the cert's outputs into
+/// the same slice.)
+///
+/// Returns true iff every `NetworkReconfigurationOutput { key_id }` item in the
+/// cert has a local digest equal to the cert's item digest. DKG and
+/// validator-mpc_data items are not gated here — the barrier exists to keep the
+/// new epoch from signing against a stale reconfiguration sharing, and the
+/// reconfiguration output is the epoch-varying material. A cert with no
+/// reconfiguration items is trivially ready on this condition.
+fn all_cert_reconfiguration_outputs_held_locally(
+    cert: &CertifiedHandoffAttestation,
+    local_reconfiguration_digests: &BTreeMap<ObjectID, [u8; 32]>,
+) -> bool {
+    cert.attestation
+        .items
+        .iter()
+        .all(|(item, cert_digest)| match item {
+            HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                local_reconfiguration_digests.get(key_id) == Some(cert_digest)
+            }
+            HandoffItemKey::NetworkDkgOutput { .. } | HandoffItemKey::ValidatorMpcData { .. } => {
+                true
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
+
+    fn key_id(index: u8) -> ObjectID {
+        ObjectID::new([index; 32])
+    }
+
+    /// Builds a cert whose only items are `NetworkReconfigurationOutput`s for
+    /// the given `(key_id, digest)` pairs. Signatures are irrelevant to the
+    /// readiness predicate, so they are left empty.
+    fn cert_with_reconfiguration_items(
+        items: Vec<(ObjectID, [u8; 32])>,
+    ) -> CertifiedHandoffAttestation {
+        CertifiedHandoffAttestation {
+            attestation: HandoffAttestation {
+                epoch: 7,
+                next_committee_pubkey_set_hash: [0u8; 32],
+                items: items
+                    .into_iter()
+                    .map(|(key_id, digest)| {
+                        (
+                            HandoffItemKey::NetworkReconfigurationOutput { key_id },
+                            digest,
+                        )
+                    })
+                    .collect(),
+            },
+            signatures: vec![],
+        }
+    }
+
+    #[test]
+    fn all_cert_reconfiguration_outputs_held_locally_cases() {
+        // Cert certifies one reconfiguration output; the local slice holds a
+        // matching digest → ready.
+        let cert = cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32])]);
+        let held = BTreeMap::from([(key_id(0), [1u8; 32])]);
+        assert!(all_cert_reconfiguration_outputs_held_locally(&cert, &held));
+
+        // Output not yet computed/cached locally (empty slice) → not ready.
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert,
+            &BTreeMap::new()
+        ));
+
+        // Local digest differs from the cert's (a stale/wrong local output —
+        // the exact condition the cert-digest match exists to catch) → not ready.
+        let stale = BTreeMap::from([(key_id(0), [9u8; 32])]);
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert, &stale
+        ));
+
+        // Two certified outputs, only one held locally → not ready (EVERY item
+        // the cert certifies must be held + matching).
+        let cert_two =
+            cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
+        let one = BTreeMap::from([(key_id(0), [1u8; 32])]);
+        assert!(!all_cert_reconfiguration_outputs_held_locally(
+            &cert_two, &one
+        ));
+
+        // Both held with matching digests → ready.
+        let both = BTreeMap::from([(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
+        assert!(all_cert_reconfiguration_outputs_held_locally(
+            &cert_two, &both
+        ));
+
+        // A cert with no reconfiguration items is trivially ready (nothing to
+        // wait for), even against an empty slice — and a DKG-only item must NOT
+        // be gated by this reconfiguration-readiness predicate.
+        let dkg_only = CertifiedHandoffAttestation {
+            attestation: HandoffAttestation {
+                epoch: 7,
+                next_committee_pubkey_set_hash: [0u8; 32],
+                items: vec![(
+                    HandoffItemKey::NetworkDkgOutput { key_id: key_id(0) },
+                    [5u8; 32],
+                )],
+            },
+            signatures: vec![],
+        };
+        assert!(all_cert_reconfiguration_outputs_held_locally(
+            &dkg_only,
+            &BTreeMap::new()
+        ));
+    }
 }

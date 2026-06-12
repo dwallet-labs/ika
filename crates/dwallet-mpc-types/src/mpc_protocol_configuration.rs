@@ -159,7 +159,9 @@ lazy_static! {
 /// Returns all supported (curve, signature_algorithms) pairs.
 ///
 /// This is the canonical source of truth, derived from
-/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`].
+/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`] — an
+/// ordered map (see its docs), so the output order is identical on
+/// every validator.
 pub fn supported_curve_to_signature_algorithms()
 -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
     SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES

@@ -21,14 +21,15 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 
 // Record history of protocol version allocations here:
 //
-// Version 1: Original version.
-// Version 4: Internal presign sessions, BLS checkpoints, NOA checkpoints, +
-//            validator-key publication switch from `ClassGroupsEncryptionKeyAndProof`
-//            (mainnet-v1.1.8 shape, v3) to `ValidatorEncryptionKeysAndProofs`
-//            (class-groups + per-curve PVSS HPKE). DKG / Reconfiguration switch
-//            to `twopc_mpc::decentralized_party::*` (PR #1707 upstream); at v3
-//            they run against `decentralized_party_backward_compatible::*` to
-//            stay wire-compatible with mainnet-v1.1.8 peers.
+// Version 1: Original baseline.
+// Version 2: network_encryption_key_version = 2.
+// Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
+// Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
+//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
+//            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
+//            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
+// Version 5: noa_checkpoints on.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -167,6 +168,16 @@ struct FeatureFlags {
     // If true, enables NOA (Network Owned Address) MPC-signed checkpoints.
     #[serde(skip_serializing_if = "is_false")]
     noa_checkpoints: bool,
+
+    // If true, enables the off-chain validator-metadata pipeline:
+    // per-epoch `ValidatorMpcDataAnnouncement` + ready signals
+    // broadcast over consensus, the step-14 kickoff gate, the
+    // sui_syncer DKG/reconfig blob and class-groups overlays,
+    // and the handoff cert produced at EndOfPublish. False means
+    // legacy chain-only behavior; flipping to true at a protocol
+    // version boundary ensures every validator switches together.
+    #[serde(skip_serializing_if = "is_false")]
+    off_chain_validator_metadata: bool,
 }
 
 #[allow(unused)]
@@ -291,6 +302,23 @@ pub struct ProtocolConfig {
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
 
+    /// Number of additional consensus leader rounds the epoch close is
+    /// deferred after a stake-quorum of EndOfPublish votes is observed
+    /// (unless every committee member votes first), so straggler
+    /// `EndOfPublishV2` bundles — which carry their handoff signatures —
+    /// are sequenced before the epoch closes. A protocol constant: all
+    /// validators must agree on it or they fork on the close round.
+    end_of_publish_grace_rounds: Option<u64>,
+
+    /// Number of additional consensus leader rounds the mpc_data freeze is
+    /// deferred after a stake-quorum of `EpochMpcDataReadySignal`s is
+    /// observed, unless full coverage (every committee member signaled and
+    /// no announcer is excluded) is reached first. Gives slower validators'
+    /// mpc_data blobs time to propagate — measured in consensus progress,
+    /// not wall-clock — before the input set is pinned. A protocol
+    /// constant: all validators must agree on it or their frozen sets fork.
+    mpc_data_freeze_grace_rounds: Option<u64>,
+
     // === Network Owned Address (NOA) Sign Presign Configuration (per algorithm) ===
     // Pool minimum sizes
     network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Option<u64>,
@@ -388,6 +416,10 @@ impl ProtocolConfig {
 
     pub fn noa_checkpoints(&self) -> bool {
         self.feature_flags.noa_checkpoints
+    }
+
+    pub fn off_chain_validator_metadata_enabled(&self) -> bool {
+        self.feature_flags.off_chain_validator_metadata
     }
 
     pub fn consensus_round_prober(&self) -> bool {
@@ -590,6 +622,8 @@ impl ProtocolConfig {
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
+            end_of_publish_grace_rounds: Some(50),
+            mpc_data_freeze_grace_rounds: Some(50),
 
             // === Network Owned Address (NOA) Presign Configuration (per algorithm) ===
             // Non-EdDSA algorithms use the same defaults as their internal presign counterparts.
@@ -671,10 +705,13 @@ impl ProtocolConfig {
                     cfg.feature_flags
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
-                    cfg.feature_flags.noa_checkpoints = true;
+                    cfg.feature_flags.off_chain_validator_metadata = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
+                // 5 => {
+                //     cfg.feature_flags.noa_checkpoints = true;
+                // }
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
@@ -687,6 +724,35 @@ impl ProtocolConfig {
                 //     existing_constant: None,
                 _ => panic!("unsupported version {version:?}"),
             }
+        }
+
+        // Local-swarm opt-in (see
+        // `enable_small_presign_pools_for_local_swarm`): shrink both the
+        // internal and network-owned-address presign pools so one host running
+        // the whole validator set can keep them filled. Off unless the local
+        // swarm / `ika start` explicitly enabled it, so testnet/mainnet keep the
+        // per-version production sizes set above.
+        if SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.load(Ordering::Relaxed) {
+            cfg.internal_secp256k1_ecdsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_secp256k1_ecdsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_secp256r1_ecdsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_secp256r1_ecdsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_eddsa_presign_pool_minimum_size = Some(2);
+            cfg.internal_eddsa_presign_pool_maximum_size = Some(10);
+            cfg.internal_schnorrkel_substrate_presign_pool_minimum_size = Some(2);
+            cfg.internal_schnorrkel_substrate_presign_pool_maximum_size = Some(10);
+            cfg.internal_taproot_presign_pool_minimum_size = Some(2);
+            cfg.internal_taproot_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_ecdsa_secp256k1_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_ecdsa_secp256r1_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_ecdsa_secp256r1_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_eddsa_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_eddsa_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size = Some(10);
+            cfg.network_owned_address_taproot_presign_pool_minimum_size = Some(2);
+            cfg.network_owned_address_taproot_presign_pool_maximum_size = Some(10);
         }
         cfg
     }
@@ -703,6 +769,24 @@ impl ProtocolConfig {
             *cur = Some(Box::new(override_fn));
             OverrideGuard
         })
+    }
+
+    /// Enable the small-presign-pool override for this process. Called by the
+    /// local in-memory swarm / `ika start` so a single host running the whole
+    /// validator set can keep both the internal and network-owned-address
+    /// presign pools filled instead of pegging the CPU and stalling epoch
+    /// advance. No-op (production sizes retained) when the
+    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set, so a local network can
+    /// still exercise production-scale pools. Validator binaries never call it,
+    /// so testnet/mainnet are unaffected.
+    pub fn enable_small_presign_pools_for_local_swarm() {
+        if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
+            info!(
+                "IKA_DISABLE_SMALL_PRESIGN_POOLS set; keeping production presign pool sizes for the local swarm"
+            );
+            return;
+        }
+        SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.store(true, Ordering::Relaxed);
     }
 
     /// Get the minimum size of the NOA sign presign pool for a given signature algorithm.
@@ -929,6 +1013,16 @@ type OverrideFn = dyn Fn(ProtocolVersion, ProtocolConfig) -> ProtocolConfig + Se
 thread_local! {
     static CONFIG_OVERRIDE: RefCell<Option<Box<OverrideFn>>> = RefCell::new(None);
 }
+
+/// Process-global switch, set by the local in-memory swarm / `ika start`, to
+/// shrink both the internal and network-owned-address presign pools so a single
+/// host running the whole validator set can keep them filled. The production
+/// pool sizes (thousands of presigns per curve) peg the CPU there and stall
+/// epoch advance. Unlike the thread-local `CONFIG_OVERRIDE` (which only the
+/// calling thread sees), this is honored by `get_for_version_impl` on every
+/// thread and every epoch. Off by default — only the local swarm turns it on,
+/// so testnet/mainnet binaries keep the production sizes.
+static SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM: AtomicBool = AtomicBool::new(false);
 
 #[must_use]
 pub struct OverrideGuard;

@@ -272,6 +272,198 @@ async fn test_partial_visibility_consensus_and_pool_retrieval() {
     );
 }
 
+/// Regression test for the epoch-close overshoot wedge: a global presign
+/// request beyond `last_session_to_complete_in_current_epoch` must not be
+/// voted for (and therefore never served) — serving completes the session
+/// on-chain past the locked target, and the end-of-publish predicate is a
+/// strict equality, so the overshot counter wedges the epoch permanently.
+/// Once the synced target covers the request, it must be served.
+#[tokio::test]
+#[cfg(test)]
+async fn global_presign_beyond_lock_target_held_until_target_covers_it() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+    let epoch_id = 1;
+
+    let mut test_state = build_test_state(4);
+
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
+
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // Stock every pool so the request WOULD be served if it weren't held.
+    let mock_session_id = SessionIdentifier::new(SessionType::InternalPresign, [0u8; 32]);
+    for epoch_store in &test_state.epoch_stores {
+        epoch_store
+            .insert_presigns(
+                DWalletSignatureAlgorithm::EdDSA,
+                network_key_id,
+                1,
+                mock_session_id,
+                vec![vec![1u8; 32]],
+            )
+            .expect("failed to insert presigns");
+    }
+
+    // Sequence number 500 is beyond the target of 400.
+    let presign_id = ObjectID::random();
+    send_global_presign_request_events_batch(
+        epoch_id,
+        &test_state.sui_data_senders,
+        network_key_id,
+        &[([22; 32], 500, presign_id)],
+        DWalletCurve::Curve25519,
+        DWalletSignatureAlgorithm::EdDSA,
+    );
+
+    run_rounds(&mut test_state, 15).await;
+    assert!(
+        validators_with_presign_output(&test_state, presign_id, false).is_empty(),
+        "a global presign beyond the lock target must not be served"
+    );
+
+    // The synced target advances to cover the request (the chain target
+    // moved before the epoch-close lock froze it).
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 500;
+    }
+
+    run_rounds(&mut test_state, 15).await;
+    assert_eq!(
+        validators_with_presign_output(&test_state, presign_id, false).len(),
+        4,
+        "the held global presign must be served once the target covers it"
+    );
+}
+
+/// Regression test for the rejection variant of the overshoot wedge: a user
+/// session that fails at admission must not have its rejection submitted
+/// while its sequence number is beyond the lock target (a quorum'd rejection
+/// completes the session on-chain — Rejected counts as completed). Once the
+/// target covers it, the rejection must flow.
+#[tokio::test]
+#[cfg(test)]
+async fn rejection_beyond_lock_target_held_until_target_covers_it() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let _guard = create_test_protocol_config_guard();
+    let epoch_id = 1;
+
+    let mut test_state = build_test_state(4);
+
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
+
+    let (consensus_round, _network_key_bytes, network_key_id) =
+        create_network_key_test(&mut test_state).await;
+    test_state.consensus_round = consensus_round as usize;
+
+    // A dwallet-specific presign whose dwallet output is garbage fails on
+    // every validator and gets rejected; sequence number 500 is beyond the
+    // target of 400, so the rejection must be held back.
+    let presign_id = ObjectID::random();
+    let session_requests = vec![DWalletSessionRequest {
+        counterparty_chain: Some(CounterpartyChainKind::Sui),
+        session_type: SessionType::User,
+        session_identifier: SessionIdentifier::new(SessionType::User, [23; 32]),
+        session_sequence_number: Some(500),
+        protocol_data: ProtocolData::Presign {
+            data: PresignData {
+                curve: DWalletCurve::Secp256k1,
+                signature_algorithm: DWalletSignatureAlgorithm::ECDSASecp256k1,
+            },
+            dwallet_id: Some(ObjectID::random()),
+            presign_id,
+            dwallet_public_output: Some(vec![1, 2, 3]),
+            dwallet_network_encryption_key_id: network_key_id,
+        },
+        epoch: epoch_id,
+        requires_network_key_data: true,
+        requires_next_active_committee: false,
+        pulled: false,
+    }];
+    test_state.sui_data_senders.iter().for_each(|sender| {
+        let _ = sender
+            .uncompleted_events_sender
+            .send((session_requests.clone(), epoch_id));
+    });
+
+    run_rounds(&mut test_state, 15).await;
+    assert!(
+        validators_with_presign_output(&test_state, presign_id, true).is_empty(),
+        "a rejection beyond the lock target must not be submitted"
+    );
+
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 500;
+    }
+
+    run_rounds(&mut test_state, 15).await;
+    assert_eq!(
+        validators_with_presign_output(&test_state, presign_id, true).len(),
+        4,
+        "the held rejection must be submitted once the target covers it"
+    );
+}
+
+/// Advance consensus and run a service loop iteration on every validator,
+/// `rounds` times.
+async fn run_rounds(test_state: &mut utils::IntegrationTestState, rounds: usize) {
+    for _ in 0..rounds {
+        utils::send_advance_results_between_parties(
+            &test_state.committee,
+            &mut test_state.sent_consensus_messages_collectors,
+            &mut test_state.epoch_stores,
+            test_state.consensus_round as u64,
+        );
+        test_state.consensus_round += 1;
+
+        for service in test_state.dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
+}
+
+/// Validators whose pending checkpoints contain a `RespondDWalletPresign`
+/// for `presign_id` with the given rejection flag.
+fn validators_with_presign_output(
+    test_state: &utils::IntegrationTestState,
+    presign_id: ObjectID,
+    rejected: bool,
+) -> Vec<usize> {
+    test_state
+        .epoch_stores
+        .iter()
+        .enumerate()
+        .filter(|(_, epoch_store)| {
+            let pending = epoch_store.pending_checkpoints.lock().unwrap();
+            pending.iter().any(|checkpoint| {
+                checkpoint.messages().iter().any(|message| {
+                    matches!(
+                        message,
+                        DWalletCheckpointMessageKind::RespondDWalletPresign(output)
+                            if output.presign_id == presign_id.to_vec()
+                                && output.rejected == rejected
+                    )
+                })
+            })
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// Helper to send multiple global presign requests in a single batch to all validators.
 /// This is necessary because `uncompleted_events_sender` is a watch channel that only keeps
 /// the last value — consecutive sends would overwrite previous ones.

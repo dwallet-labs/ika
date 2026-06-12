@@ -438,8 +438,15 @@ pub(crate) fn classify(transaction: &ConsensusTransaction) -> &'static str {
         ConsensusTransactionKind::IdleStatusUpdate(_) => "idle_status_update",
         ConsensusTransactionKind::SuiChainObservationUpdate(_) => "sui_chain_observation_update",
         ConsensusTransactionKind::GlobalPresignRequest(_) => "global_presign_request",
-        ConsensusTransactionKind::NetworkKeyData(_) => "network_key_data",
         ConsensusTransactionKind::NOAObservation(_) => "noa_observation",
+        ConsensusTransactionKind::ValidatorMpcDataAnnouncement(..) => {
+            "validator_mpc_data_announcement"
+        }
+        ConsensusTransactionKind::RelayedValidatorMpcDataAnnouncement(..) => {
+            "relayed_validator_mpc_data_announcement"
+        }
+        ConsensusTransactionKind::EpochMpcDataReadySignal(_) => "epoch_mpc_data_ready_signal",
+        ConsensusTransactionKind::EndOfPublishV2 { .. } => "end_of_publish_v2",
     }
 }
 

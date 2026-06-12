@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-use prometheus::{IntGauge, Registry, register_int_gauge_with_registry};
+use prometheus::{
+    IntCounterVec, IntGauge, Registry, register_int_counter_vec_with_registry,
+    register_int_gauge_with_registry,
+};
 use std::sync::Arc;
 
 pub struct EpochMetrics {
@@ -88,6 +91,61 @@ pub struct EpochMetrics {
     /// The amount of time taken to complete first phase of the random beacon DKG protocol,
     /// at which point the node has submitted a DKG Confirmation, for the most recent epoch.
     pub epoch_random_beacon_dkg_confirmation_time_ms: IntGauge,
+
+    /// Epoch of the most recent mpc_data freeze observed locally. Alert when
+    /// it lags `current_epoch` well past the freeze grace window — a freeze
+    /// that never fires wedges the epoch's reconfiguration/handoff pipeline.
+    /// Re-seeded from the frozen table at epoch-store open so a mid-epoch
+    /// restart doesn't false-alarm.
+    pub dwallet_mpc_data_freeze_epoch: IntGauge,
+
+    /// Number of validators the mpc_data freeze partition excluded from the
+    /// MPC working set this epoch. Alert > 0.
+    pub dwallet_mpc_data_excluded_validators: IntGauge,
+
+    /// Number of distinct `EpochMpcDataReadySignal` signers recorded this
+    /// epoch. Re-seeded from the per-epoch table at epoch-store open.
+    pub dwallet_mpc_data_ready_signals: IntGauge,
+
+    /// Stake attested by the recorded ready signals, recomputed at each
+    /// pre-freeze consensus commit. Distinguishes "short on signals" from
+    /// "short on coverage" while the freeze is late.
+    pub dwallet_mpc_data_ready_signal_stake: IntGauge,
+
+    /// This validator's own locally-validated peer count (the
+    /// `validated_peers` candidate set for its ready signal). Updated on
+    /// every `compute_locally_validated_peers` call, including before the
+    /// ready-signal emit gates, so a stuck-below-quorum state is visible.
+    pub dwallet_mpc_data_locally_validated_peers: IntGauge,
+
+    /// Number of validator mpc_data announcements recorded in this epoch's
+    /// table (self, relayed-joiner, and buffered-replay paths). Re-seeded
+    /// from the table at epoch-store open.
+    pub dwallet_mpc_data_announcements_received: IntGauge,
+
+    /// Epoch of the most recent certified handoff attestation formed or
+    /// re-minted locally. Alert when it lags `current_epoch` near the epoch
+    /// boundary — a missing cert wedges the next epoch's prepare barrier.
+    pub dwallet_handoff_cert_epoch: IntGauge,
+
+    /// Number of distinct verified handoff signatures aggregated this epoch.
+    pub dwallet_handoff_signatures_collected: IntGauge,
+
+    /// Stake accumulated by the verified handoff signatures this epoch
+    /// (quorum is stake-weighted, not headcount).
+    pub dwallet_handoff_signatures_stake: IntGauge,
+
+    /// Depth of the pending handoff-signature buffer (signatures awaiting
+    /// the expected attestation or the consensus-pubkey provider).
+    pub dwallet_handoff_signatures_buffered: IntGauge,
+
+    /// Handoff signatures rejected by the verification path, by verdict.
+    pub dwallet_handoff_signatures_rejected_total: IntCounterVec,
+
+    /// 1 while this validator's own announcement is in the per-epoch table
+    /// but the corresponding mpc_data blob is missing/invalid in perpetual
+    /// storage (it refuses to self-attest); 0 otherwise. Alert == 1.
+    pub own_mpc_data_blob_unhealthy: IntGauge,
 }
 
 impl EpochMetrics {
@@ -193,6 +251,79 @@ impl EpochMetrics {
             epoch_random_beacon_dkg_confirmation_time_ms: register_int_gauge_with_registry!(
                 "epoch_random_beacon_dkg_confirmation_time_ms",
                 "The amount of time taken to complete first phase of the random beacon DKG protocol, at which point the node has submitted a DKG Confirmation, for the most recent epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_freeze_epoch: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_freeze_epoch",
+                "Epoch of the most recent mpc_data freeze observed locally",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_excluded_validators: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_excluded_validators",
+                "Number of validators the mpc_data freeze partition excluded this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_ready_signals: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_ready_signals",
+                "Number of distinct EpochMpcDataReadySignal signers recorded this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_ready_signal_stake: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_ready_signal_stake",
+                "Stake attested by the recorded mpc_data ready signals this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_locally_validated_peers: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_locally_validated_peers",
+                "This validator's locally-validated mpc_data peer count",
+                registry
+            )
+            .unwrap(),
+            dwallet_mpc_data_announcements_received: register_int_gauge_with_registry!(
+                "dwallet_mpc_data_announcements_received",
+                "Number of validator mpc_data announcements recorded this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_handoff_cert_epoch: register_int_gauge_with_registry!(
+                "dwallet_handoff_cert_epoch",
+                "Epoch of the most recent certified handoff attestation formed locally",
+                registry
+            )
+            .unwrap(),
+            dwallet_handoff_signatures_collected: register_int_gauge_with_registry!(
+                "dwallet_handoff_signatures_collected",
+                "Number of distinct verified handoff signatures aggregated this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_handoff_signatures_stake: register_int_gauge_with_registry!(
+                "dwallet_handoff_signatures_stake",
+                "Stake accumulated by the verified handoff signatures this epoch",
+                registry
+            )
+            .unwrap(),
+            dwallet_handoff_signatures_buffered: register_int_gauge_with_registry!(
+                "dwallet_handoff_signatures_buffered",
+                "Depth of the pending handoff-signature buffer",
+                registry
+            )
+            .unwrap(),
+            dwallet_handoff_signatures_rejected_total: register_int_counter_vec_with_registry!(
+                "dwallet_handoff_signatures_rejected_total",
+                "Handoff signatures rejected by the verification path, by verdict",
+                &["verdict"],
+                registry
+            )
+            .unwrap(),
+            own_mpc_data_blob_unhealthy: register_int_gauge_with_registry!(
+                "own_mpc_data_blob_unhealthy",
+                "1 while this validator's own mpc_data blob is missing/invalid in perpetual storage",
                 registry
             )
             .unwrap(),

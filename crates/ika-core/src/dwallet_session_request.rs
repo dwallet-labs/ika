@@ -32,9 +32,20 @@ pub struct DWalletSessionRequest {
 }
 
 impl DWalletSessionRequest {
+    /// The identifier preimage deliberately contains NO consensus round
+    /// and nothing else timing-dependent: every committee member derives
+    /// the SAME internal-presign session identifier independently, and
+    /// network-key installation completes at a wall-clock-dependent
+    /// moment per validator (it runs asynchronously on the rayon pool),
+    /// so validators legitimately instantiate the same logical session
+    /// while processing DIFFERENT consensus rounds. Baking the round in
+    /// gave each validator a private session id — sessions with one
+    /// participant each, no quorum, a permanently empty presign pool.
+    /// Uniqueness comes from (epoch, session sequence number, session
+    /// type); determinism of the sequence numbers comes from every
+    /// validator walking keys/curves/algorithms in sorted order.
     pub fn new_internal_presign(
         epoch: u64,
-        consensus_round: u64,
         session_sequence_number: u64,
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
@@ -43,7 +54,6 @@ impl DWalletSessionRequest {
     ) -> Self {
         let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
         transcript.append_u64(b"epoch", epoch);
-        transcript.append_u64(b"consensus round", consensus_round);
         transcript.append_u64(b"session sequence number", session_sequence_number);
         transcript.append_u64(b"curve", curve as u64);
         transcript.append_u64(b"signature algorithm", signature_algorithm as u64);

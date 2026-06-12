@@ -11,7 +11,7 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use mpc::{GuaranteedOutputDeliveryRoundResult, WeightedThresholdAccessStructure};
 use std::sync::Arc;
-use tracing::info;
+use tracing::debug;
 
 pub(crate) struct Request {
     pub(crate) party_id: PartyID,
@@ -30,7 +30,7 @@ impl Request {
         root_seed: RootSeed,
         dwallet_mpc_metrics: Arc<DWalletMPCMetrics>,
     ) -> DwalletMPCResult<GuaranteedOutputDeliveryRoundResult> {
-        info!(
+        debug!(
             mpc_protocol=?self.protocol_data,
             validator=?self.validator_name,
             session_identifier=?computation_id.session_identifier,

@@ -342,8 +342,17 @@ export function sleep(ms: number): Promise<void> {
  */
 export async function retryUntil<T>(
 	fn: () => Promise<T>,
+	// Default to ~15 minutes (900 × 1s): callers wait on minutes-long MPC
+	// operations, and a session astride the epoch-close lock legitimately
+	// waits out an epoch boundary on top of that (it is re-pulled and
+	// completed next epoch). Short per-call caps (30 attempts) surfaced as
+	// spurious "Condition not met" failures on slow networks — prefer this
+	// default over per-call overrides. Must stay below the vitest per-case
+	// timeout (run-integration-tests-sequential.sh --timeout) so a stuck
+	// call fails with this helper's precise error, not an opaque vitest
+	// case kill.
 	condition: (result: T) => boolean,
-	maxAttempts: number = 30,
+	maxAttempts: number = 900,
 	delayMs: number = 1000,
 ): Promise<T> {
 	// If the function being called is already a polling method (like getPresignInParticularState),

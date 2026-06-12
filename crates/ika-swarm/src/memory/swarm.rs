@@ -191,6 +191,13 @@ impl<R> SwarmBuilder<R> {
 impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
     /// Create the configured Swarm.
     pub async fn build(self) -> Result<Swarm, anyhow::Error> {
+        // This in-memory swarm runs the whole validator set on a single host
+        // (local `ika start` and the cluster tests). Shrink both the internal
+        // and network-owned-address presign pools so proactive pool-fill crypto
+        // can't peg the CPU and stall epoch advance. Opt out with
+        // `IKA_DISABLE_SMALL_PRESIGN_POOLS`.
+        ika_protocol_config::ProtocolConfig::enable_small_presign_pools_for_local_swarm();
+
         const SIXTEEN_MEGA_BYTES: usize = 16 * 1024 * 1024;
         if let Err(err) = rayon::ThreadPoolBuilder::new()
             .stack_size(SIXTEEN_MEGA_BYTES)

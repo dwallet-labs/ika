@@ -127,6 +127,24 @@ pub struct SessionsManager {
     pub max_active_sessions_buffer: u64,
 }
 
+impl SessionsManager {
+    /// Rust mirror of the on-chain `sessions_manager::all_current_epoch_sessions_completed`
+    /// assertion gating `advance_epoch`: the user-completion target must be locked,
+    /// the locked batch of user sessions must be fully completed, and every system
+    /// session (network-key DKG/reconfiguration) must have finished. The notifier
+    /// checks this against the just-synced state before submitting `advance_epoch`,
+    /// so a transient "still draining" window never becomes a doomed transaction.
+    pub fn all_current_epoch_sessions_completed(&self) -> bool {
+        let user_sessions_completed = self.user_sessions_keeper.completed_sessions_count
+            == self.last_user_initiated_session_to_complete_in_current_epoch;
+        let system_sessions_completed = self.system_sessions_keeper.started_sessions_count
+            == self.system_sessions_keeper.completed_sessions_count;
+        self.locked_last_user_initiated_session_to_complete_in_current_epoch
+            && user_sessions_completed
+            && system_sessions_completed
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct SupportConfig {
     pub supported_curves_to_signature_algorithms_to_hash_schemes:
@@ -279,4 +297,55 @@ pub struct ValidatorCapV1 {
 pub struct ValidatorOperationCapV1 {
     pub id: ObjectID,
     pub validator_id: ObjectID,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keeper(started: u64, completed: u64) -> SessionsKeeper {
+        SessionsKeeper {
+            sessions: Table::default(),
+            session_events: Bag::default(),
+            started_sessions_count: started,
+            completed_sessions_count: completed,
+            next_session_sequence_number: started,
+        }
+    }
+
+    fn sessions_manager(
+        locked: bool,
+        user_completed: u64,
+        user_target: u64,
+        system_started: u64,
+        system_completed: u64,
+    ) -> SessionsManager {
+        SessionsManager {
+            registered_user_session_identifiers: Table::default(),
+            user_sessions_keeper: keeper(user_target, user_completed),
+            system_sessions_keeper: keeper(system_started, system_completed),
+            last_user_initiated_session_to_complete_in_current_epoch: user_target,
+            locked_last_user_initiated_session_to_complete_in_current_epoch: locked,
+            max_active_sessions_buffer: 100,
+        }
+    }
+
+    #[test]
+    fn all_current_epoch_sessions_completed_truth_table() {
+        // Locked, all user + system sessions completed → ready to advance.
+        assert!(sessions_manager(true, 10, 10, 3, 3).all_current_epoch_sessions_completed());
+
+        // Not locked → never ready, even if every count lines up.
+        assert!(!sessions_manager(false, 10, 10, 3, 3).all_current_epoch_sessions_completed());
+
+        // A user session in the locked batch is still pending.
+        assert!(!sessions_manager(true, 9, 10, 3, 3).all_current_epoch_sessions_completed());
+
+        // A system session started after end-of-publish but not yet completed:
+        // exactly the transient that made `advance_epoch` MoveAbort with code 6.
+        assert!(!sessions_manager(true, 10, 10, 4, 3).all_current_epoch_sessions_completed());
+
+        // No sessions at all in a freshly-locked epoch → trivially ready.
+        assert!(sessions_manager(true, 0, 0, 0, 0).all_current_epoch_sessions_completed());
+    }
 }

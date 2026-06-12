@@ -21,8 +21,10 @@
 
 use crate::dwallet_session_request::DWalletSessionRequestMetricData;
 use prometheus::{
-    GaugeVec, IntGauge, IntGaugeVec, Registry, register_gauge_vec_with_registry,
-    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
+    GaugeVec, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Registry,
+    register_gauge_vec_with_registry, register_histogram_vec_with_registry,
+    register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
+    register_int_gauge_with_registry,
 };
 use std::sync::Arc;
 
@@ -97,6 +99,43 @@ pub struct DWalletMPCMetrics {
     pub number_of_unexpected_sign_sessions: IntGauge,
     /// The last process MPC consensus round.
     pub last_process_mpc_consensus_round: IntGauge,
+
+    /// Internal presign pool size per (curve, signature_algorithm, key_role).
+    ///
+    /// The pool is keyed by `(signature_algorithm, network_key_id)`; to keep
+    /// label cardinality bounded the network key is reduced to a fixed
+    /// `key_role` enum — `network_owned_address_signing` for the key serving
+    /// network-owned-address signing, `other` for the rest (last-write-wins
+    /// across multiple non-NOA keys, which number at most a handful).
+    /// Pool exhaustion (0 sustained) stalls NOA signing and global presign
+    /// serving.
+    pub(crate) internal_presign_pool_size: IntGaugeVec,
+
+    /// Number of consensus-agreed global presign requests waiting in the
+    /// service queue because the internal pool had no presign to serve
+    /// them — the direct pool-exhausted-wait signal users feel as latency.
+    pub(crate) global_presign_requests_waiting: IntGauge,
+
+    /// Global presign requests served from the internal pool, by
+    /// signature_algorithm — pairs with the pool-size gauge so a dashboard
+    /// can compute serve rate vs top-up rate and predict exhaustion.
+    pub(crate) global_presigns_served_total: IntCounterVec,
+
+    /// Duration of each network-key instantiation sub-call (per-curve
+    /// protocol/decryption-share public parameters + NOA DKG outputs), for
+    /// both the network-DKG and reconfiguration instantiation paths.
+    /// Trends the dominant epoch-boundary cost across epochs/releases.
+    pub(crate) network_key_instantiation_sub_call_duration_seconds: HistogramVec,
+
+    /// Number of network-key instantiations currently in flight on the
+    /// rayon pool.
+    pub(crate) network_key_instantiations_in_flight: IntGauge,
+
+    /// Network-key instantiation failures by reason (`channel_closed`,
+    /// `epoch_mismatch`, `decrypt_failed`, `instantiate_failed`). Note
+    /// `decrypt_failed` is an expected transient for recently-joined
+    /// validators — tune alerts per reason.
+    pub(crate) network_key_instantiation_failures_total: IntCounterVec,
 }
 
 impl DWalletMPCMetrics {
@@ -211,6 +250,50 @@ impl DWalletMPCMetrics {
             last_process_mpc_consensus_round: register_int_gauge_with_registry!(
                 "last_process_mpc_consensus_round",
                 "Last process mpc consensus round",
+                registry
+            )
+            .unwrap(),
+            internal_presign_pool_size: register_int_gauge_vec_with_registry!(
+                "dwallet_mpc_internal_presign_pool_size",
+                "Internal presign pool size per (curve, signature_algorithm, key_role)",
+                &["curve", "signature_algorithm", "key_role"],
+                registry
+            )
+            .unwrap(),
+            global_presign_requests_waiting: register_int_gauge_with_registry!(
+                "dwallet_mpc_global_presign_requests_waiting",
+                "Global presign requests waiting because the internal pool is empty",
+                registry
+            )
+            .unwrap(),
+            global_presigns_served_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_global_presigns_served_total",
+                "Global presign requests served from the internal pool",
+                &["signature_algorithm"],
+                registry
+            )
+            .unwrap(),
+            network_key_instantiation_sub_call_duration_seconds:
+                register_histogram_vec_with_registry!(
+                    "dwallet_mpc_network_key_instantiation_sub_call_duration_seconds",
+                    "Duration of each network-key instantiation sub-call",
+                    &["sub_call"],
+                    vec![
+                        0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0
+                    ],
+                    registry
+                )
+                .unwrap(),
+            network_key_instantiations_in_flight: register_int_gauge_with_registry!(
+                "dwallet_mpc_network_key_instantiations_in_flight",
+                "Network-key instantiations currently in flight on the rayon pool",
+                registry
+            )
+            .unwrap(),
+            network_key_instantiation_failures_total: register_int_counter_vec_with_registry!(
+                "dwallet_mpc_network_key_instantiation_failures_total",
+                "Network-key instantiation failures by reason",
+                &["reason"],
                 registry
             )
             .unwrap(),
