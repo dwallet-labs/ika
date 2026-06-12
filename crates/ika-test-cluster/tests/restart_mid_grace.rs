@@ -192,9 +192,14 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // inside it: anchor persisted, close marker not yet.
     let mid_grace_handle = node_handle(&cluster, &mid_grace_name);
     let anchor_at_stop = poll_until(
-        // EndOfPublish waits out the epoch duration plus the locked-session
-        // drain before the vote, so the quorum can be most of an epoch away.
-        Duration::from_secs(120),
+        // EndOfPublish waits out the epoch duration, the locked-session
+        // drain, AND the on-chain reconfiguration-completed gate — with X
+        // down the reconfiguration MPC advances at exactly 3-of-4 threshold
+        // with zero slack, so the quorum can be several epoch-durations
+        // away. A long deadline costs nothing: the grace window only opens
+        // AT quorum (X just stays down longer), so waiting doesn't loosen
+        // the strike.
+        Duration::from_secs(300),
         "validator Y to persist the EndOfPublish quorum anchor",
         || {
             mid_grace_handle.with(|node| {
