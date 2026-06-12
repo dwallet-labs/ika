@@ -46,6 +46,10 @@ them has a bug — determine which before changing either.
   progress", distilled from real wedge investigations.
 - [`playbooks/localnet.md`](playbooks/localnet.md) — running a
   Sui+ika localnet for SDK/integration testing without the traps.
+- [`playbooks/production-alerts.md`](playbooks/production-alerts.md) —
+  the alert rules for the designed halt/block modes (barrier wait,
+  wedged assembly, bootstrap fail-closed) that look healthy from
+  outside, plus secondary dashboard signals.
 
 ### conventions/ — repo-specific procedures
 - [`conventions/sui-version-bump.md`](conventions/sui-version-bump.md)
