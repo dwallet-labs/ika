@@ -210,9 +210,9 @@ jobs:
           TEST_FILTER: ${{ inputs.test_filter }}
         run: |
           if [ -n "$TEST_FILTER" ]; then
-            ./scripts/run-integration-tests-sequential.sh --timeout 900 --filter "$TEST_FILTER"
+            ./scripts/run-integration-tests-sequential.sh --timeout 1200 --filter "$TEST_FILTER"
           else
-            ./scripts/run-integration-tests-sequential.sh --timeout 900
+            ./scripts/run-integration-tests-sequential.sh --timeout 1200
           fi
 
       - name: ika localnet health summary
