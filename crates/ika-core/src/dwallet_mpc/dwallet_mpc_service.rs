@@ -1575,7 +1575,7 @@ impl DWalletMPCService {
         }
     }
 
-    async fn handle_computation_results_and_submit_to_consensus(
+    pub(crate) async fn handle_computation_results_and_submit_to_consensus(
         &mut self,
         completed_computation_results: HashMap<
             ComputationId,
