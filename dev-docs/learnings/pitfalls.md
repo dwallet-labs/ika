@@ -96,6 +96,15 @@ rule, not the instance.
   target, so it stays 0 and (correctly) gates everything; tests set it
   past their sequence numbers. When adding a gate on synced state, grep
   the harness for tests that now need it.
+- **An `IkaNodeHandle` held across its node's in-process restart wedges
+  the respawn on the RocksDB lock.** The handle holds a STRONG
+  `Arc<IkaNode>`; `Node::stop()` joins the node thread, but the stores
+  live until the last `Arc` drops — a test-held handle keeps them open,
+  and `start()` dies with "Cannot open DB … lock hold by current
+  process". Real validator restarts never see this (process death
+  releases the lock); it's purely an in-process-swarm hazard. → Rule:
+  acquire handles on demand (inside each poll tick / scoped to one
+  statement); never bind one across a `stop()`/`start()` of its node.
 
 ## Process & forensics
 

@@ -16,7 +16,11 @@ gh workflow run integration-tests-ci.yaml --ref <branch> \
 
 # Cluster tests (in-process Sui+ika swarm tests via nextest,
 # process-per-test, ~35-40 min at 4 threads; 8-way OOMs the 96Gi pod).
-gh workflow run test-cluster.yaml --ref <branch> [-f test_filter=<name>]
+# test_filter is a nextest positional filter: it matches test FUNCTION
+# names (test_validator_restart_...), NOT the test file stem — a
+# file-stem filter silently runs 0 tests and the job fails with
+# "no tests to run".
+gh workflow run test-cluster.yaml --ref <branch> [-f test_filter=<fn-name>]
 
 # Full TypeScript SDK integration suite against one Sui + ika localnet
 # (9 files, ~60 min + ~10 min localnet readiness). For diagnosing
