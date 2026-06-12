@@ -16,9 +16,19 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn network_key_received_after_start_event() {
-    // init_for_testing honors RUST_LOG (the plain fmt subscriber caps at
-    // INFO and ignores it) and is safe under in-process parallel tests.
-    let _guard = telemetry_subscribers::init_for_testing();
+    // Honors RUST_LOG when this test sets up tracing first (the plain
+    // fmt subscriber caps at INFO and silently ignores RUST_LOG — which
+    // repeatedly sabotaged debug-tracing this test), and silently defers
+    // to whichever subscriber another in-process test installed first
+    // (init() and telemetry's init_for_testing() both PANIC in that
+    // case under parallel `cargo test`).
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
     let parties_that_receive_network_key_after_start_event = vec![0, 1];
