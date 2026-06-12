@@ -1,0 +1,288 @@
+name: TS Integration Tests
+
+# Manually triggered. Runs the full TypeScript SDK integration suite against
+# a REAL local network — a Sui localnet plus an ika localnet (`ika start`) —
+# on the `ika-k8s-large` self-hosted runner.
+#
+# All test files run in dependency order (foundational first) against ONE
+# Sui + ika localnet via `run-integration-tests-sequential.sh`.
+#
+# The localnet readiness probe waits for positive one-way signals (the
+# mpc_data freeze fired, the genesis network-key DKG reached quorum, the
+# committee assembled off-chain). A looser probe starts the tests against
+# a still-converging (or genesis-wedged) network and every test times out
+# with "Object does not exist".
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "Single test file to run (empty = full suite)"
+        type: string
+        required: false
+        default: ""
+      localnet_rust_log:
+        description: "RUST_LOG for the ika localnet (instrumentation runs use e.g. warn,ika=info,ika_node=info,ika_core::dwallet_mpc=debug)"
+        type: string
+        required: false
+        default: "warn,ika=info,ika_node=info"
+      epoch_duration_ms:
+        description: "ika localnet epoch duration in ms (15 min default: leaves ample capacity for user sessions between reconfigurations; the full suite is validated at this value)"
+        type: string
+        required: false
+        default: "900000"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  GH_DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: 1
+  rust_stable: "1.94"
+  # ika-wasm's prepare script builds wasm-pack with `--${PROFILE}`; the
+  # integration tests run real client-side crypto through that WASM, so it
+  # must be a release build (debug crypto is far too slow).
+  PROFILE: release
+
+jobs:
+  ts-integration:
+    name: TS integration suite
+    runs-on: ika-k8s-large
+    # Full suite is ~60 min on one localnet (readiness ~10 min) plus the
+    # release build on a cold cache.
+    timeout-minutes: 180
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Runner resources
+        run: |
+          # Surface what this pod ACTUALLY gets — the scale set advertises up
+          # to 80 vCPUs, but a low cgroup quota (requests/limits mismatch) or
+          # node oversubscription silently throttles the crypto workloads.
+          echo "nproc: $(nproc)"
+          echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null || echo n/a)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo n/a)"
+          free -g 2>/dev/null || true
+          uptime || true
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+
+      - name: Install build dependencies
+        run: |
+          # Some runner pods lack IPv6 egress while DNS returns AAAA records,
+          # so force IPv4 and retry — apt mirror flakiness otherwise fails the
+          # whole job before any test runs.
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "ts-integration"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.x
+          cache: "pnpm"
+
+      # `pnpm install` runs the ika-wasm package's `prepare` script, which
+      # builds the Rust->WASM bindings with wasm-pack.
+      - name: Install wasm pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "latest"
+
+      # The Cargo workspace pins Sui to mainnet-v1.70.2; a mismatched local
+      # sui completes DKG but stalls reconfiguration, so pin the binary too.
+      - name: Install Sui mainnet-v1.70.2
+        run: |
+          curl -L https://github.com/MystenLabs/sui/releases/download/mainnet-v1.70.2/sui-mainnet-v1.70.2-ubuntu-x86_64.tgz > sui.tgz
+          tar -xzf sui.tgz
+          mkdir -p "$HOME/.local/bin"
+          cp ./sui "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build ika binary
+        run: cargo build --release --bin ika
+
+      - name: Install SDK dependencies
+        run: pnpm install
+        working-directory: ./sdk/typescript
+
+      # `ika start` does NOT spawn Sui itself — it expects a localnet at
+      # 127.0.0.1:9000 (and the tests use the faucet at 127.0.0.1:9123).
+      - name: Start CPU sampler
+        run: |
+          # Every 15s: cgroup cpu.stat (usage_usec delta -> effective CPUs
+          # actually consumed; nr_throttled/throttled_usec -> CFS quota
+          # stalls) + loadavg. Answers "does this workload USE the vCPUs"
+          # rather than inferring it from wall-clock.
+          nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
+          echo $! > cpu-sampler.pid
+
+      - name: Start Sui localnet
+        run: |
+          RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
+          echo $! > sui-localnet.pid
+          for i in $(seq 1 60); do
+            if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
+              echo "sui process died"; tail -40 sui-localnet.log; exit 1
+            fi
+            if curl -s -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
+                 -d '{"jsonrpc":"2.0","id":1,"method":"rpc.discover","params":[]}' >/dev/null 2>&1 \
+               && curl -s http://127.0.0.1:9123 >/dev/null 2>&1; then
+              echo "sui localnet + faucet up after $((i*5))s"; exit 0
+            fi
+            sleep 5
+          done
+          echo "sui localnet not reachable after 5 minutes"; tail -40 sui-localnet.log; exit 1
+
+      - name: Start ika localnet
+        env:
+          EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+          LOCALNET_RUST_LOG: ${{ inputs.localnet_rust_log }}
+        run: |
+          case "$EPOCH_DURATION_MS" in
+            ''|*[!0-9]*) echo "epoch_duration_ms must be numeric"; exit 1 ;;
+          esac
+          rm -rf ~/.ika Pub.localnet.toml
+          RUST_LOG="${LOCALNET_RUST_LOG:-warn,ika=info,ika_node=info}" RUST_MIN_STACK=67108864 \
+            ./target/release/ika start --force-reinitiation \
+            --epoch-duration-ms "$EPOCH_DURATION_MS" > ika-localnet.log 2>&1 &
+          echo $! > ika-localnet.pid
+
+      - name: Wait for ika localnet readiness
+        run: |
+          # Positive one-way readiness signals (a "quiet window" heuristic
+          # flaps: every epoch transition emits fresh overlay-missing
+          # warnings while the new reconfiguration output propagates):
+          #   1. the mpc_data freeze fired (commit-boundary decision),
+          #   2. an MPC output reached consensus quorum (the genesis
+          #      network-key DKG completed),
+          #   3. the next committee assembled off-chain.
+          # The tests' own 600s polls absorb any residual convergence.
+          # Readiness lands in ~10 minutes; the 20-minute cap is headroom.
+          for i in $(seq 1 60); do
+            sleep 20
+            if ! kill -0 "$(cat ika-localnet.pid)" 2>/dev/null; then
+              echo "ika localnet process died"; tail -50 ika-localnet.log; exit 1
+            fi
+            froze=$(grep -c "freezing attestation-validated mpc_data" ika-localnet.log || true)
+            quorum=$(grep -c "MPC output reached quorum" ika-localnet.log || true)
+            assembled=$(grep -c "assembled committee mpc_data" ika-localnet.log || true)
+            if [ "${froze:-0}" -gt 0 ] && [ "${quorum:-0}" -gt 0 ] && [ "${assembled:-0}" -gt 0 ]; then
+              echo "ika localnet ready after $((i*20))s (freeze=$froze quorum=$quorum assembled=$assembled)"
+              exit 0
+            fi
+          done
+          echo "ika localnet NOT ready after 20 minutes — likely a genesis DKG wedge"
+          tail -80 ika-localnet.log
+          exit 1
+
+      - name: Run integration tests
+        working-directory: ./sdk/typescript
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          if [ -n "$TEST_FILTER" ]; then
+            ./scripts/run-integration-tests-sequential.sh --timeout 1200 --filter "$TEST_FILTER"
+          else
+            ./scripts/run-integration-tests-sequential.sh --timeout 1200
+          fi
+
+      - name: ika localnet health summary
+        if: always()
+        run: |
+          echo "highest epoch: $(grep -oE 'run_epoch epoch=[0-9]+' ika-localnet.log | grep -oE '[0-9]+' | sort -un | tail -1)"
+          echo "freeze counts: $(grep 'freezing attestation-validated' ika-localnet.log | grep -oE 'frozen=[0-9]+' | sort | uniq -c | tr '\n' ' ')"
+          echo "sign failures: $(grep -cE 'FailedToAdvanceMPC|InvalidParameters' ika-localnet.log || true)"
+          echo "panics: $(grep -ci panicked ika-localnet.log || true)"
+
+          # Rejected sessions/objects, read from the chain (the log only
+          # shows the validator side; the chain records every rejection a
+          # user actually saw). Every respond_* path emits its result event
+          # with a "Rejected"-suffixed type — page through the coordinator
+          # package's events and keep those. Guarded throughout: a dead RPC
+          # reports as such instead of failing the step.
+          PKG=$(grep -m1 -oE 'ika_dwallet_2pc_mpc_package_id: 0x[a-f0-9]+' ika-localnet.log | awk '{print $2}' || true)
+          if [ -n "$PKG" ]; then
+            : > rejected-events.jsonl
+            for MODULE in coordinator sessions_manager; do
+              CURSOR=null
+              for _page in $(seq 1 100); do
+                RESP=$(curl -s -m 10 -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
+                  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"suix_queryEvents\",\"params\":[{\"MoveModule\":{\"package\":\"$PKG\",\"module\":\"$MODULE\"}},$CURSOR,1000,false]}") || break
+                echo "$RESP" | jq -ce '.result.data[]? | select(.type | test("Rejected"))' >> rejected-events.jsonl || true
+                [ "$(echo "$RESP" | jq -r '.result.hasNextPage // false')" = "true" ] || break
+                CURSOR=$(echo "$RESP" | jq -c '.result.nextCursor')
+              done
+            done
+            jq -cs 'unique_by(.id) | .[]' rejected-events.jsonl > rejected-events.dedup.jsonl 2>/dev/null || : > rejected-events.dedup.jsonl
+            echo "rejected sessions/objects (chain events): $(wc -l < rejected-events.dedup.jsonl)"
+            echo "by type:"
+            jq -r '.type | sub(".*::";"")' rejected-events.dedup.jsonl | sort | uniq -c | sort -rn || true
+            echo "details (type + event data, first 40):"
+            jq -c '{type: (.type | sub(".*::";"")), data: .parsedJson}' rejected-events.dedup.jsonl | head -40 || true
+          else
+            echo "rejected sessions/objects: package id not found in ika-localnet.log; skipping chain query"
+          fi
+
+          # Per-validator health metrics: scrape each node's Prometheus
+          # endpoint (addresses from the generated localnet config) and
+          # print the non-zero failure/health families — per-validator
+          # asymmetry (one node failing, three healthy) is exactly the
+          # diagnostic the aggregated log can't show. Histogram buckets
+          # excluded; zero values implied healthy.
+          for ADDR in $(grep -hoE 'metrics[-_]address: "[0-9.:]+"' ~/.ika/ika_config/network.yaml 2>/dev/null | grep -oE '[0-9.]+:[0-9]+' | sort -u); do
+            echo "--- metrics $ADDR (non-zero health families) ---"
+            curl -s -m 5 "http://$ADDR/metrics" \
+              | grep -vE '^#|_bucket\{' \
+              | grep -E 'malicious|reject|fail|presign|handoff|end_of_publish|instantiation|freeze' \
+              | awk '$NF+0 != 0' | sort | head -50 || echo "(scrape failed)"
+          done
+
+          kill "$(cat ika-localnet.pid)" 2>/dev/null || true
+          kill "$(cat sui-localnet.pid)" 2>/dev/null || true
+
+      - name: Upload CPU sampler log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-sampler-${{ github.job }}-${{ github.run_attempt }}
+          path: cpu-sampler.log
+          retention-days: 7
+
+      - name: Upload localnet logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: localnet-logs
+          path: |
+            ika-localnet.log
+            sui-localnet.log
+          retention-days: 7

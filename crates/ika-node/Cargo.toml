@@ -32,6 +32,7 @@ path = "src/bin/ika-notifier.rs"
 [dependencies]
 sui-json-rpc-types.workspace = true
 anemo.workspace = true
+tikv-jemallocator = { workspace = true, optional = true }
 anemo-tower.workspace = true
 arc-swap.workspace = true
 axum.workspace = true
@@ -73,7 +74,12 @@ sui-simulator.workspace = true
 
 
 [features]
-default = ["enforce-minimum-cpu"]
+default = ["enforce-minimum-cpu", "jemalloc"]
 
 # Set this feature to enforce a minimum of 16 CPU cores for cryptographic computations.
 enforce-minimum-cpu = ["ika-core/enforce-minimum-cpu"]
+# Compiled-in jemalloc as the global allocator (mirrors sui-node) — better
+# fragmentation behavior than glibc malloc for long-running RocksDB-heavy
+# validators, and arch-independent (the Dockerfile previously attempted
+# this via an LD_PRELOAD that never actually persisted).
+jemalloc = ["tikv-jemallocator"]

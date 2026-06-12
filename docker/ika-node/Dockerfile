@@ -52,14 +52,12 @@ ARG PROFILE=release
 ARG BIN=ika-validator
 ARG TARGETARCH
 
-# Install runtime dependencies and jemalloc.
-RUN apt-get update && apt-get install -y libjemalloc-dev ca-certificates curl jq
-
-# Use jemalloc as memory allocator.
-ENV LD_PRELOAD=""
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libjemalloc.so"; \
-    fi
+# Install runtime dependencies. jemalloc is COMPILED INTO the binaries
+# (tikv-jemallocator global allocator, `jemalloc` default feature —
+# mirrors sui-node), so no libjemalloc package or LD_PRELOAD is needed;
+# the previous LD_PRELOAD approach never persisted past its RUN layer
+# and containers were silently running glibc malloc.
+RUN apt-get update && apt-get install -y ca-certificates curl jq
 
 # Set working directory.
 WORKDIR ${WORKDIR}/ika

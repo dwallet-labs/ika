@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use futures::{StreamExt, future};
 use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
 use ika_sui_client::{SuiClient, SuiClientInner};
-use ika_types::committee::{Committee, EpochId};
+use ika_types::committee::{Committee, CommitteeMembership, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
 use ika_types::messages_dwallet_mpc::{
@@ -34,8 +34,8 @@ use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
 use tracing::info;
 
-pub mod end_of_publish_sender;
 pub mod metrics;
+pub mod pubkey_provider_updater;
 mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
@@ -56,6 +56,21 @@ pub struct SuiConnectorService {
     sui_connector_config: SuiConnectorConfig,
     #[allow(dead_code)]
     metrics: Arc<SuiConnectorMetrics>,
+    /// Late-bindable handle the network-keys sync task reads on each
+    /// fetch. Lets ika-node install (and replace, per epoch) the
+    /// off-chain `NetworkKeyBlobSource` used to overlay locally-
+    /// cached DKG/reconfig output blobs onto the chain copy. `None`
+    /// here disables the overlay; chain bytes flow through unchanged.
+    network_key_blob_source:
+        Arc<arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>>,
+    /// Late-bindable off-chain validator-mpc_data assembler. When
+    /// installed and `Complete` for the next-epoch committee,
+    /// `sync_next_committee` builds the `Committee` from this
+    /// instead of from the on-chain mpc_data. `Incomplete` /
+    /// `None` paths fall through to the existing chain-read.
+    class_groups_source: Arc<
+        arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
+    >,
 }
 
 impl SuiConnectorService {
@@ -67,6 +82,7 @@ impl SuiConnectorService {
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         mode: NodeMode,
         next_epoch_committee_sender: Sender<Committee>,
+        chain_next_committee_sender: Sender<CommitteeMembership>,
         new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
@@ -98,6 +114,15 @@ impl SuiConnectorService {
             sui_connector_metrics.clone(),
         );
 
+        let network_key_blob_source: Arc<
+            arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
+        > = Arc::new(arc_swap::ArcSwapOption::empty());
+        let class_groups_source: Arc<
+            arc_swap::ArcSwapOption<
+                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
+            >,
+        > = Arc::new(arc_swap::ArcSwapOption::empty());
+
         let sui_modules_to_watch = vec![SESSIONS_MANAGER_MODULE_NAME.to_owned()];
         let task_handles = SuiSyncer::new(
             sui_client.clone(),
@@ -107,6 +132,7 @@ impl SuiConnectorService {
         .run(
             Duration::from_secs(2),
             next_epoch_committee_sender,
+            chain_next_committee_sender,
             mode,
             system_object_receiver,
             dwallet_coordinator_receiver,
@@ -116,6 +142,8 @@ impl SuiConnectorService {
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
             noa_checkpoints_finalized,
+            network_key_blob_source.clone(),
+            class_groups_source.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
@@ -127,9 +155,32 @@ impl SuiConnectorService {
                 task_handles,
                 sui_connector_config,
                 metrics: sui_connector_metrics,
+                network_key_blob_source,
+                class_groups_source,
             }),
             network_keys_receiver,
         ))
+    }
+
+    /// Installs the off-chain `NetworkKeyBlobSource` the network-
+    /// keys sync task uses to overlay cached DKG / reconfig output
+    /// blobs onto the chain copy. Called once per epoch by ika-node
+    /// after the per-epoch store is up.
+    pub fn install_network_key_blob_source(
+        &self,
+        source: Box<dyn crate::validator_metadata::NetworkKeyBlobSource>,
+    ) {
+        self.network_key_blob_source.store(Some(Arc::new(source)));
+    }
+
+    /// Installs the off-chain validator-mpc_data assembler the
+    /// next-committee sync uses before falling back to the chain
+    /// `get_mpc_data_from_validators_pool` path.
+    pub fn install_mpc_data_source(
+        &self,
+        source: Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
+    ) {
+        self.class_groups_source.store(Some(Arc::new(source)));
     }
 
     pub async fn run_epoch(

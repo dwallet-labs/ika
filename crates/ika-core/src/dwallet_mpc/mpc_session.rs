@@ -96,6 +96,17 @@ pub(crate) enum SessionStatus {
     Failed,
 }
 
+impl SessionStatus {
+    /// The session's ordinal sequence number when its request is available
+    /// (set for presign sessions; `None` while still awaiting the request).
+    pub(crate) fn session_sequence_number(&self) -> Option<u64> {
+        match self {
+            SessionStatus::Active { request, .. } => request.session_sequence_number,
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SessionComputationType {
     #[allow(clippy::upper_case_acronyms)]
@@ -251,8 +262,9 @@ impl DWalletSession {
         if sender_party_id == self.party_id {
             // Received an output from ourselves from the consensus, so it's safe to mark the session as computation completed.
             info!(
-                authority=?self.validator_name,
-                status =? self.status,
+                session_identifier = ?self.session_identifier,
+                session_sequence_number = ?self.status.session_sequence_number(),
+                authority = ?self.validator_name,
                 "Received our output from consensus, marking session as computation completed",
             );
 
@@ -428,6 +440,20 @@ impl DWalletMPCManager {
             tokio::task::yield_now().await;
         }
 
+        // Drain DKG / reconfig requests parked on the off-chain
+        // freeze gate. We retry every cycle because the gate's
+        // satisfaction signal (a fresh quorum) doesn't trigger us
+        // directly — it shows up in the per-epoch store, which we
+        // re-read inside `handle_mpc_request`. Requests that still
+        // don't pass get re-queued.
+        let pending_freeze = mem::take(&mut self.requests_pending_for_frozen_mpc_data);
+        for request in pending_freeze {
+            if Some(SessionStatus::Failed) == self.handle_mpc_request(request.clone()) {
+                failed_sessions_waiting_to_send_reject.push(request.clone());
+            }
+            tokio::task::yield_now().await;
+        }
+
         // Handle the new requests batch.
         // `handle_mpc_request()` may fail on the condition of either waiting for the next committee or network key information,
         // in which case it would be added to the corresponding queue,
@@ -528,6 +554,43 @@ impl DWalletMPCManager {
             return None;
         }
 
+        // Off-chain mpc_data freeze gate: both network DKG and
+        // reconfiguration sessions wait until the per-epoch mpc_data
+        // input set is frozen. The freeze itself is decided at the
+        // consensus commit boundary (quorum of ready-signals AND full
+        // coverage-or-grace; see
+        // `process_consensus_transactions_and_commit_boundary`) so the
+        // frozen set is identical on every validator; this gate just
+        // reads it. A deferred request re-drains every cycle (see the
+        // drain loop above), so the session starts on the first cycle
+        // after the freeze lands.
+        //
+        // Bypassed entirely when the off-chain validator metadata
+        // protocol feature is disabled — legacy chain-only behavior.
+        let off_chain_gate_passes = match &request.protocol_data {
+            ProtocolData::NetworkEncryptionKeyDkg { .. }
+            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+                !self.epoch_store.off_chain_validator_metadata_enabled()
+                    || self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+            }
+            _ => true,
+        };
+        if !off_chain_gate_passes {
+            debug!(
+                session_request=?DWalletSessionRequestMetricData::from(&request.protocol_data).to_string(),
+                session_identifier=?session_identifier,
+                "off-chain mpc_data freeze gate not satisfied — deferring"
+            );
+            if self
+                .requests_pending_for_frozen_mpc_data
+                .iter()
+                .all(|e| e.session_identifier != session_identifier)
+            {
+                self.requests_pending_for_frozen_mpc_data.push(request);
+            }
+            return None;
+        }
+
         if let Some(session) = self.sessions.get(&session_identifier)
             && !matches!(session.status, SessionStatus::WaitingForSessionRequest)
         {
@@ -535,8 +598,22 @@ impl DWalletMPCManager {
             return None;
         }
 
-        if let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
-            request.protocol_data.is_global_presign()
+        // Global presigns are served from the internal presign pool — but the
+        // pool only exists once `internal_presign_sessions` activates (the
+        // whole request/fulfill pipeline is gated on that flag, see
+        // `next_global_presign_request` in the service). Before activation —
+        // i.e. while running at the previous protocol version right after an
+        // upgrade, with the on-chain `GlobalPresignConfig` already routing
+        // presigns to global — diverting the request here would strand it:
+        // no pool to serve it, no MPC session spawned, and the session is
+        // locked into its epoch (`all_current_epoch_sessions_completed`
+        // blocks `advance_epoch`), wedging the network below the version
+        // that could serve it. So pre-activation, fall through and run the
+        // request as a user-requested MPC session — the pre-pool serving
+        // behavior (the dwallet-output-less presign computation path).
+        if self.protocol_config.internal_presign_sessions_enabled()
+            && let Some((presign_id, curve, signature_algorithm, dwallet_network_encryption_key_id)) =
+                request.protocol_data.is_global_presign()
         {
             if request.session_sequence_number.is_none() {
                 error!(

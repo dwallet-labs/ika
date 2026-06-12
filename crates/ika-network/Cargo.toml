@@ -9,6 +9,8 @@ edition = "2024"
 [dependencies]
 anemo.workspace = true
 anemo-tower.workspace = true
+arc-swap.workspace = true
+async-trait.workspace = true
 governor.workspace = true
 serde.workspace = true
 tonic.workspace = true

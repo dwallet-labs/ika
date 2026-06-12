@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 bin-version.workspace = true
+tikv-jemallocator = { workspace = true, optional = true }
 dwallet-rng.workspace = true
 dwallet-classgroups-types.workspace = true
 clap.workspace = true
@@ -65,4 +66,8 @@ msim.workspace = true
 normal = ["tikv-jemalloc-ctl"]
 
 [features]
+default = ["jemalloc"]
+# Compiled-in jemalloc as the global allocator (mirrors sui) — the CLI
+# hosts whole localnet swarms, where allocator behavior matters most.
+jemalloc = ["tikv-jemallocator"]
 protocol-commands = ['ika-sui-client/protocol-commands']

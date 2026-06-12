@@ -7,7 +7,7 @@ use crate::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm, DwalletNetwork
 use group::HashScheme;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Protocol flags for DKG and signing operations
 #[repr(u32)]
@@ -41,8 +41,17 @@ pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 pub const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
 
 lazy_static! {
-    /// Supported curves to signature algorithms to hash schemes
-    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: HashMap<u32, HashMap<u32, Vec<u32>>> = {
+    /// Supported curves to signature algorithms to hash schemes.
+    ///
+    /// MUST be an ordered map (`BTreeMap`), at both nesting levels. Validators
+    /// iterate this map to instantiate internal presign sessions, assigning each
+    /// session a sequence number from a single shared counter in iteration order;
+    /// the sequence number is bound into the session identifier transcript. With
+    /// `HashMap`'s per-process random iteration order, each validator derived
+    /// *different* session identifiers for the same (curve, algorithm) work, so
+    /// those sessions could never reach quorum and the presign pools starved for
+    /// the whole epoch (wedging epoch advance once a user presign request locked).
+    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: BTreeMap<u32, BTreeMap<u32, Vec<u32>>> = {
         vec![
             (
                 0, // Curve: Secp256k1
@@ -150,7 +159,9 @@ lazy_static! {
 /// Returns all supported (curve, signature_algorithms) pairs.
 ///
 /// This is the canonical source of truth, derived from
-/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`].
+/// [`SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`] — an
+/// ordered map (see its docs), so the output order is identical on
+/// every validator.
 pub fn supported_curve_to_signature_algorithms()
 -> Vec<(DWalletCurve, Vec<DWalletSignatureAlgorithm>)> {
     SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES

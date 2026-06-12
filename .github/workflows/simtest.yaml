@@ -76,7 +76,16 @@ jobs:
           toolchain: ${{ env.rust_stable }}
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake clang pkg-config libssl-dev
+        run: |
+          # IPv4 + retry: some runners lack IPv6 egress while DNS returns
+          # AAAA records; apt mirror flakiness otherwise fails the job.
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            sudo apt-get $APT update && \
+              sudo apt-get $APT install -y cmake clang pkg-config libssl-dev && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
 
       - uses: Swatinem/rust-cache@v2
         with:

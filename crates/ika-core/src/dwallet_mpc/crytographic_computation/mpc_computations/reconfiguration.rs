@@ -4,7 +4,9 @@
 use crate::debug_variable_chunks;
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::{
     build_network_encryption_key_public_data, compute_all_network_owned_address_dkg_outputs,
+    timed_sub_call,
 };
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
@@ -422,47 +424,76 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_dkg_public_output: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
+    metrics: &DWalletMPCMetrics,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedDecryptionKeyReconfigurationOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
 
     // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
     // reconfiguration `PublicOutput` (either bwd-compat or main; both expose
-    // the same per-curve accessor API).
+    // the same per-curve accessor API). Each sub-call is individually timed
+    // (log + histogram) — this is the steady-state per-epoch instantiation
+    // path, so it needs the same cost breakdown as the DKG path.
     macro_rules! build_from_reconfig_output {
         ($public_output:expr) => {{
             let public_output = $public_output;
-            let secp256k1_protocol_public_parameters =
-                Arc::new(public_output.secp256k1_protocol_public_parameters()?);
-            let secp256k1_decryption_key_share_public_parameters = Arc::new(
-                public_output
-                    .secp256k1_decryption_key_share_public_parameters(access_structure)
-                    .map_err(DwalletMPCError::from)?,
-            );
-            let secp256r1_protocol_public_parameters =
-                Arc::new(public_output.secp256r1_protocol_public_parameters()?);
-            let secp256r1_decryption_key_share_public_parameters = Arc::new(
-                public_output.secp256r1_decryption_key_share_public_parameters(access_structure)?,
-            );
-            let ristretto_protocol_public_parameters =
-                Arc::new(public_output.ristretto_protocol_public_parameters()?);
-            let ristretto_decryption_key_share_public_parameters = Arc::new(
-                public_output.ristretto_decryption_key_share_public_parameters(access_structure)?,
-            );
-            let curve25519_protocol_public_parameters =
-                Arc::new(public_output.curve25519_protocol_public_parameters()?);
-            let curve25519_decryption_key_share_public_parameters = Arc::new(
-                public_output
-                    .curve25519_decryption_key_share_public_parameters(access_structure)?,
-            );
+            let secp256k1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_protocol_public_parameters",
+                || public_output.secp256k1_protocol_public_parameters(),
+            )?);
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_decryption_key_share",
+                || {
+                    public_output
+                        .secp256k1_decryption_key_share_public_parameters(access_structure)
+                        .map_err(DwalletMPCError::from)
+                },
+            )?);
+            let secp256r1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_protocol_public_parameters",
+                || public_output.secp256r1_protocol_public_parameters(),
+            )?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_decryption_key_share",
+                || public_output.secp256r1_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let ristretto_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_protocol_public_parameters",
+                || public_output.ristretto_protocol_public_parameters(),
+            )?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_decryption_key_share",
+                || public_output.ristretto_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let curve25519_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_protocol_public_parameters",
+                || public_output.curve25519_protocol_public_parameters(),
+            )?);
+            let curve25519_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_decryption_key_share",
+                || {
+                    public_output
+                        .curve25519_decryption_key_share_public_parameters(access_structure)
+                },
+            )?);
 
-            let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
-                &network_key_id,
-                &secp256k1_protocol_public_parameters,
-                &secp256r1_protocol_public_parameters,
-                &ristretto_protocol_public_parameters,
-                &curve25519_protocol_public_parameters,
-            )?;
+            let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
+                compute_all_network_owned_address_dkg_outputs(
+                    &network_key_id,
+                    &secp256k1_protocol_public_parameters,
+                    &secp256r1_protocol_public_parameters,
+                    &ristretto_protocol_public_parameters,
+                    &curve25519_protocol_public_parameters,
+                )
+            })?;
 
             Ok::<NetworkEncryptionKeyPublicData, DwalletMPCError>(
                 build_network_encryption_key_public_data(

@@ -76,13 +76,13 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [workspace.dependencies]
 crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = ["serde"] }
 
-mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c"}
-proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c", features = ["threshold"] }
-commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c"}
-group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "a37297c"}
-homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "a37297c"}
+mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd"}
+proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd"}
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd", features = ["threshold"] }
+commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd" }
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd"}
+group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "de3cddd"}
+homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "de3cddd"}
 
 k256 = { version = "0.14.0-pre.11", default-features = false }
 p256 = { version = "0.14.0-pre.11", default-features = false }
@@ -156,6 +156,7 @@ indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
 tikv-jemalloc-ctl = "0.5.4"
+tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls"] }
 jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.16.3"
 merlin = { version = "3", default-features = false }

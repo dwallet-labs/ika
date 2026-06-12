@@ -20,9 +20,8 @@ use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKi
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
 use ika_types::messages_dwallet_mpc::{
     AssignedPresign, ConsensusGlobalPresignRequest, ConsensusNOAObservation,
-    ConsensusNetworkKeyData, DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput,
-    IdleStatusUpdate, SessionIdentifier, SessionType, SuiChainObservationUpdate,
-    UserSecretKeyShareEventType,
+    DWalletInternalMPCOutput, DWalletMPCMessage, DWalletMPCOutput, IdleStatusUpdate,
+    SessionIdentifier, SessionType, SuiChainObservationUpdate, UserSecretKeyShareEventType,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use std::collections::HashMap;
@@ -61,7 +60,6 @@ pub(crate) struct TestingAuthorityPerEpochStore {
         Arc<Mutex<HashMap<Round, Vec<SuiChainObservationUpdate>>>>,
     pub(crate) round_to_global_presign_requests:
         Arc<Mutex<HashMap<Round, Vec<ConsensusGlobalPresignRequest>>>>,
-    pub(crate) round_to_network_key_data: Arc<Mutex<HashMap<Round, Vec<ConsensusNetworkKeyData>>>>,
     pub(crate) round_to_noa_observations: Arc<Mutex<HashMap<Round, Vec<ConsensusNOAObservation>>>>,
     /// Presign pool keyed by (signature algorithm, dwallet_network_encryption_key_id)
     /// Each entry contains a vector of (SessionIdentifier, presign_bytes)
@@ -133,7 +131,6 @@ impl TestingAuthorityPerEpochStore {
                 vec![],
             )]))),
             round_to_global_presign_requests: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
-            round_to_network_key_data: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
@@ -349,18 +346,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         Ok(store.get(&next).map(|v| (next, v.clone())))
     }
 
-    fn next_network_key_data(
-        &self,
-        last_consensus_round: Option<Round>,
-    ) -> IkaResult<Option<(Round, Vec<ConsensusNetworkKeyData>)>> {
-        let store = self.round_to_network_key_data.lock().unwrap();
-        if last_consensus_round.is_none() {
-            return Ok(store.get(&0).map(|v| (0, v.clone())));
-        }
-        let next = last_consensus_round.unwrap() + 1;
-        Ok(store.get(&next).map(|v| (next, v.clone())))
-    }
-
     fn next_noa_observation(
         &self,
         last_consensus_round: Option<Round>,
@@ -427,6 +412,73 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             session_identifier,
             blending_index,
         )))
+    }
+
+    fn cache_network_dkg_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        // Testing impl: no-op. The integration test gate doesn't
+        // exercise handoff attestation contents, so we don't need
+        // a per-test in-memory mirror.
+        Ok(())
+    }
+
+    fn cache_network_reconfiguration_output(
+        &self,
+        _dwallet_network_encryption_key_id: sui_types::base_types::ObjectID,
+        _reconfiguration_epoch: sui_types::base_types::EpochId,
+        _output_bytes: &[u8],
+    ) -> IkaResult<()> {
+        Ok(())
+    }
+
+    fn get_certified_handoff_attestation(
+        &self,
+        _epoch: sui_types::base_types::EpochId,
+    ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
+        // Testing impl: no persisted certs; the cert-verified
+        // instantiation path is a no-op and tests exercise the
+        // consensus-voted path.
+        Ok(None)
+    }
+
+    fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
+        // Testing impl: report frozen so the session-kickoff gate
+        // doesn't block tests that never produce the actual freeze
+        // signal flow. Production builds use the real per-epoch
+        // store, where this reflects the attestation-tally snapshot.
+        Ok(true)
+    }
+
+    fn off_chain_validator_metadata_enabled(&self) -> bool {
+        // Tests exercise the off-chain pipeline regardless of
+        // protocol-config version, so report enabled.
+        true
+    }
+
+    fn get_frozen_mpc_data_input_set_trait(
+        &self,
+    ) -> IkaResult<std::collections::HashMap<ika_types::crypto::AuthorityName, [u8; 32]>> {
+        // Tests don't drive the freeze gate; return an empty map
+        // which short-circuits the local-readiness check ("freeze
+        // hasn't fired yet, no opinion") so the per-session gate
+        // doesn't block test sessions.
+        Ok(std::collections::HashMap::new())
+    }
+
+    fn perpetual_tables_handle(
+        &self,
+    ) -> Option<
+        std::sync::Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+    > {
+        // Tests don't install a perpetual tables handle; returning
+        // None is consistent with "freeze hasn't been populated
+        // either," and `local_mpc_data_ready_for_frozen_set`
+        // short-circuits to `true` on an empty frozen set before
+        // it would touch this.
+        None
     }
 }
 
@@ -738,17 +790,6 @@ pub(crate) fn send_advance_results_between_parties(
                 }
             })
             .collect();
-        let network_key_data: Vec<_> = consensus_messages
-            .clone()
-            .into_iter()
-            .filter_map(|message| {
-                if let ConsensusTransactionKind::NetworkKeyData(msg) = message.kind {
-                    Some(msg)
-                } else {
-                    None
-                }
-            })
-            .collect();
         let noa_observations: Vec<_> = consensus_messages
             .into_iter()
             .filter_map(|message| {
@@ -823,14 +864,6 @@ pub(crate) fn send_advance_results_between_parties(
                 .entry(new_data_consensus_round)
                 .or_default()
                 .extend(presign_requests.clone());
-            // Distribute network key data to all parties
-            other_epoch_store
-                .round_to_network_key_data
-                .lock()
-                .unwrap()
-                .entry(new_data_consensus_round)
-                .or_default()
-                .extend(network_key_data.clone());
             // Distribute NOA observations to all parties
             other_epoch_store
                 .round_to_noa_observations
@@ -847,7 +880,17 @@ pub(crate) fn send_advance_results_between_parties(
 /// At 100ms per iteration, this gives ~180 seconds before failing.
 /// The generous limit accounts for rayon thread pool contention when
 /// the full integration test suite runs in a single process.
+/// Overridable via `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` — lets
+/// slower or heavily-loaded environments extend the budget without
+/// recompiling.
 const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
+
+fn max_computation_wait_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_COMPUTATION_WAIT_ITERATIONS)
+}
 
 /// Wait for all parties' in-flight rayon computations to complete.
 ///
@@ -860,7 +903,8 @@ const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
 /// real wall-clock time plus tokio runtime polls to deliver their results
 /// through the completion channel.
 pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState) {
-    for iteration in 0..MAX_COMPUTATION_WAIT_ITERATIONS {
+    let max_iterations = max_computation_wait_iterations();
+    for iteration in 0..max_iterations {
         let all_idle = test_state.dwallet_mpc_services.iter().all(|s| {
             s.dwallet_mpc_manager()
                 .cryptographic_computations_orchestrator
@@ -887,8 +931,42 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
     }
     panic!(
         "Rayon computations did not complete within {} seconds",
-        MAX_COMPUTATION_WAIT_ITERATIONS / 10
+        max_iterations / 10
     );
+}
+
+/// Runs service-loop iterations (with 100ms sleeps) until every given
+/// service has `key_id` installed in its `network_keys`. The network-key
+/// instantiation is spawned on the rayon pool and lands on a LATER
+/// service tick — a single post-adoption iteration no longer observes it.
+/// Panics after the computation-wait budget.
+pub(crate) async fn run_service_loops_until_network_key_installed(
+    dwallet_mpc_services: &mut [DWalletMPCService],
+    key_id: ObjectID,
+) {
+    let mut iterations = 0usize;
+    loop {
+        let all_installed = dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id)
+                .is_ok()
+        });
+        if all_installed {
+            return;
+        }
+        iterations += 1;
+        if iterations >= max_computation_wait_iterations() {
+            panic!(
+                "network key {key_id:?} was not installed on every party after {iterations} iterations"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for service in dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
 }
 
 pub(crate) async fn advance_all_parties_and_wait_for_completions(
@@ -913,7 +991,16 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
 /// At 100ms per iteration, this gives ~60 seconds before failing.
 /// This needs to be long enough to complete internal presign sessions
 /// which run in parallel and can be CPU-intensive.
+/// Overridable via `IKA_TEST_MAX_PARTY_ITERATIONS` (see
+/// `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` above for why).
 const MAX_PARTY_ITERATIONS: usize = 600;
+
+fn max_party_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_PARTY_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_PARTY_ITERATIONS)
+}
 
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
     committee: &Committee,
@@ -928,19 +1015,19 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut iterations = 0usize;
     // Track per-party newly-instantiated network key IDs so that sessions waiting
     // for a key (in `requests_pending_for_network_key`) are activated as soon as the
-    // key is voted-in through a consensus round, without requiring a second outer-loop
+    // key is adopted and installed, without requiring a second outer-loop
     // iteration.
     let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
         vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         iterations += 1;
-        if iterations >= MAX_PARTY_ITERATIONS {
+        if iterations >= max_party_iterations() {
             panic!(
                 "Party advancement did not complete after {} iterations (~{} seconds). \
                 Completed {}/{} parties. Completed: {:?}, Expected: {:?}. \
                 This likely indicates a bug in the test or the MPC flow.",
-                MAX_PARTY_ITERATIONS,
-                MAX_PARTY_ITERATIONS / 10,
+                max_party_iterations(),
+                max_party_iterations() / 10,
                 completed_parties.len(),
                 parties_to_advance.len(),
                 completed_parties,
@@ -971,22 +1058,12 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                 })
             };
 
-            // When `currently_running == 0` and the party has new network key data
-            // (e.g. key data broadcast after DKG completes), treat it as a round boundary
-            // so the outer loop can call `send_advance_results_between_parties` and activate
-            // sessions waiting on the key.
-            // Also trigger when there are global presign requests, so that the
+            // Trigger when there are global presign requests, so that the
             // outer loop distributes them to all parties (regardless of running computations).
             // This check must happen BEFORE clearing so the messages are not lost.
-            let currently_running_len = dwallet_mpc_service
-                .dwallet_mpc_manager()
-                .cryptographic_computations_orchestrator
-                .currently_running_cryptographic_computations
-                .len();
             let check_status_update_with_data = |store: &Arc<Mutex<Vec<ConsensusTransaction>>>| {
                 store.lock().unwrap().iter().any(|msg| match &msg.kind {
                     ConsensusTransactionKind::GlobalPresignRequest(_) => true,
-                    ConsensusTransactionKind::NetworkKeyData(_) => currently_running_len == 0,
                     _ => false,
                 })
             };
@@ -1026,7 +1103,6 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
                     ConsensusTransactionKind::IdleStatusUpdate(_) => true,
                     ConsensusTransactionKind::SuiChainObservationUpdate(_) => true,
                     ConsensusTransactionKind::GlobalPresignRequest(_) => true,
-                    ConsensusTransactionKind::NetworkKeyData(_) => true,
                     ConsensusTransactionKind::NOAObservation(_) => true,
                     _ => false,
                 });
