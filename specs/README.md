@@ -23,3 +23,8 @@ here.
 - [`handoff.md`](handoff.md) — the cross-epoch handoff: the attestation,
   EndOfPublish V2, certificate aggregation and persistence, joiner
   bootstrap, and the prepare-then-start barrier.
+- [`epoch-close-session-lock.md`](epoch-close-session-lock.md) — the
+  epoch-close session lock: the frozen completion target, the
+  strict-equality close predicate, the gate-consensus-submission rule
+  every user-session completion path must follow, and the
+  batch-processing rule for computation results.
