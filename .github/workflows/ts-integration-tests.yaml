@@ -222,6 +222,50 @@ jobs:
           echo "freeze counts: $(grep 'freezing attestation-validated' ika-localnet.log | grep -oE 'frozen=[0-9]+' | sort | uniq -c | tr '\n' ' ')"
           echo "sign failures: $(grep -cE 'FailedToAdvanceMPC|InvalidParameters' ika-localnet.log || true)"
           echo "panics: $(grep -ci panicked ika-localnet.log || true)"
+
+          # Rejected sessions/objects, read from the chain (the log only
+          # shows the validator side; the chain records every rejection a
+          # user actually saw). Every respond_* path emits its result event
+          # with a "Rejected"-suffixed type — page through the coordinator
+          # package's events and keep those. Guarded throughout: a dead RPC
+          # reports as such instead of failing the step.
+          PKG=$(grep -m1 -oE 'ika_dwallet_2pc_mpc_package_id: 0x[a-f0-9]+' ika-localnet.log | awk '{print $2}' || true)
+          if [ -n "$PKG" ]; then
+            : > rejected-events.jsonl
+            for MODULE in coordinator sessions_manager; do
+              CURSOR=null
+              for _page in $(seq 1 100); do
+                RESP=$(curl -s -m 10 -X POST http://127.0.0.1:9000 -H 'Content-Type: application/json' \
+                  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"suix_queryEvents\",\"params\":[{\"MoveModule\":{\"package\":\"$PKG\",\"module\":\"$MODULE\"}},$CURSOR,1000,false]}") || break
+                echo "$RESP" | jq -ce '.result.data[]? | select(.type | test("Rejected"))' >> rejected-events.jsonl || true
+                [ "$(echo "$RESP" | jq -r '.result.hasNextPage // false')" = "true" ] || break
+                CURSOR=$(echo "$RESP" | jq -c '.result.nextCursor')
+              done
+            done
+            jq -cs 'unique_by(.id) | .[]' rejected-events.jsonl > rejected-events.dedup.jsonl 2>/dev/null || : > rejected-events.dedup.jsonl
+            echo "rejected sessions/objects (chain events): $(wc -l < rejected-events.dedup.jsonl)"
+            echo "by type:"
+            jq -r '.type | sub(".*::";"")' rejected-events.dedup.jsonl | sort | uniq -c | sort -rn || true
+            echo "details (type + event data, first 40):"
+            jq -c '{type: (.type | sub(".*::";"")), data: .parsedJson}' rejected-events.dedup.jsonl | head -40 || true
+          else
+            echo "rejected sessions/objects: package id not found in ika-localnet.log; skipping chain query"
+          fi
+
+          # Per-validator health metrics: scrape each node's Prometheus
+          # endpoint (addresses from the generated localnet config) and
+          # print the non-zero failure/health families — per-validator
+          # asymmetry (one node failing, three healthy) is exactly the
+          # diagnostic the aggregated log can't show. Histogram buckets
+          # excluded; zero values implied healthy.
+          for ADDR in $(grep -hoE 'metrics[-_]address: "[0-9.:]+"' ~/.ika/ika_config/network.yaml 2>/dev/null | grep -oE '[0-9.]+:[0-9]+' | sort -u); do
+            echo "--- metrics $ADDR (non-zero health families) ---"
+            curl -s -m 5 "http://$ADDR/metrics" \
+              | grep -vE '^#|_bucket\{' \
+              | grep -E 'malicious|reject|fail|presign|handoff|end_of_publish|instantiation|freeze' \
+              | awk '$NF+0 != 0' | sort | head -50 || echo "(scrape failed)"
+          done
+
           kill "$(cat ika-localnet.pid)" 2>/dev/null || true
           kill "$(cat sui-localnet.pid)" 2>/dev/null || true
 
