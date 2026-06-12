@@ -215,6 +215,9 @@ covers the change; escalate to the full suite before merge):
 - Don't push/commit to `main`, `master`, or `dev` branches
 - Don't use `--no-verify` to skip git hooks
 
+(Both DON'Ts and the fmt-before-commit rule are enforced
+deterministically by `.claude/hooks/git-guard.sh`.)
+
 ## Long sessions
 
 When compacting, always preserve: the modified-file list, test commands
