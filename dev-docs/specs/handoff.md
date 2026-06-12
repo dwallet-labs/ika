@@ -126,6 +126,24 @@ next epoch inherits.
    compatibility, but the certificate-gated off-chain copy is the only
    sanctioned read path.
 
+   Two adoption guards keep the installed parameter set identical
+   across the committee (a validator that installs anything else
+   honestly computes byte-divergent MPC outputs and is convicted
+   malicious by the output-quorum byte-equality tally — silently
+   reducing the committee's fault tolerance):
+   - An overlay entry whose reconfiguration output is (transiently)
+     EMPTY must not be adopted through the initial-DKG branch while
+     the certificate pins a reconfiguration digest for the key:
+     DKG-derived parameters are a set the committee never agreed to
+     run this epoch. Skip and retry; the overlay re-merges every sync
+     tick and the barrier installs the pinned blob by digest.
+   - Adopted data whose `current_epoch` metadata differs from the
+     manager's epoch is rejected BEFORE the (expensive, ~10s)
+     instantiation spawns — a stale chain snapshot at the boundary
+     otherwise burns the instantiation and blocks the same key's
+     correct data behind the in-flight entry, widening the
+     epoch-entry key gap during which sessions park.
+
 ## Key invariants
 
 1. One handoff per epoch, attested at EndOfPublish, verified against
