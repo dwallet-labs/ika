@@ -8,6 +8,7 @@ mod message_before_event;
 mod missing_network_key;
 mod network_dkg;
 mod network_dkg_bwd_compat;
+mod network_key_adoption;
 mod network_owned_address_sign;
 mod noa_checkpoint;
 mod presign_consensus;

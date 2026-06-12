@@ -15,6 +15,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
+use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
@@ -71,6 +72,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
     pub(crate) assigned_presigns:
         Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>,
+    /// Configurable certified handoff attestations, keyed by epoch.
+    /// Empty by default (the cert-gated adoption path then behaves as
+    /// "cert absent"); tests for the cert-digest gate insert one here.
+    pub(crate) certified_handoff_attestations:
+        Arc<Mutex<HashMap<EpochId, CertifiedHandoffAttestation>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -135,6 +141,7 @@ impl TestingAuthorityPerEpochStore {
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
+            certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -436,12 +443,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn get_certified_handoff_attestation(
         &self,
-        _epoch: sui_types::base_types::EpochId,
+        epoch: sui_types::base_types::EpochId,
     ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
-        // Testing impl: no persisted certs; the cert-verified
-        // instantiation path is a no-op and tests exercise the
-        // consensus-voted path.
-        Ok(None)
+        // Testing impl: serves the configurable in-memory map (empty by
+        // default, in which case the cert-verified adoption path behaves
+        // as "cert absent" and tests exercise the consensus-voted path).
+        Ok(self
+            .certified_handoff_attestations
+            .lock()
+            .unwrap()
+            .get(&epoch)
+            .cloned())
     }
 
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {

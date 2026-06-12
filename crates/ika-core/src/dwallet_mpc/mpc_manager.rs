@@ -18,7 +18,7 @@ use crate::dwallet_mpc::{
     generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
     party_id_to_authority_name,
 };
-use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
@@ -209,7 +209,8 @@ pub(crate) struct DWalletMPCManager {
     /// an expensive, long-running computation; awaiting it inline froze
     /// the whole MPC service loop — every session on the validator —
     /// for its full duration at each epoch boundary.
-    pending_network_key_instantiations: HashMap<ObjectID, PendingNetworkKeyInstantiation>,
+    pub(crate) pending_network_key_instantiations:
+        HashMap<ObjectID, PendingNetworkKeyInstantiation>,
 
     /// Last time the handoff-cert read-error warn in
     /// `adopt_cert_verified_keys` was emitted. The adoption pass runs
@@ -225,6 +226,13 @@ pub(crate) struct DWalletMPCManager {
     /// would re-warn per republish; warn once per distinct local digest,
     /// debug thereafter.
     warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
+
+    /// Sessions whose protocol-cryptographic-data generation already
+    /// failed and was logged. The generation re-runs every 20ms service
+    /// iteration, so a stuck session would otherwise emit ~50 identical
+    /// errors/second; log once per session (the skip-and-retry behavior
+    /// itself is unthrottled).
+    warned_cryptographic_data_generation_failures: HashSet<SessionIdentifier>,
 
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
@@ -276,7 +284,7 @@ pub(crate) struct DWalletMPCManager {
 /// An in-flight network-key instantiation: the input bytes that were
 /// attempted (retained for the failure record, which suppresses retries
 /// on identical bytes) and the receiver its result arrives on.
-struct PendingNetworkKeyInstantiation {
+pub(crate) struct PendingNetworkKeyInstantiation {
     attempted: DWalletNetworkEncryptionKeyData,
     receiver: oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>>,
 }
@@ -383,6 +391,7 @@ impl DWalletMPCManager {
             pending_network_key_instantiations: HashMap::new(),
             last_cert_read_warn: None,
             warned_cert_digest_mismatches: HashSet::new(),
+            warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
@@ -802,6 +811,46 @@ impl DWalletMPCManager {
             }
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
             if data.current_reconfiguration_public_output.is_empty() {
+                // A cert that pins a reconfiguration digest for this key means
+                // the committee agreed this epoch runs on parameters derived
+                // from THAT reconfiguration output. An overlay entry whose
+                // reconfiguration output is (transiently) empty must therefore
+                // never be adopted through this initial-DKG branch: it would
+                // instantiate DKG-derived parameters — a set the committee
+                // never agreed to use this epoch — and every MPC output this
+                // validator computes with them byte-diverges from its peers',
+                // which the output-quorum byte-equality tally then convicts
+                // as malicious. Skip and retry: the overlay re-merges every
+                // sync tick and the prepare-then-start barrier installs the
+                // cert-pinned blob by digest at the boundary, so the bytes
+                // become locally resolvable. Warn once per cert digest
+                // (deduped), debug on repeats — same pattern as the
+                // mismatch skips below.
+                if off_chain_on
+                    && let Some(cert_reconfiguration_digest) = reconfiguration_digests.get(key_id)
+                {
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, *cert_reconfiguration_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            ?cert_reconfiguration_digest,
+                            "prior epoch's handoff cert pins a reconfiguration output for \
+                             this key but the overlay's reconfiguration output is empty — \
+                             skipping adoption until the blob resolves locally (a DKG-only \
+                             instantiation would diverge from the committee-agreed \
+                             parameters)"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "overlay reconfiguration output still empty for a \
+                             cert-reconfigured key — skipping adoption"
+                        );
+                    }
+                    continue;
+                }
                 // Initial-DKG state: adopt the deterministic local DKG
                 // output. Require the match only if a cert pins it.
                 if let Some(cert_dkg) = dkg_digests.get(key_id)
@@ -1784,6 +1833,12 @@ impl DWalletMPCManager {
 
         let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
+        // Collected inside the immutable-borrow iteration below, logged
+        // (deduped per session) after it ends — a generation failure
+        // recurs every 20ms service tick for a stuck session, and the
+        // skip used to be silent, which blinded post-mortems.
+        let mut failed_cryptographic_data_generations = Vec::new();
+
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
             .flat_map(|(session, _)| {
@@ -1802,15 +1857,28 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                self.generate_protocol_cryptographic_data(
+                let protocol_cryptographic_data = match self.generate_protocol_cryptographic_data(
                     &session.computation_type,
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
                     &self.protocol_config,
-                )
-                .ok()?
-                .map(|protocol_cryptographic_data| {
+                ) {
+                    Ok(protocol_cryptographic_data) => protocol_cryptographic_data,
+                    Err(e) => {
+                        // The skip is correct (the session simply isn't
+                        // advanceable this tick); the silence was the bug.
+                        failed_cryptographic_data_generations.push((
+                            session.session_identifier,
+                            DWalletSessionRequestMetricData::from(&request.protocol_data),
+                            e,
+                        ));
+
+                        return None;
+                    }
+                };
+
+                protocol_cryptographic_data.map(|protocol_cryptographic_data| {
                     let attempt_number = protocol_cryptographic_data.get_attempt_number();
                     let mpc_round = protocol_cryptographic_data.get_mpc_round();
 
@@ -1833,6 +1901,24 @@ impl DWalletMPCManager {
                 })
             })
             .collect();
+
+        for (session_identifier, protocol_data, error) in failed_cryptographic_data_generations {
+            // Once per session: the failure recurs every tick while the
+            // session is stuck, and the first occurrence carries all the
+            // signal.
+            if self
+                .warned_cryptographic_data_generation_failures
+                .insert(session_identifier)
+            {
+                error!(
+                    ?session_identifier,
+                    mpc_protocol = %protocol_data,
+                    error = ?error,
+                    "failed to generate protocol cryptographic data — session skipped \
+                     this tick (will retry every service iteration)"
+                );
+            }
+        }
 
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
@@ -2079,6 +2165,26 @@ impl DWalletMPCManager {
                 // meantime, the snapshot comparison below re-fires once
                 // the in-flight one completes.
                 if self.pending_network_key_instantiations.contains_key(key_id) {
+                    return false;
+                }
+                // The adopted snapshot can carry a stale chain epoch — the
+                // syncer fetched it before the chain rolled over (or after,
+                // for a manager about to be torn down). The post-instantiation
+                // poll already rejects such a key (`key.epoch() != self.epoch_id`),
+                // but only after ~10s of parameter derivation burnt on the
+                // rayon pool — and while that doomed instantiation is in
+                // flight, the correct same-key data cannot spawn. Reject the
+                // metadata mismatch before spawning instead; the syncer
+                // re-fetches and the adoption pass delivers the current
+                // epoch's data within a few ticks.
+                if key_data.current_epoch != self.epoch_id {
+                    debug!(
+                        ?key_id,
+                        key_data_epoch = key_data.current_epoch,
+                        current_epoch = self.epoch_id,
+                        "adopted network-key data carries a different epoch — not \
+                         spawning instantiation; awaiting the current epoch's overlay"
+                    );
                     return false;
                 }
                 // Filter to: first instantiation OR the *content*
