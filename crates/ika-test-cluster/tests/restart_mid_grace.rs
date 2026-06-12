@@ -54,6 +54,14 @@ use std::time::Duration;
 /// machinery has already been proven once on a healthy boundary.
 const STRUCK_EPOCH: u64 = 1;
 
+/// An `IkaNodeHandle` holds a STRONG `Arc<IkaNode>`. A handle that is
+/// still alive when its node is restarted keeps the old instance's
+/// RocksDB handles open, and the respawn dies on the still-held store
+/// LOCK ("lock hold by current process") — `Node::stop` joins the node
+/// thread, but the stores live until the last `Arc` drops, and a
+/// test-held handle is such an `Arc`. Acquire handles on demand (inside
+/// each poll tick / scoped to one statement); never bind one across a
+/// `stop()`/`start()` of its node.
 fn node_handle(cluster: &IkaTestCluster, name: &AuthorityName) -> IkaNodeHandle {
     cluster
         .swarm
@@ -163,12 +171,11 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // excluded. Full coverage (4 entries) rather than mere presence: the
     // freeze fires once and is consensus-deterministic, so 4 here means 4
     // everywhere.
-    let straggler_handle = node_handle(&cluster, &straggler_name);
     poll_until(
         Duration::from_secs(60),
         "validator X to observe the full-coverage mpc_data freeze",
         || {
-            straggler_handle.with(|node| {
+            node_handle(&cluster, &straggler_name).with(|node| {
                 let epoch_store = node.state().epoch_store_for_testing();
                 (epoch_store.epoch() == STRUCK_EPOCH
                     && epoch_store
@@ -190,7 +197,6 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // With X silent, the live 3-of-4 reach exactly stake quorum (no
     // all_voted short-circuit) and anchor the 50-round countdown. Catch Y
     // inside it: anchor persisted, close marker not yet.
-    let mid_grace_handle = node_handle(&cluster, &mid_grace_name);
     let anchor_at_stop = poll_until(
         // EndOfPublish waits out the epoch duration, the locked-session
         // drain, AND the on-chain reconfiguration-completed gate — with X
@@ -202,7 +208,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
         Duration::from_secs(300),
         "validator Y to persist the EndOfPublish quorum anchor",
         || {
-            mid_grace_handle.with(|node| {
+            node_handle(&cluster, &mid_grace_name).with(|node| {
                 let epoch_store = node.state().epoch_store_for_testing();
                 assert_eq!(
                     epoch_store.epoch(),
@@ -217,7 +223,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
         },
     )
     .await;
-    let close_emitted_at_stop = mid_grace_handle.with(|node| {
+    let close_emitted_at_stop = node_handle(&cluster, &mid_grace_name).with(|node| {
         node.state()
             .epoch_store_for_testing()
             .is_epoch_close_emitted()
@@ -253,8 +259,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // re-anchor at some later round. (If the close already happened by the
     // time Y finishes booting, the determinism assertions below still cover
     // the invariant — this just catches a bad anchor at the sharpest point.)
-    let mid_grace_handle = node_handle(&cluster, &mid_grace_name);
-    let anchor_after_restart = mid_grace_handle.with(|node| {
+    let anchor_after_restart = node_handle(&cluster, &mid_grace_name).with(|node| {
         let epoch_store = node.state().epoch_store_for_testing();
         (epoch_store.epoch() == STRUCK_EPOCH)
             .then(|| epoch_store.end_of_publish_quorum_round())
