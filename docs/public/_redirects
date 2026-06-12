@@ -1,0 +1,41 @@
+# Cloudflare Pages redirects for the docs rewrite.
+# Old paths land on the equivalent new path; deep links in
+# blog posts and Discord keep working.
+
+# Core concepts -> Learn
+/docs/core-concepts                                /docs/learn                              301
+/docs/core-concepts/dwallets                       /docs/learn/dwallets                     301
+/docs/core-concepts/multi-chain-vs-cross-chain     /docs/learn/multi-chain-vs-cross-chain   301
+/docs/core-concepts/zero-trust-and-decentralization /docs/learn/trust-model                 301
+/docs/core-concepts/whitepaper                     /docs/learn/whitepaper                   301
+/docs/core-concepts/cryptography                   /docs/learn/cryptography                 301
+/docs/core-concepts/cryptography/mpc               /docs/learn/cryptography                 301
+/docs/core-concepts/cryptography/2pc-mpc           /docs/learn/2pc-mpc                      301
+
+# SDK -> Build / SDK
+/docs/sdk                                          /docs/build/sdk                          301
+/docs/sdk/*                                        /docs/build/sdk/:splat                   301
+
+# CLI -> Operate / CLI
+/docs/cli                                          /docs/operate/cli                        301
+/docs/cli/*                                        /docs/operate/cli/:splat                 301
+
+# Move integration -> Build / Move integration
+/docs/move-integration                             /docs/build/move-integration             301
+/docs/move-integration/*                           /docs/build/move-integration/:splat      301
+
+# Skills -> AI Skills
+/docs/skills                                       /docs/ai-skills                          301
+/docs/skills/*                                     /docs/ai-skills/:splat                   301
+
+# Operators (placeholder) -> Operate
+/docs/operators                                    /docs/operate                            301
+/docs/operators/*                                  /docs/operate/:splat                     301
+
+# Code examples (placeholder) -> Recipes
+/docs/code-examples                                /docs/build/recipes                      301
+/docs/code-examples/*                              /docs/build/recipes/:splat               301
+
+# Get Started folded into Learn as the Quickstart page
+/docs/get-started                                  /docs/learn/quickstart                   301
+/docs/get-started/*                                /docs/learn/quickstart                   301

@@ -4,11 +4,11 @@
 
 ## Available Skills
 
-| Skill | Description |
-|---|---|
-| [ika-move](./ika-move/) | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns |
-| [ika-sdk](./ika-sdk/) | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle |
-| [ika-operator](./ika-operator/) | Operating Ika network nodes — validator setup, fullnode/notifier config, monitoring, recovery |
+| Skill                           | Description                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [ika-move](./ika-move/)         | Integrating with Ika dWallet contracts in Sui Move — DKG, presign, signing, key import, treasury patterns    |
+| [ika-sdk](./ika-sdk/)           | Building with the `@ika.xyz/sdk` TypeScript SDK — IkaClient, IkaTransaction, cryptography, dWallet lifecycle |
+| [ika-operator](./ika-operator/) | Operating Ika network nodes — validator setup, fullnode/notifier config, monitoring, recovery                |
 
 ## Installation
 

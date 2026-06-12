@@ -1,0 +1,42 @@
+---
+title: ika-cli
+description: Claude Code skill for the Ika CLI covering dWallet, validator, and config commands.
+---
+
+## Install
+
+```bash
+npx skills add dwallet-labs/ika -s ika-cli
+```
+
+## What the skill knows
+
+The `ika` command-line tool surface:
+
+- **Install paths**. Homebrew (`brew install ika-xyz/tap/ika`),
+  pre-built binaries, and building from source.
+- **dWallet commands**: create, sign, presign, future-sign, import,
+  encryption-key management. Both the human-readable and JSON output
+  formats.
+- **Validator commands**: registration, committee operations, metadata
+  updates, key rotation.
+- **Config commands**: network selection, RPC endpoint configuration,
+  contract address fetching, multi-network support.
+- **Shell completions**: bash, zsh, fish.
+
+The skill also covers JSON output mode for scripting and automation.
+
+## Sample prompts
+
+- "Write a bash script that creates a shared dWallet on testnet and
+  prints the resulting Bitcoin testnet address."
+- "Register myself as a validator candidate using the CLI, then
+  produce a JSON summary of the result."
+- "Switch the active network configuration to mainnet without
+  breaking my testnet config."
+
+## Where the SKILL.md lives
+
+[`skills/ika-cli/`](https://github.com/dwallet-labs/ika/tree/main/skills/ika-cli)
+in the repository. See [Operate → CLI](../operate/cli) for the
+human-readable counterpart.

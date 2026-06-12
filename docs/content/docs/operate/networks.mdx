@@ -1,0 +1,116 @@
+---
+title: Networks
+description: Testnet, mainnet, and localnet endpoints, and how to run a local stack.
+---
+
+## Testnet and mainnet
+
+The SDK's `getNetworkConfig('testnet' | 'mainnet')` returns the
+package and object IDs you need. RPC endpoints are not bundled; pass
+your own `SuiJsonRpcClient`:
+
+```ts
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+});
+```
+
+For production traffic you should run a dedicated RPC. The public
+fullnodes are convenient for development but rate-limited.
+
+## Fees
+
+Each coordinator operation costs IKA. Default fee per operation in the
+SDK is 0.5 IKA (500,000,000 MIST). That clears the current testnet
+pricing tiers. Override via `ikaFeePerOp` on the source plugin
+options if your deployment prices ops differently.
+
+On testnet, use `coinWithBalance` to allocate the per-operation IKA
+coin. Zero-coin allocations only work on localnet, where coordinator
+pricing is zero.
+
+## Storage retention
+
+Validators prune state every epoch. A fresh localnet syncs from
+genesis quickly even after a wipe. No "long initial sync" to plan
+for.
+
+## Localnet
+
+The localnet stack lives in `sdk/plugins/test/localnet/`. It builds
+an Ika validator container alongside an Anvil EVM, a Bitcoin Core
+regtest node, a Solana test-validator, and a Sui localnet with
+faucet.
+
+### Bring it up
+
+```bash
+docker compose -f sdk/plugins/test/localnet/docker-compose.yml up -d
+```
+
+First-time bring-up of the `ika` service builds the Rust workspace
+from source. The crypto dependencies are in a private repo, so the
+build needs a GitHub token with access to
+`dwallet-labs/inkrypto`:
+
+```bash
+export GITHUB_TOKEN=<token>
+docker compose -f sdk/plugins/test/localnet/docker-compose.yml build ika
+```
+
+Expect 15 to 25 minutes on a cold cache. Layer caching keeps rebuilds
+quick.
+
+### Running on arm64 hosts
+
+`mysten/sui-tools:mainnet` is amd64-only. On arm64 hosts (Apple
+Silicon) it runs under Rosetta and Sui genesis takes 30+ minutes.
+The recommended path is to run `sui start --with-faucet` natively on
+the host and point the Ika container at `host.docker.internal`:
+
+```bash
+sui start --with-faucet --force-regenesis &
+docker compose -f sdk/plugins/test/localnet/docker-compose.yml up -d ika
+```
+
+The Ika container's default env vars already point at
+`host.docker.internal:9000` and `host.docker.internal:9123`.
+
+### Reading the local IkaConfig
+
+The Ika container writes `ika_config.json` to the bind-mounted state
+directory once it has published the Move packages and bootstrapped
+the validator swarm. Read it and build an `IkaConfig` (see
+[Network configs](../reference/network-configs) for the exact shape).
+
+### Tearing it down
+
+```bash
+docker compose -f sdk/plugins/test/localnet/docker-compose.yml down -v
+rm -rf sdk/plugins/test/localnet/ika-state
+```
+
+`down -v` deletes the volumes. Skip it if you want the chain state
+to survive a restart.
+
+## Endpoint overrides for tests
+
+The localnet test helpers honor these environment variables:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `BITCOIN_RPC_URL` | `http://test:test@127.0.0.1:18443/` | Bitcoin Core JSON-RPC. |
+| `ANVIL_URL` | `http://127.0.0.1:8545` | Anvil JSON-RPC. |
+| `SOLANA_RPC_URL` | `http://127.0.0.1:8899` | Solana test-validator JSON-RPC. |
+| `SUI_LOCALNET_URL` | `http://127.0.0.1:9000` | Sui localnet JSON-RPC. |
+| `SUI_FAUCET_URL` | `http://127.0.0.1:9123/v2/gas` | Sui faucet HTTP. |
+| `IKA_LOCALNET_CONFIG` | `sdk/plugins/test/localnet/ika-state/ika_config.json` | Ika config written by the swarm. |

@@ -10,8 +10,9 @@
 **/target
 .pre-commit*
 
-# Move build directory
-build
+# Move build directory (Move package build artifacts)
+contracts/**/build/
+deployed_contracts/**/build/
 storage
 !crates/ika-types/src/storage
 
@@ -84,6 +85,9 @@ lcov.info
 ika_config.json
 *.log
 *.seed
+
+# Localnet bind-mounted Ika state
+sdk/plugins/test/localnet/ika-state/
 
 # AI
 .cursor

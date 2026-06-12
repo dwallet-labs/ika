@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"types": "../../dist/esm/bitcoin/publisher/index.d.ts",
+	"import": "../../dist/esm/bitcoin/publisher/index.js",
+	"main": "../../dist/cjs/bitcoin/publisher/index.js",
+	"sideEffects": false
+}

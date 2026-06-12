@@ -1,5 +1,8 @@
 {
-	"title": "Solana Integration",
-	"root": true,
-	"pages": ["index"]
+	"title": "Solana Integration (pre-alpha)",
+	"pages": [
+		"index"
+	],
+	"icon": "Globe",
+	"root": true
 }

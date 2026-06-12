@@ -1,0 +1,108 @@
+---
+title: Sui destination
+description: Sign Sui transactions and personal messages across Ed25519, secp256k1, and secp256r1.
+---
+
+The Sui destination plugin signs for Sui dWallets. It supports three
+curves: `ED25519`, `SECP256K1`, and `SECP256R1`. Per-curve signature
+algorithms and hash schemes are fixed by Sui's wire format.
+
+| Curve | Algorithm | Hash | Scheme flag |
+|-------|-----------|------|-------------|
+| ED25519 | EdDSA | SHA512 | `0x00` |
+| SECP256K1 | ECDSASecp256k1 | SHA256 | `0x01` |
+| SECP256R1 | ECDSASecp256r1 | SHA256 | `0x02` |
+
+## Install
+
+```bash
+pnpm add @ika.xyz/plugins @mysten/sui
+```
+
+## Use
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { sui } from '@ika.xyz/plugins/sui/destination';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer }))
+	.use(sui())
+	.use(suiPublisher({ suiClient }));
+
+const dWallet = await ika.sui.createDWallet({
+	kind: 'shared',
+	curve: Curve.ED25519,
+});
+
+const address = await dWallet.sui.getAddress();
+```
+
+## Sign a Sui transaction
+
+```ts
+import { Transaction } from '@mysten/sui/transactions';
+
+const tx = new Transaction();
+tx.setSender(await dWallet.sui.getAddress());
+tx.transferObjects([tx.gas], '0x...');
+
+const signed = await dWallet.sui.sign({
+	kind: 'transaction',
+	tx,
+	suiClient,
+});
+
+const digest = await ika.publish({ chain: 'sui', payload: signed.payload });
+```
+
+The plugin builds the BCS-encoded `TransactionData`, wraps it in the
+Sui intent message (`messageWithIntent('TransactionData', bytes)`),
+and computes the 32-byte blake2b digest. The MPC then applies the
+curve's hash (`SHA256` for ECDSA curves, `SHA512` for Ed25519) over
+the digest. Sui validators perform the same composition on their side.
+
+## Sign a personal message
+
+```ts
+const signed = await dWallet.sui.sign({
+	kind: 'message',
+	message: new TextEncoder().encode('hello'),
+});
+
+const ok = await new Ed25519PublicKey(publicKey).verifyPersonalMessage(
+	new TextEncoder().encode('hello'),
+	signed.payload.signature,
+);
+```
+
+The plugin wraps the message via `bcs.vector(bcs.u8())` before
+applying the `PersonalMessage` intent prefix. This matches the
+canonical `@mysten/sui` `Signer.signPersonalMessage` behavior, so
+`PublicKey.verifyPersonalMessage(message, signature)` accepts the
+result.
+
+## Address derivation
+
+A Sui address is `blake2b(scheme_flag || public_key)[0..32]`, hex
+encoded with a `0x` prefix. The scheme flag is fixed per curve as
+listed above.
+
+## Publisher
+
+```ts
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+
+const pub = suiPublisher({ suiClient });
+```
+
+Calls `suiClient.executeTransaction` with the serialized
+TransactionData and the Sui-format serialized signature.
+
+## Signature wire format
+
+The plugin assembles the Sui serialized signature as
+`[scheme_flag][signature(64)][public_key]`, base64 encoded. The
+signature is asserted 64 bytes before encoding; non-64-byte inputs
+throw rather than producing a malformed signature.

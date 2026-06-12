@@ -1,0 +1,56 @@
+---
+title: Move modules
+description: Move packages and modules deployed by Ika.
+---
+
+Ika deploys four Move packages. They live in `contracts/` in the repo
+and are published to Sui by validators at network bootstrap.
+
+## Packages
+
+| Package | Purpose |
+|---------|---------|
+| `ika` | The IKA token. Standard Sui coin. |
+| `ika_common` | Shared types and helpers used by both `ika_system` and `ika_dwallet_2pc_mpc`. |
+| `ika_system` | The validator set, staking, epoch transitions, and network encryption key state. |
+| `ika_dwallet_2pc_mpc` | The dWallet coordinator. dWallet objects, presigns, signs, future-sign caps, message approvals. |
+
+## Key modules
+
+### `ika_dwallet_2pc_mpc::coordinator`
+
+The top-level public-API module. Entry points for DKG requests,
+presign requests, sign requests, future-sign, accept share, reveal
+share, and imported-key verification.
+
+### `ika_dwallet_2pc_mpc::coordinator_inner`
+
+Internal module with the event types
+(`DWalletDKGRequestEvent`, `PresignRequestEvent`, `SignRequestEvent`,
+`FutureSignRequestEvent`,
+`DWalletImportedKeyVerificationRequestEvent`) and the internal logic
+behind the public entry points.
+
+### `ika_dwallet_2pc_mpc::sessions_manager`
+
+The generic `DWalletSessionEvent<T>` wrapper applied to every protocol
+event. Also owns session lifecycle state.
+
+### `ika_system::validator_set`, `ika_system::staking`
+
+Validator-set membership, stake delegation, and the per-epoch
+rotation.
+
+### `ika_system::system`
+
+System-level configuration. Holds the on-chain handle to the network
+encryption key and the protocol version.
+
+## Where to read the source
+
+Every package's source is in this repo under `contracts/`. The SDK's
+TypeScript bindings are generated from these modules and live in
+`sdk/typescript/src/contracts/generated/`.
+
+For the curve / signature / hash combinations supported by each
+operation, see [the matrix page](./curve-signature-hash-matrix).

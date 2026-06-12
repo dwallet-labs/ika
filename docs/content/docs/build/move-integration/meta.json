@@ -1,0 +1,11 @@
+{
+	"title": "Move Integration",
+	"pages": [
+		"index",
+		"getting-started",
+		"core-concepts",
+		"protocols",
+		"integration-patterns",
+		"examples"
+	]
+}

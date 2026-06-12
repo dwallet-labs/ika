@@ -1,23 +1,23 @@
-"Type: Documentation":
+'Type: Documentation':
   - changed-files:
-      - any-glob-to-any-file: "docs/content/**/*"
+      - any-glob-to-any-file: 'docs/content/**/*'
 
-"Area: Rust":
+'Area: Rust':
   - changed-files:
-      - any-glob-to-any-file: "crates/**"
+      - any-glob-to-any-file: 'crates/**'
 
-"Area: Move":
+'Area: Move':
   - changed-files:
-      - any-glob-to-any-file: "contracts/**"
+      - any-glob-to-any-file: 'contracts/**'
 
-"Area: SDK":
+'Area: SDK':
   - changed-files:
-      - any-glob-to-any-file: "sdk/**"
+      - any-glob-to-any-file: 'sdk/**'
 
-"Area: Docker":
+'Area: Docker':
   - changed-files:
-      - any-glob-to-any-file: "docker/**"
+      - any-glob-to-any-file: 'docker/**'
 
-"Area: CI":
+'Area: CI':
   - changed-files:
-      - any-glob-to-any-file: ".github/**"
+      - any-glob-to-any-file: '.github/**'

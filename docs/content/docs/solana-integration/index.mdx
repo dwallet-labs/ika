@@ -1,24 +1,71 @@
 ---
-title: Solana Integration
-description: Build Solana programs that control dWallets for cross-chain signing
+title: Solana Integration (pre-alpha)
+description: Use Solana as the coordination chain for Ika dWallets. Pre-alpha, devnet only.
 icon: Globe
 ---
 
-import { Cards, Card } from 'fumadocs-ui/components/card';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 
-# Solana Integration
+import { Warning } from '@/components/InfoBox';
 
-Build Solana programs that control dWallets for cross-chain signing. The Solana dWallet SDK is available as a pre-alpha release with full documentation, examples, and a local development environment.
+<Warning title="Pre-alpha, devnet only">
+	This is the documentation track for the Solana-coordinated build of Ika. It runs on Solana
+	devnet, the API is unstable, and there are no production guarantees. Do not put real value
+	behind it. The mainline production stack is Sui-coordinated and is covered by every other
+	section of these docs.
+</Warning>
+
+This section covers using Solana as the coordination chain. The Solana
+build runs a separate Ika network deployment, has its own SDK, and is
+documented separately at the pre-alpha site.
+
+## Not the same as plugins/solana-destination
+
+There are two unrelated Solana surfaces in Ika. Do not confuse them:
+
+- **Solana Integration** (this section): use Solana as the **coordination chain**.
+  The dWallet object lives on Solana. Validators run a Solana-side
+  coordinator. Pre-alpha on devnet.
+- **[Build → Plugins → Solana destination](../build/plugins/solana-destination)**:
+  use Solana as a **destination chain** for a dWallet whose coordinator
+  runs on Sui. The dWallet object lives on Sui; the network signs
+  Solana transactions on behalf of it. Production-ready on testnet
+  and mainnet.
+
+If you are building today and want production signatures into Solana
+addresses, use the Sui-coordinated stack with the Solana destination
+plugin. The Solana Integration page below is only for developers who
+want to experiment with running their dWallets entirely on Solana.
+
+## Pre-alpha resources
 
 <Cards>
-  <Card
-    title="Solana Pre-Alpha Docs →"
-    description="Installation, tutorials, API reference, and examples"
-    href="https://solana-pre-alpha.ika.xyz"
-  />
-  <Card
-    title="GitHub Repository →"
-    description="Source code and developer SDK"
-    href="https://github.com/dwallet-labs/ika-pre-alpha"
-  />
+	<Card
+		title="Solana pre-alpha docs"
+		description="Installation, tutorials, API reference, examples."
+		href="https://solana-pre-alpha.ika.xyz"
+	/>
+	<Card
+		title="GitHub repository"
+		description="Source code and the Solana-side developer SDK."
+		href="https://github.com/dwallet-labs/ika-pre-alpha"
+	/>
 </Cards>
+
+## Status
+
+- **Network**: Solana devnet only.
+- **SDK**: a separate package from `@ika.xyz/sdk`. The package name
+  and import paths differ.
+- **Stability**: pre-alpha. Expect breaking changes between releases.
+- **Production**: not available. Do not store real assets behind this
+  build.
+
+## When to use this
+
+- Solana-native applications that want their dWallet coordination on
+  the same chain.
+- Experimentation with Solana-side Move-equivalent contract patterns.
+- Tracking the roadmap toward a production Solana build.
+
+For everything else, the Sui-coordinated stack is the answer.

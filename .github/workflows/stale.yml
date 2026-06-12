@@ -2,7 +2,7 @@ name: Mark stale issues and pull requests
 
 on:
   schedule:
-    - cron: "30 1 * * *"
+    - cron: '30 1 * * *'
 
 jobs:
   stale:
@@ -26,5 +26,5 @@ jobs:
             This pull request has been automatically marked as stale because it has
             not had recent activity. It will not be closed automatically, but it may
             be prioritized lower. Please update if it is still relevant.
-          stale-issue-label: "stale"
-          stale-pr-label: "stale"
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'

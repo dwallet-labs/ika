@@ -1,0 +1,131 @@
+---
+title: Cryptography helpers
+description: WASM-backed primitives the SDK exposes to callers.
+---
+
+These functions wrap the user-side MPC math. They are pure functions
+over byte buffers and are independent of any specific Sui transaction.
+
+## DKG preparation
+
+```ts
+import { prepareDKGAsync } from '@ika.xyz/sdk';
+
+const dkgData = await prepareDKGAsync(
+	ikaClient,
+	Curve.SECP256K1,
+	keys, // UserShareEncryptionKeys
+	sessionIdBytes,
+	senderAddress,
+);
+// returns { userDKGMessage, userPublicOutput, userSecretKeyShare, encryptedUserShareAndProof, sessionIdentifier }
+```
+
+`prepareDKGAsync` fetches the curve's protocol public parameters from
+chain and then runs the user-side DKG. The synchronous `prepareDKG`
+variant takes pre-fetched protocol public parameters and is useful
+when you want full control of caching.
+
+## Sign-message generation
+
+```ts
+import { createUserSignMessageWithPublicOutput } from '@ika.xyz/sdk';
+
+const msgSig = await createUserSignMessageWithPublicOutput(
+	pp, // protocol public parameters
+	Uint8Array.from(dWallet.state.Active.public_output),
+	Uint8Array.from(userSecretKeyShare),
+	Uint8Array.from(presign.state.Completed.presign),
+	message,
+	Hash.SHA256,
+	SignatureAlgorithm.Taproot,
+	Curve.SECP256K1,
+);
+```
+
+The `message` argument is the raw preimage. The hash scheme is applied
+inside the WASM call, so do not pre-hash. The returned bytes are the
+user's centralized sign-message to feed back into
+`IkaTransaction.requestSign`.
+
+## Public-key extraction
+
+```ts
+import { publicKeyFromDWalletOutput } from '@ika.xyz/sdk';
+
+const pk = await publicKeyFromDWalletOutput(
+	Curve.SECP256K1,
+	Uint8Array.from(dWallet.state.Active.public_output),
+);
+```
+
+For SECP256K1 and SECP256R1, returns 33-byte compressed. For ED25519,
+returns 32 bytes raw. For RISTRETTO, returns the canonical 32-byte
+encoding.
+
+## Signature parsing
+
+```ts
+import { parseSignatureFromSignOutput } from '@ika.xyz/sdk';
+
+const sig = await parseSignatureFromSignOutput(
+	Curve.SECP256K1,
+	SignatureAlgorithm.Taproot,
+	rawSignature,
+);
+```
+
+`IkaClient.getSign` mutates the returned object in place so the
+`state.Completed.signature` bytes are already parsed. Use this helper
+only when you have the raw on-chain bytes from another source.
+
+## Imported-key verification
+
+```ts
+import { prepareImportedKeyDWalletVerification } from '@ika.xyz/sdk';
+
+const data = await prepareImportedKeyDWalletVerification(
+	ikaClient,
+	Curve.SECP256K1,
+	bytesToHash,
+	senderAddress,
+	keys,
+	importedPrivateKey,
+);
+```
+
+`importedPrivateKey` is the raw scalar in the curve's canonical format.
+The returned object includes a verifiable encryption of the share
+which the network checks before accepting the import.
+
+## Session identifiers
+
+```ts
+import { createRandomSessionIdentifier, sessionIdentifierDigest } from '@ika.xyz/sdk';
+
+const randomId = createRandomSessionIdentifier();
+const deterministicId = sessionIdentifierDigest(messageBytes, senderAddressBytes);
+```
+
+Random for the normal case; deterministic when reproducibility is
+required, for example to retry a flow without producing a fresh
+on-chain session identifier.
+
+## Verification helpers
+
+```ts
+import { verifySecpSignature, verifyUserShare } from '@ika.xyz/sdk';
+
+await verifySecpSignature(publicKey, signature, message, networkDKG, hash, sigAlgo, curve);
+await verifyUserShare(curve, share, userDKGOutput, networkDKGOutput);
+```
+
+`verifySecpSignature` is curve-agnostic despite the name; it dispatches
+through the same WASM path as the on-chain verifier.
+
+## What runs in WASM
+
+Every function on this page crosses the WASM boundary. First invocation
+in a process pays the WASM init cost (a few hundred milliseconds);
+subsequent calls are fast. If you need to pre-warm during application
+startup, call `initializeWasm()` once.

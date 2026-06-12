@@ -1,0 +1,116 @@
+---
+title: Network configs
+description: Package IDs, object IDs, and RPC endpoints per network.
+---
+
+`IkaConfig` is the configuration object the SDK accepts. It carries
+the package IDs of the deployed Move packages plus the object IDs of
+the system objects on chain.
+
+```ts
+import { getNetworkConfig } from '@ika.xyz/sdk';
+
+const config = getNetworkConfig('testnet'); // or 'mainnet'
+```
+
+## Shape
+
+```ts
+interface IkaConfig {
+	packages: {
+		ikaPackage: string;
+		ikaCommonPackage: string;
+		ikaSystemPackage: string;
+		ikaSystemOriginalPackage: string;
+		ikaDwallet2pcMpcPackage: string;
+		ikaDwallet2pcMpcOriginalPackage: string;
+	};
+	objects: {
+		ikaSystemObject: { objectID: string; initialSharedVersion: number };
+		ikaDWalletCoordinator: { objectID: string; initialSharedVersion: number };
+	};
+}
+```
+
+The package IDs are the deployed Move packages. The object IDs and
+shared versions are needed to construct PTBs that reference the system
+and coordinator shared objects.
+
+## Testnet and mainnet
+
+The canonical values are kept in
+`sdk/typescript/src/client/network-configs.ts`. Treat that file as the
+source of truth: the values can change when a new package is published
+during an upgrade.
+
+## RPC endpoints
+
+The SDK does not include endpoint URLs. Pass a `SuiJsonRpcClient`
+built against whichever RPC you trust:
+
+```ts
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+```
+
+For production traffic you want a dedicated RPC. The public fullnodes
+are convenient for development but rate-limited.
+
+## Localnet
+
+The localnet stack writes its own `ika_config.json` to a bind-mounted
+directory when it starts. Read it and translate to `IkaConfig`:
+
+```ts
+import { readFile } from 'node:fs/promises';
+
+const raw = JSON.parse(await readFile('./ika-state/ika_config.json', 'utf8'));
+
+const config: IkaConfig = {
+	packages: {
+		ikaPackage: raw.packages.ika_package_id,
+		ikaCommonPackage: raw.packages.ika_common_package_id,
+		ikaSystemPackage: raw.packages.ika_system_package_id,
+		ikaSystemOriginalPackage: raw.packages.ika_system_package_id,
+		ikaDwallet2pcMpcPackage: raw.packages.ika_dwallet_2pc_mpc_package_id,
+		ikaDwallet2pcMpcOriginalPackage: raw.packages.ika_dwallet_2pc_mpc_package_id,
+	},
+	objects: {
+		ikaSystemObject: {
+			objectID: raw.objects.ika_system_object_id,
+			initialSharedVersion: /* fetch via getObject */ 0,
+		},
+		ikaDWalletCoordinator: {
+			objectID: raw.objects.ika_dwallet_coordinator_object_id,
+			initialSharedVersion: /* fetch via getObject */ 0,
+		},
+	},
+};
+```
+
+The `initialSharedVersion` values are not in `ika_config.json`. Fetch
+them by calling `suiClient.core.getObject` against each shared object
+once at startup. The localnet test helper `loadLocalnetIkaConfig` in
+`sdk/plugins/test/localnet/_helpers/ika-localnet.ts` does exactly
+this.
+
+## Storage retention
+
+Validators prune state every epoch. A fresh localnet syncs from
+genesis quickly even after a wipe. There is no "long initial sync"
+to plan for.
+
+## Fee pricing
+
+Each coordinator operation costs IKA. Default fee per operation in the
+SDK is 500,000,000 MIST (0.5 IKA), which clears the current testnet
+pricing tiers. Override with `ikaFeePerOp` on the source plugin
+options for deployments with different pricing.
+
+On testnet, use `coinWithBalance` to allocate the per-operation IKA
+coin rather than passing a fixed object id. Zero-coin allocations only
+work on localnet, where coordinator pricing is zero.

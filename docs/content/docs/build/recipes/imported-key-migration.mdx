@@ -1,0 +1,98 @@
+---
+title: Imported-key migration
+description: Bring an existing private key into Ika so the network co-signs from that point on.
+---
+
+You have an existing key, on Bitcoin or Ethereum or anywhere else,
+holding a real balance. You want to keep the address but stop being
+the sole signer. Imported-key migration is the right flow.
+
+## What it does
+
+DKG normally produces a fresh key. Imported-key DKG instead takes a
+key you already have and runs the DKG protocol around it, producing a
+dWallet whose public key matches your existing address. From that
+point on the network co-signs.
+
+The user share is encrypted on chain under the USEK, just like a
+zero-trust dWallet. You can optionally promote the dWallet to
+imported-key-shared, at which point the user share is published in
+plaintext and the dWallet behaves like a shared one. This promotion
+is irreversible.
+
+## Trust trade-off
+
+Imported-key has an inherent trust assumption: at the moment of
+import, the user holds the private key in plaintext. From that moment
+forward Ika's zero-trust property applies, but the import itself is
+not zero-trust. Make sure the import device is one you trust.
+
+## Setup
+
+```ts
+import { Curve, UserShareEncryptionKeys, prepareImportedKeyDWalletVerification } from '@ika.xyz/sdk';
+```
+
+Build a USEK as in the
+[zero-trust recipe](./zero-trust-ethereum) and register its encryption
+key on chain if you have not already.
+
+## Run the import
+
+```ts
+const importedPrivateKey = /* the existing 32-byte secp256k1 scalar */ ...;
+
+const dWallet = await ika.bitcoin.createDWallet({
+	kind: 'imported-key',
+	importedKey: importedPrivateKey,
+});
+
+// For Ethereum's import flow, swap `ika.bitcoin` for `ika.ethereum`.
+// Both wrap the same source-level call:
+//   ika.sui.createDWallet({ kind: 'imported-key', curve: SECP256K1, importedKey })
+```
+
+After this resolves the dWallet's `bitcoin.getAddress({ mode })` or
+`ethereum.getAddress()` returns the same address you imported.
+
+The network verifies the import via a zero-knowledge proof that the
+user's claimed centralized output is consistent with the supplied
+share. If the proof fails the import fails, so an attacker cannot
+import a key they do not actually know.
+
+## Optional: promote to imported-key-shared
+
+```ts
+await ika.sui.revealUserSecretShare({
+	dWallet,
+	acknowledge: 'i-understand-this-is-irreversible',
+});
+```
+
+This publishes the user share on chain. From that point the dWallet
+behaves like a shared dWallet: anyone with the cap can request
+signatures without the original user. Use this when the dWallet will
+be held by a contract or a multisig that itself coordinates the
+signing.
+
+The `acknowledge` string is the literal value
+`'i-understand-this-is-irreversible'`. The SDK refuses anything else
+and refuses to skip the check. The on-chain coordinator also rejects
+the reveal for non-imported-key dWallets, as a separate safety net.
+
+## Cleaning up the imported plaintext
+
+After import succeeds, the plaintext private key on the import device
+serves no purpose; the dWallet's public output captures everything
+needed for future signing. Wipe the file. Anyone who later learns the
+plaintext can sign once (because they still hold the share) but can
+also be locked out by the network if the USEK is rotated.
+
+## What is not supported
+
+- Importing a key that does not correspond to a curve Ika supports.
+- Importing into a curve that does not match (e.g. an Ed25519 key
+  into a SECP256K1 dWallet).
+- Re-importing the same key into multiple dWallets. The protocol does
+  not prevent this, but it negates the value of import: now two
+  dWallets sign for the same address, and either one can authorize.

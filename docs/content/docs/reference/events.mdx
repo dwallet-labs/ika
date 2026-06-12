@@ -1,0 +1,63 @@
+---
+title: Events
+description: On-chain events the SDK parses and their module paths.
+---
+
+The coordinator wraps every protocol event in a generic envelope:
+
+```move
+public struct DWalletSessionEvent<T> has copy, drop, store { ... event_data: T, ... }
+```
+
+`T` is one of the inner event types. The SDK parses an event by
+matching on the canonical module path
+`::coordinator_inner::<InnerType>>`.
+
+## Inner event types
+
+| Inner type | Emitted when |
+|------------|--------------|
+| `DWalletDKGRequestEvent` | A DKG request lands. Carries the dWallet id, dWallet cap id, and the user secret-key-share metadata. |
+| `PresignRequestEvent` | A presign request lands. Carries the presign id. |
+| `SignRequestEvent` | A sign request lands. Carries the sign id. |
+| `FutureSignRequestEvent` | A future-sign request lands. Carries the partial signature id and the cap id. |
+| `DWalletImportedKeyVerificationRequestEvent` | An imported-key verification request lands. Carries the dWallet id and the encrypted user share. |
+
+## Module paths
+
+All five live in `coordinator_inner`. Full type paths look like:
+
+```
+0x<package>::sessions_manager::DWalletSessionEvent<0x<package>::coordinator_inner::SignRequestEvent>
+```
+
+The SDK helper matches with the canonical suffix
+`::coordinator_inner::<InnerType>>`. This avoids the wallet-side
+attack where a malicious wallet returns fabricated events whose type
+happens to contain a bare struct name.
+
+## Parsing in TypeScript
+
+```ts
+import { ikaDwallet2pcMpc } from '@ika.xyz/sdk';
+
+const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
+
+const parser = SessionsManagerModule.DWalletSessionEvent(
+	CoordinatorInnerModule.SignRequestEvent,
+);
+
+const parsed = parser.parse(eventBcsBytes);
+```
+
+The same pattern applies for every inner type. The wrapper carries
+`session_identifier_preimage`, `event_data`, and `epoch`. The
+`event_data` field is the inner type.
+
+## Source
+
+The Move event definitions live in
+`contracts/ika_dwallet_2pc_mpc/sources/coordinator_inner.move` and
+`contracts/ika_dwallet_2pc_mpc/sources/sessions_manager.move`. The TS
+parsers are generated and exposed from
+`sdk/typescript/src/contracts/generated/`.

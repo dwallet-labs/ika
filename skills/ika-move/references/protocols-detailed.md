@@ -5,6 +5,7 @@ All coordinator function signatures and detailed flows.
 ## DKG Functions
 
 ### Shared dWallet (public user share)
+
 ```rust
 public fun request_dwallet_dkg_with_public_user_secret_key_share(
     self: &mut DWalletCoordinator,
@@ -20,9 +21,11 @@ public fun request_dwallet_dkg_with_public_user_secret_key_share(
     ctx: &mut TxContext,
 ): (DWalletCap, Option<ID>)
 ```
+
 Returns: `DWalletCap` for signing auth + optional sign session ID if sign-during-DKG was requested.
 
 ### Zero-Trust dWallet (encrypted user share)
+
 ```rust
 public fun request_dwallet_dkg(
     self: &mut DWalletCoordinator,
@@ -40,9 +43,11 @@ public fun request_dwallet_dkg(
     ctx: &mut TxContext,
 ): (DWalletCap, Option<ID>)
 ```
+
 Additional params vs shared: `encrypted_centralized_secret_share_and_proof`, `encryption_key_address`, `signer_public_key`.
 
 ### Sign During DKG
+
 ```rust
 public fun sign_during_dkg_request(
     self: &mut DWalletCoordinator,
@@ -52,11 +57,13 @@ public fun sign_during_dkg_request(
     message_centralized_signature: vector<u8>,
 ): SignDuringDKGRequest
 ```
+
 Requires an existing verified presign. Pass result as `option::some(req)` to DKG call. The returned `Option<ID>` from DKG will contain the sign session ID.
 
 ## Presign Functions
 
 ### Global Presign (Taproot, EdDSA, Schnorr, ECDSA with DKG wallets)
+
 ```rust
 public fun request_global_presign(
     self: &mut DWalletCoordinator,
@@ -71,6 +78,7 @@ public fun request_global_presign(
 ```
 
 ### dWallet-Specific Presign (ECDSA with imported keys only)
+
 ```rust
 public fun request_presign(
     self: &mut DWalletCoordinator,
@@ -84,6 +92,7 @@ public fun request_presign(
 ```
 
 ### Presign Verification
+
 ```rust
 public fun verify_presign_cap(
     self: &mut DWalletCoordinator,
@@ -96,11 +105,13 @@ public fun is_presign_valid(
     presign_cap: &UnverifiedPresignCap,
 ): bool
 ```
+
 `verify_presign_cap` fails if network hasn't completed presign. Check with `is_presign_valid` first or ensure sufficient time.
 
 ## Message Approval Functions
 
 ### Standard dWallet
+
 ```rust
 public fun approve_message(
     self: &mut DWalletCoordinator,
@@ -112,6 +123,7 @@ public fun approve_message(
 ```
 
 ### Imported Key dWallet
+
 ```rust
 public fun approve_imported_key_message(
     self: &mut DWalletCoordinator,
@@ -125,6 +137,7 @@ public fun approve_imported_key_message(
 ## Signing Functions
 
 ### Direct Sign (no return)
+
 ```rust
 public fun request_sign(
     self: &mut DWalletCoordinator,
@@ -139,6 +152,7 @@ public fun request_sign(
 ```
 
 ### Direct Sign (returns sign session ID)
+
 ```rust
 public fun request_sign_and_return_id(
     self: &mut DWalletCoordinator,
@@ -153,6 +167,7 @@ public fun request_sign_and_return_id(
 ```
 
 ### Imported Key Sign
+
 ```rust
 public fun request_imported_key_sign_and_return_id(
     self: &mut DWalletCoordinator,
@@ -169,6 +184,7 @@ public fun request_imported_key_sign_and_return_id(
 ## Future Signing Functions
 
 ### Phase 1: Request Future Sign
+
 ```rust
 public fun request_future_sign(
     self: &mut DWalletCoordinator,
@@ -183,9 +199,11 @@ public fun request_future_sign(
     ctx: &mut TxContext,
 ): UnverifiedPartialUserSignatureCap
 ```
+
 Note: takes `dwallet_id` directly (not `DWalletCap`). Get via `dwallet_cap.dwallet_id()`.
 
 ### Partial Signature Verification
+
 ```rust
 public fun verify_partial_user_signature_cap(
     self: &mut DWalletCoordinator,
@@ -200,6 +218,7 @@ public fun is_partial_user_signature_valid(
 ```
 
 ### Phase 2: Complete with Partial Signature
+
 ```rust
 public fun request_sign_with_partial_user_signature_and_return_id(
     self: &mut DWalletCoordinator,
@@ -211,9 +230,11 @@ public fun request_sign_with_partial_user_signature_and_return_id(
     ctx: &mut TxContext,
 ): ID
 ```
+
 Note: no `message_centralized_signature` param - the partial sig already contains it.
 
 ### Imported Key Phase 2
+
 ```rust
 public fun request_imported_key_sign_with_partial_user_signature_and_return_id(
     self: &mut DWalletCoordinator,
@@ -227,6 +248,7 @@ public fun request_imported_key_sign_with_partial_user_signature_and_return_id(
 ```
 
 ### Matching Partial Signatures
+
 ```rust
 public fun match_partial_user_signature_with_message_approval(
     self: &DWalletCoordinator,
@@ -240,6 +262,7 @@ public fun match_partial_user_signature_with_imported_key_message_approval(
     approval: &ImportedKeyMessageApproval,
 ): bool
 ```
+
 Use to verify partial sig matches intended message before completing.
 
 ## Key Import Functions
@@ -274,6 +297,7 @@ public fun request_make_dwallet_user_secret_key_shares_public(
     ctx: &mut TxContext,
 )
 ```
+
 Irreversible. The `public_user_secret_key_shares` must be the original user secret key share from DKG.
 
 ## Query Functions
@@ -293,6 +317,7 @@ public fun register_session_identifier(
     ctx: &mut TxContext,
 ): SessionIdentifier
 ```
+
 Bytes must be globally unique. Recommended: `ctx.fresh_object_address().to_bytes()`.
 
 ## Capability Accessors

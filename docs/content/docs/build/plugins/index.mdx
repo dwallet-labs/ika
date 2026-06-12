@@ -1,0 +1,177 @@
+---
+title: Plugins
+description: The source, destination, and publisher plugin layer over the SDK.
+---
+
+`@ika.xyz/plugins` is a first-party set of plugins that wrap the
+SDK with chain-aware ergonomics. Three plugin roles compose onto a
+single `IkaClient`:
+
+- **Source**: manages dWallets on the coordination chain. Today the
+  only source is `suiSource` (Sui). The source handles DKG, presigns,
+  signs, and the future-sign flow.
+- **Destination**: knows the wire format of a target chain. Today the
+  four destinations are `btc`, `eth`, `solana`, and `sui`. Each
+  destination builds the chain-specific preimage at sign time and
+  assembles the signed payload when the network's signature lands.
+- **Publisher**: broadcasts the assembled payload to the target chain.
+  One publisher per chain.
+
+You compose them at startup:
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer }))
+	.use(btc())
+	.use(bitcoinPublisher({ network: 'testnet' }));
+```
+
+Then drive operations through the bound surface:
+
+```ts
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
+
+const signed = await dWallet.bitcoin.sign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2tr-script',
+});
+
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+## Install
+
+```bash
+pnpm add @ika.xyz/plugins @ika.xyz/sdk @mysten/sui
+# plus the per-chain peer deps you actually use:
+pnpm add bitcoinjs-lib @bitcoinerlab/secp256k1   # bitcoin
+pnpm add viem                                     # ethereum
+pnpm add @solana/web3.js                          # solana
+```
+
+Peer dependencies `bitcoinjs-lib`, `viem`, and `@solana/web3.js` are
+declared optional. Install only the ones your application needs. Node
+18 or later.
+
+## Subpath imports
+
+Each plugin lives at its own subpath so bundlers can drop the chains
+you do not use:
+
+```ts
+import { suiSource } from '@ika.xyz/plugins/sui/source';
+import { suiPublisher } from '@ika.xyz/plugins/sui/publisher';
+import { sui } from '@ika.xyz/plugins/sui/destination';
+
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+
+import { eth } from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+
+import { solana } from '@ika.xyz/plugins/solana/destination';
+import { solanaDevnet, solanaMainnet } from '@ika.xyz/plugins/solana/publisher';
+```
+
+The root `@ika.xyz/plugins` re-exports everything, but prefer the
+subpaths to keep unused peer dependencies out of your bundle.
+
+## What each role gets
+
+- **The source** exposes the full coordination-side surface on
+  `ika.sui.*`: `createDWallet`, `requestSign`, `requestFutureSign`,
+  `completeFutureSign`, `withSigner`, presign primitives, and the
+  `compose` namespace for multi-op PTBs.
+- **The destination** exposes chain-led sugar on `ika.<chain>.*`:
+  `ika.bitcoin.createDWallet({ kind })`, `ika.ethereum.createDWallet({
+  kind })`, `ika.solana.createDWallet({ kind })`. Each picks the
+  right curve and returns an already-decorated dWallet. Use the
+  source's `ika.sui.createDWallet({ kind, curve })` directly when you
+  need full control of DKG inputs.
+- **Per-dWallet decoration**: every destination also attaches a
+  signing namespace to the dWallet handle (`dWallet.bitcoin.sign`,
+  `dWallet.ethereum.sign`, and so on) plus
+  [prepareSign and assembleSign](./prepare-and-assemble) for the
+  two-phase flow.
+- **The publisher** exposes `ika.publish({ chain, payload })`.
+
+## Source-and-destination on the same chain
+
+The Sui plugin is unique in that the same chain hosts both the
+coordinator (source) and a destination (signing for Sui from a Sui-side
+dWallet). The source manages the dWallet; the destination signs Sui
+transactions on behalf of it. The two are separate pieces of code with
+separate namespaces.
+
+## Where to go next
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Workflow, Hourglass, Bitcoin, Coins, Sparkle, FileCog, Send, Wand2 } from 'lucide-react';
+
+<Cards>
+	<Card
+		icon={<Workflow />}
+		title="prepareSign and assembleSign"
+		description="The two-phase signing API. Split preimage build, network sign, and assembly so you can gate the network call yourself."
+		href="./prepare-and-assemble"
+	/>
+	<Card
+		icon={<Hourglass />}
+		title="Future-sign"
+		description="Commit to a signature now, release it later under contract gating. The Phase-1 + Phase-2 pattern."
+		href="./future-sign"
+	/>
+</Cards>
+
+### Per-chain destinations
+
+<Cards>
+	<Card
+		icon={<Bitcoin />}
+		title="Bitcoin"
+		description="Taproot, P2WPKH, P2SH-P2WPKH, P2PKH. PSBT-mode and preimage-mode signing."
+		href="./bitcoin"
+	/>
+	<Card
+		icon={<Coins />}
+		title="Ethereum"
+		description="EIP-1559, 2930, and legacy transactions. Personal_sign (EIP-191) and typed data (EIP-712)."
+		href="./ethereum"
+	/>
+	<Card
+		icon={<Sparkle />}
+		title="Solana"
+		description="VersionedTransaction signing and personal-message signing for Solana addresses."
+		href="./solana-destination"
+	/>
+	<Card
+		icon={<FileCog />}
+		title="Sui"
+		description="TransactionData and PersonalMessage signing across ed25519, secp256k1, and secp256r1 with the correct intent prefix."
+		href="./sui-destination"
+	/>
+</Cards>
+
+### Publishing and custom plugins
+
+<Cards>
+	<Card
+		icon={<Send />}
+		title="Publishers"
+		description="Per-chain broadcasters. Esplora for Bitcoin, JSON-RPC for Ethereum and Solana, the Sui client for Sui."
+		href="./publishers"
+	/>
+	<Card
+		icon={<Wand2 />}
+		title="Writing your own plugin"
+		description="Build a custom source, destination, or publisher. Contract definitions and how they compose."
+		href="./writing-your-own"
+	/>
+</Cards>

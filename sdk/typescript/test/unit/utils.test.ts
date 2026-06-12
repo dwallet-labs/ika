@@ -13,57 +13,42 @@ import {
 
 describe('Utils', () => {
 	describe('objResToBcs', () => {
-		it('should extract BCS bytes from valid Sui object response', () => {
+		it('should extract BCS bytes from a direct Object response', () => {
+			const bytes = new Uint8Array([1, 2, 3, 4]);
+			const mockResponse = { content: bytes, type: 'SomeType' } as any;
+
+			const result = objResToBcs(mockResponse);
+			expect(result).toBeInstanceOf(Uint8Array);
+			expect(Array.from(result)).toEqual([1, 2, 3, 4]);
+		});
+
+		it('should unwrap and extract BCS bytes from a GetObjectResponse', () => {
+			const bytes = new Uint8Array([9, 8, 7]);
 			const mockResponse = {
-				data: {
-					digest: 'test-digest',
-					objectId: 'test-object-id',
-					version: '1',
-					bcs: {
-						dataType: 'moveObject' as const,
-						bcsBytes: 'test-bcs-bytes',
-					},
-				},
+				object: { content: bytes, type: 'SomeType' },
 			} as any;
 
 			const result = objResToBcs(mockResponse);
-			expect(result).toBe('test-bcs-bytes');
+			expect(Array.from(result)).toEqual([9, 8, 7]);
 		});
 
-		it('should throw InvalidObjectError when bcs data is missing', () => {
-			const mockResponse = {
-				data: {
-					digest: 'test-digest',
-					objectId: 'test-object-id',
-					version: '1',
-					type: 'SomeType',
-				},
-			} as any;
+		it('should throw InvalidObjectError when content is missing', () => {
+			const mockResponse = { type: 'SomeType' } as any;
 
 			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
 			expect(() => objResToBcs(mockResponse)).toThrow('Response bcs missing');
 		});
 
-		it('should throw InvalidObjectError when dataType is not moveObject', () => {
-			const mockResponse = {
-				data: {
-					digest: 'test-digest',
-					objectId: 'test-object-id',
-					version: '1',
-					bcs: {
-						dataType: 'package' as const,
-						bcsBytes: 'test-bcs-bytes',
-					},
-				},
-			} as any;
+		it('should throw InvalidObjectError when content is missing after unwrap', () => {
+			const mockResponse = { object: { type: 'SomeType' } } as any;
 
 			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
 		});
 
-		it('should throw InvalidObjectError when data is missing', () => {
-			const mockResponse = {} as any;
+		it('should rethrow when given an Error', () => {
+			const err = new Error('rpc boom');
 
-			expect(() => objResToBcs(mockResponse)).toThrow(InvalidObjectError);
+			expect(() => objResToBcs(err)).toThrow(err);
 		});
 	});
 

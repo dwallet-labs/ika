@@ -7,13 +7,12 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { describe, expect, it } from 'vitest';
 
 import {
-	CoordinatorInnerModule,
 	Curve,
 	Hash,
 	IkaClient,
+	ikaDwallet2pcMpc,
 	Presign,
 	publicKeyFromDWalletOutput,
-	SessionsManagerModule,
 	SignatureAlgorithm,
 	ZeroTrustDWallet,
 } from '../../src';
@@ -36,6 +35,8 @@ import {
 	testPresign,
 	waitForDWalletAwaitingSignature,
 } from './helpers';
+
+const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 
 /**
  * Compute hash based on the hash scheme

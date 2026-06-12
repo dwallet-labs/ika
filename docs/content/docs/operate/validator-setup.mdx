@@ -1,0 +1,98 @@
+---
+title: Validator setup
+description: Hardware, keys, and initial configuration for an Ika validator.
+---
+
+This page covers what a prospective Ika validator needs to do before
+joining the validator set. For day-to-day operations after the node
+is up, see [Validator operations](./validator-operations).
+
+## Hardware
+
+Validators run the same Rust binary as the localnet image. Production
+sizing depends on traffic and reconfiguration cadence; the
+ballpark numbers below are conservative starting points and should be
+revised based on actual load.
+
+- 16 physical CPU cores. The default `ika-node` build enables
+  `enforce-minimum-cpu` and refuses to start on fewer than 16; this
+  is the production gate.
+- 32 GB RAM minimum. The MPC orchestrator and the consensus state
+  combined fit comfortably in 16 GB; the extra headroom is for
+  validator state and indexer queries.
+- NVMe SSD for state. A modern consumer NVMe is fine. The on-disk
+  state grows with cumulative sessions; pruning is automatic.
+- Reliable network with low latency between validators. The MPC
+  protocol rounds are short, so tail latency matters more than
+  bandwidth.
+
+The `enforce-minimum-cpu` feature flag can be disabled for development
+machines, but production validators should leave it on; the protocol
+assumes enough cores to run MPC rounds without queuing.
+
+## Keys
+
+Each validator needs three keypair types:
+
+1. **An authority key** (Ed25519). Identifies the validator on chain.
+   Used for staking and validator-set membership.
+2. **A network key** (Ed25519). Identifies the validator on the
+   Mysticeti consensus mesh. Different from the authority key so the
+   network identity can rotate independently.
+3. **A class-groups decryption keypair**. The validator's share of
+   the network's threshold encryption key. Generated at network DKG
+   time and reshared at every epoch.
+
+All three are produced by the validator's own `ika` binary. Authority
+and network keys are stable across reconfigurations; the class-groups
+share rotates with every epoch.
+
+## Initial configuration
+
+The validator's configuration lives at the path specified by
+`IKA_CONFIG_DIR` (default `/var/lib/ika`). It contains:
+
+- `network.yaml`: the validator's view of the network. Generated at
+  bootstrap.
+- `Pub.<network>.toml`: validator-side configuration. RPC endpoints,
+  consensus parameters.
+- The validator's keystore.
+
+For production, generate the keystore offline, copy only the public
+parts to the validator host, and keep the private parts in a hardware
+key manager. The `ika validator` subcommands cover key generation,
+signing, and registration; see [CLI](./cli) for the full surface.
+
+## Staking and registration
+
+To join the active validator set:
+
+1. Acquire IKA tokens sufficient for the minimum self-stake.
+2. Register as a validator candidate with the system module
+   (`ika_system::system::request_add_validator_candidate`).
+3. Solicit delegations from token holders.
+4. Once the validator's total stake clears the threshold, the
+   validator joins the active set at the next epoch boundary.
+
+The CLI workflow is documented under
+[CLI: validator commands](./cli/validator-commands).
+
+## Network encryption key participation
+
+After joining the active set, the validator participates in the next
+network encryption key reconfiguration. The reconfiguration moves the
+network's threshold-encryption key shares onto the new committee. The
+network's public encryption key does not change.
+
+If the validator joins partway through an epoch, it does not
+participate in MPC until the next reconfiguration completes. The
+network continues to operate without it during that window.
+
+## Reading further
+
+- [Validator operations](./validator-operations) for monitoring,
+  upgrades, and incident response.
+- [CLI](./cli) for the full validator command surface.
+- The `ika-operator` AI skill in [AI Skills](../ai-skills/ika-operator)
+  is a packaged form of this operational knowledge for AI coding
+  assistants.

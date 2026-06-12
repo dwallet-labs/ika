@@ -1,0 +1,68 @@
+---
+title: SDK
+description: The protocol client and the Sui transaction builder.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Settings, Network, Layers, KeyRound, Cpu, Code2 } from 'lucide-react';
+
+`@ika.xyz/sdk` exposes the core protocol surface as a TypeScript
+package. It is independent of the plugin layer: you can write an
+application against the SDK directly, dropping the plugin abstractions
+entirely if you need full control over Move call construction.
+
+If you are starting fresh, the [Plugins](../plugins) layer is what
+most applications want. Use the SDK directly when you need to compose
+multiple coordinator operations into a single PTB, or when the plugin
+ergonomics do not fit your application.
+
+## Getting set up
+
+<Cards>
+	<Card
+		icon={<Settings />}
+		title="Setup"
+		description="Install the package, configure the network, and verify the client connects to the coordinator."
+		href="./setup"
+	/>
+</Cards>
+
+## Core API
+
+<Cards>
+	<Card
+		icon={<Network />}
+		title="IkaClient"
+		description="On-chain reads, protocol public parameters, polling helpers, and cache management."
+		href="./ika-client"
+	/>
+	<Card
+		icon={<Layers />}
+		title="IkaTransaction"
+		description="The transaction builder. DKG, presign, sign, future-sign, accept share, reveal share."
+		href="./ika-transaction"
+	/>
+	<Card
+		icon={<KeyRound />}
+		title="User Share Encryption Keys"
+		description="The user-side keypair bundle. Deterministically derived from a seed; serializable for storage."
+		href="./user-share-encryption-keys"
+	/>
+</Cards>
+
+## Lower-level
+
+<Cards>
+	<Card
+		icon={<Cpu />}
+		title="Cryptography helpers"
+		description="The WASM-backed primitives the SDK exposes: prepare DKG, build user sign messages, parse signatures, public keys from outputs."
+		href="./cryptography-helpers"
+	/>
+	<Card
+		icon={<Code2 />}
+		title="Low-level Move builders"
+		description="Raw coordinator Move calls for callers that need to compose at the coordinator-call level instead of via IkaTransaction."
+		href="./low-level"
+	/>
+</Cards>

@@ -1,9 +1,21 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
+	resolve: {
+		alias: {
+			// During tests, resolve workspace packages to TS source so we don't
+			// need to build before each run.
+			'@ika.xyz/sdk/plugin': path.resolve(__dirname, 'src/plugin/index.ts'),
+			'@ika.xyz/sdk': path.resolve(__dirname, 'src/index.ts'),
+		},
+	},
 	test: {
 		minWorkers: 1,
 		maxWorkers: 50,

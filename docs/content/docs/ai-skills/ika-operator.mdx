@@ -1,0 +1,46 @@
+---
+title: ika-operator
+description: Claude Code skill for validator operations, configuration, and incident response.
+---
+
+## Install
+
+```bash
+npx skills add dwallet-labs/ika -s ika-operator
+```
+
+## What the skill knows
+
+The operational surface for Ika validators and fullnodes:
+
+- **Validator setup**: hardware sizing, the three keypair types
+  (authority, network, class-groups), staking and registration.
+- **Configuration reference**: every field of `NodeConfig`, with
+  defaults and meaning. The `enforce-minimum-cpu` feature flag.
+- **Monitoring**: Prometheus metrics, admin API, health checks.
+  Which numbers to alert on.
+- **Operations**: rolling upgrades, key rotation, incident response.
+  How identifiable abort and slashing interact with operational
+  failures.
+- **Class-groups share rotation**: how the network encryption key
+  reconfiguration rolls validator shares onto the next committee
+  without changing the public encryption key.
+- **Disaster recovery**: rebuilding a validator from a backed-up
+  keystore.
+
+## Sample prompts
+
+- "Build a Prometheus alert set for an Ika validator. Cover sign
+  throughput, round duration, consensus participation, and
+  class-groups share production."
+- "Walk me through a key rotation procedure for the authority key
+  without losing slashing liability on the old key."
+- "Diagnose why my validator is producing zero decryption shares
+  during reconfiguration but otherwise looks healthy."
+
+## Where the SKILL.md lives
+
+[`skills/ika-operator/`](https://github.com/dwallet-labs/ika/tree/main/skills/ika-operator)
+in the repository. See [Operate → Validator setup](../operate/validator-setup)
+and [Operate → Validator operations](../operate/validator-operations)
+for the human-readable counterparts.

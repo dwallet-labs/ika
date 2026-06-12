@@ -4,7 +4,6 @@ import { RootProvider } from 'fumadocs-ui/provider';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-
 export const metadata: Metadata = {
 	title: {
 		template: '%s | Ika Docs',

@@ -1,0 +1,11 @@
+{
+	"title": "Recipes",
+	"pages": [
+		"index",
+		"shared-bitcoin",
+		"zero-trust-ethereum",
+		"imported-key-migration",
+		"future-sign-multisig",
+		"backend-funds-user-signs"
+	]
+}

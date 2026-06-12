@@ -1,0 +1,107 @@
+---
+title: Future-sign with a Move multisig
+description: Approve a signature now, release it later from a Move contract once a quorum agrees.
+---
+
+Future-sign is the right primitive when you want to commit to a
+signature now but release it conditionally later. A Move multisig
+contract is the canonical case: the user approves a specific Bitcoin
+or Ethereum transaction, transfers the partial cap to the multisig,
+and the multisig releases the signature only after its members vote.
+
+This recipe walks through the flow end to end. See
+[Future-sign](../plugins/future-sign) for the underlying primitives.
+
+## What the user does
+
+```ts
+import { Curve, Hash, SignatureAlgorithm } from '@ika.xyz/sdk';
+
+const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2wpkh',
+});
+
+const presign = await ika.sui.requestGlobalPresign({
+	curve: plan.curve,
+	signatureAlgorithm: plan.signatureAlgorithm,
+});
+
+const { capId, partialSignatureId } = await ika.sui.requestFutureSign({
+	dWallet,
+	message: preimage,
+	signatureAlgorithm: plan.signatureAlgorithm,
+	hash: plan.hash,
+	presign,
+	capRecipient: multisigContractAddress,
+});
+
+// Persist `prep`, `capId`, `partialSignatureId` so you can assemble
+// later. The cap now lives at `multisigContractAddress`.
+```
+
+After this lands the user has:
+
+- Pre-committed the exact `(dWallet, preimage, signatureAlgorithm,
+  hash)` tuple on chain.
+- Transferred a validated cap to the multisig contract.
+
+The user cannot change the message, the algorithm, or the hash
+anymore without producing a new cap.
+
+## What the contract does
+
+The Move multisig holds the cap. Its release function looks something
+like:
+
+```move
+public entry fun release_signature(
+	multisig: &mut Multisig,
+	cap: VerifiedPartialUserSignatureCap,
+	approval: MessageApproval,
+	coordinator: &Coordinator,
+	ctx: &mut TxContext,
+) {
+	// gating: require N-of-M signatures, time-lock, conditions, ...
+	assert!(multisig.has_quorum(ctx), EBlockedByQuorum);
+	coordinator::request_sign_with_partial_user_signature(coordinator, cap, approval, ctx);
+}
+```
+
+The coordinator validates that the `MessageApproval` matches the cap
+on `dwallet_id`, `message`, `signature_algorithm`, and `hash_scheme`.
+If they do not match, the call aborts with `EMessageApprovalMismatch`.
+The cap holder cannot release a different signature than the one
+originally captured.
+
+## What the watcher does
+
+Once the contract releases, the network produces the signature and
+writes the sign object on chain. The watcher polls for it and
+assembles:
+
+```ts
+const sign = await ika.sui.client.getSignInParticularState(
+	signId,
+	Curve.SECP256K1,
+	SignatureAlgorithm.ECDSASecp256k1,
+	'Completed',
+);
+
+const signed = await dWallet.bitcoin.assembleSign(prep, sign.state.Completed.signature);
+const txid = await ika.publish({ chain: 'bitcoin', payload: signed.payload });
+```
+
+`prep` is the same value the user persisted at phase-one time. The
+assembly is identical to a normal sign.
+
+## What you do not need to handle
+
+- The cap holder cannot redeem with a different message. Enforced on
+  chain.
+- The cap holder cannot redeem with a different presign. The bound
+  presign is captured at phase one.
+- If the network is unhealthy, the contract's release transaction
+  fails. The contract decides whether to retry.

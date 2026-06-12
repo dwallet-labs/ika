@@ -1,0 +1,99 @@
+---
+title: User Share Encryption Keys
+description: The user-side keypair bundle that wraps the user's secret share and authorizes dWallet ownership.
+---
+
+The User Share Encryption Keys (USEK) class bundles two distinct
+keypairs:
+
+1. A **class-groups encryption keypair**. The public key registers on
+   chain and is what zero-trust and imported-key dWallets use to
+   encrypt their secret share for backup. The private key decrypts
+   that share back into memory at sign time.
+2. An **Ed25519 acceptance signing keypair**. Used to sign the dWallet
+   public output at acceptance time, to sign the class-groups
+   encryption key when first registering it, and to sign transferred
+   dWallet outputs.
+
+Both keys derive deterministically from a single 32-byte seed using
+domain-separated keccak256, so a USEK can be reproduced from a
+recovery phrase.
+
+## Create from a seed
+
+```ts
+import { Curve, UserShareEncryptionKeys } from '@ika.xyz/sdk';
+
+const keys = await UserShareEncryptionKeys.fromRootSeedKey(
+	new TextEncoder().encode('your-seed-or-recovery-derivation'),
+	Curve.SECP256K1,
+);
+```
+
+The seed must be 32 bytes. Anything else throws. The curve argument
+ties the class-groups key to a specific plaintext space; one curve per
+USEK.
+
+## Register on chain
+
+Before the first DKG against a USEK, register its encryption key on
+chain:
+
+```ts
+const tx = new Transaction();
+const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
+await ikaTx.registerEncryptionKey({ curve: Curve.SECP256K1 });
+await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer });
+```
+
+Registration is one-time per user per curve. Subsequent DKGs reuse it.
+
+## Serialize for storage
+
+```ts
+const bytes = keys.toShareEncryptionKeysBytes();
+// ... later ...
+const restored = UserShareEncryptionKeys.fromShareEncryptionKeysBytes(bytes);
+```
+
+Stored bytes carry a version tag. If the SDK ever bumps the
+derivation, old bytes still decode correctly.
+
+## Common operations
+
+```ts
+keys.getSuiAddress();
+keys.getSigningPublicKeyBytes();
+keys.encryptionKey;
+keys.decryptionKey;
+keys.curve;
+
+await keys.getEncryptionKeySignature();
+await keys.getUserOutputSignature(dWallet, userPublicOutput);
+await keys.decryptUserShare(dWallet, encShare, pp);
+```
+
+`decryptUserShare` performs four checks before returning: the dWallet
+must be `Active`, the Ed25519 acceptance signature on the public
+output must verify, the class-groups decryption must succeed, and the
+recovered share must be consistent with the public output. If any of
+these fails, the call throws and no share material is returned.
+
+## Legacy seed derivation
+
+Before a fix landed, `fromRootSeedKey` used `0` as the curve byte
+regardless of curve. For SECP256K1 (curve byte 0) this matched the
+fixed derivation; for other curves it did not. If you have keys
+registered under the old derivation, use
+`UserShareEncryptionKeys.fromRootSeedKeyLegacyHash(seed, curve)` to
+reproduce them. The serialized bytes' version tag (V1 or V2) tells you
+which derivation to use.
+
+## What the USEK does not authorize
+
+The Ed25519 signing key is only used to bind the user to specific
+on-chain artifacts (the class-groups public key, a particular DKG
+output, a transferred output). It does not authorize signatures over
+arbitrary messages and it is not the user's "private key" for any
+dWallet. Treat it as a registration credential, not as a personal
+signing key.

@@ -1,0 +1,101 @@
+---
+title: Architecture overview
+description: How the SDK, the plugins, and the on-chain coordinator fit together.
+---
+
+Ika exposes itself to developers through three layers. Each layer is
+self-contained and can be used directly.
+
+## The three layers
+
+**On-chain coordinator (Move).** A set of Move modules on Sui:
+`ika`, `ika_common`, `ika_system`, `ika_dwallet_2pc_mpc`. They store
+dWallet objects, presign objects, sign objects, network encryption
+keys, and the validator-set state. They emit events that the
+validators listen on, and they enforce the trust model: who can
+approve a message for which dWallet, whether a partial signature
+matches a message approval, and so on.
+
+**SDK (`@ika.xyz/sdk`).** A TypeScript package that wraps the
+coordinator. The high-value parts are:
+
+- `IkaClient`: reads on-chain state for dWallets, presigns, signs,
+  and network encryption keys; manages caches for protocol public
+  parameters that change only when the network reconfigures.
+- `IkaTransaction`: a builder layered on top of `@mysten/sui`'s
+  `Transaction`. It emits the right coordinator Move calls for each
+  operation (DKG, presign, sign, future-sign, accept share, reveal
+  share, imported key).
+- `UserShareEncryptionKeys`: the user's class-groups encryption key
+  plus the Ed25519 acceptance signing key. Derived deterministically
+  from a 32-byte seed.
+- Cryptography helpers (`prepareDKG`, `createUserSignMessageWith*`,
+  `publicKeyFromDWalletOutput`, `parseSignatureFromSignOutput`, ...)
+  that cross the WASM boundary to the Rust user-side implementation.
+
+**Plugins (`@ika.xyz/plugins`).** Chain-aware composition over the
+SDK. Three plugin roles:
+
+- A **source** plugin manages dWallets on a coordination chain. The
+  only source today is `suiSource`. It handles DKG, presigns, signs,
+  and the future-sign flow.
+- A **destination** plugin knows the wire format of a particular
+  destination chain. The four destinations are `btc`, `eth`,
+  `solana`, and `sui`. Each one builds the chain-specific preimage at
+  sign time and assembles the signed payload when the network's
+  signature lands.
+- A **publisher** plugin broadcasts the assembled payload to the
+  destination chain's network. One publisher per chain.
+
+A single `IkaClient` (the plugin-host one, imported from
+`@ika.xyz/sdk/plugin`) is what composes them: one source, any number
+of destinations, any number of publishers.
+
+## Where each piece runs
+
+- The **user share** lives on the user's device for zero-trust and
+  imported-key dWallets, and on chain for shared kinds.
+- The **client SDK and plugins** run in the user's application. They
+  read on-chain state, build Sui PTBs, talk to chain RPC endpoints,
+  and run the user-side MPC math in WASM.
+- The **validator network** runs the n-party MPC. Validators only
+  communicate with each other through the Sui consensus channel
+  (Mysticeti); there is no direct peer-to-peer link, and there is no
+  user-to-validator channel.
+- The **destination chain** receives a fully-formed signed transaction
+  from the publisher. It verifies as it would any other signature.
+
+## Trust boundaries
+
+The trust assumptions are documented in detail in
+[Trust model](../learn/trust-model). For the architecture itself:
+
+- The validator network is trusted to follow the protocol up to one
+  third Byzantine stake.
+- The user is trusted to keep their share and their USEK confidential.
+- The destination chain is trusted only to verify the signature it
+  receives. Ika does not assume anything about how the destination
+  chain orders or includes transactions.
+
+## A typical signing path
+
+The end-to-end flow for signing a Bitcoin transaction with a shared
+dWallet is:
+
+1. The plugin's destination layer builds the BIP-143 or BIP-341
+   preimage and a signing plan (curve + algorithm + hash scheme).
+2. The plugin's source layer assembles a Sui PTB that approves the
+   message and requests a sign. The PTB is signed and submitted by
+   the application's Sui signer (a keypair or a wallet adapter).
+3. The Sui transaction lands. The validators see the request event,
+   reserve a presign from the global pool, and run the two-round MPC
+   sign. The signature lands on chain.
+4. The plugin's destination layer fetches the signature, wraps it in
+   the Bitcoin wire format (DER for ECDSA, raw 64 bytes for Taproot),
+   updates the PSBT, finalizes, and produces a broadcastable
+   transaction.
+5. The publisher posts the transaction to a Bitcoin RPC and waits for
+   confirmation.
+
+Each step is visible in the SDK and plugin source. There is no hidden
+state.

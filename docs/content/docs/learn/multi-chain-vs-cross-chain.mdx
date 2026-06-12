@@ -1,0 +1,47 @@
+---
+title: Multi-chain vs cross-chain
+description: The architectural distinction and where Ika sits.
+---
+
+The terms multi-chain and cross-chain are often used interchangeably.
+They describe different things and have different risk profiles.
+
+## Multi-chain
+
+A multi-chain application is one that operates across several
+blockchains, with each chain remaining sovereign. Assets on chain A
+stay on chain A and are governed by chain A's consensus and security
+rules. The application reads and writes to each chain through that
+chain's own native interface.
+
+The strength of this model is that no chain inherits another chain's
+risk. A bug on chain B does not endanger users with assets on chain A.
+
+## Cross-chain
+
+Cross-chain technology moves assets or messages between chains. The
+typical implementations are bridges, message-passing protocols, and
+federated multi-signature custodians. To do this safely, the
+cross-chain layer must hold or vouch for assets in one chain while it
+issues representations on another.
+
+The risk profile is the union of every chain involved plus the
+cross-chain layer itself. Most large losses in the history of
+permissionless cross-chain systems trace back to the bridge layer.
+
+## Where Ika sits
+
+Ika is multi-chain by construction. A dWallet's signature on chain B
+is a regular signature on chain B; the asset on chain B never leaves
+chain B and is never wrapped or represented on another chain. There is
+no bridge.
+
+The dWallet abstraction is the carrier of intent across chains, not
+the carrier of assets. A user holding a dWallet whose key signs for
+both Bitcoin and Ethereum addresses can move BTC on Bitcoin and ETH on
+Ethereum, but neither asset crosses a chain boundary. The user simply
+controls both addresses from one place.
+
+This is why the threat model in [Trust model](./trust-model) covers
+only the dWallet itself, not bridges or message layers. There is no
+extra cross-chain layer to attack.

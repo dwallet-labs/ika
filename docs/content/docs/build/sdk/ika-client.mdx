@@ -1,0 +1,106 @@
+---
+title: IkaClient
+description: The protocol client. On-chain reads, protocol public parameters, and polling helpers.
+---
+
+`IkaClient` is the read-side of the SDK. It is also the carrier for the
+protocol public parameters and the network encryption key, both of
+which the cryptography helpers consume.
+
+## Construction
+
+```ts
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
+});
+
+await ikaClient.initialize();
+```
+
+Cache is on by default. Disable it only if your application needs to
+observe coordinator state changes that the cache would mask (rare).
+
+## Reading dWallet state
+
+```ts
+const dWallet = await ikaClient.getDWallet(id);
+```
+
+`getDWallet` returns a typed dWallet view. The state is one of
+`AwaitingNetworkDKG`, `AwaitingKeyHolderSignature`, `Active`,
+`AwaitingTransfer`, or `Failed`. For most signing flows you want
+`Active`.
+
+```ts
+const dWallet = await ikaClient.getDWalletInParticularState(id, 'Active', {
+	timeout: 60_000,
+});
+```
+
+This polls with exponential backoff until the dWallet hits the
+requested state or the timeout fires. The same shape exists for
+presigns, signs, and partial signatures.
+
+## Polling options
+
+Every `*InParticularState` method accepts:
+
+```ts
+{
+	timeout?: number;          // default 30_000 ms
+	interval?: number;         // default 1_000 ms (first poll)
+	maxInterval?: number;      // default 5_000 ms after backoff
+	backoffMultiplier?: number;// default 1.5
+	signal?: AbortSignal;      // cancellation
+}
+```
+
+## Network encryption key and protocol public parameters
+
+```ts
+const key = await ikaClient.getLatestNetworkEncryptionKey();
+const pp = await ikaClient.getProtocolPublicParameters({
+	curve: Curve.SECP256K1,
+	encryptionKeyOptions: { encryptionKeyID: key.id },
+});
+```
+
+`getProtocolPublicParameters` returns the curve-specific protocol
+public parameters threaded through the WASM cryptography helpers. The
+SDK caches these by `(encryptionKeyID, curve)`; you should rarely need
+to fetch the same parameters more than once per application lifetime.
+
+## Cache invalidation
+
+```ts
+ikaClient.invalidateCache(); // drop everything
+ikaClient.invalidateObjectCache();
+ikaClient.invalidateEncryptionKeyCache();
+```
+
+The encryption-key cache automatically invalidates when a new
+reconfiguration output lands. Manual invalidation is only required if
+you bypass the SDK to write to chain and want the SDK to re-read.
+
+## Error classes
+
+`IkaClient` throws typed errors:
+
+- `IkaClientError`: base class.
+- `ObjectNotFoundError`: the object id does not exist on chain.
+- `InvalidObjectError`: the object exists but could not be parsed.
+- `NetworkError`: the underlying Sui RPC call failed.
+- `CacheError`: a cache operation failed.
+
+All inherit from `Error`, so a catch-all still works; the typed
+hierarchy is useful for selective retry policies.
