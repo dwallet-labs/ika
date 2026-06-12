@@ -174,7 +174,7 @@ pub(crate) struct DWalletMPCManager {
 
     /// Network-key data adopted by `adopt_cert_verified_keys` (gated by the
     /// prior epoch's handoff cert); the instantiation input set.
-    pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    pub(crate) adopted_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
 
     /// The `(overlay, cert-present)` input pair of the last completed
     /// `adopt_cert_verified_keys` pass. The overlay watch publishes a
@@ -385,7 +385,7 @@ impl DWalletMPCManager {
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
             logged_lock_deferred_presigns: HashSet::new(),
-            agreed_network_key_data: HashMap::new(),
+            adopted_network_key_data: HashMap::new(),
             last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
             pending_network_key_instantiations: HashMap::new(),
@@ -708,7 +708,7 @@ impl DWalletMPCManager {
     }
 
     /// Adopt this validator's locally-observed network-key outputs into
-    /// the instantiation set (`agreed_network_key_data`), gated by the
+    /// the instantiation set (`adopted_network_key_data`), gated by the
     /// prior epoch's handoff cert — the cross-epoch agreement on which
     /// outputs the current epoch inherits, replacing the now-removed consensus vote.
     ///
@@ -920,7 +920,7 @@ impl DWalletMPCManager {
                     // value still installed (debug). Only when the skip
                     // actually leaves the key unadopted is it the
                     // security-relevant divergence worth a warn.
-                    if !self.agreed_network_key_data.contains_key(key_id) {
+                    if !self.adopted_network_key_data.contains_key(key_id) {
                         if self
                             .warned_cert_digest_mismatches
                             .insert((*key_id, local_reconfiguration_digest))
@@ -986,7 +986,7 @@ impl DWalletMPCManager {
             // are off-chain.
             if data.current_reconfiguration_public_output.is_empty()
                 && self
-                    .agreed_network_key_data
+                    .adopted_network_key_data
                     .get(key_id)
                     .is_some_and(|existing| {
                         !existing.current_reconfiguration_public_output.is_empty()
@@ -1005,7 +1005,7 @@ impl DWalletMPCManager {
             let reconfigured = !data.current_reconfiguration_public_output.is_empty();
             let cert_anchored = off_chain_on && cert.is_some();
             let cert_gate_bypassed = reconfigured && !cert_anchored;
-            if cert_gate_bypassed && self.agreed_network_key_data.get(key_id) != Some(data) {
+            if cert_gate_bypassed && self.adopted_network_key_data.get(key_id) != Some(data) {
                 if off_chain_on {
                     warn!(
                         ?key_id,
@@ -1021,7 +1021,7 @@ impl DWalletMPCManager {
                     );
                 }
             }
-            self.agreed_network_key_data.insert(*key_id, data.clone());
+            self.adopted_network_key_data.insert(*key_id, data.clone());
         }
         self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
     }
@@ -1298,7 +1298,7 @@ impl DWalletMPCManager {
         // `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`) in the same
         // order, or they derive different session identifiers for the same work
         // and the sessions never reach quorum.
-        let agreed_key_ids: BTreeSet<_> = self.agreed_network_key_data.keys().copied().collect();
+        let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
@@ -2064,7 +2064,7 @@ impl DWalletMPCManager {
                         //
                         // The reconfiguration output is deliberately NOT
                         // mirrored here. It is epoch-specific, and
-                        // `agreed_network_key_data` can still carry the
+                        // `adopted_network_key_data` can still carry the
                         // *prior* epoch's output (the adopted overlay can lag the local
                         // computation), so mirroring it would race the
                         // local current value and corrupt the handoff
@@ -2092,7 +2092,7 @@ impl DWalletMPCManager {
                         // reconfiguration output undelivered and wedging the
                         // first v4 reconfiguration. Remove this guard (always
                         // mirror) once the migration chain import is gone.
-                        let key_data = self.agreed_network_key_data.get(&key_id).cloned();
+                        let key_data = self.adopted_network_key_data.get(&key_id).cloned();
                         if let Some(key_data) = key_data {
                             if self.epoch_store.off_chain_validator_metadata_enabled()
                                 && !key_data.network_dkg_public_output.is_empty()
@@ -2110,7 +2110,7 @@ impl DWalletMPCManager {
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a
                             // newer quorum has overwritten
-                            // `agreed_network_key_data` since.
+                            // `adopted_network_key_data` since.
                             self.last_instantiated_network_key_data
                                 .insert(key_id, key_data);
                         }
@@ -2140,8 +2140,8 @@ impl DWalletMPCManager {
         new_key_ids
     }
 
-    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
-    /// For each key in `agreed_network_key_data` either (a) not yet
+    /// Instantiates network keys from the cert-verified outputs adopted into `adopted_network_key_data`.
+    /// For each key in `adopted_network_key_data` either (a) not yet
     /// loaded locally, or (b) loaded but with a stale shape compared
     /// to the latest agreed bytes (typically the reconfig output
     /// flipping each epoch), SPAWNS the instantiation on the rayon
@@ -2157,7 +2157,7 @@ impl DWalletMPCManager {
     /// so we only do it when the agreed bytes actually changed.
     pub(crate) fn instantiate_adopted_network_keys(&mut self) {
         let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
-            .agreed_network_key_data
+            .adopted_network_key_data
             .iter()
             .filter(|(key_id, key_data)| {
                 // An instantiation for this key is already in flight —

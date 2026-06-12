@@ -2,14 +2,20 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use prometheus::{
-    IntCounterVec, IntGauge, Registry, register_int_counter_vec_with_registry,
-    register_int_gauge_with_registry,
+    Histogram, IntCounterVec, IntGauge, Registry, register_histogram_with_registry,
+    register_int_counter_vec_with_registry, register_int_gauge_with_registry,
 };
 use std::sync::Arc;
 
 pub struct EpochMetrics {
     /// The current epoch ID. This is updated only when the AuthorityState finishes reconfiguration.
     pub current_epoch: IntGauge,
+
+    /// Size distribution of in-band mpc_data announcement blobs accepted
+    /// for persistence. Blobs ride consensus messages with no size cap
+    /// yet; this is the measurement that picks the eventual cap (see
+    /// PR #1721 review fast-follow #2).
+    pub mpc_data_announcement_blob_bytes: Histogram,
 
     /// Current voting right of the validator in the protocol. Updated at the start of epochs.
     pub current_voting_right: IntGauge,
@@ -154,6 +160,18 @@ impl EpochMetrics {
             current_epoch: register_int_gauge_with_registry!(
                 "current_epoch",
                 "Current epoch ID",
+                registry
+            )
+            .unwrap(),
+            mpc_data_announcement_blob_bytes: register_histogram_with_registry!(
+                "ika_mpc_data_announcement_blob_bytes",
+                "Byte size of in-band mpc_data announcement blobs accepted for persistence",
+                // Class-groups bundles are multi-MB; default buckets top out
+                // at 10 and would collapse everything into +Inf.
+                vec![
+                    65536.0, 131072.0, 262144.0, 524288.0, 1048576.0, 2097152.0, 4194304.0,
+                    8388608.0, 16777216.0, 33554432.0
+                ],
                 registry
             )
             .unwrap(),

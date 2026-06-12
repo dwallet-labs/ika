@@ -86,6 +86,11 @@ jobs:
       - name: Fmt Check - Wasm
         run: cargo fmt -- --check
         working-directory: sdk/ika-wasm
+      - name: Metric name convention
+        # New prometheus metrics must use the ika_ prefix; the legacy set
+        # is frozen in scripts/metric-name-allowlist.txt.
+        # See dev-docs/conventions/metrics.md.
+        run: ./scripts/check-metric-names.sh
 
   clippy:
     if: github.event_name == 'push'

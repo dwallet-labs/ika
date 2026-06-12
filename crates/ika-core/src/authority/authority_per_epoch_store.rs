@@ -2012,6 +2012,16 @@ impl AuthorityPerEpochStore {
     /// addressed, so a blob from an as-yet-unverified relayed
     /// announcement is inert unless and until a frozen digest matches.
     fn store_announced_mpc_data_blob(&self, digest: [u8; 32], blob: &[u8]) {
+        // Blobs ride consensus with no size cap yet; record the real
+        // distribution so the eventual cap is measured, not guessed.
+        self.metrics
+            .mpc_data_announcement_blob_bytes
+            .observe(blob.len() as f64);
+        info!(
+            blob_bytes = blob.len(),
+            digest = ?digest,
+            "storing in-band mpc_data announcement blob"
+        );
         match crate::validator_metadata::verify_peer_blob_for_relay(blob, &digest) {
             crate::validator_metadata::PeerBlobVerdict::Accept => {}
             verdict => {
