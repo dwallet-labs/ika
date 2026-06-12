@@ -167,6 +167,11 @@ pub(crate) struct DWalletMPCManager {
     /// This prevents sending the same request multiple times.
     sent_presign_sequence_numbers: HashSet<u64>,
 
+    /// Sequence numbers whose lock-target deferral was already logged, so a
+    /// request waiting for `last_session_to_complete_in_current_epoch` to
+    /// cover it logs once instead of every consensus round.
+    logged_lock_deferred_presigns: HashSet<u64>,
+
     /// Network-key data adopted by `adopt_cert_verified_keys` (gated by the
     /// prior epoch's handoff cert); the instantiation input set.
     pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
@@ -371,6 +376,7 @@ impl DWalletMPCManager {
             completed_presign_sequence_numbers: HashSet::new(),
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
+            logged_lock_deferred_presigns: HashSet::new(),
             agreed_network_key_data: HashMap::new(),
             last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
@@ -1067,16 +1073,45 @@ impl DWalletMPCManager {
     }
 
     /// Returns presign requests that haven't been sent through consensus yet.
-    pub(crate) fn get_unsent_presign_requests(&self) -> Vec<GlobalPresignRequest> {
-        self.global_presign_requests
+    ///
+    /// Requests beyond `last_session_to_complete_in_current_epoch` are held
+    /// back: an agreed request is served from the internal pool and completed
+    /// on-chain with no further lock check, and the end-of-publish predicate
+    /// is a strict equality (`completed_sessions_count ==` locked target), so
+    /// completing a session beyond the locked target wedges the epoch
+    /// permanently — the counter can never come back down. The on-chain
+    /// target is monotone within an epoch and frozen by the epoch-close
+    /// lock, so a majority vote implies an honest validator observed the
+    /// target covering the request, making overshoot impossible. Held-back
+    /// requests are retried here as the synced target advances, and re-pulled
+    /// next epoch otherwise — exactly like lock-gated MPC user sessions.
+    pub(crate) fn get_unsent_presign_requests(&mut self) -> Vec<GlobalPresignRequest> {
+        let (covered, deferred): (Vec<&GlobalPresignRequest>, Vec<&GlobalPresignRequest>) = self
+            .global_presign_requests
             .iter()
             .filter(|request| {
                 !self
                     .sent_presign_sequence_numbers
                     .contains(&request.session_sequence_number)
             })
-            .cloned()
-            .collect()
+            .partition(|request| {
+                request.session_sequence_number <= self.last_session_to_complete_in_current_epoch
+            });
+        for request in deferred {
+            if self
+                .logged_lock_deferred_presigns
+                .insert(request.session_sequence_number)
+            {
+                info!(
+                    session_sequence_number = request.session_sequence_number,
+                    last_session_to_complete_in_current_epoch =
+                        self.last_session_to_complete_in_current_epoch,
+                    session_identifier = ?request.session_identifier,
+                    "holding global presign vote until the epoch-close lock target covers it; retried as the target advances, re-pulled next epoch otherwise"
+                );
+            }
+        }
+        covered.into_iter().cloned().collect()
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.

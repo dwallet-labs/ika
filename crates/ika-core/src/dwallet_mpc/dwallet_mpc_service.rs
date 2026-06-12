@@ -105,6 +105,13 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
+    /// Admission-rejected requests whose rejection output is held back until
+    /// the epoch-close lock target covers their sequence number; retried each
+    /// service loop iteration. A rejection that reaches quorum completes the
+    /// session on-chain, and completing a user session beyond the locked
+    /// target permanently wedges the epoch (the end-of-publish predicate is
+    /// a strict equality).
+    pending_rejected_sessions: Vec<DWalletSessionRequest>,
     /// Receiver for network-owned-address sign requests.
     network_owned_address_sign_requests_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
@@ -220,6 +227,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
+            pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
             last_noa_starvation_log: None,
@@ -298,6 +306,7 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
+            pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
@@ -510,7 +519,7 @@ impl DWalletMPCService {
         self.process_cryptographic_computations().await;
         self.handle_noa_sign_outputs().await;
         self.poll_noa_chain_status().await;
-        self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
+        self.submit_rejections_covered_by_lock_target(rejected_sessions)
             .await;
 
         newly_instantiated_network_key_ids
@@ -1701,6 +1710,54 @@ impl DWalletMPCService {
                 },
             }
         }
+    }
+
+    /// Submit rejection outputs for admission-failed requests, holding back
+    /// user-session rejections beyond the epoch-close lock target: a
+    /// rejection that reaches quorum completes the session on-chain
+    /// (Rejected counts as completed), and completing a user session beyond
+    /// the locked target permanently wedges the epoch — the end-of-publish
+    /// predicate is a strict equality and the completed counter never goes
+    /// back down. Held rejections retry each iteration as the synced target
+    /// advances; past the epoch boundary the request is re-pulled and
+    /// re-rejected under the next epoch's target. System and internal
+    /// sessions are not lock-gated and submit immediately.
+    async fn submit_rejections_covered_by_lock_target(
+        &mut self,
+        rejected_sessions: Vec<DWalletSessionRequest>,
+    ) {
+        let lock_target = self
+            .dwallet_mpc_manager
+            .last_session_to_complete_in_current_epoch;
+        let covered_by_lock_target = |request: &DWalletSessionRequest| match request.session_type {
+            SessionType::User => match request.session_sequence_number {
+                Some(session_sequence_number) => session_sequence_number <= lock_target,
+                // Should never happen (user sessions always carry a sequence
+                // number); submit rather than buffer forever.
+                None => true,
+            },
+            _ => true,
+        };
+
+        for request in &rejected_sessions {
+            if !covered_by_lock_target(request) {
+                info!(
+                    session_identifier = ?request.session_identifier,
+                    session_sequence_number = ?request.session_sequence_number,
+                    last_session_to_complete_in_current_epoch = lock_target,
+                    "holding session rejection until the epoch-close lock target covers it; retried as the target advances, re-pulled next epoch otherwise"
+                );
+            }
+        }
+        self.pending_rejected_sessions.extend(rejected_sessions);
+
+        let (covered, deferred): (Vec<_>, Vec<_>) = self
+            .pending_rejected_sessions
+            .drain(..)
+            .partition(covered_by_lock_target);
+        self.pending_rejected_sessions = deferred;
+        self.handle_failed_requests_and_submit_reject_to_consensus(covered)
+            .await;
     }
 
     async fn handle_failed_requests_and_submit_reject_to_consensus(
