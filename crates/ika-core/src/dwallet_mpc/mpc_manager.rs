@@ -49,6 +49,7 @@ use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot;
@@ -205,6 +206,21 @@ pub(crate) struct DWalletMPCManager {
     /// for its full duration at each epoch boundary.
     pending_network_key_instantiations: HashMap<ObjectID, PendingNetworkKeyInstantiation>,
 
+    /// Last time the handoff-cert read-error warn in
+    /// `adopt_cert_verified_keys` was emitted. The adoption pass runs
+    /// every 20ms service iteration, so a persistent store error would
+    /// otherwise warn ~50x/second; warn at most every 10s (debug in
+    /// between). The retry behavior itself is unthrottled.
+    last_cert_read_warn: Option<Instant>,
+
+    /// `(key_id, local output digest)` pairs whose contradiction with the
+    /// prior epoch's handoff cert was already warned about. The adoption
+    /// pass re-runs whenever the overlay `Arc` republishes (every ~5s
+    /// during incomplete-overlay convergence), so an unchanged mismatch
+    /// would re-warn per republish; warn once per distinct local digest,
+    /// debug thereafter.
+    warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
+
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
     // Different epochs will see repeating values of this variable,
@@ -359,6 +375,8 @@ impl DWalletMPCManager {
             last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
             pending_network_key_instantiations: HashMap::new(),
+            last_cert_read_warn: None,
+            warned_cert_digest_mismatches: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
@@ -710,7 +728,7 @@ impl DWalletMPCManager {
         // cert: `cert == None` sends a reconfigured key down the unverified
         // v3->v4-boundary adoption path below, silently bypassing the
         // cert-digest gate. A transient store error therefore skips adoption
-        // entirely for this tick (the service loop retries every round)
+        // entirely for this tick (the service loop retries every iteration)
         // rather than degrading the security gate to blind adoption.
         let cert = match self.epoch_id.checked_sub(1) {
             Some(prior_epoch) => match self
@@ -719,12 +737,30 @@ impl DWalletMPCManager {
             {
                 Ok(cert) => cert,
                 Err(e) => {
-                    warn!(
-                        error = ?e,
-                        prior_epoch,
-                        "failed to read the handoff cert for instantiation — skipping \
-                         network-key adoption this tick (retrying next round)"
-                    );
+                    // The adoption pass runs every 20ms service iteration
+                    // and a read error returns before the early-out input
+                    // snapshot updates, so a persistent store error would
+                    // otherwise emit ~50 identical warns/second. Throttle
+                    // the emission (not the retry) to one warn per 10s.
+                    let should_warn = self
+                        .last_cert_read_warn
+                        .is_none_or(|last| last.elapsed() >= Duration::from_secs(10));
+                    if should_warn {
+                        self.last_cert_read_warn = Some(Instant::now());
+                        warn!(
+                            error = ?e,
+                            prior_epoch,
+                            "failed to read the handoff cert for instantiation — skipping \
+                             network-key adoption this tick (retrying next iteration)"
+                        );
+                    } else {
+                        debug!(
+                            error = ?e,
+                            prior_epoch,
+                            "failed to read the handoff cert for instantiation — skipping \
+                             network-key adoption this tick (retrying next iteration)"
+                        );
+                    }
                     return;
                 }
             },
@@ -753,6 +789,7 @@ impl DWalletMPCManager {
                 }
             }
         }
+        let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
         for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
@@ -764,21 +801,99 @@ impl DWalletMPCManager {
                 if let Some(cert_dkg) = dkg_digests.get(key_id)
                     && *cert_dkg != local_dkg_digest
                 {
+                    // A locally-held DKG output contradicting the
+                    // quorum-certified cert is genuinely anomalous: the
+                    // key is never adopted/instantiated and the validator
+                    // silently stops signing with it. Warn (deduped per
+                    // local digest, so overlay republishes don't re-warn).
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, local_dkg_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            cert_dkg_digest = ?cert_dkg,
+                            local_dkg_digest = ?local_dkg_digest,
+                            "local network-key DKG output digest does not match the prior \
+                             epoch's handoff cert — skipping adoption"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "local network-key DKG output still contradicts the handoff \
+                             cert — skipping adoption"
+                        );
+                    }
                     continue;
                 }
-            } else if self.epoch_store.off_chain_validator_metadata_enabled() && cert.is_some() {
+            } else if off_chain_on && cert.is_some() {
                 // Reconfigured key, off-chain mode with a prior handoff cert:
                 // the overlay carries locally-cached blobs, so anchor them
                 // against the prior epoch's cert — both the stable DKG digest
                 // and the epoch-specific reconfiguration digest must match.
                 if dkg_digests.get(key_id) != Some(&local_dkg_digest) {
+                    // Same anomaly as above for a reconfigured key's
+                    // stable DKG digest.
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, local_dkg_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            cert_dkg_digest = ?dkg_digests.get(key_id),
+                            local_dkg_digest = ?local_dkg_digest,
+                            "local network-key DKG output digest does not match the prior \
+                             epoch's handoff cert — skipping adoption"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "local network-key DKG output still contradicts the handoff \
+                             cert — skipping adoption"
+                        );
+                    }
                     continue;
                 }
-                if reconfiguration_digests.get(key_id)
-                    != Some(&mpc_data_blob_hash(
-                        &data.current_reconfiguration_public_output,
-                    ))
-                {
+                let local_reconfiguration_digest =
+                    mpc_data_blob_hash(&data.current_reconfiguration_public_output);
+                if reconfiguration_digests.get(key_id) != Some(&local_reconfiguration_digest) {
+                    // NOT contradiction-only: once THIS epoch's
+                    // reconfiguration completes, the overlay carries the
+                    // new epoch-keyed output which by design mismatches
+                    // the PRIOR epoch's cert — that skip is the intended
+                    // defer-to-next-epoch with the already-adopted prior
+                    // value still installed (debug). Only when the skip
+                    // actually leaves the key unadopted is it the
+                    // security-relevant divergence worth a warn.
+                    if !self.agreed_network_key_data.contains_key(key_id) {
+                        if self
+                            .warned_cert_digest_mismatches
+                            .insert((*key_id, local_reconfiguration_digest))
+                        {
+                            warn!(
+                                ?key_id,
+                                cert_reconfiguration_digest = ?reconfiguration_digests.get(key_id),
+                                local_reconfiguration_digest = ?local_reconfiguration_digest,
+                                "local network-key reconfiguration output digest does not \
+                                 match the prior epoch's handoff cert and the key has no \
+                                 adopted value — skipping adoption, the key stays \
+                                 uninstantiated"
+                            );
+                        } else {
+                            debug!(
+                                ?key_id,
+                                "local network-key reconfiguration output still contradicts \
+                                 the handoff cert (key unadopted) — skipping adoption"
+                            );
+                        }
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "overlay reconfiguration output does not match the prior \
+                             epoch's cert (expected once this epoch's reconfiguration \
+                             completes) — keeping the adopted prior value"
+                        );
+                    }
                     continue;
                 }
             }
@@ -823,6 +938,33 @@ impl DWalletMPCManager {
                     })
             {
                 continue;
+            }
+            // Surface the one place the cert-digest security gate is
+            // bypassed: adopting a RECONFIGURED key without a prior
+            // handoff cert anchoring it. Under v3 (off-chain disabled)
+            // this is the designed every-epoch path; under v4 it is
+            // expected only at the genuine v3→v4 boundary — anywhere
+            // else it indicates a missing cert in steady state. Gated
+            // on the adopted value actually changing so overlay
+            // republishes don't re-log.
+            let reconfigured = !data.current_reconfiguration_public_output.is_empty();
+            let cert_anchored = off_chain_on && cert.is_some();
+            let cert_gate_bypassed = reconfigured && !cert_anchored;
+            if cert_gate_bypassed && self.agreed_network_key_data.get(key_id) != Some(data) {
+                if off_chain_on {
+                    warn!(
+                        ?key_id,
+                        "adopting reconfigured network key without a prior handoff cert — \
+                         expected only at the v3→v4 boundary; in steady-state v4 this \
+                         indicates a missing handoff cert"
+                    );
+                } else {
+                    info!(
+                        ?key_id,
+                        "adopting reconfigured network key from the chain copy (off-chain \
+                         metadata disabled; no handoff cert exists)"
+                    );
+                }
             }
             self.agreed_network_key_data.insert(*key_id, data.clone());
         }
@@ -1123,6 +1265,28 @@ impl DWalletMPCManager {
                         )
                     };
 
+                    // Export the pool size BEFORE the in-flight skip below,
+                    // so a pool wedged behind never-completing sessions is
+                    // still observable. The key dimension is reduced to a
+                    // bounded `key_role` label — see the metric's docs.
+                    let current_pool_size =
+                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
+                    let key_role = if is_network_owned_address_signing_presign {
+                        "network_owned_address_signing"
+                    } else {
+                        "other"
+                    };
+                    let curve_label = format!("{curve:?}");
+                    let signature_algorithm_label = format!("{signature_algorithm:?}");
+                    self.dwallet_mpc_metrics
+                        .internal_presign_pool_size
+                        .with_label_values(&[
+                            curve_label.as_str(),
+                            signature_algorithm_label.as_str(),
+                            key_role,
+                        ])
+                        .set(current_pool_size as i64);
+
                     // Skip instantiation if previous sessions for this (curve, algorithm)
                     // haven't completed yet. Each session produces a variable number of
                     // presigns (1 to n-t), so overlapping batches cause pool overshoot.
@@ -1139,9 +1303,6 @@ impl DWalletMPCManager {
                     if instantiated != completed {
                         continue;
                     }
-
-                    let current_pool_size =
-                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
 
                     if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
                         && current_pool_size < minimal_pool_size)
@@ -1729,6 +1890,10 @@ impl DWalletMPCManager {
                         "network key instantiation dropped its result channel; \
                          recording the attempt as failed"
                     );
+                    self.dwallet_mpc_metrics
+                        .network_key_instantiation_failures_total
+                        .with_label_values(&["channel_closed"])
+                        .inc();
                     self.last_failed_network_key_data
                         .insert(key_id, pending.attempted);
                     continue;
@@ -1745,6 +1910,10 @@ impl DWalletMPCManager {
                             current_epoch=?self.epoch_id,
                             "Adopted network key epoch does not match current epoch, ignoring"
                         );
+                        self.dwallet_mpc_metrics
+                            .network_key_instantiation_failures_total
+                            .with_label_values(&["epoch_mismatch"])
+                            .inc();
                         continue;
                     }
                     info!(key_id=?key_id, "Updating network key");
@@ -1760,6 +1929,10 @@ impl DWalletMPCManager {
                         // deterministic decryption isn't re-run on them
                         // every tick; it retries when the bytes change.
                         warn!(error=?e, key_id=?key_id, "could not decrypt share for network key from this output yet; will retry when its bytes change");
+                        self.dwallet_mpc_metrics
+                            .network_key_instantiation_failures_total
+                            .with_label_values(&["decrypt_failed"])
+                            .inc();
                         self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
                         // Mirror the adopted **DKG** output bytes
@@ -1831,10 +2004,17 @@ impl DWalletMPCManager {
                         key_id=?key_id,
                         "could not instantiate network key from this output yet; will retry when its bytes change"
                     );
+                    self.dwallet_mpc_metrics
+                        .network_key_instantiation_failures_total
+                        .with_label_values(&["instantiate_failed"])
+                        .inc();
                     self.last_failed_network_key_data.insert(key_id, attempted);
                 }
             }
         }
+        self.dwallet_mpc_metrics
+            .network_key_instantiations_in_flight
+            .set(self.pending_network_key_instantiations.len() as i64);
 
         new_key_ids
     }
@@ -1917,6 +2097,7 @@ impl DWalletMPCManager {
                 key_data.current_epoch,
                 self.access_structure.clone(),
                 key_data,
+                self.dwallet_mpc_metrics.clone(),
             );
             self.pending_network_key_instantiations.insert(
                 key_id,
@@ -1926,6 +2107,9 @@ impl DWalletMPCManager {
                 },
             );
         }
+        self.dwallet_mpc_metrics
+            .network_key_instantiations_in_flight
+            .set(self.pending_network_key_instantiations.len() as i64);
     }
 
     pub(crate) fn handle_output(

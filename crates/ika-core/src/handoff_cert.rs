@@ -233,6 +233,18 @@ impl HandoffAggregator {
         self.certified.as_ref()
     }
 
+    /// Number of distinct signers whose verified signature has been
+    /// inserted so far. For observability (metrics) only.
+    pub fn signer_count(&self) -> usize {
+        self.signatures.len()
+    }
+
+    /// Stake accumulated by the inserted verified signatures so far.
+    /// For observability (metrics) only — quorum is stake-weighted.
+    pub fn accumulated_stake(&self) -> StakeUnit {
+        self.accumulated_stake
+    }
+
     /// Inserts a signature. Caller is responsible for having already
     /// run `verify_handoff_signature` against this validator's
     /// expected attestation — `insert_verified` trusts that.

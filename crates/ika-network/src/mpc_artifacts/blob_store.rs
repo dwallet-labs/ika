@@ -5,6 +5,10 @@
 
 use anemo::{Network, PeerId};
 use fastcrypto::hash::{Blake2b256, HashFunction};
+use prometheus::{
+    IntCounter, IntGauge, Registry, register_int_counter_with_registry,
+    register_int_gauge_with_registry,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -49,6 +53,19 @@ const DEFAULT_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// would force a write-lock to record recency.
 pub struct InMemoryBlobStore {
     inner: RwLock<BlobStoreInner>,
+    /// Registered by [`Self::new_with_metrics`]; `None` for the plain
+    /// constructors (tests, callers without a registry).
+    metrics: Option<BlobStoreMetrics>,
+}
+
+/// Size/eviction observability for the in-memory serve cache. Approaching
+/// the byte cap silently degrades serving to perpetual-table read-through;
+/// sustained eviction is the early-warning signal.
+struct BlobStoreMetrics {
+    /// Total bytes currently held in the in-memory cache.
+    size_bytes: IntGauge,
+    /// Total blobs evicted by the FIFO byte-cap bound.
+    evictions_total: IntCounter,
 }
 
 struct BlobStoreInner {
@@ -58,6 +75,7 @@ struct BlobStoreInner {
     insertion_order: VecDeque<[u8; 32]>,
     total_bytes: usize,
     max_bytes: usize,
+    evictions_total: u64,
 }
 
 impl BlobStoreInner {
@@ -82,6 +100,7 @@ impl BlobStoreInner {
             };
             if let Some(evicted) = self.blobs.remove(&oldest) {
                 self.total_bytes = self.total_bytes.saturating_sub(evicted.len());
+                self.evictions_total = self.evictions_total.saturating_add(1);
             }
         }
     }
@@ -101,12 +120,53 @@ impl InMemoryBlobStore {
                 insertion_order: VecDeque::new(),
                 total_bytes: 0,
                 max_bytes,
+                evictions_total: 0,
+            }),
+            metrics: None,
+        })
+    }
+
+    /// Like [`Self::new`], but registers the size/evictions metrics with
+    /// `registry` so the byte-cap pressure on the serve cache is
+    /// observable (eviction silently degrades serving to perpetual
+    /// read-through). Alert: `ika_mpc_blob_store_size_bytes` near the cap,
+    /// or `ika_mpc_blob_store_evictions_total` increasing.
+    pub fn new_with_metrics(registry: &Registry) -> Arc<Self> {
+        Arc::new(Self {
+            inner: RwLock::new(BlobStoreInner {
+                blobs: HashMap::new(),
+                insertion_order: VecDeque::new(),
+                total_bytes: 0,
+                max_bytes: DEFAULT_MAX_BYTES,
+                evictions_total: 0,
+            }),
+            metrics: Some(BlobStoreMetrics {
+                size_bytes: register_int_gauge_with_registry!(
+                    "ika_mpc_blob_store_size_bytes",
+                    "Total bytes held by the in-memory MPC blob serve cache",
+                    registry,
+                )
+                .unwrap(),
+                evictions_total: register_int_counter_with_registry!(
+                    "ika_mpc_blob_store_evictions_total",
+                    "Total blobs evicted from the in-memory MPC blob serve cache",
+                    registry,
+                )
+                .unwrap(),
             }),
         })
     }
 
     pub fn insert(&self, blob_hash: [u8; 32], blob: Vec<u8>) {
-        self.inner.write().unwrap().insert(blob_hash, blob);
+        let mut inner = self.inner.write().unwrap();
+        let evictions_before = inner.evictions_total;
+        inner.insert(blob_hash, blob);
+        if let Some(metrics) = &self.metrics {
+            metrics.size_bytes.set(inner.total_bytes as i64);
+            metrics
+                .evictions_total
+                .inc_by(inner.evictions_total - evictions_before);
+        }
     }
 
     pub fn contains(&self, blob_hash: &[u8; 32]) -> bool {
@@ -119,6 +179,16 @@ impl InMemoryBlobStore {
 
     pub fn is_empty(&self) -> bool {
         self.inner.read().unwrap().blobs.is_empty()
+    }
+
+    /// Total bytes currently held in the in-memory cache.
+    pub fn total_bytes(&self) -> usize {
+        self.inner.read().unwrap().total_bytes
+    }
+
+    /// Total blobs evicted by the FIFO byte-cap bound since construction.
+    pub fn evictions_total(&self) -> u64 {
+        self.inner.read().unwrap().evictions_total
     }
 }
 

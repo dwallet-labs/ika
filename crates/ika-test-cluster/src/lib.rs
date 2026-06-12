@@ -958,10 +958,32 @@ pub struct IkaTestClusterBuilder {
 #[cfg(not(msim))]
 async fn acquire_cluster_boot_lock() -> std::net::TcpListener {
     const BOOT_LOCK_PORT: u16 = 48751;
+    let started = std::time::Instant::now();
+    let mut contended = false;
     loop {
         match std::net::TcpListener::bind(("127.0.0.1", BOOT_LOCK_PORT)) {
-            Ok(listener) => return listener,
-            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            Ok(listener) => {
+                // Log only when there was contention, so a waiter blocked
+                // behind another test process's multi-minute boot is
+                // distinguishable from a hung cluster boot.
+                if contended {
+                    tracing::info!(
+                        waited_ms = started.elapsed().as_millis() as u64,
+                        "cluster boot lock acquired"
+                    );
+                }
+                return listener;
+            }
+            Err(_) => {
+                if !contended {
+                    contended = true;
+                    tracing::info!(
+                        port = BOOT_LOCK_PORT,
+                        "cluster boot lock held by another test process; waiting"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
         }
     }
 }

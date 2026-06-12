@@ -28,11 +28,12 @@ use ika_types::messages_dwallet_mpc::{
     DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
 };
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
 use tokio::sync::watch::Receiver;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct HandoffSignatureSender {
     epoch_store: Weak<AuthorityPerEpochStore>,
@@ -50,6 +51,11 @@ pub struct HandoffSignatureSender {
     /// digest when EndOfPublish fires.
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     builders: Vec<Arc<dyn HandoffItemsBuilder>>,
+    /// Number of `EndOfPublishV2` submissions so far this epoch. Used
+    /// only to bound logging: the first submission (and every 30th
+    /// thereafter, so a boundary sequencing stall still surfaces) logs
+    /// at info, the 1s re-submissions in between at debug.
+    submit_attempts: AtomicU64,
 }
 
 impl HandoffSignatureSender {
@@ -73,6 +79,7 @@ impl HandoffSignatureSender {
             next_epoch_committee_receiver,
             network_keys_receiver,
             builders,
+            submit_attempts: AtomicU64::new(0),
         }
     }
 
@@ -88,15 +95,36 @@ impl HandoffSignatureSender {
             );
             return;
         }
+        // Throttle the failure-path warn: the loop ticks every 1s, so a
+        // persistent submit error would otherwise warn per second. Warn on
+        // the first failure and every 30th consecutive one (~30s), debug in
+        // between; the counter resets on success.
+        let mut consecutive_send_failures: u64 = 0;
         loop {
             // `send` self-gates on confirmation (re-submits the
             // idempotent bundle until our EndOfPublishV2 is recorded),
             // so the loop just drives it each tick once EndOfPublish has
             // fired for this epoch.
-            if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id)
-                && let Err(err) = self.send().await
-            {
-                warn!(error=?err, "failed to send handoff signature; will retry");
+            if *self.end_of_publish_receiver.borrow() == Some(self.epoch_id) {
+                match self.send().await {
+                    Ok(()) => consecutive_send_failures = 0,
+                    Err(err) => {
+                        if consecutive_send_failures.is_multiple_of(30) {
+                            warn!(
+                                error=?err,
+                                consecutive_failures = consecutive_send_failures,
+                                "failed to send handoff signature; will retry"
+                            );
+                        } else {
+                            debug!(
+                                error=?err,
+                                consecutive_failures = consecutive_send_failures,
+                                "failed to send handoff signature; will retry"
+                            );
+                        }
+                        consecutive_send_failures += 1;
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -280,10 +308,22 @@ impl HandoffSignatureSender {
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
-        info!(
-            epoch = self.epoch_id,
-            "submitted local handoff signature (will re-submit until confirmed)"
-        );
+        // First submission (and every 30th re-submission, so a boundary
+        // sequencing stall still surfaces at info, ~every 30s) logs at
+        // info; the expected 1s re-submit-until-confirmed ticks in
+        // between log at debug.
+        let attempt = self.submit_attempts.fetch_add(1, Ordering::AcqRel);
+        if attempt == 0 || attempt.is_multiple_of(30) {
+            info!(
+                epoch = self.epoch_id,
+                attempt, "submitted local handoff signature (will re-submit until confirmed)"
+            );
+        } else {
+            debug!(
+                epoch = self.epoch_id,
+                attempt, "re-submitted local handoff signature (not yet confirmed)"
+            );
+        }
         Ok(())
     }
 }

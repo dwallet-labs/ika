@@ -949,7 +949,8 @@ impl IkaNode {
         // validator was serving to peers. Producer caching + cross-
         // node fetch are wired in later steps; for now this just
         // serves whatever's been persisted previously.
-        let mpc_data_blob_store = ika_network::mpc_artifacts::InMemoryBlobStore::new();
+        let mpc_data_blob_store =
+            ika_network::mpc_artifacts::InMemoryBlobStore::new_with_metrics(prometheus_registry);
         for entry in perpetual_tables.iter_mpc_artifact_blobs() {
             match entry {
                 Ok((digest, bytes)) => mpc_data_blob_store.insert(digest, bytes),
@@ -1725,6 +1726,7 @@ impl IkaNode {
                     blob_cache,
                     self.p2p_network.clone(),
                     authority_names_to_peer_ids,
+                    self.metrics.mpc_data_blob_fetch_total.clone(),
                 );
                 let fetcher = Arc::new(fetcher);
                 Some(tokio::spawn(async move {
@@ -1856,6 +1858,8 @@ impl IkaNode {
                         let cert_perpetual = perpetual.clone();
                         let fail_closed_shutdown = self.shutdown_channel_tx.clone();
                         let bootstrap_sui_client = sui_client.clone();
+                        let bootstrap_outcomes =
+                            self.metrics.joiner_bootstrap_outcomes_total.clone();
                         Some(tokio::spawn(async move {
                             // Resolve the prior committee's consensus
                             // pubkeys for cert verification. Continuing
@@ -1909,13 +1913,22 @@ impl IkaNode {
                             {
                                 match verify(&persisted) {
                                     Ok(()) => {
-                                        install_joiner_network_key_outputs(
+                                        let missing_outputs = install_joiner_network_key_outputs(
                                             &persisted,
                                             &fetch_network,
                                             &peer_ids,
                                             &fetch_store,
                                         )
                                         .await;
+                                        if !missing_outputs.is_empty() {
+                                            warn!(
+                                                prior_epoch,
+                                                missing_key_ids = ?missing_outputs,
+                                                "could not fetch cert-matching network-key \
+                                                 outputs for some keys from any peer; the \
+                                                 prepare barrier will keep retrying"
+                                            );
+                                        }
                                         return;
                                     }
                                     Err(e) => {
@@ -1948,6 +1961,7 @@ impl IkaNode {
                             );
                             match verifier.run().await {
                                 BootstrapOutcome::Verified(cert) => {
+                                    bootstrap_outcomes.with_label_values(&["verified"]).inc();
                                     // Persist the verified anchor so
                                     // network-key instantiation can read
                                     // it locally and this node can serve
@@ -1961,15 +1975,29 @@ impl IkaNode {
                                             "failed to persist bootstrap handoff cert"
                                         );
                                     }
-                                    install_joiner_network_key_outputs(
+                                    let missing_outputs = install_joiner_network_key_outputs(
                                         &cert,
                                         &fetch_network,
                                         &peer_ids,
                                         &fetch_store,
                                     )
                                     .await;
+                                    if !missing_outputs.is_empty() {
+                                        // One summary warn for the one-shot
+                                        // bootstrap path (the per-key fetch
+                                        // failures inside log at debug); the
+                                        // prepare barrier keeps retrying.
+                                        warn!(
+                                            prior_epoch,
+                                            missing_key_ids = ?missing_outputs,
+                                            "joiner bootstrap could not fetch cert-matching \
+                                             network-key outputs for some keys from any peer; \
+                                             the prepare barrier will keep retrying"
+                                        );
+                                    }
                                 }
                                 BootstrapOutcome::Rejected => {
+                                    bootstrap_outcomes.with_label_values(&["rejected"]).inc();
                                     // Fail-closed: peers served certs but
                                     // NONE verified against the prior
                                     // committee — a genuine cross-epoch
@@ -1996,7 +2024,9 @@ impl IkaNode {
                                 // attempt budget (propagation lag) — already
                                 // logged inside `run()`; the anchor is merely
                                 // unconfirmed, not contradicted.
-                                BootstrapOutcome::Unavailable => {}
+                                BootstrapOutcome::Unavailable => {
+                                    bootstrap_outcomes.with_label_values(&["unavailable"]).inc();
+                                }
                             }
                         }))
                     }
@@ -2562,6 +2592,10 @@ impl IkaNode {
 
         match verifier.run().await {
             BootstrapOutcome::Verified(cert) => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["verified"])
+                    .inc();
                 // Persist the verified anchor so network-key
                 // instantiation can read it locally and this node can
                 // serve it to peers still fetching.
@@ -2582,6 +2616,10 @@ impl IkaNode {
                 Some(*cert)
             }
             BootstrapOutcome::Rejected => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["rejected"])
+                    .inc();
                 // Fail-closed: peers served certs but NONE verified
                 // against the signing committee — a genuine cross-epoch
                 // trust-anchor mismatch (a wrong committee view, or every
@@ -2601,7 +2639,13 @@ impl IkaNode {
             // No peer served a cert within the attempt budget
             // (propagation lag) — the anchor is unconfirmed, not
             // contradicted. The barrier will re-attempt.
-            BootstrapOutcome::Unavailable => None,
+            BootstrapOutcome::Unavailable => {
+                self.metrics
+                    .joiner_bootstrap_outcomes_total
+                    .with_label_values(&["unavailable"])
+                    .inc();
+                None
+            }
         }
     }
 
@@ -2735,7 +2779,7 @@ impl IkaNode {
             // Surface the breakdown roughly every 10s so a hang is never
             // silent on a dashboard or in the logs.
             if retries.is_multiple_of(10) {
-                let (cert_reconfiguration_items, missing_locally) = match &cert {
+                let (cert_reconfiguration_items, missing_key_ids) = match &cert {
                     Some(cert) => {
                         let total = cert
                             .attestation
@@ -2745,27 +2789,31 @@ impl IkaNode {
                                 matches!(item, HandoffItemKey::NetworkReconfigurationOutput { .. })
                             })
                             .count();
-                        let missing = cert
+                        let missing: Vec<ObjectID> = cert
                             .attestation
                             .items
                             .iter()
-                            .filter(|(item, digest)| match item {
-                                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                                    local_reconfiguration_digests.get(key_id) != Some(digest)
+                            .filter_map(|(item, digest)| match item {
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id }
+                                    if local_reconfiguration_digests.get(key_id)
+                                        != Some(digest) =>
+                                {
+                                    Some(*key_id)
                                 }
-                                _ => false,
+                                _ => None,
                             })
-                            .count();
+                            .collect();
                         (total, missing)
                     }
-                    None => (0, 0),
+                    None => (0, Vec::new()),
                 };
                 warn!(
                     next_epoch,
                     cur_epoch,
                     have_cert = cert.is_some(),
                     cert_reconfiguration_items,
-                    missing_locally,
+                    missing_locally = missing_key_ids.len(),
+                    missing_key_ids = ?missing_key_ids,
                     retries,
                     "prepare-then-start: still awaiting full verified handoff data for epoch \
                      {next_epoch}"
@@ -2812,12 +2860,20 @@ impl IkaNode {
 /// validator holds every output it computed, so without this precheck each
 /// epoch boundary would re-download multi-MB blobs from peers that are
 /// busy converging the same handoff.
+///
+/// Returns the key ids of certified outputs that could NOT be fetched and
+/// installed this pass. Per-key fetch failures log at debug only — the
+/// prepare barrier calls this every second of its 1s retry loop, so the
+/// operator-facing stall signal is the barrier's own every-10th-retry warn
+/// (which carries the missing key ids); one-shot callers (joiner bootstrap)
+/// summarize the returned list themselves.
 async fn install_joiner_network_key_outputs(
     cert: &CertifiedHandoffAttestation,
     network: &Network,
     peers: &[PeerId],
     epoch_store: &Arc<AuthorityPerEpochStore>,
-) {
+) -> Vec<ObjectID> {
+    let mut missing_key_ids: Vec<ObjectID> = Vec::new();
     let local_dkg_digests = epoch_store
         .get_network_dkg_output_digests()
         .unwrap_or_default();
@@ -2850,7 +2906,7 @@ async fn install_joiner_network_key_outputs(
                         verified_bytes = Some(bytes);
                         break;
                     }
-                    warn!(
+                    debug!(
                         ?key_id,
                         ?peer,
                         "network-key output blob from peer did not match the cert digest; ignoring"
@@ -2861,10 +2917,11 @@ async fn install_joiner_network_key_outputs(
             }
         }
         let Some(bytes) = verified_bytes else {
-            warn!(
+            debug!(
                 ?key_id,
-                "joiner could not fetch a cert-matching network-key output from any peer"
+                "could not fetch a cert-matching network-key output from any peer this pass"
             );
+            missing_key_ids.push(key_id);
             continue;
         };
         let cached = if is_reconfiguration {
@@ -2878,8 +2935,10 @@ async fn install_joiner_network_key_outputs(
         };
         if let Err(e) = cached {
             warn!(?key_id, error = ?e, "failed to cache fetched joiner network-key output");
+            missing_key_ids.push(key_id);
         }
     }
+    missing_key_ids
 }
 
 /// Notify state-sync that a new list of trusted peers are now available.

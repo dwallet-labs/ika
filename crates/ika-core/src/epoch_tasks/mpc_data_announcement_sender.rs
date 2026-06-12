@@ -45,7 +45,7 @@ use ika_types::error::IkaError;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::ValidatorMpcDataAnnouncement;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::watch::Receiver;
@@ -162,6 +162,11 @@ pub struct MpcDataAnnouncementSender {
     /// without this, only the first emit per (authority, epoch)
     /// would reach the strict-superset gate.
     next_sequence_number: std::sync::atomic::AtomicU64,
+    /// Number of announcement submissions so far this epoch. Used
+    /// only to bound logging: the first submission (and every 30th
+    /// thereafter, so a sequencing stall still surfaces) logs at
+    /// info, re-submissions in between at debug.
+    announcement_submit_attempts: AtomicU64,
 }
 
 impl MpcDataAnnouncementSender {
@@ -186,6 +191,7 @@ impl MpcDataAnnouncementSender {
             cached_announcement: Mutex::new(None),
             last_emitted_validated_peers_count: AtomicUsize::new(0),
             next_sequence_number: std::sync::atomic::AtomicU64::new(0),
+            announcement_submit_attempts: AtomicU64::new(0),
         }
     }
 
@@ -291,12 +297,29 @@ impl MpcDataAnnouncementSender {
         self.consensus_adapter
             .submit_to_consensus(&[tx], &epoch_store)
             .await?;
-        info!(
-            epoch = self.epoch_id,
-            blob_hash = ?announcement.blob_hash,
-            timestamp_ms = announcement.timestamp_ms,
-            "submitted validator mpc data announcement (will re-submit until confirmed)"
-        );
+        // First submission (and every 30th re-submission, so a sequencing
+        // stall still surfaces at info) logs at info; the expected
+        // re-submit-until-confirmed ticks in between log at debug.
+        let attempt = self
+            .announcement_submit_attempts
+            .fetch_add(1, Ordering::AcqRel);
+        if attempt == 0 || attempt.is_multiple_of(30) {
+            info!(
+                epoch = self.epoch_id,
+                blob_hash = ?announcement.blob_hash,
+                timestamp_ms = announcement.timestamp_ms,
+                attempt,
+                "submitted validator mpc data announcement (will re-submit until confirmed)"
+            );
+        } else {
+            debug!(
+                epoch = self.epoch_id,
+                blob_hash = ?announcement.blob_hash,
+                timestamp_ms = announcement.timestamp_ms,
+                attempt,
+                "re-submitted validator mpc data announcement (not yet confirmed)"
+            );
+        }
         Ok(())
     }
 
@@ -453,7 +476,7 @@ impl MpcDataAnnouncementSender {
         // The deadline (wall-clock) only affects WHEN each validator
         // emits; the freeze snapshot itself is still computed
         // deterministically at the consensus-ordered quorum point.
-        match self.ready_to_finalize(&epoch_store, &validated_names) {
+        let deadline_missing = match self.ready_to_finalize(&epoch_store, &validated_names) {
             ReadyToFinalize::NotYet => {
                 debug!(
                     epoch = self.epoch_id,
@@ -462,26 +485,14 @@ impl MpcDataAnnouncementSender {
                 );
                 return Ok(());
             }
-            ReadyToFinalize::Ready => {}
-            ReadyToFinalize::ReadyViaDeadlineMissing(missing) => {
-                // Liveness backstop fired: we're emitting without
-                // having validated every next-epoch member. Those
-                // members risk exclusion from the frozen set / next
-                // committee's class-groups map — blob propagation is
-                // too slow for the epoch length. Surface loudly so
-                // operators can lengthen the epoch or investigate the
-                // slow joiner(s).
-                warn!(
-                    epoch = self.epoch_id,
-                    missing_count = missing.len(),
-                    ?missing,
-                    "emitting EpochMpcDataReadySignal at the freeze deadline with \
-                     unvalidated next-epoch members — they may be excluded from the \
-                     next committee's working set (blob propagation slower than the \
-                     epoch length)"
-                );
-            }
-        }
+            ReadyToFinalize::Ready => Vec::new(),
+            // Liveness backstop fired: we're emitting without having
+            // validated every next-epoch member. The operator warn is
+            // emitted AFTER the re-emit gate below, so it fires only on
+            // ticks that actually emit a signal with missing members —
+            // not on every post-deadline poll tick.
+            ReadyToFinalize::ReadyViaDeadlineMissing(missing) => missing,
+        };
         // Re-emit policy: emit if we've never emitted (count = 0)
         // OR the validated set has grown since the last emission.
         // Re-emitting with a stable set is wasted consensus
@@ -513,6 +524,24 @@ impl MpcDataAnnouncementSender {
             .await?;
         self.last_emitted_validated_peers_count
             .store(new_count, Ordering::Release);
+        if !deadline_missing.is_empty() {
+            // The signal just emitted omits next-epoch members we never
+            // validated; they risk exclusion from the frozen set / next
+            // committee's class-groups map — blob propagation is too
+            // slow for the epoch length. Surface loudly so operators
+            // can lengthen the epoch or investigate the slow joiner(s).
+            // Bounded: fires only on actual emissions (the validated set
+            // strictly grows, so at most committee-size lines per epoch).
+            warn!(
+                epoch = self.epoch_id,
+                missing_count = deadline_missing.len(),
+                missing = ?deadline_missing,
+                "emitted EpochMpcDataReadySignal at the freeze deadline with \
+                 unvalidated next-epoch members — they may be excluded from the \
+                 next committee's working set (blob propagation slower than the \
+                 epoch length)"
+            );
+        }
         info!(
             epoch = self.epoch_id,
             sequence_number,

@@ -66,7 +66,7 @@ use mpc::GuaranteedOutputDeliveryRoundResult;
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 #[cfg(any(test, feature = "test-utils"))]
@@ -111,6 +111,10 @@ pub struct DWalletMPCService {
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
+    /// Last time the NOA-sign starvation warn fired. The service loop runs
+    /// every 20ms, so the "requests waiting, pool empty / key unavailable"
+    /// warn MUST be throttled (at most once per 30s).
+    last_noa_starvation_log: Option<Instant>,
     /// Set of message hashes that have already been submitted for signing.
     /// Uses 32-byte Blake2b digests instead of full messages to bound memory.
     submitted_noa_sign_messages: HashSet<[u8; 32]>,
@@ -218,6 +222,7 @@ impl DWalletMPCService {
             processed_global_presign_sequence_numbers: HashSet::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            last_noa_starvation_log: None,
             submitted_noa_sign_messages: HashSet::new(),
             last_sent_sui_chain_observation: None,
             current_agreed_sui_chain_context: None,
@@ -296,6 +301,7 @@ impl DWalletMPCService {
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            last_noa_starvation_log: None,
             submitted_noa_sign_messages: HashSet::new(),
             last_sent_sui_chain_observation: None,
             current_agreed_sui_chain_context: None,
@@ -572,6 +578,25 @@ impl DWalletMPCService {
                 }
                 !instantiated // keep in buffer if instantiation failed
             });
+        // Starvation signal: requests are waiting and this pass made no
+        // progress — the signing network key is unavailable or the internal
+        // presign pool for the requested algorithm is empty. Without this,
+        // a wedged pool looks identical to no demand. Throttled to once per
+        // 30s (the loop runs every 20ms).
+        let starvation_persists = newly_submitted.is_empty()
+            && !self.pending_network_owned_address_sign_requests.is_empty();
+        if starvation_persists
+            && self
+                .last_noa_starvation_log
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(30))
+        {
+            self.last_noa_starvation_log = Some(Instant::now());
+            warn!(
+                pending_requests = self.pending_network_owned_address_sign_requests.len(),
+                "network-owned-address sign requests waiting: internal presign pool \
+                 empty or signing key unavailable"
+            );
+        }
         self.submitted_noa_sign_messages.extend(newly_submitted);
     }
 
@@ -1319,6 +1344,13 @@ impl DWalletMPCService {
                                         );
 
                                     global_presign_checkpoint_messages.push(checkpoint_message);
+                                    self.dwallet_mpc_metrics
+                                        .global_presigns_served_total
+                                        .with_label_values(&[&format!(
+                                            "{:?}",
+                                            request.signature_algorithm
+                                        )])
+                                        .inc();
                                     self.processed_global_presign_sequence_numbers
                                         .insert(request.session_sequence_number);
                                     // Mark this request as fulfilled in the manager to skip future voting
@@ -1360,6 +1392,12 @@ impl DWalletMPCService {
             } else {
                 Vec::new()
             };
+            // Set unconditionally (including the queue-empty branch above,
+            // which skips the retain) so the gauge can't read stale-nonzero
+            // after the queue drains or across the per-epoch service rebuild.
+            self.dwallet_mpc_metrics
+                .global_presign_requests_waiting
+                .set(self.agreed_global_presign_requests_queue.len() as i64);
 
             // Group checkpoint messages by chain.
             let mut messages_by_chain: HashMap<

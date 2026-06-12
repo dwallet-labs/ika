@@ -8,6 +8,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_noa_dkg;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
@@ -444,6 +445,7 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
+    metrics: Arc<DWalletMPCMetrics>,
 ) -> oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
@@ -467,6 +469,7 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
+                    &metrics,
                 )
             }
         } else {
@@ -477,6 +480,7 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
+                &metrics,
             )
         };
 
@@ -598,16 +602,26 @@ pub(crate) fn build_network_encryption_key_public_data(
     }
 }
 
-/// Times one instantiation sub-call and logs its duration at info level.
-/// The instantiation dominates the epoch-boundary cost; the per-sub-call
-/// breakdown localizes any slowdown to a concrete operation instead of
-/// one opaque call.
-fn timed_sub_call<T, E>(label: &str, sub_call: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+/// Times one instantiation sub-call, logs its duration at info level, and
+/// feeds the `dwallet_mpc_network_key_instantiation_sub_call_duration_seconds`
+/// histogram for cross-epoch/release trending. The instantiation dominates
+/// the epoch-boundary cost; the per-sub-call breakdown localizes any
+/// slowdown to a concrete operation instead of one opaque call.
+pub(crate) fn timed_sub_call<T, E>(
+    metrics: &DWalletMPCMetrics,
+    label: &str,
+    sub_call: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
     let start = Instant::now();
     let result = sub_call();
+    let elapsed = start.elapsed();
+    metrics
+        .network_key_instantiation_sub_call_duration_seconds
+        .with_label_values(&[label])
+        .observe(elapsed.as_secs_f64());
     info!(
         sub_call = label,
-        elapsed_ms = start.elapsed().as_millis() as u64,
+        elapsed_ms = elapsed.as_millis() as u64,
         "network key instantiation sub-call finished"
     );
     result
@@ -619,6 +633,7 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
+    metrics: &DWalletMPCMetrics,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -633,40 +648,50 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
         ($public_output:expr) => {{
             let public_output = $public_output;
             let secp256k1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
                 "secp256k1_protocol_public_parameters",
                 || public_output.secp256k1_protocol_public_parameters(),
             )?);
-            let secp256k1_decryption_key_share_public_parameters =
-                Arc::new(timed_sub_call("secp256k1_decryption_key_share", || {
-                    public_output.secp256k1_decryption_key_share_public_parameters(access_structure)
-                })?);
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_decryption_key_share",
+                || public_output.secp256k1_decryption_key_share_public_parameters(access_structure),
+            )?);
             let secp256r1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
                 "secp256r1_protocol_public_parameters",
                 || public_output.secp256r1_protocol_public_parameters(),
             )?);
-            let secp256r1_decryption_key_share_public_parameters =
-                Arc::new(timed_sub_call("secp256r1_decryption_key_share", || {
-                    public_output.secp256r1_decryption_key_share_public_parameters(access_structure)
-                })?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_decryption_key_share",
+                || public_output.secp256r1_decryption_key_share_public_parameters(access_structure),
+            )?);
             let ristretto_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
                 "ristretto_protocol_public_parameters",
                 || public_output.ristretto_protocol_public_parameters(),
             )?);
-            let ristretto_decryption_key_share_public_parameters =
-                Arc::new(timed_sub_call("ristretto_decryption_key_share", || {
-                    public_output.ristretto_decryption_key_share_public_parameters(access_structure)
-                })?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_decryption_key_share",
+                || public_output.ristretto_decryption_key_share_public_parameters(access_structure),
+            )?);
             let curve25519_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
                 "curve25519_protocol_public_parameters",
                 || public_output.curve25519_protocol_public_parameters(),
             )?);
-            let curve25519_decryption_key_share_public_parameters =
-                Arc::new(timed_sub_call("curve25519_decryption_key_share", || {
+            let curve25519_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_decryption_key_share",
+                || {
                     public_output
                         .curve25519_decryption_key_share_public_parameters(access_structure)
-                })?);
+                },
+            )?);
 
-            let noa_dkg_data = timed_sub_call("noa_dkg_outputs", || {
+            let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
                 compute_all_network_owned_address_dkg_outputs(
                     &network_key_id,
                     &secp256k1_protocol_public_parameters,

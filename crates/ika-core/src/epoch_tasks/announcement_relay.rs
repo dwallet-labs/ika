@@ -32,6 +32,7 @@ use ika_network::mpc_artifacts::AnnouncementRelay;
 use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::SignedValidatorMpcDataAnnouncement;
 use std::sync::{Arc, Weak};
+use tracing::{debug, info};
 
 pub struct ConsensusBackedAnnouncementRelay {
     epoch_store: Weak<AuthorityPerEpochStore>,
@@ -61,6 +62,7 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         blob: Vec<u8>,
     ) -> Result<(), String> {
         let Some(epoch_store) = self.epoch_store.upgrade() else {
+            debug!("rejecting joiner announcement relay: epoch ended");
             return Err("epoch ended".to_string());
         };
         let current_epoch = epoch_store.epoch();
@@ -70,17 +72,32 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         // already in the committee and can submit themselves —
         // refuse to relay those.
         if announcement.announcement.epoch != next_epoch {
+            debug!(
+                joiner = ?announcement.announcement.validator,
+                announcement_epoch = announcement.announcement.epoch,
+                next_epoch,
+                "rejecting joiner announcement relay: wrong epoch"
+            );
             return Err(format!(
                 "announcement epoch {} is not next_epoch {next_epoch}",
                 announcement.announcement.epoch
             ));
         }
         let Some(provider) = epoch_store.joiner_pubkey_provider() else {
+            debug!(
+                joiner = ?announcement.announcement.validator,
+                "rejecting joiner announcement relay: joiner pubkey provider not installed"
+            );
             return Err("joiner pubkey provider not installed".to_string());
         };
         match verify_joiner_announcement(&announcement, provider.as_ref().as_ref(), next_epoch) {
             JoinerAnnouncementVerdict::Accept => {}
             verdict => {
+                debug!(
+                    joiner = ?announcement.announcement.validator,
+                    ?verdict,
+                    "rejecting joiner announcement relay: joiner verification failed"
+                );
                 return Err(format!("joiner verify rejected: {verdict:?}"));
             }
         }
@@ -98,12 +115,20 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
         match verify_peer_blob_for_relay(&blob, &digest) {
             PeerBlobVerdict::Accept => {}
             verdict => {
+                debug!(
+                    joiner = ?announcement.announcement.validator,
+                    ?verdict,
+                    "rejecting joiner announcement relay: blob verification failed"
+                );
                 return Err(format!("joiner blob rejected: {verdict:?}"));
             }
         }
         self.blob_cache
             .insert(digest, blob.clone())
             .map_err(|e| format!("cache joiner blob failed: {e}"))?;
+        let joiner = announcement.announcement.validator;
+        let joiner_epoch = announcement.announcement.epoch;
+        let blob_len = blob.len();
         // Carry the joiner's blob in-band on the consensus relay so the
         // whole committee obtains the bytes via consensus replication
         // rather than each member fetching them peer-to-peer.
@@ -113,6 +138,17 @@ impl AnnouncementRelay for ConsensusBackedAnnouncementRelay {
             .submit_to_consensus(&[tx], &epoch_store)
             .await
             .map_err(|e| format!("consensus submit failed: {e}"))?;
+        // The relay is the ONLY path a joiner's mpc_data enters consensus;
+        // without this record the committee side has no trace of having
+        // accepted + forwarded it. Bounded: an honest joiner stops fanning
+        // out once `min_accepts` relayers accept.
+        info!(
+            joiner = ?joiner,
+            epoch = joiner_epoch,
+            blob_hash = ?digest,
+            blob_len,
+            "relayed joiner mpc_data announcement into consensus"
+        );
         Ok(())
     }
 }
