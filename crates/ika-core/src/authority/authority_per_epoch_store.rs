@@ -3303,6 +3303,21 @@ impl AuthorityPerEpochStore {
             .collect())
     }
 
+    /// The consensus leader round at which this validator observed the
+    /// `EndOfPublish` stake quorum — the persisted anchor of the
+    /// deferred-close grace countdown — or `None` if quorum hasn't been
+    /// reached this epoch (or the epoch closed inline under v3 rules).
+    pub fn end_of_publish_quorum_round(&self) -> IkaResult<Option<u64>> {
+        Ok(self.tables()?.end_of_publish_quorum_round.get(&0)?)
+    }
+
+    /// Whether this validator has already emitted the epoch-close
+    /// checkpoint message set. Persisted through the emitting commit's
+    /// batch so a restart cannot re-emit the close at a later commit.
+    pub fn is_epoch_close_emitted(&self) -> IkaResult<bool> {
+        Ok(self.tables()?.epoch_close_emitted.get(&0)?.is_some())
+    }
+
     pub async fn user_certs_closed_notify(&self) {
         self.user_certs_closed_notify.wait().await
     }
