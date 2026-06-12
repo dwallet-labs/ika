@@ -95,4 +95,11 @@ node-compile-cache
 
 # Local debugging
 debug_output.txt
-.claude/
+# .claude/ is personal by default (settings.local.json, worktrees) — except
+# the team-shared pieces: skills, subagents, hooks, and project settings.
+# Personal skills belong in ~/.claude/skills/, not here.
+.claude/*
+!.claude/agents/
+!.claude/hooks/
+!.claude/skills/
+!.claude/settings.json

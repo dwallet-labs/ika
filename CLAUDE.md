@@ -6,13 +6,25 @@ Decentralized MPC signing network built on Sui. dWallets provide zero-trust mult
 
 Act as a critical intellectual sparring partner, not a yes-man. Evaluate every idea on its merits—the user is a collaborator who can be wrong, not an authority to defer to. Question assumptions, point out flaws, logical errors, unstated premises, and potential bugs immediately and directly. Be skeptical by default; each claim must prove itself. No opening praise or "you're right" unless genuinely warranted after scrutiny. Prioritize truth over harmony. Be ruthless with constructive criticism.
 
+## Working Principles (Karpathy's four)
+
+1. **Think before coding** — state assumptions explicitly; if a request
+   is ambiguous, present the interpretations and ask rather than guess.
+2. **Simplicity first** — the minimum code that solves the stated
+   problem; no unrequested abstractions, features, or "flexibility".
+3. **Surgical changes** — every changed line traces directly to the
+   request; don't touch unrelated code, comments, or formatting.
+4. **Goal-driven execution** — turn the task into verifiable success
+   criteria (a test, a check, a command) before starting, then iterate
+   until they pass.
+
 ## Build Commands
 
 ```bash
 # Rust - always use release mode for crypto code (debug is far too slow)
 cargo build --release
-cargo test --release
 cargo clippy --all-targets --all-features
+# Tests: see Testing section below
 
 # TypeScript SDK
 cd sdk/typescript && pnpm install && pnpm build
@@ -89,35 +101,35 @@ here are part of the change, not documentation debt.
 
 ### Rust
 
-**DO:**
+Mechanically-enforceable rules live in `clippy.toml` (disallowed
+methods/macros: unbounded channels, `block_on`,
+`bincode::deserialize_from`, `log::*`, arg-count limit) and
+`[workspace.lints]` (`unsafe_code = "deny"`) — add new ones THERE, not
+here. The rules below are the ones lints can't check:
 
+- **NEVER use `unsafe`** — no exceptions (also denied by workspace lint)
 - Rust 1.93 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
-- Prefer functional style; use iterators, `map`, `filter`, `fold` over loops
-- Shadow variables when transforming and old value won't be used (keep naming simple)
-- Put imports at file top (e.g., `use std::collections::HashSet;`)
-- Use English words for numbers in names (`first_item`, `second_part`)
-- Module structure: `xxx.rs` as module file with `mod tests` inside
-- For all-public structs, prefer direct instantiation over `new()` for clarity
+- Prefer functional style; iterators (`map`/`filter`/`fold`) over loops;
+  avoid mutable variables unless necessary
+- Shadow variables when transforming and the old value won't be used
+- Imports at file top; no fully-qualified paths inline (use `HashSet`
+  after importing, not `std::collections::HashSet`); no imports or fn
+  definitions inside functions
+- English words for numbers in names (`first_item`, not `item1`)
+- Module structure: `xxx.rs` as module file with `mod tests` inside —
+  no separate `mod.rs` or `tests.rs` files
+- For all-public structs, prefer direct instantiation over `new()`
+- Don't mix public and private data in a struct (unless return-only and
+  immediately destructured)
 - Malicious parties: use `HashSet`, or if `Vec` call `deduplicate_and_sort()`
-- Use `tracing::*` macros for logging
 - When moving code between files, copy-paste identically (easier to review)
-
-**DON'T:**
-
-- **NEVER use `unsafe`** - no exceptions
-- Don't use mutable variables unless absolutely necessary
-- Don't use fully-qualified paths inline in code (use `HashSet` after importing, not `std::collections::HashSet`)
-- Don't place imports or function definitions inside functions
-- Don't use numbers in names (`x1` → `first_x`, `part2` → `second_part`, `item3` → `third_item`)
-- Don't create separate `mod.rs` or `tests.rs` files
-- Don't mix public and private data in a struct (unless return-only and immediately destructured)
-- Don't use `log::*` macros (use `tracing::*`)
-- Don't use unbounded channels (use bounded)
-- Don't use `futures::executor::block_on` (use tokio runtime)
-- Don't use `bincode::deserialize_from` (use `bincode::deserialize`)
-- Don't exceed 20 function arguments (clippy enforced)
-- Don't reference plan/phase names in comments (e.g., "Phase 4f of crypto bump", "(Phase 4a, option 1)"). Plan-phase nomenclature rots once the plan doc is archived; keep the comment's technical content and drop the phase tag.
-- When initializing a struct with locals, name the local like the field (use struct-init shorthand or shadowing). `let dkg_output = ...; let dkg_output = bcs::to_bytes(&dkg_output)?; PerCurveDkgData { dkg_output, public_key }` — not `let out = ...; let raw_bytes = bcs::to_bytes(&out)?; PerCurveDkgData { dkg_output: raw_bytes, public_key }`.
+- Don't reference plan/phase names in comments (e.g., "Phase 4f of
+  crypto bump") — plan nomenclature rots once the plan doc is archived;
+  keep the technical content, drop the phase tag
+- When initializing a struct with locals, name the local like the field
+  (struct-init shorthand or shadowing): `let dkg_output = bcs::to_bytes(&dkg_output)?;
+  PerCurveDkgData { dkg_output, .. }` — not `let raw_bytes = ...;
+  PerCurveDkgData { dkg_output: raw_bytes, .. }`
 
 ### Move
 
@@ -154,6 +166,15 @@ dispatch commands, runtimes, and artifact recovery:
 `dev-docs/playbooks/ci-suites.md`. Running a local Sui+ika localnet
 (version traps, readiness gates): `dev-docs/playbooks/localnet.md`.
 Debugging an MPC stall: `dev-docs/playbooks/mpc-stall-postmortem.md`.
+
+Minimal verification by change type (run the narrowest check that
+covers the change; escalate to the full suite before merge):
+
+- `dwallet_mpc/**` → `cargo test --release -p ika-core <nearest integration filter>`
+- Epoch boundaries / reconfiguration / `sui_connector` → cluster suite on CI
+- `sdk/typescript/**` → `./scripts/run-integration-tests-sequential.sh --filter <file-stem>`
+- `contracts/**` → `sui move build` per touched package
+- `ika-protocol-config` → `cargo test -p ika-protocol-config` (snapshot tests)
 
 ## Cryptography Notes
 
@@ -193,6 +214,11 @@ Debugging an MPC stall: `dev-docs/playbooks/mpc-stall-postmortem.md`.
 
 - Don't push/commit to `main`, `master`, or `dev` branches
 - Don't use `--no-verify` to skip git hooks
+
+## Long sessions
+
+When compacting, always preserve: the modified-file list, test commands
+already validated, branch names, and in-flight CI run IDs/URLs.
 
 ## Gotchas
 
