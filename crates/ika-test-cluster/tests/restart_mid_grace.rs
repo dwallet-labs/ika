@@ -71,10 +71,16 @@ fn node_handle(cluster: &IkaTestCluster, name: &AuthorityName) -> IkaNodeHandle 
         .expect("validator node is running")
 }
 
-/// Highest certified dwallet checkpoint with `epoch == STRUCK_EPOCH`, as
-/// `(sequence_number, bcs(message))`, or `None` if the node hasn't certified
-/// the struck epoch's tail yet. Sequence numbers are monotonic across
-/// epochs, so walking back from the latest certified checkpoint finds it.
+/// The FINAL certified dwallet checkpoint of `STRUCK_EPOCH`, as
+/// `(sequence_number, bcs(message))` — `None` until this node's store can
+/// prove finality. The proof matters: a restarted validator still syncing
+/// its tail holds SOME epoch-1 checkpoint long before it holds the last
+/// one, and comparing a not-yet-final tail across validators misreads
+/// catch-up lag as a fork. Finality here = the node's latest certified
+/// checkpoint is already past the struck epoch; sequence numbers are
+/// contiguous across epochs, so walking back from it provably lands on
+/// the struck epoch's true last checkpoint (a gap mid-walk returns `None`
+/// and the caller's poll retries).
 fn final_struck_epoch_checkpoint(handle: &IkaNodeHandle) -> Option<(u64, Vec<u8>)> {
     handle.with(|node| {
         let state = node.state();
@@ -82,6 +88,9 @@ fn final_struck_epoch_checkpoint(handle: &IkaNodeHandle) -> Option<(u64, Vec<u8>
         let latest = store
             .get_latest_certified_checkpoint()
             .expect("checkpoint store read failed")?;
+        if latest.data().epoch <= STRUCK_EPOCH {
+            return None;
+        }
         let mut message = latest.data().clone();
         while message.epoch > STRUCK_EPOCH {
             let sequence_number = message.sequence_number.checked_sub(1)?;
