@@ -18,11 +18,6 @@ permissions:
 env:
   RUSTDOCFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
-  # Keep panic backtraces but disable eager library Backtrace::capture()
-  # — class-groups constructs backtrace-carrying errors on hot paths and
-  # RUST_BACKTRACE=1 alone makes every capture a globally-locked DWARF
-  # unwind (~5x slowdown on crypto). See the Gotchas section in CLAUDE.md.
-  RUST_LIB_BACKTRACE: "0"
   rust_stable: 1.94
   SUI_VERSION: 'sui@mainnet'
 
