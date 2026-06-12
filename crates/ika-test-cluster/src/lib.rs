@@ -183,6 +183,16 @@ impl IkaTestCluster {
     /// boundary (the same lifecycle the bootstrap path drives for the
     /// initial set). Caller is responsible for `wait_for_epoch` after.
     pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
+        // The joiner's ports are probed when the initialization config is
+        // built here, but only bound by `spawn_new_node` after the whole
+        // candidate→stake→add transaction sequence — a multi-second window
+        // in which a concurrently booting test process can claim the probed
+        // ports ("Address already in use" on the joiner spawn). Hold the
+        // same cross-process lock that serializes cluster boots for the
+        // full probe-to-bind span.
+        #[cfg(not(msim))]
+        let boot_lock = acquire_cluster_boot_lock().await;
+
         let mut rng = OsRng;
         let mut joiner_init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
         joiner_init.name = Some(format!(
@@ -271,6 +281,9 @@ impl IkaTestCluster {
             self.system.ika_dwallet_coordinator_object_id,
         );
         let node_handle = self.swarm.spawn_new_node(validator_config).await;
+        // The joiner's listeners are bound; release the probe-to-bind lock.
+        #[cfg(not(msim))]
+        drop(boot_lock);
 
         Ok(JoinerHandle {
             address: joiner_address,

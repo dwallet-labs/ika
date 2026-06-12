@@ -122,9 +122,12 @@ async fn test_global_presigns_complete_across_epoch_switches() {
 
     // The wedge signature is an epoch that never closes: traffic has
     // stopped, so the next boundary must arrive even with stragglers
-    // re-pulled into it.
+    // re-pulled into it. The budget covers an end-of-epoch
+    // reconfiguration under a 4-way-parallel CI pod (it passed at 180s
+    // standalone but timed out in the full suite) — the failure mode
+    // this guards against is "never", not "slow".
     tokio::time::timeout(
-        std::time::Duration::from_secs(180),
+        std::time::Duration::from_secs(420),
         cluster.wait_for_epoch(traffic_end_epoch + 1),
     )
     .await
@@ -137,7 +140,7 @@ async fn test_global_presigns_complete_across_epoch_switches() {
         .sui_connector_client()
         .await
         .expect("sui_connector_client failed");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
     loop {
         let (_, inner) = sui_client.must_get_dwallet_coordinator_inner().await;
         let ika_types::sui::DWalletCoordinatorInner::V1(inner) = inner;
