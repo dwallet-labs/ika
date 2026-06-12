@@ -122,6 +122,16 @@ jobs:
           nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
           echo $! > cpu-sampler.pid
 
+      - name: Build test cluster
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          # Compilation in its own step: the Downloaded/Compiling stream is
+          # the majority of this workflow's log volume (~57% measured), and
+          # a separate step collapses in the UI when green, leaving the test
+          # step with only nextest progress and failure replays.
+          cargo nextest run --no-run --release -p "$PACKAGE"
+
       - name: Run test cluster
         env:
           PACKAGE: ${{ inputs.package }}
@@ -134,8 +144,12 @@ jobs:
           # the end — no more multi-GB interleaved logs), and no fail-fast
           # so one wedged cluster can't hide the rest of the suite's
           # results. Long tests surface via nextest's default SLOW markers.
+          # Failure replays stay inline ON PURPOSE: when the runner pod dies
+          # (OOM/eviction) the artifact upload never happens and the live
+          # log is the only surviving evidence.
           cargo nextest run --release -p "$PACKAGE" $TEST_FILTER \
-            --test-threads "$TEST_THREADS" --no-fail-fast 2>&1 | tee cluster-tests.log
+            --test-threads "$TEST_THREADS" --no-fail-fast --cargo-quiet \
+            2>&1 | tee cluster-tests.log
 
       - name: Summarize results
         if: always()

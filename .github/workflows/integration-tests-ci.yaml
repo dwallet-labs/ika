@@ -107,6 +107,20 @@ jobs:
           nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
           echo $! > cpu-sampler.pid
 
+      - name: Build tests
+        env:
+          SCOPE: ${{ inputs.scope }}
+        run: |
+          # Compilation in its own step: the Downloaded/Compiling stream
+          # dominates the log volume, a separate step collapses in the UI
+          # when green, and `time` in the run step covers test execution,
+          # not rustc.
+          if [ "$SCOPE" = "all" ]; then
+            cargo test --release --workspace --features test-utils --color=always --no-run
+          else
+            cargo test -p ika-core --lib --release --features test-utils --color=always --no-run
+          fi
+
       - name: Run tests
         env:
           SCOPE: ${{ inputs.scope }}
@@ -119,9 +133,7 @@ jobs:
           if [ -n "$TEST_THREADS" ]; then
             THREADS="--test-threads=$TEST_THREADS"
           fi
-          # Build first so `time` covers the test execution, not rustc.
           if [ "$SCOPE" = "all" ]; then
-            cargo test --release --workspace --features test-utils --color=always --no-run
             time cargo test --release --workspace --features test-utils --color=always -- \
               $THREADS --nocapture 2>&1 | tee rust-tests.log
           else
@@ -129,8 +141,6 @@ jobs:
             if [ -n "$TEST_FILTER" ]; then
               FILTER="dwallet_mpc::integration_tests::$TEST_FILTER"
             fi
-            cargo test -p ika-core --lib "$FILTER" --release \
-              --features test-utils --color=always --no-run
             time cargo test -p ika-core --lib "$FILTER" --release \
               --features test-utils --color=always -- $THREADS --nocapture 2>&1 | tee rust-tests.log
           fi
