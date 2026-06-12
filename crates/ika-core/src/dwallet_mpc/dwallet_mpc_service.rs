@@ -1597,6 +1597,14 @@ impl DWalletMPCService {
                 ComputationResultData::Native
             };
 
+            // Skip ONLY this result on a missing/non-active session —
+            // never abandon the rest of the batch. A result for a session
+            // that went non-active while its computation was in flight is
+            // routine under load (e.g., it completed via the peers' output
+            // quorum); a `return` here used to drop every other session's
+            // round messages and outputs in the same batch, starving those
+            // sessions below the message threshold network-wide and wedging
+            // the epoch close (locked-set sessions could never complete).
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
                     should_never_happen = true,
@@ -1605,7 +1613,7 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "failed to retrieve session for which a computation update was received"
                 );
-                return;
+                continue;
             };
 
             let SessionStatus::Active { request, .. } = session.status.clone() else {
@@ -1615,7 +1623,7 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "received a computation update for a non-active session"
                 );
-                return;
+                continue;
             };
 
             match computation_result {

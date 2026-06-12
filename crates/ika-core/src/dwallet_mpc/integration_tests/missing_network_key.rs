@@ -56,6 +56,16 @@ async fn network_key_received_after_start_event() {
         network_owned_address_sign_output_receivers,
     };
 
+    // The harness never syncs the epoch-close lock target from a chain, so
+    // it stays 0 and every user-session consensus submission (computation
+    // advance, rejection) would be held back; set it past the sequence
+    // numbers this test uses, like the other harness tests do.
+    for dwallet_mpc_service in &mut test_state.dwallet_mpc_services {
+        dwallet_mpc_service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
+
     send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     let mut consensus_round = 1;
     let network_key_checkpoint;
