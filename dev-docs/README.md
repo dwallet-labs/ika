@@ -59,6 +59,17 @@ them has a bug — determine which before changing either.
 - [`learnings/pitfalls.md`](learnings/pitfalls.md) — non-obvious failure
   classes found in this codebase, each with the general rule it taught.
 
+### plans/ — implementation plans worth keeping in the repo
+Multi-PR / multi-session efforts with an explicit status lifecycle
+(`active → landed/superseded/abandoned`). Intent and sequencing live
+here; once landed, durable behavior moves to `specs/`. See
+[`plans/README.md`](plans/README.md).
+
+### reviews/ — written reviews worth keeping in the repo
+Long-form PR reviews, design reviews, and audits — point-in-time
+RECORDS with per-finding resolutions, not maintained truth (that's
+`specs/`). See [`reviews/README.md`](reviews/README.md).
+
 ## Writing style for this folder
 
 - Lead with the decision rule or command, not background.
