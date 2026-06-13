@@ -92,6 +92,14 @@ one of them has a bug — determine which before changing either. The
 same maintenance rule applies to the playbooks and conventions: docs
 here are part of the change, not documentation debt.
 
+**Write for a reader without the originating context.** Don't put
+out-of-context references in documentation, dev-docs, code comments, or
+PR descriptions — internal labels (ticket shorthands, test/property IDs
+like "F4-1", plan/phase numbers) are meaningless to anyone outside the
+moment they were coined and rot once that context is gone. Spell out the
+mechanism in plain terms instead. (The Rust-comment instance of this is
+under Code Style.)
+
 ## Dependencies
 
 - Use workspace-level dependencies exclusively
