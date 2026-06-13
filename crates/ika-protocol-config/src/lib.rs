@@ -25,8 +25,8 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Version 2: network_encryption_key_version = 2.
 // Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
 // Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
-//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
-//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
+//            consensus_skip_gced_blocks_in_direct_finalization on; version-3 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3; #1707) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
 // Version 5: noa_checkpoints on.
@@ -390,8 +390,8 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
-    /// True iff this protocol_version uses the post-PR-#1707 network DKG /
-    /// validator-key-publication shape — `ValidatorEncryptionKeysAndProofs`
+    /// True iff this protocol_version uses the version-3 network DKG /
+    /// validator-key-publication shape (#1707) — `ValidatorEncryptionKeysAndProofs`
     /// (class-groups + per-curve PVSS HPKE) and
     /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
     /// <= 3 (mainnet-v1.1.8), where the publication is bare
@@ -401,8 +401,8 @@ impl ProtocolConfig {
         self.network_encryption_key_version.is_some_and(|v| v == 3)
     }
 
-    /// True iff this protocol_version uses the post-PR-#1707 reconfiguration
-    /// shape — `twopc_mpc::decentralized_party::reconfiguration::Party` with
+    /// True iff this protocol_version uses the version-3 reconfiguration
+    /// shape (#1707) — `twopc_mpc::decentralized_party::reconfiguration::Party` with
     /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
     /// <= 3, where reconfiguration runs against
     /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.

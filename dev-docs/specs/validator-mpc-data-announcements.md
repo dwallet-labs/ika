@@ -84,7 +84,8 @@ which bytes* deterministic in consensus order.
   set: the reconfiguration proceeds without them. The certificate
   cannot backfill an announcement that missed the freeze — convergence
   of announcement propagation BEFORE the freeze is the only mechanism
-  (this is the F4-1 churn property).
+  (this is the property that lets reconfiguration tolerate committee
+  churn: late or churning members are simply excluded, never block it).
 
 ## Next-committee assembly
 
