@@ -72,12 +72,15 @@ sui-simulator.workspace = true
 ika-types.workspace = true
 
 ika-sui-client.workspace = true
+sui-config.workspace = true
 sui-json-rpc-types.workspace = true
+sui-light-client.workspace = true
 sui-sdk.workspace = true
 sui-types.workspace = true
 backoff.workspace = true
 strum_macros.workspace = true
 derive_more.workspace = true
+thiserror.workspace = true
 derivative = "2.2.0"
 
 dwallet-mpc-centralized-party = { path = "../dwallet-mpc-centralized-party" }
@@ -99,10 +102,11 @@ ika-protocol-config.workspace = true
 [target.'cfg(msim)'.dependencies]
 moka = { workspace = true, default-features = false, features = [
     "sync",
+    "future",
     "atomic64",
 ] }
 [target.'cfg(not(msim))'.dependencies]
-moka = { workspace = true, features = ["sync"] }
+moka = { workspace = true, features = ["sync", "future"] }
 # Production builds run crypto with rayon-backed parallelism. Under
 # `cargo simtest` (cfg msim), rayon worker threads have no msim node
 # context and panic at the first tracing/tokio call, so we drop the

@@ -36,6 +36,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 anemo-tower.workspace = true
 arc-swap.workspace = true
 axum.workspace = true
+hex.workspace = true
 anyhow.workspace = true
 bin-version.workspace = true
 clap.workspace = true

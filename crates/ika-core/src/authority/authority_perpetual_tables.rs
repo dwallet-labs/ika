@@ -10,6 +10,12 @@ use crate::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use sui_types::base_types::TransactionDigest as SuiTransactionDigest;
+use sui_types::committee::Committee as SuiCommittee;
+use sui_types::messages_checkpoint::{
+    CertifiedCheckpointSummary as SuiCertifiedCheckpointSummary,
+    CheckpointSequenceNumber as SuiCheckpointSequenceNumber,
+};
 use typed_store::DBMapUtils;
 use typed_store::rocks::{DBBatch, DBMap, MetricConf};
 use typed_store::rocksdb::Options;
@@ -74,6 +80,41 @@ pub struct AuthorityPerpetualTables {
     /// historical slice stays available for late handoff retries.
     pub(crate) network_reconfiguration_output_digest_by_epoch_and_key:
         DBMap<(EpochId, ObjectID), [u8; 32]>,
+
+    // -- OCS verifier (Sui state ingest) ----------------------------------------------------
+    /// Sui committee BLS-verified for each Sui epoch we've ratcheted through.
+    /// Append-only across Sui epoch transitions; survives Ika epoch boundaries.
+    pub(crate) sui_committees: DBMap<u64, SuiCommittee>,
+
+    /// Highest Sui epoch for which `sui_committees` holds a verified entry.
+    pub(crate) sui_committee_head: DBMap<(), u64>,
+
+    /// Verified end-of-epoch `CertifiedCheckpointSummary` keyed by the epoch
+    /// it terminates. The summary at epoch E proves the transition to
+    /// committee[E+1]. Sparse: only present for epochs whose end-of-epoch
+    /// summary we've actually seen (the trusted anchor's epoch + every
+    /// epoch the ratchet has walked through).
+    pub(crate) sui_committee_summaries: DBMap<u64, SuiCertifiedCheckpointSummary>,
+
+    /// Last checkpoint sequence number of each Sui epoch. Used by the ratchet
+    /// to fetch the right end-of-epoch CheckpointData without re-querying the
+    /// `LedgerService::GetEpoch` RPC.
+    pub(crate) sui_end_of_epoch_seqs: DBMap<u64, SuiCheckpointSequenceNumber>,
+
+    /// Cached Sui `CheckpointData` (BCS bytes) keyed by sequence number.
+    /// Read-through cache for the OCS verifier and the SuiStateMirror relay.
+    /// Bounded retention is enforced in [`Self::put_sui_checkpoint`]: entries
+    /// older than the retention window are range-deleted on insert.
+    pub(crate) sui_checkpoint_cache: DBMap<SuiCheckpointSequenceNumber, Vec<u8>>,
+
+    /// TX digest → checkpoint sequence index. Avoids a `get_transaction` round-trip
+    /// when verifying repeat reads of objects whose `previous_transaction` we've seen before.
+    pub(crate) sui_tx_to_checkpoint: DBMap<SuiTransactionDigest, SuiCheckpointSequenceNumber>,
+
+    /// Highest Sui checkpoint sequence number the sui-state-direct pusher has considered.
+    /// Persisted so that a restart resumes pushing where it left off rather than
+    /// jumping to `latest` and silently leaving a gap during downtime.
+    pub(crate) sui_pusher_last_seq: DBMap<(), SuiCheckpointSequenceNumber>,
 }
 
 impl AuthorityPerpetualTables {
@@ -326,6 +367,151 @@ impl AuthorityPerpetualTables {
         self.certified_handoff_attestations
             .safe_iter()
             .map(|res| res.map_err(IkaError::from))
+    }
+
+    // -- Sui-side state (consumed by ika-core/sui_connector) --------------------------------
+
+    pub fn get_sui_committee(&self, sui_epoch: u64) -> IkaResult<Option<SuiCommittee>> {
+        Ok(self.sui_committees.get(&sui_epoch)?)
+    }
+
+    pub fn highest_sui_committee_epoch(&self) -> IkaResult<Option<u64>> {
+        Ok(self.sui_committee_head.get(&())?)
+    }
+
+    /// Install a verified Sui committee. Bumps `sui_committee_head` to
+    /// `committee.epoch`. Does NOT write a summary — use
+    /// [`Self::record_sui_committee_summary`] for that, since it's typically
+    /// keyed at a different epoch (the summary's epoch == the prior head).
+    pub fn install_sui_committee(&self, committee: &SuiCommittee) -> IkaResult {
+        let epoch = committee.epoch;
+        let mut wb = self.sui_committees.batch();
+        wb.insert_batch(&self.sui_committees, [(epoch, committee.clone())])?;
+        wb.insert_batch(&self.sui_committee_head, [((), epoch)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Install a committee at `epoch` without bumping `sui_committee_head`.
+    /// Used by trusted-anchor seeding when we install committee[E] alongside
+    /// committee[E+1] but want head to land on E+1.
+    pub fn insert_sui_committee_without_head(&self, committee: &SuiCommittee) -> IkaResult {
+        let epoch = committee.epoch;
+        let mut wb = self.sui_committees.batch();
+        wb.insert_batch(&self.sui_committees, [(epoch, committee.clone())])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Persist a verified end-of-epoch summary, keyed by `summary.epoch()`.
+    /// Independent of committee installs.
+    pub fn record_sui_committee_summary(
+        &self,
+        summary: &SuiCertifiedCheckpointSummary,
+    ) -> IkaResult {
+        let mut wb = self.sui_committee_summaries.batch();
+        wb.insert_batch(
+            &self.sui_committee_summaries,
+            [(summary.epoch(), summary.clone())],
+        )?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_committee_summary(
+        &self,
+        sui_epoch: u64,
+    ) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
+        Ok(self.sui_committee_summaries.get(&sui_epoch)?)
+    }
+
+    pub fn iter_sui_committees(&self) -> IkaResult<Vec<(u64, SuiCommittee)>> {
+        let mut out = Vec::new();
+        for r in self.sui_committees.safe_iter() {
+            let (epoch, c) = r?;
+            out.push((epoch, c));
+        }
+        Ok(out)
+    }
+
+    pub fn get_sui_end_of_epoch_seq(
+        &self,
+        sui_epoch: u64,
+    ) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_end_of_epoch_seqs.get(&sui_epoch)?)
+    }
+
+    pub fn put_sui_end_of_epoch_seq(
+        &self,
+        sui_epoch: u64,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_seqs.batch();
+        wb.insert_batch(&self.sui_end_of_epoch_seqs, [(sui_epoch, seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self.sui_checkpoint_cache.get(&seq)?)
+    }
+
+    pub fn put_sui_checkpoint(&self, seq: SuiCheckpointSequenceNumber, bcs: &[u8]) -> IkaResult {
+        /// Cached checkpoints older than this many sequences below the newest
+        /// insert get range-deleted. The cache only ever serves *recent*
+        /// re-reads (verifier re-walks, relay peers, push-gap recovery), so
+        /// the window just has to comfortably exceed those; anything older is
+        /// re-fetchable from upstream.
+        const RETENTION_SEQS: u64 = 10_000;
+        /// Issue the range-delete once every this many inserts — range
+        /// tombstones are cheap but there's no reason to write one per put.
+        const PRUNE_INTERVAL: u64 = 256;
+
+        let mut wb = self.sui_checkpoint_cache.batch();
+        wb.insert_batch(&self.sui_checkpoint_cache, [(seq, bcs.to_vec())])?;
+        if seq % PRUNE_INTERVAL == 0 {
+            let cutoff = seq.saturating_sub(RETENTION_SEQS);
+            if cutoff > 0 {
+                // Pruned entries may stay visible until compaction (range
+                // tombstones); harmless for a cache — the point is that disk
+                // usage stops growing without bound.
+                wb.schedule_delete_range(&self.sui_checkpoint_cache, &0, &cutoff)?;
+            }
+        }
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_tx_checkpoint(
+        &self,
+        tx: &SuiTransactionDigest,
+    ) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_tx_to_checkpoint.get(tx)?)
+    }
+
+    pub fn put_sui_tx_checkpoint(
+        &self,
+        tx: SuiTransactionDigest,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.sui_tx_to_checkpoint.batch();
+        wb.insert_batch(&self.sui_tx_to_checkpoint, [(tx, seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_pusher_last_seq(&self) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_pusher_last_seq.get(&())?)
+    }
+
+    pub fn put_sui_pusher_last_seq(&self, seq: SuiCheckpointSequenceNumber) -> IkaResult {
+        let mut wb = self.sui_pusher_last_seq.batch();
+        wb.insert_batch(&self.sui_pusher_last_seq, [((), seq)])?;
+        wb.write()?;
+        Ok(())
     }
 }
 

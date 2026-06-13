@@ -10,11 +10,13 @@ use fastcrypto::encoding::{Encoding, Hex};
 use fastcrypto::traits::KeyPair;
 use ika_config::node::{
     AuthorityKeyPairWithPath, AuthorityOverloadConfig, KeyPairWithPath, RootSeedWithPath,
-    RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig,
+    RunWithRange, StateArchiveConfig, SuiChainIdentifier, SuiConnectorConfig, SuiDataSource,
     default_end_of_epoch_broadcast_channel_capacity,
 };
 use std::path::PathBuf;
 use sui_types::base_types::ObjectID;
+use sui_types::committee::Committee;
+use sui_types::digests::CheckpointDigest;
 
 use ika_config::p2p::{P2pConfig, SeedPeer, StateSyncConfig};
 
@@ -36,6 +38,22 @@ pub struct ValidatorConfigBuilder {
     authority_overload_config: Option<AuthorityOverloadConfig>,
     max_submit_position: Option<usize>,
     submit_delay_step_override_millis: Option<u64>,
+    /// Optional digest of an end-of-epoch checkpoint summary, pasted
+    /// into `NodeConfig.sui_connector_config.sui_trusted_anchor`.
+    trusted_anchor: Option<CheckpointDigest>,
+    /// Optional epoch-0 committee, pasted into
+    /// `NodeConfig.sui_connector_config.sui_unsafe_genesis_committee`.
+    /// Mutually exclusive with `trusted_anchor` — see the config docs.
+    unsafe_genesis_committee: Option<Committee>,
+    /// Override for `NodeConfig.sui_connector_config.sui_data_source`.
+    /// When `Some`, replaces the swarm default of
+    /// `SuiStateDirect { serve_mirror: true }`. Use this to flip a
+    /// validator into sui-state-mirrored for testing.
+    sui_data_source_override: Option<SuiDataSource>,
+    /// Override for `NodeConfig.sui_connector_config.sui_state_mirror_peers`.
+    /// Required for sui-state-mirrored; hex-encoded anemo peer ids of the
+    /// sui-state-direct validators this node reads Sui state from.
+    sui_state_mirror_peers_override: Option<Vec<String>>,
 }
 
 impl ValidatorConfigBuilder {
@@ -75,6 +93,26 @@ impl ValidatorConfigBuilder {
         submit_delay_step_override_millis: u64,
     ) -> Self {
         self.submit_delay_step_override_millis = Some(submit_delay_step_override_millis);
+        self
+    }
+
+    pub fn with_trusted_anchor(mut self, digest: CheckpointDigest) -> Self {
+        self.trusted_anchor = Some(digest);
+        self
+    }
+
+    pub fn with_unsafe_genesis_committee(mut self, committee: Committee) -> Self {
+        self.unsafe_genesis_committee = Some(committee);
+        self
+    }
+
+    pub fn with_sui_data_source(mut self, data_source: SuiDataSource) -> Self {
+        self.sui_data_source_override = Some(data_source);
+        self
+    }
+
+    pub fn with_sui_state_mirror_peers(mut self, peers: Vec<String>) -> Self {
+        self.sui_state_mirror_peers_override = Some(peers);
         self
     }
 
@@ -137,7 +175,20 @@ impl ValidatorConfigBuilder {
                 validator.consensus_key_pair.copy(),
             )),
             sui_connector_config: SuiConnectorConfig {
-                sui_rpc_url: sui_rpc_url.to_string(),
+                sui_rpc_url: None,
+                sui_data_source: Some(self.sui_data_source_override.clone().unwrap_or_else(|| {
+                    SuiDataSource::SuiStateDirect {
+                        url: sui_rpc_url.to_string(),
+                        serve_mirror: true,
+                    }
+                })),
+                sui_state_mirror_peers: self
+                    .sui_state_mirror_peers_override
+                    .clone()
+                    .unwrap_or_default(),
+                sui_trusted_anchor: self.trusted_anchor,
+                sui_unsafe_genesis_committee: self.unsafe_genesis_committee.clone(),
+                allow_unverified_committee_fallback: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 ika_package_id,
                 ika_common_package_id,
@@ -172,6 +223,17 @@ impl ValidatorConfigBuilder {
         }
     }
 
+    /// Builds a fresh validator NodeConfig with a generated init config.
+    ///
+    /// Like [`Self::build`], this emits a new-style (`SuiStateDirect`) config,
+    /// which the node boot gate requires to carry a Sui trust anchor. The
+    /// caller MUST seed one first via [`Self::with_unsafe_genesis_committee`]
+    /// (the Sui chain's epoch-0 committee, e.g. from
+    /// `ika_sui_client::anchor::fetch_genesis_committee`) or
+    /// [`Self::with_trusted_anchor`]; otherwise the resulting validator is
+    /// rejected at boot with "`sui-data-source` is set but no Sui trust
+    /// anchor is configured". The swarm path does this in
+    /// `network_config_builder`.
     pub fn build_new_validator<R: rand::RngCore + rand::CryptoRng>(
         self,
         rng: &mut R,
@@ -356,7 +418,17 @@ impl FullnodeConfigBuilder {
                 .network_address
                 .unwrap_or(validator_config.network_address),
             sui_connector_config: SuiConnectorConfig {
-                sui_rpc_url: sui_rpc_url.to_string(),
+                sui_rpc_url: None,
+                // Fullnodes don't run the OCS verifier: direct gRPC, no
+                // mirror service, no trusted anchor.
+                sui_data_source: Some(SuiDataSource::SuiStateDirect {
+                    url: sui_rpc_url.to_string(),
+                    serve_mirror: false,
+                }),
+                sui_state_mirror_peers: Vec::new(),
+                sui_trusted_anchor: None,
+                sui_unsafe_genesis_committee: None,
+                allow_unverified_committee_fallback: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
                 ika_package_id,
                 ika_common_package_id,

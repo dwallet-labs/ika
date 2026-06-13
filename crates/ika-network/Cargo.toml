@@ -21,6 +21,10 @@ ika-archival.workspace = true
 sui-types.workspace = true
 ika-types.workspace = true
 ika-config.workspace = true
+# OCS verified-read relay (SuiStateMirror) + proof provider.
+ika-sui-client.workspace = true
+sui-light-client.workspace = true
+moka = { workspace = true, features = ["future"] }
 
 bcs.workspace = true
 fastcrypto.workspace = true
@@ -34,6 +38,8 @@ rand = "0.8" # use old version for compatability with fastcrypto
 anyhow.workspace = true
 prometheus.workspace = true
 mysten-metrics.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
 
 [build-dependencies]
 anemo-build.workspace = true

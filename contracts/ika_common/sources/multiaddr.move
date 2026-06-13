@@ -173,7 +173,7 @@ fun validate_with_transport(addr: &String, transport: String): bool {
 /// * `true` if the IPv4 address is valid, `false` otherwise
 fun is_valid_ipv4(ip: &String): bool {
     let len = ip.length();
-    let mut parts: vector<String> = vector::empty();
+    let mut parts: vector<String> = vector[];
     let mut start = 0;
     let mut i = 0;
 
@@ -242,7 +242,7 @@ fun is_valid_ipv4(ip: &String): bool {
 /// * `true` if the IPv6 address is valid, `false` otherwise
 fun is_valid_ipv6(ip: &String): bool {
     let len = ip.length();
-    let mut parts: vector<String> = vector::empty();
+    let mut parts: vector<String> = vector[];
     let mut start = 0;
     let mut i = 0;
     let mut consecutive_colons = false;
@@ -312,7 +312,7 @@ fun is_valid_dns(hostname: &String): bool {
     let len = hostname.length();
     if (len < 1 || len > 253) return false;
 
-    let mut parts: vector<String> = vector::empty();
+    let mut parts: vector<String> = vector[];
     let mut start = 0;
     let mut i = 0;
 

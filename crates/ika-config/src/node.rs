@@ -174,11 +174,12 @@ pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "http://127.0.0.1:9000";
 pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "http://127.0.0.1:9123/gas";
 
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum SuiChainIdentifier {
     Mainnet,
     Testnet,
+    Devnet,
     Custom,
 }
 
@@ -187,18 +188,140 @@ impl fmt::Display for SuiChainIdentifier {
         match self {
             SuiChainIdentifier::Mainnet => write!(f, "Mainnet"),
             SuiChainIdentifier::Testnet => write!(f, "Testnet"),
+            SuiChainIdentifier::Devnet => write!(f, "Devnet"),
             SuiChainIdentifier::Custom => write!(f, "Custom"),
         }
     }
+}
+
+/// Returns the binary's compiled-in trusted anchor digest for a given
+/// chain, if any. Production validators paste a fresh anchor in their
+/// node config; this is the fallback for testnet/devnet release builds
+/// shipped with a known-good digest.
+///
+/// Mainnet: `None` until Sui mainnet enables
+/// `include_checkpoint_artifacts_digest_in_summary` (currently on
+/// protocol v121, the flag lands in v122). When that ships, CI
+/// regenerates this with a real digest.
+///
+/// Testnet/Devnet: `None` for now — to be filled in by release tooling
+/// that queries the upstream Sui RPC for a recent end-of-epoch
+/// checkpoint and bakes the digest here. Operators use the
+/// `sui_trusted_anchor` config field to provide their own digest in the
+/// meantime.
+pub fn compiled_in_trusted_anchor(
+    _chain: SuiChainIdentifier,
+) -> Option<sui_types::digests::CheckpointDigest> {
+    // TODO(release-eng): generate per-chain digests via CI from a known-good Sui RPC.
+    None
+}
+
+/// Where this validator gets Sui state from.
+///
+/// `SuiStateDirect` runs against a Sui fullnode reachable over gRPC, and
+/// (by default) also exposes a [`SuiStateMirror`](../../../ika-network)
+/// service to peers — making this validator a *source* of verified
+/// Sui state for the cluster.
+///
+/// `SuiStateMirrored` reads Sui state through the mirror service of a
+/// peer instead of connecting to Sui directly. Reads are still verified
+/// end-to-end via OCS, so the relayer is untrusted; an optional
+/// `fallback_grpc_url` is used for transaction submission and
+/// `get_transaction` (which can't be relayed because their return types
+/// aren't Deserializable).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+// `rename_all` covers the variant tags; `rename_all_fields` is required to also
+// kebab-case the fields *inside* struct variants (e.g. `fallback-grpc-url`).
+// Without it those fields stay snake_case while every other config key is
+// kebab-case, so an operator writing `fallback-grpc-url` would have it silently
+// dropped — flipping a mirrored validator into peer-only.
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    tag = "kind"
+)]
+pub enum SuiDataSource {
+    SuiStateDirect {
+        /// gRPC URL of a Sui fullnode this validator can reach directly.
+        url: String,
+        /// If true, expose `SuiStateMirror` to Ika peers so other validators
+        /// can read Sui state through us. Defaults to true.
+        #[serde(default = "default_true")]
+        serve_mirror: bool,
+    },
+    SuiStateMirrored {
+        /// Optional Sui gRPC URL used as a fallback for transaction submission
+        /// and `get_transaction`. Trust unaffected — OCS verifies regardless.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fallback_grpc_url: Option<String>,
+    },
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SuiConnectorConfig {
-    /// Rpc url for Sui fullnode, used for query stuff and submit transactions.
-    #[serde(default = "default_sui_rpc_url")]
-    pub sui_rpc_url: String,
+    /// Legacy JSON-RPC url of a Sui fullnode (old-style configs). Ignored
+    /// whenever [`SuiConnectorConfig::sui_data_source`] is present, and
+    /// optional so a migrated config can DROP this field entirely. At least
+    /// one of the two must be set; a config with neither has no Sui endpoint
+    /// and is rejected at startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_rpc_url: Option<String>,
+    /// Source of Sui state and tx-submission for this node — the new-style
+    /// gRPC config that replaces `sui_rpc_url`. Its PRESENCE is what selects
+    /// the read path: a config without it is an old-style (pre-OCS) config,
+    /// and a validator on one keeps the DEPRECATED legacy JSON-RPC path
+    /// (Sui is sunsetting JSON-RPC — migrate by adding this section plus a
+    /// trust anchor). When present, all Sui I/O runs over gRPC and a
+    /// validator must also configure a trust anchor (its MPC event source on
+    /// this path is the anchor-verified `BagEventPump`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_data_source: Option<SuiDataSource>,
+    /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
+    /// If empty in `PeerMirror` mode, the connector will try every connected
+    /// peer (relying on those that don't implement the service to error fast).
+    #[serde(default)]
+    pub sui_state_mirror_peers: Vec<String>,
+    /// Trust anchor: digest of an end-of-epoch
+    /// `CertifiedCheckpointSummary`. At boot the validator looks the
+    /// summary up by digest, asserts `summary.digest() == this`,
+    /// extracts `committee[E+1]` from `end_of_epoch_data`, and
+    /// installs it. Operators mint a fresh digest with
+    /// `ika validator anchor-last-eoe-checkpoint`.
+    ///
+    /// Ignored when the perpetual `sui_committees` table already
+    /// contains entries (we've already verified past this point). To
+    /// force re-anchoring, wipe the perpetual
+    /// `sui_committees`/`sui_committee_head` columns first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_trusted_anchor: Option<sui_types::digests::CheckpointDigest>,
+    /// Genesis bootstrap committee for chains that haven't reached
+    /// their first end-of-epoch yet (brand-new localnets, fresh-init
+    /// testnet). Used as `committee[0]`. Mutually exclusive with
+    /// `sui_trusted_anchor`; startup errors if both are set.
+    ///
+    /// **UNSAFE for production.** Bypasses the digest-anchored trust
+    /// model — the operator pins the committee directly, with no
+    /// digest cross-check. Production deployments should always use
+    /// `sui_trusted_anchor`. The `unsafe_` prefix is the universal
+    /// convention for "this opt-out skips a safety property."
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
+    /// When the committee ratchet reaches an end-of-epoch checkpoint that the
+    /// upstream has pruned, it cannot BLS-verify the `committee[E] →
+    /// committee[E+1]` transition. If this is `true` it falls back to fetching
+    /// `committee[E+1]` directly from the (untrusted) endpoint — trust degrades
+    /// to "what the endpoint says." Default `false`: the ratchet instead returns
+    /// `OcsError::ProofChainBroken` and the operator must re-anchor closer to
+    /// the current epoch. Only enable on chains/operators that accept the
+    /// degraded trust to preserve liveness from a stale anchor.
+    #[serde(default)]
+    pub allow_unverified_committee_fallback: bool,
     /// The expected sui chain identifier connecting to.
     pub sui_chain_identifier: SuiChainIdentifier,
     /// The move package ID of ika (IKA) on sui.
@@ -318,10 +441,6 @@ pub struct NodeConfig {
 /// default (retention 0), so retention here is the conservative side of an
 /// existing policy, not a new one.
 pub const DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS: u64 = 2;
-
-fn default_sui_rpc_url() -> String {
-    LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string()
-}
 
 fn default_grpc_address() -> Multiaddr {
     "/ip4/0.0.0.0/tcp/8080".parse().unwrap()

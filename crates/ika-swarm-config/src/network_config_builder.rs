@@ -340,12 +340,27 @@ impl<R: rand::RngCore + rand::CryptoRng> ConfigBuilder<R> {
         )
         .await?;
 
+        // Validators built here are new-style (`SuiStateDirect`), and the node
+        // boot gate requires every new-style validator to carry a Sui trust
+        // anchor (its MPC event source on the gRPC path is the anchor-verified
+        // BagEventPump). Seed each with the Sui chain's epoch-0 committee as its
+        // unsafe-genesis anchor — the same path the test cluster uses. Without
+        // it the swarm/`ika start`/ts-integration validators are rejected at
+        // boot with "`sui-data-source` is set but no Sui trust anchor".
+        let sui_genesis_committee =
+            ika_sui_client::anchor::fetch_genesis_committee(&self.sui_fullnode_rpc_url)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("fetch Sui genesis committee for OCS trust anchor: {e}")
+                })?;
+
         let validator_configs = validator_initialization_configs
             .iter()
             .enumerate()
             .map(|(idx, validator)| {
                 let mut builder = ValidatorConfigBuilder::new()
-                    .with_config_directory(self.config_directory.clone());
+                    .with_config_directory(self.config_directory.clone())
+                    .with_unsafe_genesis_committee(sui_genesis_committee.clone());
 
                 if let Some(max_submit_position) = self.max_submit_position {
                     builder = builder.with_max_submit_position(max_submit_position);
