@@ -106,6 +106,27 @@ rule, not the instance.
   acquire handles on demand (inside each poll tick / scoped to one
   statement); never bind one across a `stop()`/`start()` of its node.
 
+## Dead code & dependencies
+
+- **In a library workspace the `dead_code` lint is nearly blind.** rustc
+  treats every `pub` item reachable from a crate's API root as used, so
+  unused `pub` fns/structs/enums/variants/fields/consts in a lib crate
+  never warn — a clean `cargo check`/`clippy` is NOT evidence of no dead
+  code. → Rule: find dead code by workspace-wide reference analysis (grep
+  each symbol across `crates/` AND `sdk/`), not the compiler; and in a Sui
+  fork, classify (safe to remove vs public API vs upstream-parity vs
+  has-a-side-effect) before deleting. Full procedure:
+  `../conventions/dead-code-cleanup.md`.
+- **A grep-only "unused dependency" verdict produces false positives.** An
+  audit declared `eyre` unused in `ika-core`; it was used as `eyre::Result`
+  / `eyre::eyre!` in five files, caught only by the build. → Rule: never
+  remove a Cargo dep on grep evidence alone — remove it, then
+  `cargo check --workspace --all-targets`. Know that command's blind spots:
+  it does not build `cfg(msim)` code, the excluded `sdk/*-wasm` crates, or
+  non-default features, so a dep used only there compiles clean after a
+  wrong removal. Verify those paths (`cargo simtest`, the wasm build,
+  `--features <f>`) or leave the dep.
+
 ## Process & forensics
 
 - **Verify the chain/config you're querying is the one the system

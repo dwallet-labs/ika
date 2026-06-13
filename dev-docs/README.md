@@ -58,6 +58,10 @@ them has a bug — determine which before changing either.
 - [`conventions/simtest.md`](conventions/simtest.md) — what simtest is,
   why it is slow by design, when to use it vs `#[tokio::test]`, and the
   msim gotcha catalogue.
+- [`conventions/dead-code-cleanup.md`](conventions/dead-code-cleanup.md) —
+  auditing/removing unused Rust: why the compiler can't see unused `pub`
+  items, how to classify candidates in a Sui fork, and gating dependency
+  removals on a build (with that build's blind spots).
 
 ### learnings/ — pitfalls that cost real debugging time
 - [`learnings/pitfalls.md`](learnings/pitfalls.md) — non-obvious failure
