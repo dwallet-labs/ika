@@ -49,6 +49,13 @@ use super::{
     SuiStateMirrorClient, VerifiedObjectRequest,
 };
 
+/// Per-peer, per-request deadline for relay reads. anemo configures no
+/// default outbound timeout and QUIC keep-alives keep an idle-but-connected
+/// peer's connection alive, so without this a peer that accepts the stream and
+/// never responds would hang the read forever and starve `try_peers` of any
+/// failover. Matches the 30s the push path already uses.
+const RELAY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct SuiMirrorPeers {
     network: Network,
@@ -124,9 +131,9 @@ impl SuiMirrorPeers {
             };
             tried_any = true;
             let mut client = SuiStateMirrorClient::new(peer);
-            match op(&mut client).await {
-                Ok(resp) => return Ok(resp.into_inner()),
-                Err(status) => {
+            match tokio::time::timeout(RELAY_REQUEST_TIMEOUT, op(&mut client)).await {
+                Ok(Ok(resp)) => return Ok(resp.into_inner()),
+                Ok(Err(status)) => {
                     if status.status() != anemo::types::response::StatusCode::NotFound {
                         all_not_found = false;
                     }
@@ -141,6 +148,23 @@ impl SuiMirrorPeers {
                         .inc();
                     self.demote(peer_id);
                     last_err = Some(format!("{status:?}"));
+                }
+                Err(_elapsed) => {
+                    // A timeout is a peer/network failure, not a NotFound, so it
+                    // must not be folded into the all-peers-NotFound result that
+                    // the committee ratchet keys its fallback decision on.
+                    all_not_found = false;
+                    warn!(
+                        ?peer_id,
+                        timeout = ?RELAY_REQUEST_TIMEOUT,
+                        "{op_label}: peer timed out, trying next"
+                    );
+                    self.metrics
+                        .relay_peer_failover_total
+                        .with_label_values(&[op_label, &peer_id.to_string()])
+                        .inc();
+                    self.demote(peer_id);
+                    last_err = Some(format!("{op_label}: peer {peer_id} timed out"));
                 }
             }
         }
