@@ -383,10 +383,6 @@ impl IkaNode {
             Some(perpetual_tables_options.options),
         ));
 
-        //let cur_epoch = latest_system_state.epoch();
-        // let committee = committee_store
-        //     .get_committee(&cur_epoch)?
-        //     .expect("Committee of the current epoch must exist");
         let chain_identifier =
             ChainIdentifier::from(config.sui_connector_config.ika_system_object_id);
 
@@ -1592,12 +1588,6 @@ impl IkaNode {
         self.state.committee_store().clone()
     }
 
-    /*
-    pub fn clone_authority_store(&self) -> Arc<AuthorityStore> {
-        self.state.db()
-    }
-    */
-
     /// This function awaits the completion of checkpoint execution of the current epoch,
     /// after which it initiates reconfiguration of the entire system.
     pub async fn monitor_reconfiguration(
@@ -1629,10 +1619,6 @@ impl IkaNode {
                         .truncate_below(config.version),
                     vec![],
                     // Note: this is a temp fix, we will handle package upgrades later.
-                    // sui_client
-                    // .get_available_move_packages()
-                    //     .await
-                    //     .map_err(|e| anyhow!("Cannot get available move packages: {:?}", e))?,
                 ));
 
             if let Some(components) = &*self.validator_components.lock().await {
@@ -3015,21 +3001,6 @@ async fn health_check_handler(
                 return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "down");
             }
         };
-
-        // // Calculate the threshold time based on the provided threshold_seconds
-        // let latest_chain_time = summary.timestamp();
-        // let threshold =
-        //     std::time::SystemTime::now() - Duration::from_secs(threshold_seconds as u64);
-        //
-        // // Check if the latest checkpoint is within the threshold
-        // if latest_chain_time < threshold {
-        //     warn!(
-        //         ?latest_chain_time,
-        //         ?threshold,
-        //         "failing healthcheck due to checkpoint lag"
-        //     );
-        //     return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "down");
-        // }
     }
     // if health endpoint is responding and no threshold is given, respond success
     (axum::http::StatusCode::OK, "up")

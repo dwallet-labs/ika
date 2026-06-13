@@ -385,9 +385,6 @@ pub enum DWalletCheckpointHighestWatermark {
 }
 
 pub struct DWalletCheckpointBuilder {
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    state: Arc<AuthorityState>,
     tables: Arc<DWalletCheckpointStore>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     notify: Arc<Notify>,
@@ -424,7 +421,6 @@ pub struct DWalletCheckpointSignatureAggregator {
 
 impl DWalletCheckpointBuilder {
     fn new(
-        state: Arc<AuthorityState>,
         tables: Arc<DWalletCheckpointStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         notify: Arc<Notify>,
@@ -436,7 +432,6 @@ impl DWalletCheckpointBuilder {
         previous_epoch_last_checkpoint_sequence_number: u64,
     ) -> Self {
         Self {
-            state,
             tables,
             epoch_store,
             notify,
@@ -517,12 +512,6 @@ impl DWalletCheckpointBuilder {
     ) -> anyhow::Result<()> {
         let last_details = pending_checkpoints.last().unwrap().details().clone();
 
-        // Keeps track of the effects that are already included in the current checkpoint.
-        // This is used when there are multiple pending checkpoints to create a single checkpoint
-        // because in such scenarios, dependencies of a transaction may in earlier created checkpoints,
-        // or in earlier pending checkpoints.
-        //let mut effects_in_current_checkpoint = BTreeSet::new();
-
         // Stores the transactions that should be included in the checkpoint.
         // Transactions will be recorded in the checkpoint in this order.
         let mut pending_dwallet_checkpoints_v1 = Vec::new();
@@ -545,9 +534,6 @@ impl DWalletCheckpointBuilder {
         new_checkpoints: Vec<DWalletCheckpointMessage>,
     ) -> IkaResult {
         let _scope = monitored_scope("DWalletCheckpointBuilder::write_checkpoints");
-        //let mut batch = self.tables.checkpoint_content.batch();
-        // let mut all_tx_digests =
-        //     Vec::with_capacity(new_checkpoints.iter().map(|(_, c)| c.size()).sum());
 
         for checkpoint_message in &new_checkpoints {
             debug!(
@@ -556,7 +542,6 @@ impl DWalletCheckpointBuilder {
                 checkpoint_digest = ?checkpoint_message.digest(),
                 "writing dwallet checkpoint",
             );
-            //all_tx_digests.extend(contents.iter().map(|digest| digest));
 
             self.output
                 .dwallet_checkpoint_created(checkpoint_message, &self.epoch_store, &self.tables)
@@ -570,19 +555,9 @@ impl DWalletCheckpointBuilder {
                 .last_constructed_dwallet_checkpoint
                 .set(sequence_number as i64);
 
-            // batch.insert_batch(
-            //     &self.tables.checkpoint_content,
-            //     [(contents.digest(), contents)],
-            // )?;
-
             self.tables
                 .locally_computed_checkpoints
                 .insert(&sequence_number, checkpoint_message)?;
-
-            // batch.insert_batch(
-            //     &self.tables.locally_computed_checkpoints,
-            //     [(sequence_number, summary)],
-            // )?;
         }
 
         self.notify_aggregator.notify_one();
@@ -648,20 +623,6 @@ impl DWalletCheckpointBuilder {
         let epoch = self.epoch_store.epoch();
         let total = all_messages.len();
         let last_checkpoint = self.epoch_store.last_built_dwallet_checkpoint_message()?;
-        // if last_checkpoint.is_none() {
-        //     let epoch = self.epoch_store.epoch();
-        //     if epoch > 0 {
-        //         let previous_epoch = epoch - 1;
-        //         let last_verified = self.tables.get_epoch_last_checkpoint(previous_epoch)?;
-        //         last_checkpoint = last_verified.map(VerifiedCheckpointMessage::into_summary_and_sequence);
-        //         if let Some((ref seq, _)) = last_checkpoint {
-        //             debug!("No checkpoints in builder DB, taking checkpoint from previous epoch with sequence {seq}");
-        //         } else {
-        //             // This is some serious bug with when CheckpointBuilder started so surfacing it via panic
-        //             panic!("Can not find last checkpoint for previous epoch {previous_epoch}");
-        //         }
-        //     }
-        // }
         let mut last_checkpoint_seq = last_checkpoint.as_ref().map(|(seq, _)| *seq).unwrap_or(0);
         // Epoch 0 is where we create the validator set (we are not running Epoch 0).
         // Once we initialize, the active committee starts in Epoch 1.
@@ -1064,7 +1025,6 @@ impl DWalletCheckpointService {
         let mut tasks = JoinSet::new();
 
         let builder = DWalletCheckpointBuilder::new(
-            state.clone(),
             checkpoint_store.clone(),
             epoch_store.clone(),
             notify_builder.clone(),

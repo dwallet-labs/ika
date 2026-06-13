@@ -24,7 +24,6 @@ ika-config.workspace = true
 
 bcs.workspace = true
 fastcrypto.workspace = true
-mysten-common.workspace = true
 mysten-network.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -33,7 +32,6 @@ tap.workspace = true
 rand = "0.8" # use old version for compatability with fastcrypto
 anyhow.workspace = true
 prometheus.workspace = true
-mysten-metrics.workspace = true
 
 [build-dependencies]
 anemo-build.workspace = true

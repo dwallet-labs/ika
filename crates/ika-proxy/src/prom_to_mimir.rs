@@ -175,8 +175,6 @@ impl From<MetricFamily> for Mimir<Vec<remote_write::TimeSeries>> {
                 ts.samples.push(s);
             } else if metric.histogram.is_some() {
                 // TODO implement
-                // ts.mut_histograms()
-                //     .push(Mimir::<remote_write::Histogram>::from(metric.get_histogram()).histogram());
             } else if metric.summary.is_some() {
                 // TODO implement
                 error!("summary is not implemented for a metric type");
@@ -218,7 +216,6 @@ pub mod tests {
         mf.set_metric(metric);
         mf
     }
-    #[allow(dead_code)]
     fn create_metric_gauge(labels: Vec<proto::LabelPair>, gauge: proto::Gauge) -> proto::Metric {
         let mut m = proto::Metric::default();
         m.set_label(labels);
@@ -271,7 +268,6 @@ pub mod tests {
             })
             .collect()
     }
-    #[allow(dead_code)]
     fn create_gauge(value: f64) -> proto::Gauge {
         let mut g = proto::Gauge::default();
         g.set_value(value);

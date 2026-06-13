@@ -382,8 +382,6 @@ pub enum SystemCheckpointHighestWatermark {
 }
 
 pub struct SystemCheckpointBuilder {
-    #[allow(dead_code)]
-    state: Arc<AuthorityState>,
     tables: Arc<SystemCheckpointStore>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     notify: Arc<Notify>,
@@ -421,7 +419,6 @@ pub struct SystemCheckpointSignatureAggregator {
 
 impl SystemCheckpointBuilder {
     fn new(
-        state: Arc<AuthorityState>,
         tables: Arc<SystemCheckpointStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         notify: Arc<Notify>,
@@ -433,7 +430,6 @@ impl SystemCheckpointBuilder {
         previous_epoch_last_checkpoint_sequence_number: u64,
     ) -> Self {
         Self {
-            state,
             tables,
             epoch_store,
             notify,
@@ -512,12 +508,6 @@ impl SystemCheckpointBuilder {
     async fn make_checkpoint(&self, pendings: Vec<PendingSystemCheckpoint>) -> anyhow::Result<()> {
         let last_details = pendings.last().unwrap().details().clone();
 
-        // Keeps track of the effects that are already included in the current checkpoint.
-        // This is used when there are multiple pending checkpoints to create a single checkpoint
-        // because in such scenarios, dependencies of a transaction may in earlier created checkpoints,
-        // or in earlier pending checkpoints.
-        //let mut effects_in_current_checkpoint = BTreeSet::new();
-
         // Stores the transactions that should be included in the checkpoint. Transactions will be recorded in the checkpoint
         // in this order.
         let mut pending_system_checkpoints_v1 = Vec::new();
@@ -540,9 +530,6 @@ impl SystemCheckpointBuilder {
         new_checkpoints: Vec<SystemCheckpointMessage>,
     ) -> IkaResult {
         let _scope = monitored_scope("SystemCheckpointBuilder::write_system_checkpoints");
-        //let mut batch = self.tables.system_checkpoint_content.batch();
-        // let mut all_tx_digests =
-        //     Vec::with_capacity(new_system_checkpoints.iter().map(|(_, c)| c.size()).sum());
 
         for checkpoint_message in &new_checkpoints {
             debug!(
@@ -551,7 +538,6 @@ impl SystemCheckpointBuilder {
                 checkpoint_digest = ?checkpoint_message.digest(),
                 "writing system checkpoint",
             );
-            //all_tx_digests.extend(contents.iter().map(|digest| digest));
 
             self.output
                 .system_checkpoint_created(checkpoint_message, &self.epoch_store, &self.tables)
@@ -565,19 +551,9 @@ impl SystemCheckpointBuilder {
                 .last_constructed_system_checkpoint
                 .set(sequence_number as i64);
 
-            // batch.insert_batch(
-            //     &self.tables.checkpoint_content,
-            //     [(contents.digest(), contents)],
-            // )?;
-
             self.tables
                 .locally_computed_checkpoints
                 .insert(&sequence_number, checkpoint_message)?;
-
-            // batch.insert_batch(
-            //     &self.tables.locally_computed_checkpoints,
-            //     [(sequence_number, summary)],
-            // )?;
         }
 
         self.notify_aggregator.notify_one();
@@ -643,20 +619,6 @@ impl SystemCheckpointBuilder {
         let epoch = self.epoch_store.epoch();
         let total = all_messages.len();
         let last_checkpoint = self.epoch_store.last_built_system_checkpoint_message()?;
-        // if last_checkpoint.is_none() {
-        //     let epoch = self.epoch_store.epoch();
-        //     if epoch > 0 {
-        //         let previous_epoch = epoch - 1;
-        //         let last_verified = self.tables.get_epoch_last_system_checkpoint(previous_epoch)?;
-        //         last_checkpoint = last_verified.map(VerifiedSystemCheckpoint::into_summary_and_sequence);
-        //         if let Some((ref seq, _)) = last_system_checkpoint {
-        //             debug!("No last_checkpoint in builder DB, taking system_checkpoint from previous epoch with sequence {seq}");
-        //         } else {
-        //             // This is some serious bug with when SystemCheckpointBuilder started so surfacing it via panic
-        //             panic!("Can not find last system_checkpoint for previous epoch {previous_epoch}");
-        //         }
-        //     }
-        // }
         let mut last_checkpoint_seq = last_checkpoint.as_ref().map(|(seq, _)| *seq).unwrap_or(0);
         // Epoch 0 is where we create the validator set (we are not running Epoch 0).
         // Once we initialize, the active committee starts in Epoch 1.
@@ -1055,7 +1017,6 @@ impl SystemCheckpointService {
         let mut tasks = JoinSet::new();
 
         let builder = SystemCheckpointBuilder::new(
-            state.clone(),
             system_checkpoint_store.clone(),
             epoch_store.clone(),
             notify_builder.clone(),
@@ -1095,24 +1056,6 @@ impl SystemCheckpointService {
         });
 
         (service, tasks)
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    fn write_and_notify_system_checkpoint_for_testing(
-        &self,
-        epoch_store: &AuthorityPerEpochStore,
-        system_checkpoint: PendingSystemCheckpoint,
-    ) -> IkaResult {
-        use crate::authority::authority_per_epoch_store::ConsensusCommitOutput;
-
-        let mut output = ConsensusCommitOutput::new(0);
-        epoch_store.write_pending_system_checkpoint(&mut output, &system_checkpoint)?;
-        let mut batch = epoch_store.db_batch_for_test();
-        output.write_to_batch(epoch_store, &mut batch)?;
-        batch.write()?;
-        self.notify_checkpoint()?;
-        Ok(())
     }
 }
 
