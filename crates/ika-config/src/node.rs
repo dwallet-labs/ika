@@ -230,7 +230,16 @@ pub fn compiled_in_trusted_anchor(
 /// `get_transaction` (which can't be relayed because their return types
 /// aren't Deserializable).
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case", tag = "kind")]
+// `rename_all` covers the variant tags; `rename_all_fields` is required to also
+// kebab-case the fields *inside* struct variants (e.g. `fallback-grpc-url`).
+// Without it those fields stay snake_case while every other config key is
+// kebab-case, so an operator writing `fallback-grpc-url` would have it silently
+// dropped — flipping a mirrored validator into peer-only.
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    tag = "kind"
+)]
 pub enum SuiDataSource {
     SuiStateDirect {
         /// gRPC URL of a Sui fullnode this validator can reach directly.
