@@ -7024,6 +7024,7 @@ dependencies = [
  "ika-config",
  "ika-move-contracts",
  "ika-protocol-config",
+ "ika-sui-client",
  "ika-types",
  "move-core-types",
  "move-package",
