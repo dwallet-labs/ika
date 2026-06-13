@@ -181,10 +181,10 @@ pub(crate) fn session_input_from_request(
             // protocol_version. At `_version == 2` (mainnet-v1.1.8 era) peers
             // publish bare `ClassGroupsEncryptionKeyAndProof` and the
             // bwd-compat DKG `PublicInput::new` takes only the class-groups
-            // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
+            // CRT map. At `_version == 3` we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
-                // At `_version == 3` every committee member MUST publish the post-PR-#1707
+                // At `_version == 3` every committee member MUST publish the version-3
                 // bundle shape (class-groups + per-curve PVSS HPKE). The shape-tolerant
                 // decoder accepts old-shape submissions silently, so a validator that
                 // hasn't migrated would land here with empty PVSS entries while their
@@ -202,7 +202,8 @@ pub(crate) fn session_input_from_request(
                 {
                     return Err(DwalletMPCError::InvalidMPCPartyType(format!(
                         "at network_encryption_key_version == 3 every committee member \
-                         must publish the post-PR-#1707 bundle shape, but only \
+                         must publish the version-3 bundle shape (class-groups + per-curve \
+                         PVSS HPKE keys), but only \
                          {class_groups_count}/{expected} class-groups, \
                          {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
                          {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \

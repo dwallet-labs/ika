@@ -73,7 +73,8 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
             crate::dwallet_mpc::get_validator_mpc_keys_by_party_id(&upcoming_committee)?;
 
         // At main Reconfig (callable only from `_version == 3`) every upcoming
-        // committee member MUST publish the post-PR-#1707 bundle shape. The
+        // committee member MUST publish the version-3 bundle shape
+        // (class-groups + per-curve PVSS HPKE keys). The
         // shape-tolerant decoder accepts old-shape submissions silently, so a
         // not-yet-migrated validator in the upcoming committee would land here
         // with empty PVSS entries while their class-groups entry is present.
@@ -98,7 +99,8 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         {
             return Err(DwalletMPCError::InvalidMPCPartyType(format!(
                 "at reconfiguration_message_version == 3 every upcoming committee \
-                 member must publish the post-PR-#1707 bundle shape, but only \
+                 member must publish the version-3 bundle shape (class-groups + \
+                 per-curve PVSS HPKE keys), but only \
                  {class_groups_count}/{expected} class-groups, \
                  {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
                  {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \

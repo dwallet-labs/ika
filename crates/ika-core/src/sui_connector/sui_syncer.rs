@@ -661,7 +661,7 @@ where
             .map_err(DwalletMPCError::IkaError)?;
 
         // Shape-tolerant decode per validator. PVSS HashMaps gain an entry only
-        // when the validator published the post-PR-#1707 bundle shape;
+        // when the validator published the version-3 bundle shape;
         // mainnet-v1.1.8-shape validators contribute only their class-groups key.
         let decoded_per_validator: Vec<_> = committee
             .iter()
@@ -673,7 +673,7 @@ where
                 if decoded.is_none() {
                     warn!(
                         authority = ?name,
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
+                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor version-3 shape)"
                     );
                 }
                 decoded.map(|d| (*name, d))

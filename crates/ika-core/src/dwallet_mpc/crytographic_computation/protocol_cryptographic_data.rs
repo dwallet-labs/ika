@@ -88,7 +88,7 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<bwd_compat_dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-    /// Network DKG running the post-PR-#1707 main Party
+    /// Network DKG running the version-3 main Party
     /// (`twopc_mpc::decentralized_party::dkg::Party`). Selected when
     /// `ProtocolConfig::is_network_encryption_key_version_v3()` is `true`.
     NetworkEncryptionKeyDkg {
