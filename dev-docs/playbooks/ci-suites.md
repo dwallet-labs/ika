@@ -5,6 +5,20 @@ self-hosted runners (80 vCPU; measured at full per-thread parity with an
 M3 Max). Prefer these over hours-long local runs — they parallelize,
 don't tie up a laptop, and upload logs as artifacts for post-mortem.
 
+## Nightly orchestrator
+
+`.github/workflows/scheduled-all-suites.yaml` runs every night at 03:00
+UTC (and on `workflow_dispatch`). It fans out over `branch: [main, dev]`
+× the four heavy suites below and dispatches each via `gh workflow run`
+with that suite's default inputs. It only *dispatches* — each run reports
+under its own workflow (Test Cluster / Integration Tests CI / TS
+Integration Tests / Simtest) on the targeted branch, with its own logs.
+
+Caveat: GitHub fires `schedule:` triggers only from the repository
+DEFAULT branch (`main`). Until this orchestrator also lands on `main`,
+the nightly cron does not run; `workflow_dispatch` works from any branch
+it exists on.
+
 ## Dispatch commands
 
 ```bash
