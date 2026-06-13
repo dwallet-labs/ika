@@ -6969,6 +6969,7 @@ dependencies = [
  "sui-macros",
  "sui-sdk",
  "sui-simulator",
+ "sui-swarm-config",
  "sui-types",
  "telemetry-subscribers",
  "test-cluster",
