@@ -3183,6 +3183,52 @@ mod tests {
         assert!(partition.excluded.is_empty());
     }
 
+    /// A FRESH quorum attestation always wins over carry-forward: a member
+    /// frozen this epoch keeps its fresh digest and the prior-cert digest
+    /// is ignored — carry-forward only fills gaps, it never overrides a
+    /// fresh announcement. In production an existing validator's blob is
+    /// root-seed-deterministic (fresh == prior), but this pins the
+    /// precedence so a future change can't let a stale carried digest
+    /// shadow a fresh one.
+    #[test]
+    fn carry_forward_never_overrides_a_fresh_attestation() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // All four freshly attested this epoch at their current hashes.
+        let view = vec![
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0x44; 32]),
+        ];
+        let signals: BTreeMap<_, _> = [a, b, c, d]
+            .into_iter()
+            .map(|s| (s, view.clone()))
+            .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert_eq!(attested.frozen.len(), 4);
+
+        // Prior cert held a DIFFERENT digest for every member. Since all
+        // four are freshly frozen, carry-forward must use NONE of them.
+        let prior: HashMap<_, _> = [
+            (a, [0x99; 32]),
+            (b, [0x99; 32]),
+            (c, [0x99; 32]),
+            (d, [0x99; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.frozen.contains(&(a, [0x11; 32])));
+        assert!(partition.frozen.contains(&(d, [0x44; 32])));
+        assert!(
+            !partition.frozen.iter().any(|(_, hash)| *hash == [0x99; 32]),
+            "a stale prior-cert digest shadowed a fresh attestation",
+        );
+    }
+
     /// Byzantine scenario: validator D serves bytes but they're
     /// malicious (don't decode to valid mpc_data). Honest validators
     /// drop D from their attestation, but byzantine D vouches for
