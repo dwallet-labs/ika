@@ -226,11 +226,6 @@ fn default_socket_address() -> SocketAddr {
     local_ip_utils::new_local_tcp_socket_for_testing()
 }
 
-#[allow(unused)]
-fn default_multiaddr_address() -> Multiaddr {
-    local_ip_utils::new_local_tcp_address_for_testing()
-}
-
 fn default_stake() -> u64 {
     MIN_VALIDATOR_JOINING_STAKE_INKU
 }

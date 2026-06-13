@@ -1592,12 +1592,6 @@ impl IkaNode {
         self.state.committee_store().clone()
     }
 
-    /*
-    pub fn clone_authority_store(&self) -> Arc<AuthorityStore> {
-        self.state.db()
-    }
-    */
-
     /// This function awaits the completion of checkpoint execution of the current epoch,
     /// after which it initiates reconfiguration of the entire system.
     pub async fn monitor_reconfiguration(

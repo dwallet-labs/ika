@@ -115,12 +115,6 @@ impl<S: Clone + Eq, const STRENGTH: bool> StakeAggregator<S, STRENGTH> {
     pub fn has_quorum(&self) -> bool {
         self.total_votes >= self.committee.threshold::<STRENGTH>()
     }
-
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    pub fn validator_sig_count(&self) -> usize {
-        self.data.len()
-    }
 }
 
 impl<const STRENGTH: bool> StakeAggregator<AuthoritySignInfo, STRENGTH> {
@@ -235,14 +229,6 @@ impl<K, V, const STRENGTH: bool> MultiStakeAggregator<K, V, STRENGTH> {
         }
     }
 
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    pub fn unique_key_count(&self) -> usize {
-        self.stake_maps.len()
-    }
-
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
     pub fn total_votes(&self) -> StakeUnit {
         self.stake_maps
             .values()
@@ -293,19 +279,12 @@ impl<K, V, const STRENGTH: bool> MultiStakeAggregator<K, V, STRENGTH>
 where
     K: Hash + Eq,
 {
-    #[allow(dead_code)]
-    pub fn authorities_for_key(&self, k: &K) -> Option<impl Iterator<Item = &AuthorityName>> {
-        self.stake_maps.get(k).map(|(_, agg)| agg.keys())
-    }
-
     /// The sum of all remaining stake, i.e. all stake not yet
     /// committed by vote to a specific value
     pub fn uncommitted_stake(&self) -> StakeUnit {
         self.committee.total_votes() - self.total_votes()
     }
 
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
     /// Total stake of the largest faction
     pub fn plurality_stake(&self) -> StakeUnit {
         self.stake_maps
@@ -315,8 +294,6 @@ where
             .unwrap_or_default()
     }
 
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
     /// If true, there isn't enough uncommitted stake to reach quorum for any value
     pub fn quorum_unreachable(&self) -> bool {
         self.uncommitted_stake() + self.plurality_stake() < self.committee.threshold::<STRENGTH>()
@@ -364,16 +341,6 @@ where
         }
 
         agg.insert_generic(authority, ())
-    }
-
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    pub fn has_quorum_for_key(&self, k: &K) -> bool {
-        if let Some(entry) = self.stake_maps.get(k) {
-            entry.has_quorum()
-        } else {
-            false
-        }
     }
 
     // todo(zeev): why is it not used?

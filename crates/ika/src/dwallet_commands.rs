@@ -1083,7 +1083,6 @@ fn curve_name_to_id(curve: &str) -> Result<u32> {
 }
 
 /// Parse u32 curve ID to name string.
-#[allow(dead_code)]
 fn curve_id_to_name(id: u32) -> Result<&'static str> {
     match id {
         0 => Ok("secp256k1"),

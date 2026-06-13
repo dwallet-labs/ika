@@ -385,9 +385,6 @@ pub enum DWalletCheckpointHighestWatermark {
 }
 
 pub struct DWalletCheckpointBuilder {
-    // todo(zeev): why is it not used?
-    #[allow(dead_code)]
-    state: Arc<AuthorityState>,
     tables: Arc<DWalletCheckpointStore>,
     epoch_store: Arc<AuthorityPerEpochStore>,
     notify: Arc<Notify>,
@@ -424,7 +421,6 @@ pub struct DWalletCheckpointSignatureAggregator {
 
 impl DWalletCheckpointBuilder {
     fn new(
-        state: Arc<AuthorityState>,
         tables: Arc<DWalletCheckpointStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         notify: Arc<Notify>,
@@ -436,7 +432,6 @@ impl DWalletCheckpointBuilder {
         previous_epoch_last_checkpoint_sequence_number: u64,
     ) -> Self {
         Self {
-            state,
             tables,
             epoch_store,
             notify,
@@ -648,20 +643,6 @@ impl DWalletCheckpointBuilder {
         let epoch = self.epoch_store.epoch();
         let total = all_messages.len();
         let last_checkpoint = self.epoch_store.last_built_dwallet_checkpoint_message()?;
-        // if last_checkpoint.is_none() {
-        //     let epoch = self.epoch_store.epoch();
-        //     if epoch > 0 {
-        //         let previous_epoch = epoch - 1;
-        //         let last_verified = self.tables.get_epoch_last_checkpoint(previous_epoch)?;
-        //         last_checkpoint = last_verified.map(VerifiedCheckpointMessage::into_summary_and_sequence);
-        //         if let Some((ref seq, _)) = last_checkpoint {
-        //             debug!("No checkpoints in builder DB, taking checkpoint from previous epoch with sequence {seq}");
-        //         } else {
-        //             // This is some serious bug with when CheckpointBuilder started so surfacing it via panic
-        //             panic!("Can not find last checkpoint for previous epoch {previous_epoch}");
-        //         }
-        //     }
-        // }
         let mut last_checkpoint_seq = last_checkpoint.as_ref().map(|(seq, _)| *seq).unwrap_or(0);
         // Epoch 0 is where we create the validator set (we are not running Epoch 0).
         // Once we initialize, the active committee starts in Epoch 1.
@@ -1064,7 +1045,6 @@ impl DWalletCheckpointService {
         let mut tasks = JoinSet::new();
 
         let builder = DWalletCheckpointBuilder::new(
-            state.clone(),
             checkpoint_store.clone(),
             epoch_store.clone(),
             notify_builder.clone(),

@@ -1439,13 +1439,11 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
         bcs::from_bytes(encrypted_user_share_and_proof)?;
     let dwallet_dkg_output = match bcs::from_bytes(dwallet_dkg_output)? {
         VersionedDwalletDKGPublicOutput::V1(output) => {
-            // return Err(anyhow::anyhow!("2.1"));
             let versioned_output: P::DecentralizedPartyDKGOutput =
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(&output)?.into();
             versioned_output
         }
         VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
-            // return Err(anyhow::anyhow!("2.2"));
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(&dkg_output)?
         }
     };

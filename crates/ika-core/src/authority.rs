@@ -714,14 +714,6 @@ impl AuthorityState {
             .check_system_overload_at_signing
     }
 
-    #[allow(dead_code)]
-    fn update_overload_metrics(&self, source: &str) {
-        self.metrics
-            .transaction_overload_sources
-            .with_label_values(&[source])
-            .inc();
-    }
-
     fn check_protocol_version(
         supported_protocol_versions: SupportedProtocolVersions,
         current_version: ProtocolVersion,
