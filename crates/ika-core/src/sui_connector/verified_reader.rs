@@ -28,7 +28,7 @@ use sui_types::dynamic_field::Field;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointSequenceNumber, VerifiedCheckpoint,
 };
-use sui_types::object::Object;
+use sui_types::object::{Object, Owner};
 
 use ika_sui_client::transport::TransportError;
 
@@ -70,6 +70,15 @@ pub enum ReaderError {
     Decode(String),
     #[error("unsupported version {kind}={version}")]
     UnsupportedVersion { kind: &'static str, version: u64 },
+    #[error(
+        "bag membership: entry {entry} in a page for bag {bag_id} is owned by \
+         {owner} — not a dynamic-field child of the requested bag"
+    )]
+    BagMembership {
+        bag_id: ObjectID,
+        entry: ObjectID,
+        owner: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -372,6 +381,26 @@ impl OcsVerifiedReader {
                 self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
             self.record_verify_outcome_unit("bag_entry", &entry_result);
             entry_result?;
+            // Bind the entry to the requested bag. The inclusion proof above
+            // only attests that this object existed on-chain at a verified
+            // checkpoint — NOT that it is a child of `bag_id`. A genuine bag
+            // entry is a dynamic field owned by the bag's UID, i.e.
+            // `Owner::ObjectOwner(bag_id)`, and that owner is part of the
+            // object digest the proof just verified. Without this check a
+            // malicious relay could return a validly-proven dynamic field of a
+            // *different* bag (e.g. replayed session events from another
+            // coordinator), and the count-only omission detector downstream
+            // would not catch a substitution that keeps the page size intact.
+            match entry.object.owner() {
+                Owner::ObjectOwner(addr) if ObjectID::from(*addr) == bag_id => {}
+                other => {
+                    return Err(ReaderError::BagMembership {
+                        bag_id,
+                        entry: entry.object.id(),
+                        owner: format!("{other:?}"),
+                    });
+                }
+            }
             if let Some(proof) = cache_proof {
                 let cache_entry = VerifiedObjectEntry {
                     object: cache_object,
@@ -641,6 +670,7 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
         ReaderError::StaleCheckpoint { .. } => "stale_checkpoint",
         ReaderError::Decode(_) => "decode",
         ReaderError::UnsupportedVersion { .. } => "unsupported_version",
+        ReaderError::BagMembership { .. } => "bag_membership",
     }
 }
 
