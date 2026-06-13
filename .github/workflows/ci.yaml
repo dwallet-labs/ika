@@ -91,6 +91,10 @@ jobs:
         # is frozen in scripts/metric-name-allowlist.txt.
         # See dev-docs/conventions/metrics.md.
         run: ./scripts/check-metric-names.sh
+      - name: Sui version consistency
+        # The Sui pin lives in several places that don't update together;
+        # see dev-docs/conventions/sui-version-bump.md.
+        run: ./scripts/check-sui-version-consistency.sh
 
   clippy:
     if: github.event_name == 'push'
