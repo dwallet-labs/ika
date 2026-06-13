@@ -69,6 +69,33 @@ pub fn localhost_for_testing() -> String {
     "127.0.0.1".to_string()
 }
 
+/// Base port for this test process's deterministic port block.
+///
+/// `cargo nextest` runs each test in its own process and assigns every
+/// concurrently-running test a unique global slot (`NEXTEST_TEST_GLOBAL_SLOT`).
+/// Deriving a disjoint port block per slot lets parallel test processes
+/// pre-allocate non-overlapping, deterministic ports for their swarm nodes, so
+/// they never probe-then-bind the same port and collide with
+/// `Address already in use`. `ports_per_slot` must cover every port one test
+/// process allocates. The block stays below the Linux ephemeral range
+/// (32768+) so the OS never hands one of these ports to an unrelated socket.
+/// (Unset slot -> 0, the natural single-process/local default.)
+pub fn deterministic_port_base(ports_per_slot: u16) -> u16 {
+    const FIRST_BASE: u32 = 9000;
+    const CEILING: u32 = 32000;
+    let slot: u32 = std::env::var("NEXTEST_TEST_GLOBAL_SLOT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let base = FIRST_BASE + slot * ports_per_slot as u32;
+    assert!(
+        base + ports_per_slot as u32 <= CEILING,
+        "nextest global slot {slot} overflows the deterministic test-port range \
+         [{FIRST_BASE}, {CEILING}); lower the cluster suite's --test-threads"
+    );
+    base as u16
+}
+
 /// Returns an available port for the given host in simtest.
 /// We don't care about host because it's all managed by simulator. Just obtain a unique port.
 #[cfg(msim)]

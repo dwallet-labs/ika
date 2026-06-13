@@ -73,10 +73,25 @@ rule, not the instance.
 
 - **Probe-then-bind port allocation races across processes.** Two test
   processes probing for free ports then binding later collide
-  ("Address already in use") — and the window can be SECONDS when setup
-  work sits between probe and bind (the joiner spawn did several
-  on-chain txs in between). → Rule: hold a cross-process lock from probe
-  to bind, and audit every node-spawn path, not just the boot path.
+  ("Address already in use"). A cross-process *boot lock* is NOT enough:
+  it serializes boots, but other tests' swarm nodes stay alive (holding
+  their ports) while their bodies run unlocked, and the probe — `TcpListener`
+  on a port that a live node holds for *UDP* (anemo/QUIC binds UDP; TCP
+  free-ness says nothing about UDP, which has no TIME_WAIT) — hands out a
+  doomed port. This flaked the cluster suite in BOTH swarm layers:
+  `ika_node::IkaNode::create_p2p_network` and (via the injected base chain)
+  `sui_node::SuiNode::create_p2p_network`. → Rule: don't probe — PRE-ALLOCATE
+  a disjoint, deterministic port block per test PROCESS, keyed on
+  `NEXTEST_TEST_GLOBAL_SLOT` (unique among concurrently-running tests), so no
+  two tests ever share a port for the lifetime of their nodes. See
+  `crates/ika-config/src/local_ip_utils.rs::deterministic_port_base` and its
+  use in `ika-test-cluster` (ika validators/joiners via
+  `with_deterministic_ports`; the upstream Sui validators via a
+  `ConfigBuilder` `NetworkConfig` injected with `set_network_config`, since
+  Sui's swarm otherwise probes its own ports). Fullnodes ride along — they
+  reuse a validator's deterministic p2p port and only probe TCP admin/RPC
+  (reliable). Keep the deterministic block below the OS ephemeral range
+  (32768+) so it's never handed to an unrelated socket.
 - **`tokio::sync::watch` keeps only the last value.** Two sends in a row
   lose the first — test helpers sending event batches must send ONE
   batch. Symptom: the first event simply never happened.
