@@ -16,6 +16,12 @@ here.
 
 ## Files
 
+- [`ocs-verified-sui-reads.md`](ocs-verified-sui-reads.md) — OCS
+  verified Sui reads: the committee-BLS → artifacts-digest → Merkle
+  trust chain, node roles and the config-shape transport gate, the
+  trust-anchor bootstrap and committee ratchet, freshness/rollback
+  protection, the verified bag-walk + event pump, and the untrusted
+  relay protocol (peer-only validators included).
 - [`validator-mpc-data-announcements.md`](validator-mpc-data-announcements.md)
   — the off-chain validator MPC-data pipeline: blob derivation,
   consensus announcements, P2P propagation, ready signals, the freeze
