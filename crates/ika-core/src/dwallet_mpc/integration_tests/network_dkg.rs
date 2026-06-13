@@ -236,7 +236,7 @@ pub(crate) async fn create_network_key_test(
 ///
 /// This exercises the multi-key code paths that the production
 /// off-chain pipeline depends on: the per-key
-/// `agreed_network_key_data` quorum, `instantiate_adopted_network_keys`'s
+/// `adopted_network_key_data` quorum, `instantiate_adopted_network_keys`'s
 /// ability to install more than one key per epoch, and the
 /// per-key digest/blob caches.
 #[tokio::test]
