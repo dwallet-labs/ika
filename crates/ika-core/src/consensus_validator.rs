@@ -198,49 +198,7 @@ impl IkaTxValidator {
 
     fn vote_transactions(&self, _txs: Vec<ConsensusTransactionKind>) -> Vec<TransactionIndex> {
         vec![]
-        //let epoch_store = self.authority_state.load_epoch_store_one_call_per_task();
-        // if !epoch_store.protocol_config().mysticeti_fastpath() {
-        //     return vec![];
-        // }
-        //
-        // let mut result = Vec::new();
-        // for (i, tx) in txs.into_iter().enumerate() {
-        //     let ConsensusTransactionKind::UserTransaction(tx) = tx else {
-        //         continue;
-        //     };
-        //
-        //     if let Err(e) = self.vote_transaction(&epoch_store, tx).await {
-        //         debug!("Failed to vote transaction: {:?}", e);
-        //         result.push(i as TransactionIndex);
-        //     }
-        // }
-        //
-        // result
     }
-
-    // async fn vote_transaction(
-    //     &self,
-    //     epoch_store: &Arc<AuthorityPerEpochStore>,
-    //     tx: Box<Transaction>,
-    // ) -> IkaResult<()> {
-    //     // Currently validity_check() and verify_transaction() are not required to be consistent across validators,
-    //     // so they do not run in validate_transactions(). They can run there once we confirm it is safe.
-    //     tx.validity_check(epoch_store.protocol_config(), epoch_store.epoch())?;
-    //
-    //     self.authority_state.check_system_overload(
-    //         &*self.consensus_overload_checker,
-    //         tx.data(),
-    //         self.authority_state.check_system_overload_at_signing(),
-    //     )?;
-    //
-    //     let tx = epoch_store.verify_transaction(*tx)?;
-    //
-    //     self.authority_state
-    //         .handle_transaction_v2(epoch_store, tx)
-    //         .await?;
-    //
-    //     Ok(())
-    // }
 }
 
 fn tx_kind_from_bytes(tx: &[u8]) -> Result<ConsensusTransactionKind, ValidationError> {

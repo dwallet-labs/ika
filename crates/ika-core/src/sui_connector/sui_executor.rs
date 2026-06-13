@@ -698,9 +698,6 @@ where
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -741,9 +738,6 @@ where
     ) -> anyhow::Result<SuiTransactionBlockResponse> {
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
         let mut ptb = ProgrammableTransactionBuilder::new();
         let dwallet_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -950,9 +944,6 @@ where
         info!("Running `process_mid_epoch()`");
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -1024,9 +1015,6 @@ where
         info!("Process `lock_last_active_session_sequence_number()`");
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -1091,9 +1079,6 @@ where
         info!("Running `process_request_advance_epoch()`");
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let mut ptb = ProgrammableTransactionBuilder::new();
 
@@ -1171,9 +1156,6 @@ where
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         //merge_gas_coins(&mut ptb, &gas_coins)?;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         let dwallet_2pc_mpc_coordinator_arg = sui_client
             .get_mutable_dwallet_2pc_mpc_coordinator_arg_must_succeed()
@@ -1258,9 +1240,6 @@ where
         let gas_coins =
             Self::next_gas_coins(&notifier_tx_lock, sui_client, sui_notifier.sui_address).await;
         // merge_gas_coins(&mut ptb, &gas_coins)?;
-        // let gas_coin = gas_coins
-        //     .first()
-        //     .ok_or_else(|| IkaError::SuiConnectorInternalError("no gas coin found".to_string()))?;
 
         info!(
             "`signers_bitmap` @ handle_execution_task: {:?}",

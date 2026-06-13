@@ -3772,11 +3772,9 @@ impl AuthorityPerEpochStore {
                 checkpoint_service,
                 system_checkpoint_service,
                 consensus_commit_info,
-                //&mut roots,
                 authority_metrics,
             )
             .await?;
-        //self.finish_consensus_certificate_process_with_batch(&mut output, &verified_transactions)?;
         output.record_verified_dwallet_checkpoint_messages(
             verified_dwallet_checkpoint_messages.clone(),
         );

@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-bcs.workspace = true
 cargo_metadata = "0.19"
 fastcrypto.workspace = true
 futures.workspace = true
@@ -28,11 +27,9 @@ ika-swarm.workspace = true
 ika-swarm-config.workspace = true
 ika-types.workspace = true
 
-sui-config.workspace = true
 sui-json-rpc-types.workspace = true
 sui-keys.workspace = true
 sui-sdk.workspace = true
-sui-test-transaction-builder.workspace = true
 sui-types.workspace = true
 test-cluster.workspace = true
 
@@ -40,8 +37,6 @@ test-cluster.workspace = true
 sui-simulator.workspace = true
 
 [dev-dependencies]
-prometheus.workspace = true
 sui-macros.workspace = true
-sui-protocol-config.workspace = true
 telemetry-subscribers.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }

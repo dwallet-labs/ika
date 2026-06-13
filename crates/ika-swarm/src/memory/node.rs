@@ -100,32 +100,6 @@ impl Node {
             }
         }
 
-        // if is_validator {
-        //     let network_address = self.config().network_address().clone();
-        //     let tls_config = sui_tls::create_rustls_client_config(
-        //         self.config().network_key_pair().public().to_owned(),
-        //         IKA_VALIDATOR_SERVER_NAME.to_string(),
-        //         None,
-        //     );
-        //     let channel = mysten_network::client::connect(&network_address, Some(tls_config))
-        //         .await
-        //         .map_err(|err| anyhow!(err.to_string()))
-        //         .map_err(HealthCheckError::Failure)
-        //         .tap_err(|e| error!("error connecting to {}: {e}", self.name().concise()))?;
-        //
-        //     let mut client = tonic_health::pb::health_client::HealthClient::new(channel);
-        //     client
-        //         .check(tonic_health::pb::HealthCheckRequest::default())
-        //         .await
-        //         .map_err(|e| HealthCheckError::Failure(e.into()))
-        //         .tap_err(|e| {
-        //             error!(
-        //                 "error performing health check on {}: {e}",
-        //                 self.name().concise()
-        //             )
-        //         })?;
-        // }
-
         Ok(())
     }
 }

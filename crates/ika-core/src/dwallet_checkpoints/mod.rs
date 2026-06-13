@@ -512,12 +512,6 @@ impl DWalletCheckpointBuilder {
     ) -> anyhow::Result<()> {
         let last_details = pending_checkpoints.last().unwrap().details().clone();
 
-        // Keeps track of the effects that are already included in the current checkpoint.
-        // This is used when there are multiple pending checkpoints to create a single checkpoint
-        // because in such scenarios, dependencies of a transaction may in earlier created checkpoints,
-        // or in earlier pending checkpoints.
-        //let mut effects_in_current_checkpoint = BTreeSet::new();
-
         // Stores the transactions that should be included in the checkpoint.
         // Transactions will be recorded in the checkpoint in this order.
         let mut pending_dwallet_checkpoints_v1 = Vec::new();
@@ -540,9 +534,6 @@ impl DWalletCheckpointBuilder {
         new_checkpoints: Vec<DWalletCheckpointMessage>,
     ) -> IkaResult {
         let _scope = monitored_scope("DWalletCheckpointBuilder::write_checkpoints");
-        //let mut batch = self.tables.checkpoint_content.batch();
-        // let mut all_tx_digests =
-        //     Vec::with_capacity(new_checkpoints.iter().map(|(_, c)| c.size()).sum());
 
         for checkpoint_message in &new_checkpoints {
             debug!(
@@ -551,7 +542,6 @@ impl DWalletCheckpointBuilder {
                 checkpoint_digest = ?checkpoint_message.digest(),
                 "writing dwallet checkpoint",
             );
-            //all_tx_digests.extend(contents.iter().map(|digest| digest));
 
             self.output
                 .dwallet_checkpoint_created(checkpoint_message, &self.epoch_store, &self.tables)
@@ -565,19 +555,9 @@ impl DWalletCheckpointBuilder {
                 .last_constructed_dwallet_checkpoint
                 .set(sequence_number as i64);
 
-            // batch.insert_batch(
-            //     &self.tables.checkpoint_content,
-            //     [(contents.digest(), contents)],
-            // )?;
-
             self.tables
                 .locally_computed_checkpoints
                 .insert(&sequence_number, checkpoint_message)?;
-
-            // batch.insert_batch(
-            //     &self.tables.locally_computed_checkpoints,
-            //     [(sequence_number, summary)],
-            // )?;
         }
 
         self.notify_aggregator.notify_one();

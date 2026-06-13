@@ -824,7 +824,6 @@ impl AuthorityState {
             .reopen_epoch_db(cur_epoch_store, new_committee, epoch_start_configuration)
             .await?;
         assert_eq!(new_epoch_store.epoch(), new_epoch);
-        //self.transaction_manager.reconfigure(new_epoch);
         *execution_lock = new_epoch;
         // drop execution_lock after epoch store was updated
         // see also assert in AuthorityState::process_certificate

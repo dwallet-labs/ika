@@ -508,12 +508,6 @@ impl SystemCheckpointBuilder {
     async fn make_checkpoint(&self, pendings: Vec<PendingSystemCheckpoint>) -> anyhow::Result<()> {
         let last_details = pendings.last().unwrap().details().clone();
 
-        // Keeps track of the effects that are already included in the current checkpoint.
-        // This is used when there are multiple pending checkpoints to create a single checkpoint
-        // because in such scenarios, dependencies of a transaction may in earlier created checkpoints,
-        // or in earlier pending checkpoints.
-        //let mut effects_in_current_checkpoint = BTreeSet::new();
-
         // Stores the transactions that should be included in the checkpoint. Transactions will be recorded in the checkpoint
         // in this order.
         let mut pending_system_checkpoints_v1 = Vec::new();
@@ -536,9 +530,6 @@ impl SystemCheckpointBuilder {
         new_checkpoints: Vec<SystemCheckpointMessage>,
     ) -> IkaResult {
         let _scope = monitored_scope("SystemCheckpointBuilder::write_system_checkpoints");
-        //let mut batch = self.tables.system_checkpoint_content.batch();
-        // let mut all_tx_digests =
-        //     Vec::with_capacity(new_system_checkpoints.iter().map(|(_, c)| c.size()).sum());
 
         for checkpoint_message in &new_checkpoints {
             debug!(
@@ -547,7 +538,6 @@ impl SystemCheckpointBuilder {
                 checkpoint_digest = ?checkpoint_message.digest(),
                 "writing system checkpoint",
             );
-            //all_tx_digests.extend(contents.iter().map(|digest| digest));
 
             self.output
                 .system_checkpoint_created(checkpoint_message, &self.epoch_store, &self.tables)
@@ -561,19 +551,9 @@ impl SystemCheckpointBuilder {
                 .last_constructed_system_checkpoint
                 .set(sequence_number as i64);
 
-            // batch.insert_batch(
-            //     &self.tables.checkpoint_content,
-            //     [(contents.digest(), contents)],
-            // )?;
-
             self.tables
                 .locally_computed_checkpoints
                 .insert(&sequence_number, checkpoint_message)?;
-
-            // batch.insert_batch(
-            //     &self.tables.locally_computed_checkpoints,
-            //     [(sequence_number, summary)],
-            // )?;
         }
 
         self.notify_aggregator.notify_one();
