@@ -44,7 +44,7 @@ use ika_config::object_storage_config::{ObjectStoreConfig, ObjectStoreType};
 use ika_config::{ConsensusConfig, NodeConfig};
 use ika_core::authority::AuthorityState;
 use ika_core::authority::authority_per_epoch_store::{
-    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait,
+    AuthorityPerEpochStore, AuthorityPerEpochStoreTrait, EPOCH_DB_PREFIX,
 };
 use ika_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use ika_core::consensus_adapter::{
@@ -226,6 +226,14 @@ pub struct IkaNode {
     /// Per-kind flags for NOA checkpoint finalization epoch gate.
     noa_dwallet_finalized: Arc<std::sync::atomic::AtomicBool>,
     noa_system_finalized: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Prunes per-epoch authority store directories
+    /// (`<db-path>/live/store/epoch_<N>/`); the `perpetual/` sibling never
+    /// matches its prefix filter and is never touched. Constructed once at
+    /// node start (seeded with the boot epoch so the periodic tick works
+    /// across restarts) and notified at every epoch transition after the
+    /// outgoing epoch store's DB handles are released.
+    authority_store_pruner: ConsensusStorePruner,
 }
 
 impl fmt::Debug for IkaNode {
@@ -661,6 +669,21 @@ impl IkaNode {
         // setup shutdown channel
         let (shutdown_channel, _) = broadcast::channel::<Option<RunWithRange>>(1);
 
+        // Per-epoch authority store directories grow unbounded without
+        // pruning, and everything later epochs depend on lives in the
+        // `perpetual/` sibling by design (handoff certs, epoch-keyed
+        // reconfiguration outputs, blob mirror). Keep a bounded window of
+        // prior epochs; see `authority_db_retention_epochs`.
+        let authority_store_pruner = ConsensusStorePruner::new_with_layout(
+            config.db_path().join("store"),
+            EPOCH_DB_PREFIX,
+            "authority",
+            epoch_store.epoch(),
+            config.authority_db_retention_epochs(),
+            config.authority_db_pruner_period(),
+            &registry_service.default_registry(),
+        );
+
         let node = Self {
             config,
             validator_components: Mutex::new(validator_components),
@@ -689,6 +712,7 @@ impl IkaNode {
             shutdown_channel_tx: shutdown_channel,
             noa_dwallet_finalized,
             noa_system_finalized,
+            authority_store_pruner,
         };
 
         info!("IkaNode started!");
@@ -1148,6 +1172,7 @@ impl IkaNode {
         // This only gets started up once, not on every epoch. (Make call to remove every epoch.)
         let consensus_store_pruner = ConsensusStorePruner::new(
             consensus_manager.get_storage_base_path(),
+            epoch_store.epoch(),
             consensus_config.db_retention_epochs(),
             consensus_config.db_pruner_period(),
             &registry_service.default_registry(),
@@ -2385,6 +2410,11 @@ impl IkaNode {
             // Force releasing the current epoch store DB handle, because the
             // Arc<AuthorityPerEpochStore> may linger.
             cur_epoch_store.release_db_handles();
+
+            // Only after the handles release is dropping epoch dirs safe in
+            // every configuration; with the default retention (>0) the
+            // pruned dirs are older still.
+            self.authority_store_pruner.prune(next_epoch).await;
 
             info!("Reconfiguration finished, sending exit signal");
         }

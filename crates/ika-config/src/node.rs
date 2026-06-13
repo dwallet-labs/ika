@@ -294,7 +294,30 @@ pub struct NodeConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_with_range: Option<RunWithRange>,
+
+    /// Retention window for per-epoch authority store directories
+    /// (`<db-path>/live/store/epoch_<N>/`): the current epoch plus this
+    /// many prior epochs are kept; older directories are deleted at each
+    /// epoch transition and on a periodic tick. Defaults to
+    /// `DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS` when unset — without
+    /// pruning these directories grow unbounded (everything a later epoch
+    /// needs lives in the `perpetual/` sibling, which is never touched).
+    /// Set a very large value to effectively retain everything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_db_retention_epochs: Option<u64>,
+
+    /// Period of the authority store pruner's periodic tick. Defaults to
+    /// one hour when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authority_db_pruner_period_secs: Option<u64>,
 }
+
+/// Keep the current epoch plus this many prior per-epoch authority store
+/// directories by default. Two prior epochs preserve a post-mortem window
+/// while keeping disk usage bounded; the consensus store already prunes by
+/// default (retention 0), so retention here is the conservative side of an
+/// existing policy, not a new one.
+pub const DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS: u64 = 2;
 
 fn default_sui_rpc_url() -> String {
     LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string()
@@ -379,6 +402,17 @@ impl NodeConfig {
 
     pub fn consensus_config(&self) -> Option<&ConsensusConfig> {
         self.consensus_config.as_ref()
+    }
+
+    pub fn authority_db_retention_epochs(&self) -> u64 {
+        self.authority_db_retention_epochs
+            .unwrap_or(DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS)
+    }
+
+    pub fn authority_db_pruner_period(&self) -> Duration {
+        self.authority_db_pruner_period_secs
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(3_600))
     }
 
     pub fn sui_address(&self) -> SuiAddress {
