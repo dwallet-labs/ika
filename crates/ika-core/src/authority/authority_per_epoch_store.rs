@@ -3221,6 +3221,49 @@ impl AuthorityPerEpochStore {
     /// announcer who withheld their blob from honest peers can't
     /// be smuggled into the working set, even if they signed a
     /// valid announcement digest.
+    /// The prior epoch's handoff-certificate `validator -> mpc_data
+    /// digest` map, used to carry forward stable mpc_data for committee
+    /// members that did not freshly announce this epoch (see
+    /// `carry_forward_stable_mpc_data`). Empty when there is no prior
+    /// certificate (genesis epoch, v3, or a read error) — carry-forward
+    /// then degrades to announce-only. The certificate is perpetual and
+    /// stake-quorum-signed, and the prepare-then-start barrier guarantees
+    /// every validator holds the prior-epoch certificate before
+    /// processing this epoch's consensus, so the returned map is
+    /// identical across honest validators — a precondition for the freeze
+    /// staying deterministic.
+    fn prior_epoch_mpc_data_digests(&self) -> HashMap<AuthorityName, [u8; 32]> {
+        let Some(prior_epoch) = self.epoch().checked_sub(1) else {
+            return HashMap::new();
+        };
+        let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
+            return HashMap::new();
+        };
+        let cert = match perpetual.get_certified_handoff_attestation(prior_epoch) {
+            Ok(Some(cert)) => cert,
+            Ok(None) => return HashMap::new(),
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    prior_epoch,
+                    "failed to read prior-epoch handoff cert for mpc_data carry-forward; \
+                     degrading to announce-only",
+                );
+                return HashMap::new();
+            }
+        };
+        cert.attestation
+            .items
+            .iter()
+            .filter_map(|(key, digest)| match key {
+                ika_types::handoff::HandoffItemKey::ValidatorMpcData { validator } => {
+                    Some((*validator, *digest))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
@@ -3242,17 +3285,41 @@ impl AuthorityPerEpochStore {
             signals.insert(signer, signal.validated_peers);
         }
         let committee_for_tally = committee.clone();
-        let partition = crate::validator_metadata::compute_freeze_partition(
+        let attested = crate::validator_metadata::compute_freeze_partition(
             &signals,
             |authority| committee_for_tally.weight(authority),
             committee.quorum_threshold(),
         );
+        // Carry forward stable mpc_data: a committee member that did not
+        // freshly announce this epoch is frozen at the digest the prior
+        // epoch's handoff cert already agreed for it. The blob is a pure
+        // function of the validator's root seed, so the carried digest is
+        // byte-identical to a fresh announcement. Without this, a member
+        // that entered the epoch late — a routine restart near the
+        // boundary — is dropped from the frozen set, and the
+        // reconfiguration into the next epoch is rejected forever because
+        // a still-seated member's class-groups material is missing. Only
+        // first-time joiners (no prior-cert digest) remain excludable.
+        let attested_frozen = attested.frozen.len();
+        let committee_members: Vec<AuthorityName> = committee
+            .voting_rights
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        let prior_mpc_data = self.prior_epoch_mpc_data_digests();
+        let partition = crate::validator_metadata::carry_forward_stable_mpc_data(
+            attested,
+            &committee_members,
+            &prior_mpc_data,
+        );
         info!(
             current_epoch = self.epoch(),
             frozen = partition.frozen.len(),
+            attested = attested_frozen,
+            carried_forward = partition.frozen.len().saturating_sub(attested_frozen),
             excluded = partition.excluded.len(),
             excluded_set = ?partition.excluded,
-            "ready quorum reached — freezing attestation-validated mpc_data input set"
+            "ready quorum reached — freezing attestation-validated mpc_data input set (stable carry-forward applied)"
         );
         for (authority, blob_hash) in &partition.frozen {
             tables
@@ -3301,6 +3368,21 @@ impl AuthorityPerEpochStore {
             .safe_iter()
             .filter_map(Result::ok)
             .collect())
+    }
+
+    /// The consensus leader round at which this validator observed the
+    /// `EndOfPublish` stake quorum — the persisted anchor of the
+    /// deferred-close grace countdown — or `None` if quorum hasn't been
+    /// reached this epoch (or the epoch closed inline under v3 rules).
+    pub fn end_of_publish_quorum_round(&self) -> IkaResult<Option<u64>> {
+        Ok(self.tables()?.end_of_publish_quorum_round.get(&0)?)
+    }
+
+    /// Whether this validator has already emitted the epoch-close
+    /// checkpoint message set. Persisted through the emitting commit's
+    /// batch so a restart cannot re-emit the close at a later commit.
+    pub fn is_epoch_close_emitted(&self) -> IkaResult<bool> {
+        Ok(self.tables()?.epoch_close_emitted.get(&0)?.is_some())
     }
 
     pub async fn user_certs_closed_notify(&self) {

@@ -43,7 +43,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
     EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
@@ -489,6 +489,60 @@ where
     let excluded: Vec<AuthorityName> = peers_seen
         .into_iter()
         .filter(|peer| !frozen_peers.contains(peer))
+        .collect();
+    FreezePartition { frozen, excluded }
+}
+
+/// Supplements a freeze partition with carry-forward of stable
+/// mpc_data. A validator's mpc_data blob is a pure function of its root
+/// seed (`derive_mpc_data_blob`) — byte-identical every epoch — so a
+/// committee member that did not freshly announce this epoch can be
+/// frozen at the digest the PRIOR epoch's handoff certificate already
+/// agreed for it. `prior_mpc_data` is that `validator -> digest` map
+/// (the cert's `ValidatorMpcData` items); it is consensus-anchored and
+/// perpetual, so every honest validator supplements identically.
+///
+/// Any committee member not already in `partition.frozen` but present
+/// in `prior_mpc_data` is moved into `frozen` at its prior digest and
+/// removed from `excluded` (the prior digest is the validator's true,
+/// already-quorum-attested blob — a divergent fresh announcement that
+/// landed it in `excluded` was byzantine/transient). Members with no
+/// prior digest — first-time joiners — are left untouched: they must
+/// announce fresh, and a joiner that never announces is excluded, per
+/// the announcements spec.
+///
+/// This restores the v3 "always available" property for any validator
+/// ever frozen. Because the carried digest re-enters this epoch's
+/// certificate, coverage chains across epochs: a validator frozen even
+/// once stays covered while it is down, so a continuing member that is
+/// slow — or even a permanently-down-but-staked one — never wedges the
+/// reconfiguration into the next epoch.
+pub fn carry_forward_stable_mpc_data(
+    partition: FreezePartition,
+    committee_members: &[AuthorityName],
+    prior_mpc_data: &HashMap<AuthorityName, [u8; 32]>,
+) -> FreezePartition {
+    let FreezePartition {
+        mut frozen,
+        excluded,
+    } = partition;
+    let mut frozen_peers: HashSet<AuthorityName> =
+        frozen.iter().map(|(authority, _)| *authority).collect();
+    for member in committee_members {
+        if frozen_peers.contains(member) {
+            continue;
+        }
+        if let Some(digest) = prior_mpc_data.get(member) {
+            frozen.push((*member, *digest));
+            frozen_peers.insert(*member);
+        }
+    }
+    // Keep `frozen` sorted by (authority, hash) — the invariant
+    // `compute_freeze_partition` documents and downstream relies on.
+    frozen.sort();
+    let excluded = excluded
+        .into_iter()
+        .filter(|authority| !frozen_peers.contains(authority))
         .collect();
     FreezePartition { frozen, excluded }
 }
@@ -3028,6 +3082,151 @@ mod tests {
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         assert_eq!(frozen_authorities, vec![a, b, c]);
         assert!(partition.excluded.is_empty());
+    }
+
+    // -------- carry_forward_stable_mpc_data --------
+
+    /// The fix for the freeze wedge: a continuing committee member that
+    /// went silent this epoch (the "silent withholding" scenario above)
+    /// but was frozen in the prior epoch is restored to the frozen set at
+    /// its prior digest, instead of being dropped. This is what keeps a
+    /// member that restarted near the epoch boundary from leaving a gap
+    /// the next reconfiguration rejects forever.
+    #[test]
+    fn carry_forward_restores_silent_continuing_member() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // Only a, b, c were freshly attested this epoch; d went silent.
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert_eq!(attested.frozen.len(), 3);
+
+        // d carries a prior-epoch digest (a/b/c also do — a no-op for them).
+        let prior: HashMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0xDD; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.frozen.contains(&(d, [0xDD; 32])));
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// A first-time joiner (no prior-epoch digest) that went silent is
+    /// NOT carried forward — there is no stable data to reuse, so it must
+    /// announce fresh. Only members with a prior digest are restored.
+    #[test]
+    fn carry_forward_does_not_invent_data_for_a_joiner() {
+        let (a, b, c, joiner) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xEE));
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+
+        // Prior epoch knows a/b/c but NOT the joiner.
+        let prior: HashMap<_, _> = [(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])]
+            .into_iter()
+            .collect();
+        let committee = [a, b, c, joiner];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert!(!frozen_authorities.contains(&joiner));
+    }
+
+    /// A member that announced a divergent blob this epoch (so it landed
+    /// in `excluded`) but has a known-good prior digest is carried forward
+    /// at the prior digest and removed from `excluded`: its true blob is
+    /// root-seed-deterministic, so the divergent fresh one was
+    /// byzantine/transient.
+    #[test]
+    fn carry_forward_overrides_exclusion_with_known_good_prior() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let mut signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        // d self-votes a lone hash (1/4) — below quorum → excluded.
+        signals.insert(d, vec![(d, [0x99; 32])]);
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert!(attested.excluded.contains(&d));
+
+        let prior: HashMap<_, _> = [(d, [0xDD; 32])].into_iter().collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        // d frozen at the prior (good) digest, not its divergent fresh one.
+        assert!(partition.frozen.contains(&(d, [0xDD; 32])));
+        assert!(!partition.frozen.contains(&(d, [0x99; 32])));
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// A FRESH quorum attestation always wins over carry-forward: a member
+    /// frozen this epoch keeps its fresh digest and the prior-cert digest
+    /// is ignored — carry-forward only fills gaps, it never overrides a
+    /// fresh announcement. In production an existing validator's blob is
+    /// root-seed-deterministic (fresh == prior), but this pins the
+    /// precedence so a future change can't let a stale carried digest
+    /// shadow a fresh one.
+    #[test]
+    fn carry_forward_never_overrides_a_fresh_attestation() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // All four freshly attested this epoch at their current hashes.
+        let view = vec![
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0x44; 32]),
+        ];
+        let signals: BTreeMap<_, _> = [a, b, c, d]
+            .into_iter()
+            .map(|s| (s, view.clone()))
+            .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert_eq!(attested.frozen.len(), 4);
+
+        // Prior cert held a DIFFERENT digest for every member. Since all
+        // four are freshly frozen, carry-forward must use NONE of them.
+        let prior: HashMap<_, _> = [
+            (a, [0x99; 32]),
+            (b, [0x99; 32]),
+            (c, [0x99; 32]),
+            (d, [0x99; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.frozen.contains(&(a, [0x11; 32])));
+        assert!(partition.frozen.contains(&(d, [0x44; 32])));
+        assert!(
+            !partition.frozen.iter().any(|(_, hash)| *hash == [0x99; 32]),
+            "a stale prior-cert digest shadowed a fresh attestation",
+        );
     }
 
     /// Byzantine scenario: validator D serves bytes but they're
