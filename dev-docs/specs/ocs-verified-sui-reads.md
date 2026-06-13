@@ -156,13 +156,33 @@ children are dynamic-field objects; the relay enumerates them with an
 own inclusion proof.
 
 An inclusion proof alone only attests that an object existed on-chain —
-**not** that it is a child of the requested bag. Each entry is therefore
-bound to its bag after the proof: a genuine bag child is owned by the
-bag's UID (`Owner::ObjectOwner(bag_id)`), and that owner is inside the
-proof-bound `ObjectDigest`, so the reader rejects any entry whose owner
-is not the requested bag (`ReaderError::BagMembership`). Without this an
-untrusted relay could return a validly-proven dynamic field of a
-*different* bag (e.g. replayed session events from another coordinator).
+**not** that it is a child of the requested collection. Each entry is
+therefore bound to its collection after the proof, using the entry's
+proof-bound owner (the owner is inside the proof-bound `ObjectDigest`).
+The binding depends on the collection kind:
+
+- A plain **Bag/Table** stores the value inline in a `Field<K, V>` owned
+  by the collection UID, so a genuine child's owner is
+  `Owner::ObjectOwner(bag_id)`.
+- An **ObjectTable/ObjectBag** stores the value as a separate object
+  pointed to by a `Field<Wrapper<K>, ID>`; `list_dynamic_fields` resolves
+  to that wrapped value object, which is owned by the `Field` wrapper, not
+  the collection. The genuine child's owner is therefore the wrapper id,
+  `derive_dynamic_field_id(bag_id, 0x2::dynamic_object_field::Wrapper<K>,
+  bcs(key))`. The relay carries the entry's key (name type + BCS value,
+  from `list_dynamic_fields`) on the verified bag-page response; the reader
+  re-derives the wrapper id and matches it against the proven owner. The
+  gRPC field visitor reports the *unwrapped* inner key type, so the reader
+  re-wraps in `Wrapper<K>` before deriving (the BCS value is identical — a
+  single-field `Wrapper` encodes as its inner value).
+
+The reader rejects any entry whose proven owner matches neither
+(`ReaderError::BagMembership`). The derivation is collision-resistant
+against the committee-proven owner, so a relay cannot forge a key that
+derives to a foreign object's owner. Without this binding an untrusted
+relay could return a validly-proven dynamic field of a *different*
+collection (e.g. replayed session events from another coordinator, or a
+foreign network-encryption-key object).
 
 Bag entries get no freshness bound and no high-water (an event can sit
 in a bag across many checkpoints). The remaining defenses against a relay
@@ -247,11 +267,12 @@ gap-recovery path is effectively dead for its stated consumer.
 4. Freshness is measured against a process-monotonic observed head,
    never the relay's per-response claim; per-object version high-water is
    monotone and recorded only after proof success.
-5. A bag-page entry must be owned by the requested bag
-   (`Owner::ObjectOwner(bag_id)`); the inclusion proof alone does not
-   establish bag membership. Omission/replay past that are backstopped by
-   the count-only detector and downstream session-id dedup, not by the
-   proof.
+5. A bag-page entry must be bound to the requested collection by its
+   proof-bound owner: `Owner::ObjectOwner(bag_id)` for a plain Bag/Table,
+   or the entry's derived `Field<Wrapper<K>, ID>` wrapper id for an
+   ObjectTable/ObjectBag. The inclusion proof alone does not establish
+   membership. Omission/replay past that are backstopped by the count-only
+   detector and downstream session-id dedup, not by the proof.
 6. The relay is fully untrusted; only proofs are trusted. Un-relayable
    methods must error (never silently return data), and `NotFound` is
    produced only when every reached peer agreed.
