@@ -41,6 +41,11 @@ on:
         type: string
         required: false
         default: "4"
+      rust_log:
+        description: "RUST_LOG for the test run (default error; scope debug to specific modules — full-debug replays are multi-GB)"
+        type: string
+        required: false
+        default: "error"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,7 +57,7 @@ env:
   CARGO_NET_RETRY: 10
   RUSTUP_MAX_RETRIES: 10
   RUST_BACKTRACE: 1
-  RUST_LOG: error
+  RUST_LOG: ${{ inputs.rust_log || 'error' }}
   rust_stable: "1.94"
 
 jobs:

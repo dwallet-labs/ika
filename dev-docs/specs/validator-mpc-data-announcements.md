@@ -81,11 +81,35 @@ which bytes* deterministic in consensus order.
 - **Frozen set semantics**: `frozen: validator -> blob_hash` is written
   once per epoch (`freeze_mpc_data_if_first`) and is immutable for the
   epoch. Validators not in the frozen set are the epoch's **excluded**
-  set: the reconfiguration proceeds without them. The certificate
-  cannot backfill an announcement that missed the freeze — convergence
-  of announcement propagation BEFORE the freeze is the only mechanism
-  (this is the property that lets reconfiguration tolerate committee
-  churn: late or churning members are simply excluded, never block it).
+  set: the reconfiguration proceeds without them.
+- **Carry-forward (stable mpc_data)**: a validator's blob is a pure
+  function of its root seed (`derive_mpc_data_blob`), so a continuing
+  validator's blob is byte-identical every epoch. At the freeze, a
+  committee member that was NOT freshly attested this epoch but IS
+  present in the prior epoch's handoff certificate (its
+  `ValidatorMpcData` items) is frozen at its prior-cert digest; the
+  bytes resolve from perpetual `mpc_artifact_blobs`
+  (`carry_forward_stable_mpc_data`). Only members with no prior-cert
+  digest — first-time joiners — can be excluded for failing to announce
+  (a joiner that misses the freeze is excluded, not waited for). This
+  restores the v3 "always available" property for any validator ever
+  frozen: a member that restarts near the epoch boundary keeps its seat
+  in the frozen set instead of leaving a gap the next reconfiguration
+  would reject forever. Because the carried digest re-enters this
+  epoch's certificate, coverage CHAINS across epochs — a validator
+  frozen even once stays covered while it is down, so even a
+  permanently-down-but-staked member never wedges reconfiguration.
+  Carry-forward is deterministic: the prior certificate is
+  consensus-anchored, perpetual, and (by the prepare-then-start
+  barrier) held by every validator before it processes this epoch's
+  consensus. A fresh announcement that diverged (landing a member in
+  `excluded`) is overridden by the known-good prior digest, since the
+  true blob cannot legitimately change between epochs.
+- The certificate cannot backfill an announcement for a validator with
+  no prior frozen blob (a first-time joiner). For joiners the only
+  mechanism is announcement propagation reaching a stake quorum BEFORE
+  the freeze fires: a joiner whose blob has not propagated in time is
+  excluded for the epoch, with no after-the-fact recovery.
 
 ## Next-committee assembly
 
