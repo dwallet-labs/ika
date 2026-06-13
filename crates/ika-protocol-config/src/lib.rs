@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
@@ -180,14 +179,8 @@ struct FeatureFlags {
     off_chain_validator_metadata: bool,
 }
 
-#[allow(unused)]
 fn is_false(b: &bool) -> bool {
     !b
-}
-
-#[allow(unused)]
-fn is_empty(b: &BTreeSet<String>) -> bool {
-    b.is_empty()
 }
 
 /// Ordering mechanism for transactions in one Narwhal consensus output.

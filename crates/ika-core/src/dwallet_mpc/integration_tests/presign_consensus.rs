@@ -11,8 +11,6 @@ use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use sui_types::base_types::ObjectID;
-#[allow(unused_imports)]
-use sui_types::committee::EpochId;
 use tracing::info;
 
 /// Test that global presign requests are properly tracked and reported.

@@ -177,11 +177,8 @@ pub async fn init_ika_on_sui(
     ),
     anyhow::Error,
 > {
-    //let config_dir = ika_config_dir()?;
     let config_dir = tempfile::tempdir()?.keep();
     let config_path = config_dir.join(SUI_CLIENT_CONFIG);
-    //let keystore_path = config_dir.join(SUI_KEYSTORE_FILENAME);
-    //let mut keystore = Keystore::from(FileBasedKeystore::new(&keystore_path)?);
     let mut keystore = Keystore::InMem(InMemKeystore::default());
     let alias = "publisher";
     let (publisher_address, keypair, scheme, phrase) =
@@ -1812,10 +1809,6 @@ pub(crate) async fn create_sui_transaction(
     gas_payment: Vec<ObjectRef>,
 ) -> Result<Transaction, anyhow::Error> {
     let gas_price = context.get_reference_gas_price().await?;
-
-    //let gas_budget = max_gas_budget(&client).await?;
-    // let gas_budget =
-    //     estimate_gas_budget(context, signer, tx_kind.clone(), gas_price, gas_payment.clone(), None).await?;
 
     let tx_data = TransactionData::new_with_gas_coins(
         tx_kind,

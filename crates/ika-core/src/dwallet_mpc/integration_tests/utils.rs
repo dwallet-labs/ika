@@ -1224,39 +1224,6 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     None
 }
 
-/// Overrides the legitimate messages of malicious parties with false messages for the given crypto round and
-/// malicious parties. When other validators receive these messages, they will mark the malicious parties as malicious.
-// TODO: itay
-#[allow(dead_code)]
-pub(crate) fn override_legit_messages_with_false_messages(
-    malicious_parties: &[usize],
-    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
-    crypto_round: u64,
-) {
-    for malicious_party_index in malicious_parties {
-        // Create a malicious message for round 1, and set it as the patty's message.
-        let original_message = sent_consensus_messages_collectors[*malicious_party_index]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .pop();
-        if let Some(mut original_message) = original_message {
-            let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind
-            else {
-                panic!("Only DWalletMPCMessage messages can be overridden with false messages");
-            };
-            let mut new_message: Vec<u8> = vec![0];
-            new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
-            new_message.extend([3; 48]);
-            msg.message = new_message;
-            sent_consensus_messages_collectors[*malicious_party_index]
-                .submitted_messages
-                .lock()
-                .unwrap()
-                .push(original_message);
-        };
-    }
-}
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};

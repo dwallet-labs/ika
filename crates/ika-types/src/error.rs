@@ -372,6 +372,3 @@ impl PartialOrd for IkaError {
         Some(self.cmp(other))
     }
 }
-
-#[allow(dead_code)]
-type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

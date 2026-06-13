@@ -55,7 +55,6 @@ serde_repr.workspace = true
 base64.workspace = true
 hex.workspace = true
 
-consensus-core.workspace = true
 consensus-types.workspace = true
 
 [dev-dependencies]

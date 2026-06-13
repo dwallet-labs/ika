@@ -368,9 +368,6 @@ impl<C: DWalletCheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
         });
 
         fail_point_async!("crash"); // for tests that produce random crashes
-        //
-        // self.transaction_manager_sender
-        //     .send(executable_transactions);
     }
 }
 
