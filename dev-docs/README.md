@@ -63,6 +63,12 @@ them has a bug — determine which before changing either.
 - [`learnings/pitfalls.md`](learnings/pitfalls.md) — non-obvious failure
   classes found in this codebase, each with the general rule it taught.
 
+### reference/ — pointers to external sources worth consulting
+- [`reference/sui-upstream.md`](reference/sui-upstream.md) — ika is forked
+  from Sui; how to find the pinned Sui source (locally + on GitHub) and
+  what to read in it for forked subsystems and consensus (Mysticeti =
+  Sui's `consensus/core`).
+
 ### plans/ — implementation plans worth keeping in the repo
 Multi-PR / multi-session efforts with an explicit status lifecycle
 (`active → landed/superseded/abandoned`). Intent and sequencing live

@@ -234,7 +234,14 @@ already validated, branch names, and in-flight CI run IDs/URLs.
 ## Gotchas
 
 - **Release mode required**: Crypto operations are extremely slow in debug mode
-- **Forked from Sui**: Much code structure mirrors Sui Network patterns
+- **Forked from Sui — read the upstream as a reference**: much code
+  structure mirrors Sui Network patterns, so when a forked subsystem is
+  unclear (and especially for consensus — Mysticeti is Sui's
+  `consensus/core`), read the pinned Sui source. It's checked out locally
+  under `~/.cargo/git/checkouts/sui-*/<rev>/` (the one with `consensus/`
+  at its root) and browsable at github.com/MystenLabs/sui at the pinned
+  tag. How to locate it + what to read for what:
+  `dev-docs/reference/sui-upstream.md`.
 - **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.70.2`;
   sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
   PR — root `Cargo.toml` (~90 tag pins), excluded wasm workspace locks,
@@ -244,5 +251,8 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   `dev-docs/conventions/sui-version-bump.md`; enforced in CI by
   `scripts/check-sui-version-consistency.sh`.
 - **WASM excluded**: `sdk/ika-wasm` is excluded from workspace (separate build)
-- **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing
+- **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing —
+  the commit/round semantics ika's freeze and epoch-close logic rely on
+  (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
+  in ika (see the upstream reference above)
 - **NOA checkpoints not live**: The NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`) is under active development and not yet deployed. No backward compatibility constraints on serialization formats or type names
