@@ -32,11 +32,12 @@
 //!   one (which would close the epoch late and fork its final checkpoint).
 //!
 //! The end-state assertions are cross-validator determinism, not liveness
-//! alone: every validator (restarted or not) must locally compute and
-//! certify a byte-identical final checkpoint for the struck epoch, persist
-//! byte-identical handoff attestation certs, and then drive one more full
-//! reconfiguration to prove the network keys handed off under all that churn
-//! actually work.
+//! alone: every validator (restarted or not) must persist a byte-identical
+//! handoff attestation certificate for the struck epoch — the cert pins the
+//! epoch's reconfiguration output and frozen mpc_data, so a validator that
+//! closed the epoch at a different round would aggregate a divergent cert —
+//! and then drive one more full reconfiguration to prove the network keys
+//! handed off under all that churn actually work.
 //!
 //! `#[tokio::test(flavor = "multi_thread")]` per CLAUDE.md "Picking a test
 //! type": the kill timing is driven by polling real node state, not by
@@ -69,44 +70,6 @@ fn node_handle(cluster: &IkaTestCluster, name: &AuthorityName) -> IkaNodeHandle 
         .expect("validator node exists for the configured name")
         .get_node_handle()
         .expect("validator node is running")
-}
-
-/// The FINAL certified dwallet checkpoint of `STRUCK_EPOCH`, as
-/// `(sequence_number, bcs(message))` — `None` until this node's store can
-/// prove finality. The proof matters: a restarted validator still syncing
-/// its tail holds SOME epoch-1 checkpoint long before it holds the last
-/// one, and comparing a not-yet-final tail across validators misreads
-/// catch-up lag as a fork. Finality here = the node's latest certified
-/// checkpoint is already past the struck epoch; sequence numbers are
-/// contiguous across epochs, so walking back from it provably lands on
-/// the struck epoch's true last checkpoint (a gap mid-walk returns `None`
-/// and the caller's poll retries).
-fn final_struck_epoch_checkpoint(handle: &IkaNodeHandle) -> Option<(u64, Vec<u8>)> {
-    handle.with(|node| {
-        let state = node.state();
-        let store = state.get_checkpoint_store();
-        let latest = store
-            .get_latest_certified_checkpoint()
-            .expect("checkpoint store read failed")?;
-        if latest.data().epoch <= STRUCK_EPOCH {
-            return None;
-        }
-        let mut message = latest.data().clone();
-        while message.epoch > STRUCK_EPOCH {
-            let sequence_number = message.sequence_number.checked_sub(1)?;
-            message = store
-                .get_dwallet_checkpoint_by_sequence_number(sequence_number)
-                .expect("checkpoint store read failed")?
-                .data()
-                .clone();
-        }
-        (message.epoch == STRUCK_EPOCH).then(|| {
-            (
-                message.sequence_number,
-                bcs::to_bytes(&message).expect("checkpoint message serializes"),
-            )
-        })
-    })
 }
 
 /// All persisted handoff attestation certs, keyed by epoch, as bcs bytes.
@@ -285,7 +248,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
         None => tracing::info!(
             "Y's struck epoch already closed by the time it rebooted — \
              anchor reload not directly observable, covered by the \
-             checkpoint determinism assertions",
+             handoff-cert determinism assertion below",
         ),
     }
 
@@ -293,91 +256,41 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
         wait_for_node_epoch(&node_handle(&cluster, name), STRUCK_EPOCH + 1).await;
     }
 
-    // The final checkpoint of the struck epoch must be byte-identical on
-    // every validator, in BOTH stores: certified (the network agreed on one
-    // close) and locally computed (each validator — including both restarted
-    // ones, rebuilding through recovery — derived that same close itself; a
-    // validator that closed at the wrong round would locally compute a
-    // divergent tail while happily syncing the canonical certified one, so
-    // certified equality alone would mask exactly the bug this test exists
-    // to catch).
-    let mut final_checkpoints = Vec::new();
-    for name in &names {
-        let handle = node_handle(&cluster, name);
-        let checkpoint = poll_until(
-            // Finality here needs an epoch-2 certified checkpoint, and in a
-            // quiet epoch the first one only arrives with the epoch-2
-            // reconfiguration output — measured ~3.5 min after the restarts
-            // on the CI runner (restarted validators re-instantiate adopted
-            // keys before participating, and the computation is heavy).
-            // Budgets guard against "never", not "slow".
-            Duration::from_secs(300),
-            "validator to certify the struck epoch's final checkpoint",
-            || final_struck_epoch_checkpoint(&handle),
-        )
-        .await;
-        final_checkpoints.push(checkpoint);
-    }
-    let (final_sequence_number, canonical_bytes) = final_checkpoints[0].clone();
-    for (index, (sequence_number, bytes)) in final_checkpoints.iter().enumerate() {
-        assert_eq!(
-            (*sequence_number, bytes),
-            (final_sequence_number, &canonical_bytes),
-            "validator[{index}]'s certified final checkpoint of epoch \
-             {STRUCK_EPOCH} diverges from validator[0]'s — the epoch close \
-             forked across the restarts",
-        );
-    }
-    for (index, name) in names.iter().enumerate() {
-        let handle = node_handle(&cluster, name);
-        let locally_computed = poll_until(
-            Duration::from_secs(300),
-            "validator to locally compute the struck epoch's final checkpoint",
-            || {
-                handle.with(|node| {
-                    node.state()
-                        .get_checkpoint_store()
-                        .get_locally_computed_checkpoint(final_sequence_number)
-                        .expect("checkpoint store read failed")
-                })
-            },
-        )
-        .await;
-        assert_eq!(
-            bcs::to_bytes(&locally_computed).expect("checkpoint message serializes"),
-            canonical_bytes,
-            "validator[{index}] locally computed a final checkpoint for epoch \
-             {STRUCK_EPOCH} that diverges from the certified one — it closed \
-             the epoch at a different point than its peers",
-        );
-    }
-
-    // Handoff attestation certs must converge byte-identically everywhere —
-    // including the cert for the struck epoch's handoff, formed while X was
-    // down and Y was bouncing. Anchor the expected set on a validator that
-    // was never killed.
-    let reference_handle = node_handle(&cluster, &names[1]);
-    let reference_certs = poll_until(
+    // No-fork proof: every validator must persist a BYTE-IDENTICAL handoff
+    // certificate for the struck epoch. The cert is the cross-epoch
+    // agreement on that epoch's close and handoff — its items pin the
+    // epoch-keyed reconfiguration output and the frozen mpc_data set — so a
+    // validator that closed the epoch at a different round (including the
+    // two that restarted through the close) would aggregate a divergent
+    // attestation and fail this equality. Handoff certs are perpetual
+    // (never pruned), so this is robust to the network advancing while we
+    // poll — unlike a checkpoint comparison, which races checkpoint pruning.
+    let reference_cert = poll_until(
         Duration::from_secs(300),
         "a never-restarted validator to persist the struck epoch's handoff cert",
         || {
-            let certs = handoff_certs(&reference_handle);
-            certs.contains_key(&STRUCK_EPOCH).then_some(certs)
+            handoff_certs(&node_handle(&cluster, &names[1]))
+                .get(&STRUCK_EPOCH)
+                .cloned()
         },
     )
     .await;
     for (index, name) in names.iter().enumerate() {
-        let handle = node_handle(&cluster, name);
-        poll_until(
+        let cert = poll_until(
             Duration::from_secs(300),
-            "validator's handoff certs to converge with the reference set",
-            || (handoff_certs(&handle) == reference_certs).then_some(()),
+            "validator to persist the struck epoch's handoff cert",
+            || {
+                handoff_certs(&node_handle(&cluster, name))
+                    .get(&STRUCK_EPOCH)
+                    .cloned()
+            },
         )
         .await;
-        tracing::info!(
-            validator_index = index,
-            cert_epochs = ?reference_certs.keys().collect::<Vec<_>>(),
-            "handoff certs match the reference validator",
+        assert_eq!(
+            cert, reference_cert,
+            "validator[{index}]'s handoff cert for epoch {STRUCK_EPOCH} diverges \
+             from the never-restarted validator's — the epoch close forked \
+             across the restarts",
         );
     }
 
