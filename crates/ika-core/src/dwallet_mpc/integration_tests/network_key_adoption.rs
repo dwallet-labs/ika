@@ -121,7 +121,7 @@ async fn empty_reconfiguration_overlay_is_not_adopted_when_cert_pins_reconfigura
     let manager = service.dwallet_mpc_manager_mut();
     manager.adopt_cert_verified_keys(&empty_reconfiguration_overlay);
     assert!(
-        !manager.agreed_network_key_data.contains_key(&key_id),
+        !manager.adopted_network_key_data.contains_key(&key_id),
         "an empty-reconfiguration overlay entry must not be adopted while the prior \
          epoch's cert pins a reconfiguration digest for the key"
     );
@@ -139,7 +139,7 @@ async fn empty_reconfiguration_overlay_is_not_adopted_when_cert_pins_reconfigura
     )]));
     manager.adopt_cert_verified_keys(&mismatching_overlay);
     assert!(
-        !manager.agreed_network_key_data.contains_key(&key_id),
+        !manager.adopted_network_key_data.contains_key(&key_id),
         "a cert-mismatching reconfiguration output must not be adopted"
     );
 
@@ -155,7 +155,7 @@ async fn empty_reconfiguration_overlay_is_not_adopted_when_cert_pins_reconfigura
     )]));
     manager.adopt_cert_verified_keys(&matching_overlay);
     let adopted = manager
-        .agreed_network_key_data
+        .adopted_network_key_data
         .get(&key_id)
         .expect("the cert-matching overlay entry must be adopted");
     assert_eq!(
@@ -186,7 +186,7 @@ async fn stale_epoch_network_key_data_is_not_spawned() {
     // Stale snapshot: the syncer fetched the chain object before the
     // chain rolled over to the manager's epoch.
     let stale_key_id = ObjectID::random();
-    manager.agreed_network_key_data.insert(
+    manager.adopted_network_key_data.insert(
         stale_key_id,
         network_key_data(
             stale_key_id,
@@ -206,7 +206,7 @@ async fn stale_epoch_network_key_data_is_not_spawned() {
     // Current-epoch data for the same key spawns normally (the gate
     // discriminates on the epoch, not on the key).
     let current_key_id = ObjectID::random();
-    manager.agreed_network_key_data.insert(
+    manager.adopted_network_key_data.insert(
         current_key_id,
         network_key_data(
             current_key_id,
