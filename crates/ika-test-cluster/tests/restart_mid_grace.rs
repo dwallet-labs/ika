@@ -305,7 +305,13 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     for name in &names {
         let handle = node_handle(&cluster, name);
         let checkpoint = poll_until(
-            Duration::from_secs(90),
+            // Finality here needs an epoch-2 certified checkpoint, and in a
+            // quiet epoch the first one only arrives with the epoch-2
+            // reconfiguration output — measured ~3.5 min after the restarts
+            // on the CI runner (restarted validators re-instantiate adopted
+            // keys before participating, and the computation is heavy).
+            // Budgets guard against "never", not "slow".
+            Duration::from_secs(300),
             "validator to certify the struck epoch's final checkpoint",
             || final_struck_epoch_checkpoint(&handle),
         )
@@ -325,7 +331,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     for (index, name) in names.iter().enumerate() {
         let handle = node_handle(&cluster, name);
         let locally_computed = poll_until(
-            Duration::from_secs(90),
+            Duration::from_secs(300),
             "validator to locally compute the struck epoch's final checkpoint",
             || {
                 handle.with(|node| {
@@ -352,7 +358,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     // was never killed.
     let reference_handle = node_handle(&cluster, &names[1]);
     let reference_certs = poll_until(
-        Duration::from_secs(90),
+        Duration::from_secs(300),
         "a never-restarted validator to persist the struck epoch's handoff cert",
         || {
             let certs = handoff_certs(&reference_handle);
@@ -363,7 +369,7 @@ async fn test_validator_restart_mid_end_of_publish_grace() {
     for (index, name) in names.iter().enumerate() {
         let handle = node_handle(&cluster, name);
         poll_until(
-            Duration::from_secs(90),
+            Duration::from_secs(300),
             "validator's handoff certs to converge with the reference set",
             || (handoff_certs(&handle) == reference_certs).then_some(()),
         )
