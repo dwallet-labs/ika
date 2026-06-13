@@ -223,6 +223,17 @@ impl ValidatorConfigBuilder {
         }
     }
 
+    /// Builds a fresh validator NodeConfig with a generated init config.
+    ///
+    /// Like [`Self::build`], this emits a new-style (`SuiStateDirect`) config,
+    /// which the node boot gate requires to carry a Sui trust anchor. The
+    /// caller MUST seed one first via [`Self::with_unsafe_genesis_committee`]
+    /// (the Sui chain's epoch-0 committee, e.g. from
+    /// `ika_sui_client::anchor::fetch_genesis_committee`) or
+    /// [`Self::with_trusted_anchor`]; otherwise the resulting validator is
+    /// rejected at boot with "`sui-data-source` is set but no Sui trust
+    /// anchor is configured". The swarm path does this in
+    /// `network_config_builder`.
     pub fn build_new_validator<R: rand::RngCore + rand::CryptoRng>(
         self,
         rng: &mut R,
