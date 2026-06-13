@@ -235,7 +235,7 @@ already validated, branch names, and in-flight CI run IDs/URLs.
 
 - **Release mode required**: Crypto operations are extremely slow in debug mode
 - **Forked from Sui**: Much code structure mirrors Sui Network patterns
-- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.70.2`;
+- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.72.3`;
   sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
   PR — root `Cargo.toml` (~90 tag pins), excluded wasm workspace locks,
   the sui-binary downloads in the TS CI workflows, this file, and every
