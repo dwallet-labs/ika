@@ -67,6 +67,8 @@ overflow-checks = false
 opt-level = 3
 
 [workspace.lints.rust]
+# CLAUDE.md's "NEVER use unsafe" as a compile error, not a request.
+unsafe_code = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(msim)',
     'cfg(fail_points)',
