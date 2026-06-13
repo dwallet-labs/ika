@@ -282,7 +282,7 @@ pub fn reevaluate_buffered_joiner_announcements(
 /// paths hashing this output produce the same digest.
 ///
 /// At `network_encryption_key_version == 3` (the v4 protocol shape)
-/// the inner bytes are the post-PR-#1707 `ValidatorEncryptionKeysAndProofs`
+/// the inner bytes are the `ValidatorEncryptionKeysAndProofs`
 /// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
 /// `decode_validator_encryption_keys` accepts either shape (new or
 /// mainnet-v1.1.8 class-groups-only); using the new shape here is
@@ -811,7 +811,7 @@ pub fn default_handoff_items_builders(
 /// off-chain. `class_groups` is required for every authority in the
 /// working set (the strict gate). The three PVSS halves are
 /// opportunistic per-validator: present only when the validator
-/// published under the post-PR-#1707 shape
+/// published under the version-3 shape
 /// (`network_encryption_key_version == 3`).
 ///
 /// Under v4 the off-chain producer (`derive_mpc_data_blob`) always

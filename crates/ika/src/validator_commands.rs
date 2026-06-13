@@ -72,9 +72,11 @@ pub enum IkaValidatorCommand {
         /// can interop with mainnet-v1.1.8 peers. See the same flag on
         /// `set-next-epoch-mpc-data`.
         ///
-        /// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707
-        /// transition. Delete this flag (and the legacy publication branch in
-        /// the command implementation) once the network has settled at
+        /// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+        /// bare-class-groups key shape to the version-3 bundle
+        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707). Delete this
+        /// flag (and the legacy publication branch in the command
+        /// implementation) once the network has settled at
         /// `network_encryption_key_version == 3`.
         #[clap(long)]
         legacy_class_groups_only: bool,
@@ -328,8 +330,8 @@ pub enum IkaValidatorCommand {
         ika_sui_config: Option<PathBuf>,
         /// Publish the mainnet-v1.1.8-shape MPC data (bare
         /// `ClassGroupsEncryptionKeyAndProof`, no per-curve PVSS HPKE keys)
-        /// instead of the default post-PR-#1707 bundle
-        /// (`ValidatorEncryptionKeysAndProofs`).
+        /// instead of the default version-3 bundle
+        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707).
         ///
         /// Set this flag while the network is still at `protocol_version <= 3`
         /// so mainnet-v1.1.8 peers can decode this validator's published bytes.
@@ -337,9 +339,11 @@ pub enum IkaValidatorCommand {
         /// — at that point all validators run the new binary and consume the
         /// new shape.
         ///
-        /// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707
-        /// transition. Delete this flag (and the legacy publication branch in
-        /// the command implementation) once the network has settled at
+        /// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+        /// bare-class-groups key shape to the version-3 bundle
+        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707). Delete this
+        /// flag (and the legacy publication branch in the command
+        /// implementation) once the network has settled at
         /// `network_encryption_key_version == 3`.
         #[clap(long)]
         legacy_class_groups_only: bool,

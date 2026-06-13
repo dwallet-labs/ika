@@ -55,7 +55,7 @@ async fn test_joiner_added_at_epoch_2() {
     wait_for_node_epoch(&joiner.node_handle, 2).await;
 }
 
-/// F4-1 explicit check: a joiner that registers mid-epoch must land
+/// Churn-tolerance check: a joiner that registers mid-epoch must land
 /// in the *frozen* mpc_data input set, and therefore in the next
 /// committee's off-chain-assembled `class_groups_public_keys_and_proofs`
 /// map. The ready-signal emit gate (`decide_ready_to_finalize`) delays
@@ -64,11 +64,11 @@ async fn test_joiner_added_at_epoch_2() {
 /// is precisely what lets a joiner — who can only announce after
 /// `V_{e+1}` is published — be captured by the freeze.
 ///
-/// This test caught a real F4-1 deadlock — the joiner watcher + freeze
-/// emit-gate both keyed off the *assembled* committee, which can't
-/// include a joiner until after the freeze excludes it. Fixed by the
-/// chain next-epoch-committee channel, after which the joiner fans its
-/// mpc_data out (it never did before).
+/// This test caught a real mid-epoch-joiner deadlock — the joiner
+/// watcher + freeze emit-gate both keyed off the *assembled* committee,
+/// which can't include a joiner until after the freeze excludes it.
+/// Fixed by the chain next-epoch-committee channel, after which the
+/// joiner fans its mpc_data out (it never did before).
 ///
 /// The integration path (observe the chain committee → fan out → relay
 /// accept once the relayer's JoinerPubkeyProvider refreshes → consensus
@@ -141,7 +141,7 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     assert!(
         in_class_groups,
         "joiner {joiner_name:?} must appear in epoch-2 committee \
-         class_groups_public_keys_and_proofs (F4-1: freeze must capture \
+         class_groups_public_keys_and_proofs (freeze must capture \
          the mid-epoch joiner)"
     );
 }

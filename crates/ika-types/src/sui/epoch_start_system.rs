@@ -141,7 +141,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .iter()
             .map(|validator| {
                 // Shape-tolerant decode: accepts both the mainnet-v1.1.8
-                // bare-class-groups payload and the post-PR-#1707 bundle. PVSS
+                // bare-class-groups payload and the version-3 bundle. PVSS
                 // halves come back as `None` for validators publishing the old
                 // shape; downstream DKG/Reconfig dispatch picks the bwd-compat
                 // Party in that case.
@@ -194,7 +194,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
         // Shape-tolerant decode per validator. Mainnet-v1.1.8-shape payloads
         // (bare class-groups) populate only the class-groups HashMap; PVSS
         // HashMaps gain an entry only when the validator published the
-        // post-PR-#1707 bundle shape.
+        // version-3 bundle shape.
         let decoded_per_validator: Vec<_> = self
             .active_validators
             .iter()
@@ -206,7 +206,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                 if decoded.is_none() {
                     error!(
                         authority = ?validator.authority_name(),
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
+                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor version-3 shape)"
                     );
                 }
                 decoded.map(|d| (validator.authority_name(), d))
