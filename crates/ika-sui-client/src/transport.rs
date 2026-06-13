@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 pub use sui_rpc_api::client::ExecutedTransaction;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::committee::Committee;
@@ -51,6 +52,34 @@ pub fn derive_versioned_child_id(parent: ObjectID, version: u64) -> Result<Objec
     let name_bytes = bcs::to_bytes(&version).map_err(|e| format!("encode u64 name: {e}"))?;
     sui_types::dynamic_field::derive_dynamic_field_id(parent, &sui_types::TypeTag::U64, &name_bytes)
         .map_err(|e| format!("derive child id: {e}"))
+}
+
+/// Deterministically-derived `Field` wrapper id for a dynamic *object* field
+/// `(parent, name)`, given the stringified `TypeTag` of the unwrapped key and
+/// its BCS-encoded value. Returns `None` if the key type doesn't parse.
+///
+/// Used to bind a relay-walked collection entry to its parent: in an
+/// `ObjectTable`/`ObjectBag` the resolved entry is the wrapped value object,
+/// which is owned by its `Field<Wrapper<K>, ID>` wrapper — and that wrapper's
+/// id is this derivation. The on-chain key is *not* the bare `K`; it is
+/// `0x2::dynamic_object_field::Wrapper<K>`. The gRPC `list_dynamic_fields`
+/// reports the *unwrapped* inner key type (its field visitor strips the
+/// wrapper), so we re-wrap before deriving. The key *bytes* need no change: a
+/// single-field `Wrapper` BCS-encodes identically to its inner value.
+///
+/// Since the derivation is collision-resistant and the value object's owner is
+/// committee-proven, a relay cannot supply a name that derives to a foreign
+/// object's owner.
+pub fn derive_object_field_wrapper_id(
+    parent: ObjectID,
+    name_type: &str,
+    name_value_bcs: &[u8],
+) -> Option<ObjectID> {
+    let inner = sui_types::TypeTag::from_str(name_type).ok()?;
+    let wrapper = sui_types::TypeTag::Struct(Box::new(
+        sui_types::dynamic_field::DynamicFieldInfo::dynamic_object_field_wrapper(inner),
+    ));
+    sui_types::dynamic_field::derive_dynamic_field_id(parent, &wrapper, name_value_bcs).ok()
 }
 
 /// Borrowed BCS contents of a Move object; `None` when the object is a

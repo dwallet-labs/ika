@@ -265,6 +265,15 @@ pub struct VerifiedObjectEntry {
     pub object: Object,
     pub checkpoint_seq: CheckpointSequenceNumber,
     pub proof: OCSInclusionProof,
+    /// For entries surfaced by a dynamic-field walk (`verified_bag_page`):
+    /// the field's key — stringified `TypeTag` of the name and its BCS
+    /// value. Lets the consumer bind a value object to its parent collection
+    /// (an `ObjectTable`/`ObjectBag` value is owned by its `Field`, not the
+    /// collection UID). Empty for direct/batch object reads.
+    #[serde(default)]
+    pub dynamic_field_name_type: String,
+    #[serde(default)]
+    pub dynamic_field_name_bcs: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -432,6 +441,10 @@ impl LocalProofProvider {
                 object,
                 checkpoint_seq: cp_seq,
                 proof,
+                // Populated by the bag-page walk (which has the field key);
+                // empty for direct/batch object reads.
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
             },
             cached.summary.clone(),
         ))
@@ -588,7 +601,12 @@ impl ProofProvider for LocalProofProvider {
                 }
             };
             match self.build_object_entry(object).await {
-                Ok((seq, verified_entry, summary)) => {
+                Ok((seq, mut verified_entry, summary)) => {
+                    // Carry the field key so the consumer can bind this entry
+                    // to `bag_id` even when it's an `ObjectTable`/`ObjectBag`
+                    // value object (owned by its `Field`, not the collection).
+                    verified_entry.dynamic_field_name_type = entry.name_type;
+                    verified_entry.dynamic_field_name_bcs = entry.name_value_bcs;
                     summaries.entry(seq).or_insert(summary);
                     self.metrics
                         .proof_built_total

@@ -277,6 +277,8 @@ impl IkaCheckpointPusher {
                 object,
                 checkpoint_seq: *data.checkpoint_summary.sequence_number(),
                 proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
             });
         }
 

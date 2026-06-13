@@ -124,6 +124,8 @@ impl VerifiedStateCache {
                 object: snapshot.object.clone(),
                 checkpoint_seq: snapshot.source_checkpoint_seq,
                 proof: clone_proof(&snapshot.proof),
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
             });
         }
         GetVerifiedSnapshotResponse {

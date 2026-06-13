@@ -30,7 +30,7 @@ use sui_types::messages_checkpoint::{
 };
 use sui_types::object::{Object, Owner};
 
-use ika_sui_client::transport::TransportError;
+use ika_sui_client::transport::{TransportError, derive_object_field_wrapper_id};
 
 use ika_network::proof_provider::{ProofProvider, VerifiedBagPageRequest, VerifiedObjectResponse};
 
@@ -243,6 +243,8 @@ impl OcsVerifiedReader {
                     object: cache_object,
                     checkpoint_seq: seq,
                     proof,
+                    dynamic_field_name_type: String::new(),
+                    dynamic_field_name_bcs: Vec::new(),
                 };
                 self.cache.absorb_entries(&cache_summary, &[cache_entry]);
             }
@@ -381,31 +383,53 @@ impl OcsVerifiedReader {
                 self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
             self.record_verify_outcome_unit("bag_entry", &entry_result);
             entry_result?;
-            // Bind the entry to the requested bag. The inclusion proof above
-            // only attests that this object existed on-chain at a verified
-            // checkpoint — NOT that it is a child of `bag_id`. A genuine bag
-            // entry is a dynamic field owned by the bag's UID, i.e.
-            // `Owner::ObjectOwner(bag_id)`, and that owner is part of the
-            // object digest the proof just verified. Without this check a
-            // malicious relay could return a validly-proven dynamic field of a
-            // *different* bag (e.g. replayed session events from another
-            // coordinator), and the count-only omission detector downstream
-            // would not catch a substitution that keeps the page size intact.
-            match entry.object.owner() {
-                Owner::ObjectOwner(addr) if ObjectID::from(*addr) == bag_id => {}
-                other => {
-                    return Err(ReaderError::BagMembership {
-                        bag_id,
-                        entry: entry.object.id(),
-                        owner: format!("{other:?}"),
-                    });
+            // Bind the entry to the requested collection. The inclusion proof
+            // above only attests that this object existed on-chain at a
+            // verified checkpoint — NOT that it is a member of `bag_id`. The
+            // binding is the entry's owner, which is part of the
+            // proof-verified object digest, and depends on the collection
+            // kind:
+            //   - A plain `Bag`/`Table` stores the value inline in a
+            //     `Field<K, V>` owned directly by the collection UID:
+            //     `Owner::ObjectOwner(bag_id)`.
+            //   - An `ObjectTable`/`ObjectBag` resolves to the wrapped value
+            //     object, which is owned by its `Field<Wrapper<K>, ID>`
+            //     wrapper, whose id is
+            //     `derive_dynamic_field_id(bag_id, Wrapper<K>, key)`. The
+            //     relay's key is untrusted, but the derivation is
+            //     collision-resistant against the proven owner, so a relay
+            //     cannot supply a name that derives to a *foreign* object's
+            //     owner.
+            // Without this a malicious relay could return a validly-proven
+            // dynamic field of a *different* collection (e.g. replayed session
+            // events), which the count-only omission detector wouldn't catch.
+            let bound_to_collection = match entry.object.owner() {
+                Owner::ObjectOwner(addr) => {
+                    let owner_id = ObjectID::from(*addr);
+                    owner_id == bag_id
+                        || derive_object_field_wrapper_id(
+                            bag_id,
+                            &entry.dynamic_field_name_type,
+                            &entry.dynamic_field_name_bcs,
+                        )
+                        .is_some_and(|field_id| owner_id == field_id)
                 }
+                _ => false,
+            };
+            if !bound_to_collection {
+                return Err(ReaderError::BagMembership {
+                    bag_id,
+                    entry: entry.object.id(),
+                    owner: format!("{:?}", entry.object.owner()),
+                });
             }
             if let Some(proof) = cache_proof {
                 let cache_entry = VerifiedObjectEntry {
                     object: cache_object,
                     checkpoint_seq: seq,
                     proof,
+                    dynamic_field_name_type: String::new(),
+                    dynamic_field_name_bcs: Vec::new(),
                 };
                 self.cache.absorb_entries(&cache_summary, &[cache_entry]);
             }
@@ -559,6 +583,8 @@ impl OcsVerifiedReader {
                 object: cache_object,
                 checkpoint_seq: proof_seq,
                 proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
             };
             self.cache.absorb_entries(&cache_summary, &[entry]);
         }
