@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bcs.workspace = true
 cargo_metadata = "0.19"
 fastcrypto.workspace = true
 futures.workspace = true
