@@ -139,8 +139,12 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     `proof_verify_failures_total`; BagMembership, BLS-summary, freshness, and
     decode failures on the batch/bag paths leave no metric trail. Anchor:
     `crates/ika-core/src/sui_connector/verified_reader.rs`,
-    `ocs_metrics.rs`. RESOLUTION: open — extend security-counter wiring to
-    cover those failure modes.
+    `ocs_metrics.rs`. RESOLUTION (`384dce3f18`): added a `record_fail` helper
+    and routed every bypassing failure point (summary BLS verify,
+    missing-summary decode, freshness, high-water, bag-membership) through it,
+    so all batch/bag verify failures now increment
+    `proof_verify_failures_total` (and the high-water gauge). A metric-assert
+    test is deferred to the H2 negative-tests work.
 
 ### Open
 
@@ -186,20 +190,19 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 ## Remaining work (risk-ordered)
 
-DONE since the audit: findings 6 (S1), 9 (H3), 15 (S4) fixed; 10/11 closed by
-removing the push/cache gossip subsystem (`b9be273a74`) — which also took out
-the sequential fanout (11) and the unbounded `GetVerifiedSnapshot` clone (part
-of 14) in one removal. Open items below.
+DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 15 (S4) fixed; 10/11
+closed by removing the push/cache gossip subsystem (`b9be273a74`) — which also
+took out the sequential fanout (11) and the unbounded `GetVerifiedSnapshot`
+clone (part of 14) in one removal. Open items below.
 
-1. **Finding 12** — security-counter coverage on batch/bag verify.
-2. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
+1. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-3. **Adversarial tests** — the review noted security-critical paths
+2. **Adversarial tests** — the review noted security-critical paths
    (proof-rejection, high-water rollback, BagMembership binding, the legacy
    JSON-RPC gate truth-table) had zero negative tests; only happy-path
    cluster tests existed. Finding 6's fix added the first such unit test
    (ratchet error classification). Build out the rest.
-4. **Mirrored-node currency redesign** (future feature, not a finding) —
+3. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
 
