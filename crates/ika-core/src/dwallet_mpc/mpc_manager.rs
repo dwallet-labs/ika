@@ -11,17 +11,18 @@ use crate::dwallet_mpc::mpc_session::{
     DWalletMPCSessionOutput, DWalletSession, SessionComputationType, SessionStatus,
     session_input_from_request,
 };
-use crate::dwallet_mpc::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
+use crate::dwallet_mpc::network_dkg::spawn_network_encryption_key_public_data_instantiation;
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
     generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
     party_id_to_authority_name,
 };
-use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
 use dwallet_mpc_types::dwallet_mpc::{
-    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, VersionedPresignOutput,
+    DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
+    VersionedPresignOutput,
 };
 use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
 use dwallet_rng::RootSeed;
@@ -35,6 +36,7 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::handoff::HandoffItemKey;
+use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
     DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
@@ -47,8 +49,10 @@ use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace, warn};
 
 use ika_types::noa_checkpoint::{
@@ -163,12 +167,29 @@ pub(crate) struct DWalletMPCManager {
     /// This prevents sending the same request multiple times.
     sent_presign_sequence_numbers: HashSet<u64>,
 
-    /// Most recently consensus-agreed network key data (via inline is_authorized_subset check).
-    pub(crate) agreed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+    /// Sequence numbers whose lock-target deferral was already logged, so a
+    /// request waiting for `last_session_to_complete_in_current_epoch` to
+    /// cover it logs once instead of every consensus round.
+    logged_lock_deferred_presigns: HashSet<u64>,
+
+    /// Network-key data adopted by `adopt_cert_verified_keys` (gated by the
+    /// prior epoch's handoff cert); the instantiation input set.
+    pub(crate) adopted_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
+    /// The `(overlay, cert-present)` input pair of the last completed
+    /// `adopt_cert_verified_keys` pass. The overlay watch publishes a
+    /// fresh `Arc` on every change (never mutates in place) and the
+    /// prior epoch's handoff cert is immutable once present, so an
+    /// identical pair cannot produce new adoptions — the pass (which
+    /// re-hashes multi-MB blobs) is skipped for that tick.
+    last_adoption_input: Option<(
+        Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>,
+        bool,
+    )>,
 
     /// Per-key snapshot of the `DWalletNetworkEncryptionKeyData`
     /// shape we last passed to `update_network_key`. Used by
-    /// `instantiate_agreed_keys_from_voted_data` to distinguish
+    /// `instantiate_adopted_network_keys` to distinguish
     /// "agreed data hasn't changed since we last instantiated"
     /// from "agreed data was just overwritten by a fresh quorum
     /// (typically the reconfig output flipping)" — only the latter
@@ -182,6 +203,36 @@ pub(crate) struct DWalletMPCManager {
     /// snapshot suppresses the retry until the bytes change (the output
     /// that carries this validator's share arrives).
     last_failed_network_key_data: HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+
+    /// Network-key instantiations currently running on the rayon pool,
+    /// polled (non-blocking) every service tick. The instantiation is
+    /// an expensive, long-running computation; awaiting it inline froze
+    /// the whole MPC service loop — every session on the validator —
+    /// for its full duration at each epoch boundary.
+    pub(crate) pending_network_key_instantiations:
+        HashMap<ObjectID, PendingNetworkKeyInstantiation>,
+
+    /// Last time the handoff-cert read-error warn in
+    /// `adopt_cert_verified_keys` was emitted. The adoption pass runs
+    /// every 20ms service iteration, so a persistent store error would
+    /// otherwise warn ~50x/second; warn at most every 10s (debug in
+    /// between). The retry behavior itself is unthrottled.
+    last_cert_read_warn: Option<Instant>,
+
+    /// `(key_id, local output digest)` pairs whose contradiction with the
+    /// prior epoch's handoff cert was already warned about. The adoption
+    /// pass re-runs whenever the overlay `Arc` republishes (every ~5s
+    /// during incomplete-overlay convergence), so an unchanged mismatch
+    /// would re-warn per republish; warn once per distinct local digest,
+    /// debug thereafter.
+    warned_cert_digest_mismatches: HashSet<(ObjectID, [u8; 32])>,
+
+    /// Sessions whose protocol-cryptographic-data generation already
+    /// failed and was logged. The generation re-runs every 20ms service
+    /// iteration, so a stuck session would otherwise emit ~50 identical
+    /// errors/second; log once per session (the skip-and-retry behavior
+    /// itself is unthrottled).
+    warned_cryptographic_data_generation_failures: HashSet<SessionIdentifier>,
 
     // The sequence number of the next internal presign session.
     // Starts from 1 in every epoch, and increases as they are spawned.
@@ -228,6 +279,14 @@ pub(crate) struct DWalletMPCManager {
     finalized_tx_refs: HashSet<NOACheckpointTxRef>,
     /// (tx_ref, retry_round) pairs that have already reached failure quorum.
     failed_tx_ref_rounds: HashSet<(NOACheckpointTxRef, u32)>,
+}
+
+/// An in-flight network-key instantiation: the input bytes that were
+/// attempted (retained for the failure record, which suppresses retries
+/// on identical bytes) and the receiver its result arrives on.
+pub(crate) struct PendingNetworkKeyInstantiation {
+    attempted: DWalletNetworkEncryptionKeyData,
+    receiver: oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>>,
 }
 
 impl DWalletMPCManager {
@@ -325,8 +384,14 @@ impl DWalletMPCManager {
             completed_presign_sequence_numbers: HashSet::new(),
             global_presign_requests: Vec::new(),
             sent_presign_sequence_numbers: HashSet::new(),
-            agreed_network_key_data: HashMap::new(),
+            logged_lock_deferred_presigns: HashSet::new(),
+            adopted_network_key_data: HashMap::new(),
+            last_adoption_input: None,
             last_instantiated_network_key_data: HashMap::new(),
+            pending_network_key_instantiations: HashMap::new(),
+            last_cert_read_warn: None,
+            warned_cert_digest_mismatches: HashSet::new(),
+            warned_cryptographic_data_generation_failures: HashSet::new(),
             last_failed_network_key_data: HashMap::new(),
             next_internal_presign_sequence_number: 1,
             instantiated_internal_presign_sessions: HashMap::new(),
@@ -385,6 +450,10 @@ impl DWalletMPCManager {
             let output_result = self.handle_output(consensus_round, output.clone());
             match output_result {
                 Some((malicious_authorities, output_result)) => {
+                    // Recovery net: cache quorum-agreed network-key outputs
+                    // locally even when this validator didn't produce them
+                    // (see `cache_network_key_output_from_quorum`).
+                    self.cache_network_key_output_from_quorum(&output_result);
                     // Read counterparty_chain before completing (which removes session data).
                     let counterparty_chain = self
                         .sessions
@@ -416,6 +485,100 @@ impl DWalletMPCManager {
         }
 
         (agreed_outputs, completed_sessions)
+    }
+
+    /// Recovery net for network-key outputs: caches the quorum-agreed DKG /
+    /// reconfiguration output bytes locally even when this validator did not
+    /// compute them itself.
+    ///
+    /// The producer-side cache (the `Finalize` arm in `dwallet_mpc_service`)
+    /// runs only for sessions this validator computed locally to completion.
+    /// A validator that restarted mid-session (replay marks the session
+    /// completed from the quorum output and never re-runs the computation),
+    /// or whose own computation finished after it processed the quorum round
+    /// (the `Finalize` result is dropped for non-active sessions), would
+    /// otherwise NEVER hold the output locally — leaving its off-chain
+    /// overlay empty for the key, withholding its EndOfPublish vote
+    /// (`snapshot_ready_for_signing` requires the local digest), and under
+    /// v4 there is no chain fallback to heal it (observed live as a wedged
+    /// genesis: one validator missing the DKG output blocked the epoch from
+    /// ever closing).
+    ///
+    /// The bytes are the stake-quorum-agreed value from consensus — the same
+    /// canonical output every peer holds — so caching them is safe. Chunked
+    /// outputs (`slice_public_output_into_messages` splits large outputs
+    /// across several message kinds, in order) are reassembled by
+    /// concatenation. The cache is content-addressed, so on the validators
+    /// that DID compute locally this is a no-op re-cache of identical bytes.
+    /// Reconfiguration outputs are keyed by this manager's epoch — the
+    /// reconfiguration session's own epoch, matching the producer side's
+    /// `session_request.epoch` keying (system sessions are always
+    /// current-epoch).
+    fn cache_network_key_output_from_quorum(&self, output: &DWalletMPCOutputKind) {
+        if !self.epoch_store.off_chain_validator_metadata_enabled() {
+            return;
+        }
+        let DWalletMPCOutputKind::External { output: kinds } = output else {
+            return;
+        };
+        let mut dkg_outputs: HashMap<ObjectID, Vec<u8>> = HashMap::new();
+        let mut reconfiguration_outputs: HashMap<ObjectID, Vec<u8>> = HashMap::new();
+        for kind in kinds {
+            match kind {
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(chunk)
+                    if !chunk.rejected =>
+                {
+                    if let Ok(key_id) =
+                        ObjectID::from_bytes(&chunk.dwallet_network_encryption_key_id)
+                    {
+                        dkg_outputs
+                            .entry(key_id)
+                            .or_default()
+                            .extend_from_slice(&chunk.public_output);
+                    }
+                }
+                DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(
+                    chunk,
+                ) if !chunk.rejected => {
+                    if let Ok(key_id) =
+                        ObjectID::from_bytes(&chunk.dwallet_network_encryption_key_id)
+                    {
+                        reconfiguration_outputs
+                            .entry(key_id)
+                            .or_default()
+                            .extend_from_slice(&chunk.public_output);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (key_id, bytes) in dkg_outputs {
+            if bytes.is_empty() {
+                continue;
+            }
+            if let Err(e) = self.epoch_store.cache_network_dkg_output(key_id, &bytes) {
+                warn!(
+                    error = ?e,
+                    ?key_id,
+                    "failed to cache quorum-agreed network DKG output"
+                );
+            }
+        }
+        for (key_id, bytes) in reconfiguration_outputs {
+            if bytes.is_empty() {
+                continue;
+            }
+            if let Err(e) =
+                self.epoch_store
+                    .cache_network_reconfiguration_output(key_id, self.epoch_id, &bytes)
+            {
+                warn!(
+                    error = ?e,
+                    ?key_id,
+                    "failed to cache quorum-agreed network reconfiguration output"
+                );
+            }
+        }
     }
 
     /// Handle idle status and chain observation updates for a consensus round.
@@ -545,7 +708,7 @@ impl DWalletMPCManager {
     }
 
     /// Adopt this validator's locally-observed network-key outputs into
-    /// the instantiation set (`agreed_network_key_data`), gated by the
+    /// the instantiation set (`adopted_network_key_data`), gated by the
     /// prior epoch's handoff cert — the cross-epoch agreement on which
     /// outputs the current epoch inherits, replacing the now-removed consensus vote.
     ///
@@ -566,20 +729,66 @@ impl DWalletMPCManager {
     ///   still required as a consistency check.
     pub fn adopt_cert_verified_keys(
         &mut self,
-        overlay: &HashMap<ObjectID, DWalletNetworkEncryptionKeyData>,
+        overlay: &Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>,
     ) {
-        let cert = self.epoch_id.checked_sub(1).and_then(|prior_epoch| {
-            match self
+        // Once a pass ran with the cert present, the same overlay `Arc`
+        // can't yield new adoptions — skip before even the cert DB read.
+        if let Some((last_overlay, cert_was_present)) = &self.last_adoption_input
+            && Arc::ptr_eq(last_overlay, overlay)
+            && *cert_was_present
+        {
+            return;
+        }
+        // A cert READ ERROR must not be conflated with a genuinely-absent
+        // cert: `cert == None` sends a reconfigured key down the unverified
+        // v3->v4-boundary adoption path below, silently bypassing the
+        // cert-digest gate. A transient store error therefore skips adoption
+        // entirely for this tick (the service loop retries every iteration)
+        // rather than degrading the security gate to blind adoption.
+        let cert = match self.epoch_id.checked_sub(1) {
+            Some(prior_epoch) => match self
                 .epoch_store
                 .get_certified_handoff_attestation(prior_epoch)
             {
                 Ok(cert) => cert,
                 Err(e) => {
-                    warn!(error = ?e, prior_epoch, "failed to read handoff cert for instantiation");
-                    None
+                    // The adoption pass runs every 20ms service iteration
+                    // and a read error returns before the early-out input
+                    // snapshot updates, so a persistent store error would
+                    // otherwise emit ~50 identical warns/second. Throttle
+                    // the emission (not the retry) to one warn per 10s.
+                    let should_warn = self
+                        .last_cert_read_warn
+                        .is_none_or(|last| last.elapsed() >= Duration::from_secs(10));
+                    if should_warn {
+                        self.last_cert_read_warn = Some(Instant::now());
+                        warn!(
+                            error = ?e,
+                            prior_epoch,
+                            "failed to read the handoff cert for instantiation — skipping \
+                             network-key adoption this tick (retrying next iteration)"
+                        );
+                    } else {
+                        debug!(
+                            error = ?e,
+                            prior_epoch,
+                            "failed to read the handoff cert for instantiation — skipping \
+                             network-key adoption this tick (retrying next iteration)"
+                        );
+                    }
+                    return;
                 }
-            }
-        });
+            },
+            None => None,
+        };
+        // Same overlay and the cert is still absent — identical inputs
+        // to the last completed pass, nothing new to adopt.
+        if let Some((last_overlay, cert_was_present)) = &self.last_adoption_input
+            && Arc::ptr_eq(last_overlay, overlay)
+            && *cert_was_present == cert.is_some()
+        {
+            return;
+        }
         let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
         if let Some(cert) = &cert {
@@ -595,39 +804,151 @@ impl DWalletMPCManager {
                 }
             }
         }
-        for (key_id, data) in overlay {
+        let off_chain_on = self.epoch_store.off_chain_validator_metadata_enabled();
+        for (key_id, data) in overlay.iter() {
             if data.network_dkg_public_output.is_empty() {
                 continue; // nothing computed/fetched locally yet
             }
-            // NOTE: the overlay's `current_reconfiguration_public_output`
-            // is epoch-correct by construction — the blob source serves
-            // only the output FOR the requesting epoch (`(epoch, key)`-
-            // keyed, mirroring the on-chain read), so a freshly-produced
-            // mid-epoch output targeting the NEXT epoch's committee can
-            // never appear here. The cert anchor below is a trust check
-            // on the bytes, not an epoch-correctness filter.
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
             if data.current_reconfiguration_public_output.is_empty() {
+                // A cert that pins a reconfiguration digest for this key means
+                // the committee agreed this epoch runs on parameters derived
+                // from THAT reconfiguration output. An overlay entry whose
+                // reconfiguration output is (transiently) empty must therefore
+                // never be adopted through this initial-DKG branch: it would
+                // instantiate DKG-derived parameters — a set the committee
+                // never agreed to use this epoch — and every MPC output this
+                // validator computes with them byte-diverges from its peers',
+                // which the output-quorum byte-equality tally then convicts
+                // as malicious. Skip and retry: the overlay re-merges every
+                // sync tick and the prepare-then-start barrier installs the
+                // cert-pinned blob by digest at the boundary, so the bytes
+                // become locally resolvable. Warn once per cert digest
+                // (deduped), debug on repeats — same pattern as the
+                // mismatch skips below.
+                if off_chain_on
+                    && let Some(cert_reconfiguration_digest) = reconfiguration_digests.get(key_id)
+                {
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, *cert_reconfiguration_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            ?cert_reconfiguration_digest,
+                            "prior epoch's handoff cert pins a reconfiguration output for \
+                             this key but the overlay's reconfiguration output is empty — \
+                             skipping adoption until the blob resolves locally (a DKG-only \
+                             instantiation would diverge from the committee-agreed \
+                             parameters)"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "overlay reconfiguration output still empty for a \
+                             cert-reconfigured key — skipping adoption"
+                        );
+                    }
+                    continue;
+                }
                 // Initial-DKG state: adopt the deterministic local DKG
                 // output. Require the match only if a cert pins it.
                 if let Some(cert_dkg) = dkg_digests.get(key_id)
                     && *cert_dkg != local_dkg_digest
                 {
+                    // A locally-held DKG output contradicting the
+                    // quorum-certified cert is genuinely anomalous: the
+                    // key is never adopted/instantiated and the validator
+                    // silently stops signing with it. Warn (deduped per
+                    // local digest, so overlay republishes don't re-warn).
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, local_dkg_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            cert_dkg_digest = ?cert_dkg,
+                            local_dkg_digest = ?local_dkg_digest,
+                            "local network-key DKG output digest does not match the prior \
+                             epoch's handoff cert — skipping adoption"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "local network-key DKG output still contradicts the handoff \
+                             cert — skipping adoption"
+                        );
+                    }
                     continue;
                 }
-            } else if self.epoch_store.off_chain_validator_metadata_enabled() && cert.is_some() {
+            } else if off_chain_on && cert.is_some() {
                 // Reconfigured key, off-chain mode with a prior handoff cert:
                 // the overlay carries locally-cached blobs, so anchor them
                 // against the prior epoch's cert — both the stable DKG digest
                 // and the epoch-specific reconfiguration digest must match.
                 if dkg_digests.get(key_id) != Some(&local_dkg_digest) {
+                    // Same anomaly as above for a reconfigured key's
+                    // stable DKG digest.
+                    if self
+                        .warned_cert_digest_mismatches
+                        .insert((*key_id, local_dkg_digest))
+                    {
+                        warn!(
+                            ?key_id,
+                            cert_dkg_digest = ?dkg_digests.get(key_id),
+                            local_dkg_digest = ?local_dkg_digest,
+                            "local network-key DKG output digest does not match the prior \
+                             epoch's handoff cert — skipping adoption"
+                        );
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "local network-key DKG output still contradicts the handoff \
+                             cert — skipping adoption"
+                        );
+                    }
                     continue;
                 }
-                if reconfiguration_digests.get(key_id)
-                    != Some(&mpc_data_blob_hash(
-                        &data.current_reconfiguration_public_output,
-                    ))
-                {
+                let local_reconfiguration_digest =
+                    mpc_data_blob_hash(&data.current_reconfiguration_public_output);
+                if reconfiguration_digests.get(key_id) != Some(&local_reconfiguration_digest) {
+                    // NOT contradiction-only: once THIS epoch's
+                    // reconfiguration completes, the overlay carries the
+                    // new epoch-keyed output which by design mismatches
+                    // the PRIOR epoch's cert — that skip is the intended
+                    // defer-to-next-epoch with the already-adopted prior
+                    // value still installed (debug). Only when the skip
+                    // actually leaves the key unadopted is it the
+                    // security-relevant divergence worth a warn.
+                    if !self.adopted_network_key_data.contains_key(key_id) {
+                        if self
+                            .warned_cert_digest_mismatches
+                            .insert((*key_id, local_reconfiguration_digest))
+                        {
+                            warn!(
+                                ?key_id,
+                                cert_reconfiguration_digest = ?reconfiguration_digests.get(key_id),
+                                local_reconfiguration_digest = ?local_reconfiguration_digest,
+                                "local network-key reconfiguration output digest does not \
+                                 match the prior epoch's handoff cert and the key has no \
+                                 adopted value — skipping adoption, the key stays \
+                                 uninstantiated"
+                            );
+                        } else {
+                            debug!(
+                                ?key_id,
+                                "local network-key reconfiguration output still contradicts \
+                                 the handoff cert (key unadopted) — skipping adoption"
+                            );
+                        }
+                    } else {
+                        debug!(
+                            ?key_id,
+                            "overlay reconfiguration output does not match the prior \
+                             epoch's cert (expected once this epoch's reconfiguration \
+                             completes) — keeping the adopted prior value"
+                        );
+                    }
                     continue;
                 }
             }
@@ -665,7 +986,7 @@ impl DWalletMPCManager {
             // are off-chain.
             if data.current_reconfiguration_public_output.is_empty()
                 && self
-                    .agreed_network_key_data
+                    .adopted_network_key_data
                     .get(key_id)
                     .is_some_and(|existing| {
                         !existing.current_reconfiguration_public_output.is_empty()
@@ -673,8 +994,36 @@ impl DWalletMPCManager {
             {
                 continue;
             }
-            self.agreed_network_key_data.insert(*key_id, data.clone());
+            // Surface the one place the cert-digest security gate is
+            // bypassed: adopting a RECONFIGURED key without a prior
+            // handoff cert anchoring it. Under v3 (off-chain disabled)
+            // this is the designed every-epoch path; under v4 it is
+            // expected only at the genuine v3→v4 boundary — anywhere
+            // else it indicates a missing cert in steady state. Gated
+            // on the adopted value actually changing so overlay
+            // republishes don't re-log.
+            let reconfigured = !data.current_reconfiguration_public_output.is_empty();
+            let cert_anchored = off_chain_on && cert.is_some();
+            let cert_gate_bypassed = reconfigured && !cert_anchored;
+            if cert_gate_bypassed && self.adopted_network_key_data.get(key_id) != Some(data) {
+                if off_chain_on {
+                    warn!(
+                        ?key_id,
+                        "adopting reconfigured network key without a prior handoff cert — \
+                         expected only at the v3→v4 boundary; in steady-state v4 this \
+                         indicates a missing handoff cert"
+                    );
+                } else {
+                    info!(
+                        ?key_id,
+                        "adopting reconfigured network key from the chain copy (off-chain \
+                         metadata disabled; no handoff cert exists)"
+                    );
+                }
+            }
+            self.adopted_network_key_data.insert(*key_id, data.clone());
         }
+        self.last_adoption_input = Some((overlay.clone(), cert.is_some()));
     }
 
     /// Handle NOA observation messages. Resolves finalization and failure quorums.
@@ -773,16 +1122,45 @@ impl DWalletMPCManager {
     }
 
     /// Returns presign requests that haven't been sent through consensus yet.
-    pub(crate) fn get_unsent_presign_requests(&self) -> Vec<GlobalPresignRequest> {
-        self.global_presign_requests
+    ///
+    /// Requests beyond `last_session_to_complete_in_current_epoch` are held
+    /// back: an agreed request is served from the internal pool and completed
+    /// on-chain with no further lock check, and the end-of-publish predicate
+    /// is a strict equality (`completed_sessions_count ==` locked target), so
+    /// completing a session beyond the locked target wedges the epoch
+    /// permanently — the counter can never come back down. The on-chain
+    /// target is monotone within an epoch and frozen by the epoch-close
+    /// lock, so a majority vote implies an honest validator observed the
+    /// target covering the request, making overshoot impossible. Held-back
+    /// requests are retried here as the synced target advances, and re-pulled
+    /// next epoch otherwise — exactly like lock-gated MPC user sessions.
+    pub(crate) fn get_unsent_presign_requests(&mut self) -> Vec<GlobalPresignRequest> {
+        let (covered, deferred): (Vec<&GlobalPresignRequest>, Vec<&GlobalPresignRequest>) = self
+            .global_presign_requests
             .iter()
             .filter(|request| {
                 !self
                     .sent_presign_sequence_numbers
                     .contains(&request.session_sequence_number)
             })
-            .cloned()
-            .collect()
+            .partition(|request| {
+                request.session_sequence_number <= self.last_session_to_complete_in_current_epoch
+            });
+        for request in deferred {
+            if self
+                .logged_lock_deferred_presigns
+                .insert(request.session_sequence_number)
+            {
+                info!(
+                    session_sequence_number = request.session_sequence_number,
+                    last_session_to_complete_in_current_epoch =
+                        self.last_session_to_complete_in_current_epoch,
+                    session_identifier = ?request.session_identifier,
+                    "holding global presign vote until the epoch-close lock target covers it; retried as the target advances, re-pulled next epoch otherwise"
+                );
+            }
+        }
+        covered.into_iter().cloned().collect()
     }
 
     /// Handles a message by forwarding it to the relevant MPC session.
@@ -920,7 +1298,7 @@ impl DWalletMPCManager {
         // `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`) in the same
         // order, or they derive different session identifiers for the same work
         // and the sessions never reach quorum.
-        let agreed_key_ids: BTreeSet<_> = self.agreed_network_key_data.keys().copied().collect();
+        let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
             for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
@@ -971,6 +1349,28 @@ impl DWalletMPCManager {
                         )
                     };
 
+                    // Export the pool size BEFORE the in-flight skip below,
+                    // so a pool wedged behind never-completing sessions is
+                    // still observable. The key dimension is reduced to a
+                    // bounded `key_role` label — see the metric's docs.
+                    let current_pool_size =
+                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
+                    let key_role = if is_network_owned_address_signing_presign {
+                        "network_owned_address_signing"
+                    } else {
+                        "other"
+                    };
+                    let curve_label = format!("{curve:?}");
+                    let signature_algorithm_label = format!("{signature_algorithm:?}");
+                    self.dwallet_mpc_metrics
+                        .internal_presign_pool_size
+                        .with_label_values(&[
+                            curve_label.as_str(),
+                            signature_algorithm_label.as_str(),
+                            key_role,
+                        ])
+                        .set(current_pool_size as i64);
+
                     // Skip instantiation if previous sessions for this (curve, algorithm)
                     // haven't completed yet. Each session produces a variable number of
                     // presigns (1 to n-t), so overlapping batches cause pool overshoot.
@@ -987,9 +1387,6 @@ impl DWalletMPCManager {
                     if instantiated != completed {
                         continue;
                     }
-
-                    let current_pool_size =
-                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
 
                     if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
                         && current_pool_size < minimal_pool_size)
@@ -1047,9 +1444,13 @@ impl DWalletMPCManager {
         };
 
         let session_sequence_number = self.next_internal_presign_sequence_number;
+        // `consensus_round` is logged below for traceability but is
+        // deliberately NOT part of the request/session identifier:
+        // validators reach this point at different rounds (the network
+        // key installs asynchronously), and the identifier must come out
+        // identical on every committee member.
         let request = DWalletSessionRequest::new_internal_presign(
             self.epoch_id,
-            consensus_round,
             session_sequence_number,
             curve,
             signature_algorithm,
@@ -1432,6 +1833,12 @@ impl DWalletMPCManager {
 
         let number_of_ready_to_advance_sessions = ready_to_advance_sessions.len();
 
+        // Collected inside the immutable-borrow iteration below, logged
+        // (deduped per session) after it ends — a generation failure
+        // recurs every 20ms service tick for a stuck session, and the
+        // skip used to be silent, which blinded post-mortems.
+        let mut failed_cryptographic_data_generations = Vec::new();
+
         let computation_requests: Vec<_> = ready_to_advance_sessions
             .into_iter()
             .flat_map(|(session, _)| {
@@ -1450,15 +1857,28 @@ impl DWalletMPCManager {
                     return None;
                 };
 
-                self.generate_protocol_cryptographic_data(
+                let protocol_cryptographic_data = match self.generate_protocol_cryptographic_data(
                     &session.computation_type,
                     &request.protocol_data,
                     last_read_consensus_round,
                     public_input.clone(),
                     &self.protocol_config,
-                )
-                .ok()?
-                .map(|protocol_cryptographic_data| {
+                ) {
+                    Ok(protocol_cryptographic_data) => protocol_cryptographic_data,
+                    Err(e) => {
+                        // The skip is correct (the session simply isn't
+                        // advanceable this tick); the silence was the bug.
+                        failed_cryptographic_data_generations.push((
+                            session.session_identifier,
+                            DWalletSessionRequestMetricData::from(&request.protocol_data),
+                            e,
+                        ));
+
+                        return None;
+                    }
+                };
+
+                protocol_cryptographic_data.map(|protocol_cryptographic_data| {
                     let attempt_number = protocol_cryptographic_data.get_attempt_number();
                     let mpc_round = protocol_cryptographic_data.get_mpc_round();
 
@@ -1481,6 +1901,24 @@ impl DWalletMPCManager {
                 })
             })
             .collect();
+
+        for (session_identifier, protocol_data, error) in failed_cryptographic_data_generations {
+            // Once per session: the failure recurs every tick while the
+            // session is stuck, and the first occurrence carries all the
+            // signal.
+            if self
+                .warned_cryptographic_data_generation_failures
+                .insert(session_identifier)
+            {
+                error!(
+                    ?session_identifier,
+                    mpc_protocol = %protocol_data,
+                    error = ?error,
+                    "failed to generate protocol cryptographic data — session skipped \
+                     this tick (will retry every service iteration)"
+                );
+            }
+        }
 
         let completed_computation_results = self
             .cryptographic_computations_orchestrator
@@ -1540,89 +1978,50 @@ impl DWalletMPCManager {
         false
     }
 
-    /// Instantiates network keys from the cert-verified outputs adopted into `agreed_network_key_data`.
-    /// For each key in `agreed_network_key_data` either (a) not yet
-    /// loaded locally, or (b) loaded but with a stale shape compared
-    /// to the latest agreed bytes (typically the reconfig output
-    /// flipping each epoch), runs the instantiation pass. Returns
-    /// the IDs touched.
-    ///
-    /// The `last_instantiated_network_key_data` snapshot prevents
-    /// re-running on every poll: re-instantiation costs a per-curve
-    /// decrypt + key-share regenerate inside `update_network_key`,
-    /// so we only do it when the agreed bytes actually changed.
-    pub(crate) async fn instantiate_agreed_keys_from_voted_data(&mut self) -> Vec<ObjectID> {
-        let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
-            .agreed_network_key_data
-            .iter()
-            .filter(|(key_id, key_data)| {
-                // Filter to: first instantiation OR the *content*
-                // (DKG output, reconfig output, state) has moved
-                // since we last instantiated. Excludes the per-epoch
-                // `current_epoch` field, which flips every epoch
-                // boundary even when the underlying bytes are
-                // unchanged and would otherwise force a wasteful
-                // `update_network_key` pass that re-decrypts the key
-                // shares.
-                // Never re-attempt bytes that already failed, regardless
-                // of which branch below would otherwise select them. The
-                // instantiation/decryption is deterministic, so identical
-                // bytes fail identically; retry only once the bytes change
-                // (the output carrying our share arrives). Without this
-                // guard the `last_instantiated` comparison below re-selects
-                // failing bytes every poll (they differ from the last
-                // *successfully* instantiated ones by definition), burning
-                // a heavy class-groups decrypt per tick and starving the
-                // service loop.
-                if self
-                    .last_failed_network_key_data
-                    .get(key_id)
-                    .is_some_and(|failed| {
-                        failed.network_dkg_public_output == key_data.network_dkg_public_output
-                            && failed.current_reconfiguration_public_output
-                                == key_data.current_reconfiguration_public_output
-                            && failed.state == key_data.state
-                    })
-                {
-                    return false;
-                }
-                if !self
-                    .network_keys
-                    .network_encryption_keys
-                    .contains_key(key_id)
-                {
-                    return true;
-                }
-                match self.last_instantiated_network_key_data.get(key_id) {
-                    None => true,
-                    Some(prev) => {
-                        prev.network_dkg_public_output != key_data.network_dkg_public_output
-                            || prev.current_reconfiguration_public_output
-                                != key_data.current_reconfiguration_public_output
-                            || prev.state != key_data.state
-                    }
-                }
-            })
-            .map(|(key_id, key_data)| (*key_id, key_data.clone()))
-            .collect();
-
+    /// Polls the in-flight network-key instantiations (non-blocking):
+    /// each runs on the rayon pool for up to minutes, and the service
+    /// loop must keep processing sessions in the meantime. Called once
+    /// per service ITERATION — not per consensus round — so a completed
+    /// key installs even when no new consensus rounds arrived. Returns
+    /// the IDs whose instantiation completed and installed this poll.
+    pub(crate) async fn poll_pending_network_key_instantiations(&mut self) -> Vec<ObjectID> {
         let mut new_key_ids = Vec::new();
-
-        for (key_id, key_data) in keys_to_instantiate {
-            info!(key_id=?key_id, "Instantiating agreed network key");
-            // Retained for the failure path (the bytes are moved into
-            // instantiation below) so we can record what failed and skip
-            // re-attempting identical bytes next tick.
-            let attempted = key_data.clone();
-
-            let res =
-                instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
-                    key_data.current_epoch,
-                    self.access_structure.clone(),
-                    key_data,
-                )
-                .await;
-
+        let in_flight_key_ids: Vec<ObjectID> = self
+            .pending_network_key_instantiations
+            .keys()
+            .copied()
+            .collect();
+        for key_id in in_flight_key_ids {
+            let Some(mut pending) = self.pending_network_key_instantiations.remove(&key_id) else {
+                continue;
+            };
+            let res = match pending.receiver.try_recv() {
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    // Still computing — put it back and check next tick.
+                    self.pending_network_key_instantiations
+                        .insert(key_id, pending);
+                    continue;
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    // The computation dropped its sender without a result
+                    // (panicked on the rayon pool). Record the attempt so
+                    // identical bytes aren't retried every tick.
+                    warn!(
+                        key_id=?key_id,
+                        "network key instantiation dropped its result channel; \
+                         recording the attempt as failed"
+                    );
+                    self.dwallet_mpc_metrics
+                        .network_key_instantiation_failures_total
+                        .with_label_values(&["channel_closed"])
+                        .inc();
+                    self.last_failed_network_key_data
+                        .insert(key_id, pending.attempted);
+                    continue;
+                }
+                Ok(res) => res,
+            };
+            let attempted = pending.attempted;
             match res {
                 Ok(key) => {
                     if key.epoch() != self.epoch_id {
@@ -1630,8 +2029,12 @@ impl DWalletMPCManager {
                             key_id=?key_id,
                             key_epoch=?key.epoch(),
                             current_epoch=?self.epoch_id,
-                            "Consensus-voted network key epoch does not match current epoch, ignoring"
+                            "Adopted network key epoch does not match current epoch, ignoring"
                         );
+                        self.dwallet_mpc_metrics
+                            .network_key_instantiation_failures_total
+                            .with_label_values(&["epoch_mismatch"])
+                            .inc();
                         continue;
                     }
                     info!(key_id=?key_id, "Updating network key");
@@ -1647,6 +2050,10 @@ impl DWalletMPCManager {
                         // deterministic decryption isn't re-run on them
                         // every tick; it retries when the bytes change.
                         warn!(error=?e, key_id=?key_id, "could not decrypt share for network key from this output yet; will retry when its bytes change");
+                        self.dwallet_mpc_metrics
+                            .network_key_instantiation_failures_total
+                            .with_label_values(&["decrypt_failed"])
+                            .inc();
                         self.last_failed_network_key_data.insert(key_id, attempted);
                     } else {
                         // Mirror the adopted **DKG** output bytes
@@ -1657,7 +2064,7 @@ impl DWalletMPCManager {
                         //
                         // The reconfiguration output is deliberately NOT
                         // mirrored here. It is epoch-specific, and
-                        // `agreed_network_key_data` can still carry the
+                        // `adopted_network_key_data` can still carry the
                         // *prior* epoch's output (the adopted overlay can lag the local
                         // computation), so mirroring it would race the
                         // local current value and corrupt the handoff
@@ -1685,7 +2092,7 @@ impl DWalletMPCManager {
                         // reconfiguration output undelivered and wedging the
                         // first v4 reconfiguration. Remove this guard (always
                         // mirror) once the migration chain import is gone.
-                        let key_data = self.agreed_network_key_data.get(&key_id).cloned();
+                        let key_data = self.adopted_network_key_data.get(&key_id).cloned();
                         if let Some(key_data) = key_data {
                             if self.epoch_store.off_chain_validator_metadata_enabled()
                                 && !key_data.network_dkg_public_output.is_empty()
@@ -1703,7 +2110,7 @@ impl DWalletMPCManager {
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a
                             // newer quorum has overwritten
-                            // `agreed_network_key_data` since.
+                            // `adopted_network_key_data` since.
                             self.last_instantiated_network_key_data
                                 .insert(key_id, key_data);
                         }
@@ -1718,12 +2125,132 @@ impl DWalletMPCManager {
                         key_id=?key_id,
                         "could not instantiate network key from this output yet; will retry when its bytes change"
                     );
+                    self.dwallet_mpc_metrics
+                        .network_key_instantiation_failures_total
+                        .with_label_values(&["instantiate_failed"])
+                        .inc();
                     self.last_failed_network_key_data.insert(key_id, attempted);
                 }
             }
         }
+        self.dwallet_mpc_metrics
+            .network_key_instantiations_in_flight
+            .set(self.pending_network_key_instantiations.len() as i64);
 
         new_key_ids
+    }
+
+    /// Instantiates network keys from the cert-verified outputs adopted into `adopted_network_key_data`.
+    /// For each key in `adopted_network_key_data` either (a) not yet
+    /// loaded locally, or (b) loaded but with a stale shape compared
+    /// to the latest agreed bytes (typically the reconfig output
+    /// flipping each epoch), SPAWNS the instantiation on the rayon
+    /// pool — the instantiation is an expensive, long-running
+    /// computation, and awaiting it inline froze every session on the
+    /// validator for its full duration at each epoch boundary.
+    /// Completions are collected
+    /// by [`Self::poll_pending_network_key_instantiations`].
+    ///
+    /// The `last_instantiated_network_key_data` snapshot prevents
+    /// re-running on every poll: re-instantiation costs a per-curve
+    /// decrypt + key-share regenerate inside `update_network_key`,
+    /// so we only do it when the agreed bytes actually changed.
+    pub(crate) fn instantiate_adopted_network_keys(&mut self) {
+        let keys_to_instantiate: Vec<(ObjectID, DWalletNetworkEncryptionKeyData)> = self
+            .adopted_network_key_data
+            .iter()
+            .filter(|(key_id, key_data)| {
+                // An instantiation for this key is already in flight —
+                // don't spawn another; if the agreed bytes moved in the
+                // meantime, the snapshot comparison below re-fires once
+                // the in-flight one completes.
+                if self.pending_network_key_instantiations.contains_key(key_id) {
+                    return false;
+                }
+                // The adopted snapshot can carry a stale chain epoch — the
+                // syncer fetched it before the chain rolled over (or after,
+                // for a manager about to be torn down). The post-instantiation
+                // poll already rejects such a key (`key.epoch() != self.epoch_id`),
+                // but only after ~10s of parameter derivation burnt on the
+                // rayon pool — and while that doomed instantiation is in
+                // flight, the correct same-key data cannot spawn. Reject the
+                // metadata mismatch before spawning instead; the syncer
+                // re-fetches and the adoption pass delivers the current
+                // epoch's data within a few ticks.
+                if key_data.current_epoch != self.epoch_id {
+                    debug!(
+                        ?key_id,
+                        key_data_epoch = key_data.current_epoch,
+                        current_epoch = self.epoch_id,
+                        "adopted network-key data carries a different epoch — not \
+                         spawning instantiation; awaiting the current epoch's overlay"
+                    );
+                    return false;
+                }
+                // Filter to: first instantiation OR the *content*
+                // (DKG output, reconfig output, state) has moved
+                // since we last instantiated. Excludes the per-epoch
+                // `current_epoch` field, which flips every epoch
+                // boundary even when the underlying bytes are
+                // unchanged and would otherwise force a wasteful
+                // `update_network_key` pass that re-decrypts the key
+                // shares.
+                if !self
+                    .network_keys
+                    .network_encryption_keys
+                    .contains_key(key_id)
+                {
+                    return true;
+                }
+                match self.last_instantiated_network_key_data.get(key_id) {
+                    // Never instantiated this key. Attempt it — unless we
+                    // already failed to decrypt these exact bytes. The
+                    // decryption is deterministic, so identical bytes
+                    // would fail identically; retry only once the bytes
+                    // change (the output carrying our share arrives).
+                    None => match self.last_failed_network_key_data.get(key_id) {
+                        None => true,
+                        Some(failed) => {
+                            failed.network_dkg_public_output != key_data.network_dkg_public_output
+                                || failed.current_reconfiguration_public_output
+                                    != key_data.current_reconfiguration_public_output
+                                || failed.state != key_data.state
+                        }
+                    },
+                    Some(prev) => {
+                        prev.network_dkg_public_output != key_data.network_dkg_public_output
+                            || prev.current_reconfiguration_public_output
+                                != key_data.current_reconfiguration_public_output
+                            || prev.state != key_data.state
+                    }
+                }
+            })
+            .map(|(key_id, key_data)| (*key_id, key_data.clone()))
+            .collect();
+
+        for (key_id, key_data) in keys_to_instantiate {
+            info!(key_id=?key_id, "Instantiating agreed network key");
+            // Retained for the failure path (the bytes are moved into
+            // instantiation below) so we can record what failed and skip
+            // re-attempting identical bytes next tick.
+            let attempted = key_data.clone();
+            let receiver = spawn_network_encryption_key_public_data_instantiation(
+                key_data.current_epoch,
+                self.access_structure.clone(),
+                key_data,
+                self.dwallet_mpc_metrics.clone(),
+            );
+            self.pending_network_key_instantiations.insert(
+                key_id,
+                PendingNetworkKeyInstantiation {
+                    attempted,
+                    receiver,
+                },
+            );
+        }
+        self.dwallet_mpc_metrics
+            .network_key_instantiations_in_flight
+            .set(self.pending_network_key_instantiations.len() as i64);
     }
 
     pub(crate) fn handle_output(

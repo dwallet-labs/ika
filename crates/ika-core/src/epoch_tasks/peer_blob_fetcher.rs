@@ -41,9 +41,10 @@ use anemo::{Network, PeerId};
 use ika_network::mpc_artifacts::fetch_blob;
 use ika_types::committee::EpochId;
 use ika_types::crypto::AuthorityName;
+use prometheus::IntCounterVec;
 use rand::seq::SliceRandom;
-use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 use typed_store::Map;
@@ -55,6 +56,18 @@ pub struct PeerBlobFetcher {
     blob_cache: Arc<BlobCache>,
     p2p_network: Network,
     authority_names_to_peer_ids: HashMap<AuthorityName, PeerId>,
+    /// P2P fetch outcomes by result (`ok` / `not_found` / `hash_mismatch` /
+    /// `decode_failed` / `cache_insert_failed` / `transport_error`) — the
+    /// byzantine-bad-bytes and transport-health signals that explain slow
+    /// ready-signal coverage. Registered by the caller (ika-node).
+    fetch_outcomes: IntCounterVec,
+    /// `(announcer, candidate)` pairs already warned about serving bad
+    /// bytes this epoch — the fetch pass re-runs every ~2s while a blob
+    /// is unfetched, so a persistently-bad peer would otherwise re-warn
+    /// per pass. Warn once per pair, debug thereafter (the
+    /// `fetch_outcomes` counter still measures persistent offenders).
+    /// Bounded by committee-size² and dropped with the per-epoch task.
+    warned_bad_bytes_pairs: Mutex<HashSet<(AuthorityName, AuthorityName)>>,
 }
 
 impl PeerBlobFetcher {
@@ -65,6 +78,7 @@ impl PeerBlobFetcher {
         blob_cache: Arc<BlobCache>,
         p2p_network: Network,
         authority_names_to_peer_ids: HashMap<AuthorityName, PeerId>,
+        fetch_outcomes: IntCounterVec,
     ) -> Self {
         Self {
             epoch_store,
@@ -73,7 +87,19 @@ impl PeerBlobFetcher {
             blob_cache,
             p2p_network,
             authority_names_to_peer_ids,
+            fetch_outcomes,
+            warned_bad_bytes_pairs: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Warn the first time a given `(announcer, candidate)` pair serves
+    /// bad bytes this epoch; returns whether the caller should warn (vs
+    /// log the repeat at debug).
+    fn should_warn_bad_bytes(&self, announcer: AuthorityName, candidate: AuthorityName) -> bool {
+        self.warned_bad_bytes_pairs
+            .lock()
+            .expect("mutex poisoned")
+            .insert((announcer, candidate))
     }
 
     pub async fn run(self: Arc<Self>) {
@@ -188,14 +214,28 @@ impl PeerBlobFetcher {
                         {
                             crate::validator_metadata::PeerBlobVerdict::Accept => {}
                             crate::validator_metadata::PeerBlobVerdict::HashMismatch => {
-                                warn!(
-                                    ?announcer,
-                                    ?candidate_authority,
-                                    ?peer_id,
-                                    expected = ?digest,
-                                    "peer blob fetcher: candidate served bytes that don't \
-                                     match the announcement digest; trying next peer"
-                                );
+                                self.fetch_outcomes
+                                    .with_label_values(&["hash_mismatch"])
+                                    .inc();
+                                if self.should_warn_bad_bytes(announcer, candidate_authority) {
+                                    warn!(
+                                        ?announcer,
+                                        ?candidate_authority,
+                                        ?peer_id,
+                                        expected = ?digest,
+                                        "peer blob fetcher: candidate served bytes that don't \
+                                         match the announcement digest; trying next peer"
+                                    );
+                                } else {
+                                    debug!(
+                                        ?announcer,
+                                        ?candidate_authority,
+                                        ?peer_id,
+                                        expected = ?digest,
+                                        "peer blob fetcher: candidate again served \
+                                         hash-mismatching bytes; trying next peer"
+                                    );
+                                }
                                 continue;
                             }
                             crate::validator_metadata::PeerBlobVerdict::DecodeFailed => {
@@ -214,13 +254,26 @@ impl PeerBlobFetcher {
                                 // else has the signed digest's
                                 // preimage), so dropping costs
                                 // nothing useful.
-                                warn!(
-                                    ?announcer,
-                                    ?candidate_authority,
-                                    ?peer_id,
-                                    "peer blob fetcher: candidate served hash-matching bytes \
-                                     that fail structural decode; refusing to relay"
-                                );
+                                self.fetch_outcomes
+                                    .with_label_values(&["decode_failed"])
+                                    .inc();
+                                if self.should_warn_bad_bytes(announcer, candidate_authority) {
+                                    warn!(
+                                        ?announcer,
+                                        ?candidate_authority,
+                                        ?peer_id,
+                                        "peer blob fetcher: candidate served hash-matching bytes \
+                                         that fail structural decode; refusing to relay"
+                                    );
+                                } else {
+                                    debug!(
+                                        ?announcer,
+                                        ?candidate_authority,
+                                        ?peer_id,
+                                        "peer blob fetcher: candidate again served \
+                                         hash-matching undecodable bytes; refusing to relay"
+                                    );
+                                }
                                 continue;
                             }
                         }
@@ -228,6 +281,9 @@ impl PeerBlobFetcher {
                         // mirror in one call, so the blob is both
                         // restart-safe and immediately P2P-servable.
                         if let Err(e) = self.blob_cache.insert(digest, bytes) {
+                            self.fetch_outcomes
+                                .with_label_values(&["cache_insert_failed"])
+                                .inc();
                             warn!(
                                 error = ?e,
                                 ?announcer,
@@ -236,6 +292,7 @@ impl PeerBlobFetcher {
                             );
                             continue;
                         }
+                        self.fetch_outcomes.with_label_values(&["ok"]).inc();
                         info!(
                             ?announcer,
                             served_by = ?candidate_authority,
@@ -246,6 +303,7 @@ impl PeerBlobFetcher {
                         break;
                     }
                     Ok(None) => {
+                        self.fetch_outcomes.with_label_values(&["not_found"]).inc();
                         debug!(
                             ?announcer,
                             ?candidate_authority,
@@ -254,6 +312,9 @@ impl PeerBlobFetcher {
                         );
                     }
                     Err(e) => {
+                        self.fetch_outcomes
+                            .with_label_values(&["transport_error"])
+                            .inc();
                         debug!(
                             ?announcer,
                             ?candidate_authority,

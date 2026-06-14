@@ -6,17 +6,25 @@ Decentralized MPC signing network built on Sui. dWallets provide zero-trust mult
 
 Act as a critical intellectual sparring partner, not a yes-man. Evaluate every idea on its merits—the user is a collaborator who can be wrong, not an authority to defer to. Question assumptions, point out flaws, logical errors, unstated premises, and potential bugs immediately and directly. Be skeptical by default; each claim must prove itself. No opening praise or "you're right" unless genuinely warranted after scrutiny. Prioritize truth over harmony. Be ruthless with constructive criticism.
 
-## No Time Estimates
+## Working Principles (Karpathy's four)
 
-NEVER estimate time, effort, or duration for any work — no "weeks", "days", "hours", "engineer-quarter", "this is quick", "this will take a while", no calendar/sprint-based sequencing. You have no reliable concept of wall-clock effort, and time estimates produce bad downstream planning decisions. Express plans as **ordering and dependencies only** ("first / then / after X / in parallel", "P0 before P1"), never as durations. Applies to plans, design docs, PR descriptions, and chat. If asked "how long will this take", say you don't estimate time and give the dependency-ordered steps instead.
+1. **Think before coding** — state assumptions explicitly; if a request
+   is ambiguous, present the interpretations and ask rather than guess.
+2. **Simplicity first** — the minimum code that solves the stated
+   problem; no unrequested abstractions, features, or "flexibility".
+3. **Surgical changes** — every changed line traces directly to the
+   request; don't touch unrelated code, comments, or formatting.
+4. **Goal-driven execution** — turn the task into verifiable success
+   criteria (a test, a check, a command) before starting, then iterate
+   until they pass.
 
 ## Build Commands
 
 ```bash
 # Rust - always use release mode for crypto code (debug is far too slow)
 cargo build --release
-cargo test --release
 cargo clippy --all-targets --all-features
+# Tests: see Testing section below
 
 # TypeScript SDK
 cd sdk/typescript && pnpm install && pnpm build
@@ -68,6 +76,30 @@ sdk/
 - `contracts/ika_dwallet_2pc_mpc/sources/coordinator.move` - On-chain MPC coordination
 - `sdk/typescript/src/` - TypeScript SDK source
 
+## Engineering docs & specs (`dev-docs/`)
+
+`dev-docs/` is the engineering knowledge base — read on demand, indexed
+in `dev-docs/README.md`: behavioral specs, debugging playbooks,
+conventions, and pitfalls. (`docs/` is the public docs website.)
+
+`dev-docs/specs/` holds behavioral specifications for ika subsystems
+(the protocol-level contract: actors, messages, decision rules,
+invariants). **Read the relevant spec before changing a subsystem it
+covers, and update the spec in the same PR as any behavior change.**
+New consensus messages, cross-epoch invariants, or decision rules get a
+spec (extend an existing file or add one). When spec and code disagree,
+one of them has a bug — determine which before changing either. The
+same maintenance rule applies to the playbooks and conventions: docs
+here are part of the change, not documentation debt.
+
+**Write for a reader without the originating context.** Don't put
+out-of-context references in documentation, dev-docs, code comments, or
+PR descriptions — internal labels (ticket shorthands, test/property IDs
+like "F4-1", plan/phase numbers) are meaningless to anyone outside the
+moment they were coined and rot once that context is gone. Spell out the
+mechanism in plain terms instead. (The Rust-comment instance of this is
+under Code Style.)
+
 ## Dependencies
 
 - Use workspace-level dependencies exclusively
@@ -77,35 +109,35 @@ sdk/
 
 ### Rust
 
-**DO:**
+Mechanically-enforceable rules live in `clippy.toml` (disallowed
+methods/macros: unbounded channels, `block_on`,
+`bincode::deserialize_from`, `log::*`, arg-count limit) and
+`[workspace.lints]` (`unsafe_code = "deny"`) — add new ones THERE, not
+here. The rules below are the ones lints can't check:
 
+- **NEVER use `unsafe`** — no exceptions (also denied by workspace lint)
 - Rust 1.93 toolchain (`rust-toolchain.toml`), rustfmt 2024 edition
-- Prefer functional style; use iterators, `map`, `filter`, `fold` over loops
-- Shadow variables when transforming and old value won't be used (keep naming simple)
-- Put imports at file top (e.g., `use std::collections::HashSet;`)
-- Use English words for numbers in names (`first_item`, `second_part`)
-- Module structure: `xxx.rs` as module file with `mod tests` inside
-- For all-public structs, prefer direct instantiation over `new()` for clarity
+- Prefer functional style; iterators (`map`/`filter`/`fold`) over loops;
+  avoid mutable variables unless necessary
+- Shadow variables when transforming and the old value won't be used
+- Imports at file top; no fully-qualified paths inline (use `HashSet`
+  after importing, not `std::collections::HashSet`); no imports or fn
+  definitions inside functions
+- English words for numbers in names (`first_item`, not `item1`)
+- Module structure: `xxx.rs` as module file with `mod tests` inside —
+  no separate `mod.rs` or `tests.rs` files
+- For all-public structs, prefer direct instantiation over `new()`
+- Don't mix public and private data in a struct (unless return-only and
+  immediately destructured)
 - Malicious parties: use `HashSet`, or if `Vec` call `deduplicate_and_sort()`
-- Use `tracing::*` macros for logging
 - When moving code between files, copy-paste identically (easier to review)
-
-**DON'T:**
-
-- **NEVER use `unsafe`** - no exceptions
-- Don't use mutable variables unless absolutely necessary
-- Don't use fully-qualified paths inline in code (use `HashSet` after importing, not `std::collections::HashSet`)
-- Don't place imports or function definitions inside functions
-- Don't use numbers in names (`x1` → `first_x`, `part2` → `second_part`, `item3` → `third_item`)
-- Don't create separate `mod.rs` or `tests.rs` files
-- Don't mix public and private data in a struct (unless return-only and immediately destructured)
-- Don't use `log::*` macros (use `tracing::*`)
-- Don't use unbounded channels (use bounded)
-- Don't use `futures::executor::block_on` (use tokio runtime)
-- Don't use `bincode::deserialize_from` (use `bincode::deserialize`)
-- Don't exceed 20 function arguments (clippy enforced)
-- Don't reference plan/phase names in comments (e.g., "Phase 4f of crypto bump", "(Phase 4a, option 1)"). Plan-phase nomenclature rots once the plan doc is archived; keep the comment's technical content and drop the phase tag.
-- When initializing a struct with locals, name the local like the field (use struct-init shorthand or shadowing). `let dkg_output = ...; let dkg_output = bcs::to_bytes(&dkg_output)?; PerCurveDkgData { dkg_output, public_key }` — not `let out = ...; let raw_bytes = bcs::to_bytes(&out)?; PerCurveDkgData { dkg_output: raw_bytes, public_key }`.
+- Don't reference plan/phase names in comments (e.g., "Phase 4f of
+  crypto bump") — plan nomenclature rots once the plan doc is archived;
+  keep the technical content, drop the phase tag
+- When initializing a struct with locals, name the local like the field
+  (struct-init shorthand or shadowing): `let dkg_output = bcs::to_bytes(&dkg_output)?;
+  PerCurveDkgData { dkg_output, .. }` — not `let raw_bytes = ...;
+  PerCurveDkgData { dkg_output: raw_bytes, .. }`
 
 ### Move
 
@@ -123,89 +155,34 @@ cargo test --release -- --test-threads=1   # Sequential execution
 # Integration tests
 cargo test --release -p ika-core dwallet_mpc::integration_tests
 
-# Simtest (manual; see "simtest under msim" below for what this is)
+# Simtest (manual; see dev-docs/conventions/simtest.md for what this is)
 MSIM_DISABLE_WATCHDOG=1 cargo simtest --package ika-test-cluster -- test_swarm_reaches_epoch_2
 
 # TypeScript SDK tests
 cd sdk/typescript && pnpm test
 ```
 
-### Picking a test type
+Default to `#[tokio::test(flavor = "multi_thread")]` for cluster tests;
+reach for `#[sim_test]` only when the test target IS scheduling/ordering
+nondeterminism — decision guide and msim gotcha catalogue:
+`dev-docs/conventions/simtest.md`. Crypto correctness belongs in unit
+tests inside the crypto crate; integration tests exercise coordination
+on top.
 
-`IkaTestClusterBuilder` works under both `#[tokio::test]` and `#[sim_test]`
-(msim-specific code is `cfg(msim)`-gated). Default to
-`#[tokio::test(flavor = "multi_thread")]` — real parallel crypto, fast
-wall time, no seed-reproducibility.
+Prefer running the heavy suites on CI over hours-long local runs —
+dispatch commands, runtimes, and artifact recovery:
+`dev-docs/playbooks/ci-suites.md`. Running a local Sui+ika localnet
+(version traps, readiness gates): `dev-docs/playbooks/localnet.md`.
+Debugging an MPC stall: `dev-docs/playbooks/mpc-stall-postmortem.md`.
 
-Reach for `#[sim_test]` only when the thing being tested *is*
-scheduling/ordering nondeterminism: message reordering during DKG, network
-partition mid-reconfig, a validator joining at a precise epoch boundary.
-Use pre-baked or stubbed crypto fixtures where you can — don't recompute
-class-groups DKG inside a simtest just because the framework allows it.
+Minimal verification by change type (run the narrowest check that
+covers the change; escalate to the full suite before merge):
 
-Crypto correctness belongs in unit tests inside the crypto crate, not in
-network-level integration tests. Integration tests should assume the
-crypto works and exercise coordination on top.
-
-### Why simtest is slow
-
-Under `cfg(msim)`, every simulated validator runs on the same single OS
-thread — that's how msim achieves seed-reproducibility, by collapsing all
-sources of scheduling nondeterminism onto a controlled scheduler. Real
-OS-thread parallelism (rayon `par_iter` inside class-groups, mpc, proof,
-tiresias) is incompatible with that model: rayon workers are real threads
-msim doesn't control, and any tokio/tracing call from them hits
-`NodeHandle::current().unwrap()` and `rayon-core` aborts the process
-(bypasses `panic_handler`).
-
-The workaround in this repo is to drop the cryptography-private `parallel`
-feature under `cfg(msim)` via `[target.'cfg(not(msim))'.dependencies]` overrides in
-`ika-core` and `dwallet-classgroups-types`. That reads backwards but is the
-only direction Cargo accepts — feature unification is additive only, so to
-turn a feature OFF under msim you list the base dep without it and re-add
-it in a `cfg(not(msim))` block. Direct `rayon::spawn_fifo` sites in
-`dwallet_mpc/crytographic_computation/{orchestrator,mpc_computations/network_dkg}.rs`
-also capture the caller's `sui_simulator::runtime::NodeHandle` and re-enter
-it as the first line of the closure. New rayon-from-msim-node code needs
-both patterns.
-
-Net effect: class-groups crypto runs sequentially under simtest. The
-single-OS-thread + no-parallelism combination makes the smoke test slow
-enough that simtest is more useful on-demand (the manual GitHub workflow)
-than per-PR. That's the trade-off, not a bug — see "Picking a test type"
-above; for tests where the slowness would dominate, `#[tokio::test]` is the
-right tool.
-
-### Simtest under msim
-
-`cargo simtest` (driver `scripts/simtest/cargo-simtest`) runs deterministic
-single-threaded tests via mysten-sim. Smoke entry point:
-`crates/ika-test-cluster/` (`IkaTestCluster` + `IkaTestClusterBuilder`).
-Other gotchas:
-
-- **Move build under msim** breaks the moment it touches sui-framework
-  (move-package-alt git-fetches via `tokio::process`, which msim doesn't
-  emulate). `IkaTestClusterBuilder` works around this by rewriting each
-  `Move.toml` to use explicit local-path deps on Sui framework + Move stdlib
-  (`ika_move_contracts::save_contracts_to_temp_dir_for_simtest`). The
-  `SIMTEST_STATIC_INIT_MOVE` warm-up uses the no-dep stub at
-  `crates/ika-test-cluster/move-stub/` for the same reason.
-- **IP allocation:** ika-config allocates from `10.11.0.x` (sui-config uses
-  `10.10.0.x` and they each have their own thread-local `SimAddressManager`).
-- **`Pub.<env>.toml`** persists across runs and breaks the next publish if
-  its absolute paths point at a deleted temp dir. `IkaTestClusterBuilder`
-  chdirs into the contracts temp dir before publish so the pubfile dies with
-  the `TempDir`.
-- **mysten-sim pin:** rev `213e543` (tokio 1.49.0) to match the workspace
-  tokio. Older pins ship 1.38.1 and the `[patch.crates-io.tokio]` patch
-  silently no-ops.
-- **`[profile.simulator]`** matches release (`opt-level = 3`,
-  `debug-assertions = false`, `overflow-checks = false`) — class-groups
-  crypto is unusable otherwise. `debug = 1` keeps line-table backtraces.
-- **Stale msim rot:** if `cargo simtest build` hits an `unresolved import`
-  under `--cfg msim`, suspect a Sui-fork `#[cfg(msim)]` block referencing
-  ika-renamed-but-not-actually-aliased symbols (`ika_simulator::*`,
-  `OIDCProvider`, `safe_mode`, etc.).
+- `dwallet_mpc/**` → `cargo test --release -p ika-core <nearest integration filter>`
+- Epoch boundaries / reconfiguration / `sui_connector` → cluster suite on CI
+- `sdk/typescript/**` → `./scripts/run-integration-tests-sequential.sh --filter <file-stem>`
+- `contracts/**` → `sui move build` per touched package
+- `ika-protocol-config` → `cargo test -p ika-protocol-config` (snapshot tests)
 
 ## Cryptography Notes
 
@@ -246,11 +223,36 @@ Other gotchas:
 - Don't push/commit to `main`, `master`, or `dev` branches
 - Don't use `--no-verify` to skip git hooks
 
+(Both DON'Ts and the fmt-before-commit rule are enforced
+deterministically by `.claude/hooks/git-guard.sh`.)
+
+## Long sessions
+
+When compacting, always preserve: the modified-file list, test commands
+already validated, branch names, and in-flight CI run IDs/URLs.
+
 ## Gotchas
 
 - **Release mode required**: Crypto operations are extremely slow in debug mode
-- **Forked from Sui**: Much code structure mirrors Sui Network patterns
-- **Sui dependency pinned**: Uses `mainnet-v1.70.2` tag for all Sui dependencies
+- **Forked from Sui — read the upstream as a reference**: much code
+  structure mirrors Sui Network patterns, so when a forked subsystem is
+  unclear (and especially for consensus — Mysticeti is Sui's
+  `consensus/core`), read the pinned Sui source. It's checked out locally
+  under `~/.cargo/git/checkouts/sui-*/<rev>/` (the one with `consensus/`
+  at its root) and browsable at github.com/MystenLabs/sui at the pinned
+  tag. How to locate it + what to read for what:
+  `dev-docs/reference/sui-upstream.md`.
+- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.70.2`;
+  sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
+  PR — root `Cargo.toml` (~90 tag pins), excluded wasm workspace locks,
+  the sui-binary downloads in the TS CI workflows, this file, and every
+  developer's local `sui` binary (a mismatched localnet binary completes
+  DKG but silently stalls reconfiguration). Checklist:
+  `dev-docs/conventions/sui-version-bump.md`; enforced in CI by
+  `scripts/check-sui-version-consistency.sh`.
 - **WASM excluded**: `sdk/ika-wasm` is excluded from workspace (separate build)
-- **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing
+- **Mysticeti consensus**: Uses Sui's Mysticeti for MPC message routing —
+  the commit/round semantics ika's freeze and epoch-close logic rely on
+  (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
+  in ika (see the upstream reference above)
 - **NOA checkpoints not live**: The NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`) is under active development and not yet deployed. No backward compatibility constraints on serialization formats or type names

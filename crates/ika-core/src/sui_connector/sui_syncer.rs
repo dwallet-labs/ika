@@ -42,6 +42,20 @@ pub struct SuiSyncer<C> {
     metrics: Arc<SuiConnectorMetrics>,
 }
 
+/// Per-loop dedup/latch state for `new_committee`'s assembly logging,
+/// carried across `sync_next_committee` ticks so the per-tick
+/// re-assembly doesn't re-log identical outcomes at info/error.
+#[derive(Default)]
+struct AssemblyLogState {
+    /// Last `(epoch, frozen, members, secp256k1, secp256r1, ristretto)`
+    /// assembly summary logged at info — identical repeats demote to debug.
+    last_logged_assembly: Option<(EpochId, bool, usize, usize, usize, usize)>,
+    /// Epoch for which the PERMANENT `EverythingExcluded` wedge was
+    /// already logged at error — repeats demote to debug (the
+    /// `off_chain_assembly_wedged` gauge carries the ongoing state).
+    wedge_logged_for_epoch: Option<EpochId>,
+}
+
 impl<C> SuiSyncer<C>
 where
     C: SuiClientInner + 'static,
@@ -95,6 +109,8 @@ where
             dwallet_coordinator_object_receiver.clone(),
             network_keys_sender,
             network_key_blob_source,
+            mode,
+            self.metrics.clone(),
         ));
 
         // Validator-only tasks: committee sync, end of publish, session tracking, uncompleted events
@@ -106,6 +122,7 @@ where
                 next_epoch_committee_sender.clone(),
                 chain_next_committee_sender.clone(),
                 class_groups_source.clone(),
+                self.metrics.clone(),
             ));
             info!("Starting end of publish sync task");
             tokio::spawn(Self::sync_dwallet_end_of_publish(
@@ -306,8 +323,25 @@ where
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         >,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
         let mut poll_interval = Duration::from_secs(10);
+        // Epoch for which a post-freeze (final) committee was already
+        // sent. Post-freeze, the off-chain assembly is a pure function
+        // of the immutable frozen set, so re-assembling and re-sending
+        // every tick is pure waste — skip until the epoch advances.
+        let mut final_committee_sent_for_epoch: Option<EpochId> = None;
+        // Consecutive ticks the off-chain assembly returned Incomplete —
+        // expected benign retry while announcements/blobs converge, so
+        // the per-tick log is debug; escalate to warn every 30th
+        // consecutive tick so a genuine stall still surfaces.
+        let mut consecutive_incomplete_ticks: u64 = 0;
+        // Dedup/latch state for the assembly logging inside `new_committee`.
+        let mut assembly_log_state = AssemblyLogState::default();
+        // Last `(epoch, frozen)` committee send logged at info — the
+        // pre-freeze window re-sends every tick, so intermediate
+        // re-sends demote to debug.
+        let mut last_logged_committee_send: Option<(EpochId, bool)> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -341,8 +375,9 @@ where
             // assembled). This chain signal breaks that cycle. It
             // carries only membership + stake (empty mpc_data crypto maps)
             // — all the freeze emit-gate and joiner watcher read.
+            let next_epoch = system_inner.epoch() + 1;
             let chain_committee = CommitteeMembership {
-                epoch: system_inner.epoch() + 1,
+                epoch: next_epoch,
                 voting_rights: new_next_committee
                     .iter()
                     .map(|(_, (name, stake))| (*name, *stake))
@@ -350,26 +385,76 @@ where
                 quorum_threshold: new_next_bls_committee.quorum_threshold,
                 validity_threshold: new_next_bls_committee.validity_threshold,
             };
-            let _ = chain_next_committee_sender.send(chain_committee);
+            // Only wake receivers when the chain view actually changed;
+            // an unconditional `send` marks the watch changed every tick.
+            chain_next_committee_sender.send_if_modified(|current| {
+                if *current != chain_committee {
+                    *current = chain_committee;
+                    true
+                } else {
+                    false
+                }
+            });
+
+            if final_committee_sent_for_epoch == Some(next_epoch) {
+                continue;
+            }
 
             let off_chain_on = ProtocolConfig::get_for_version(
                 ProtocolVersion::new(system_inner.protocol_version()),
                 Chain::Unknown,
             )
             .off_chain_validator_metadata_enabled();
+            // Snapshot the source once so the freeze probe and the
+            // assembly read the SAME per-epoch store: the freeze flag is
+            // monotonic within a store, so `is_frozen == true` here
+            // guarantees the assembly below used the frozen pairs.
+            let class_groups_snapshot = class_groups_source.load_full();
+            let frozen_at_assembly = class_groups_snapshot
+                .as_ref()
+                .is_some_and(|source| source.is_frozen());
             let committee = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
-                system_inner.epoch() + 1,
+                next_epoch,
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
                 true,
-                class_groups_source.clone(),
+                class_groups_snapshot,
                 off_chain_on,
+                frozen_at_assembly,
+                &mut assembly_log_state,
+                &metrics,
             )
             .await
             {
-                Ok(committee) => committee,
+                Ok(committee) => {
+                    consecutive_incomplete_ticks = 0;
+                    committee
+                }
+                Err(e @ DwalletMPCError::OffChainAssemblyIncomplete { .. }) => {
+                    // Expected per-tick retry while the off-chain pipeline
+                    // converges (every epoch, even with zero churn) — the
+                    // assembly outcome was already logged inside
+                    // `new_committee`. Demote the per-tick wrapper to
+                    // debug; escalate every 30th consecutive tick so a
+                    // genuine stall still surfaces at warn.
+                    consecutive_incomplete_ticks += 1;
+                    metrics.off_chain_assembly_incomplete_ticks_total.inc();
+                    if consecutive_incomplete_ticks.is_multiple_of(30) {
+                        warn!(
+                            consecutive_incomplete_ticks,
+                            "off-chain validator-mpc_data assembly still incomplete after \
+                             many consecutive sync ticks: {e}"
+                        );
+                    } else {
+                        debug!(
+                            consecutive_incomplete_ticks,
+                            "failed to initiate the next committee: {e}"
+                        );
+                    }
+                    continue;
+                }
                 Err(e) => {
                     error!("failed to initiate the next committee: {e}");
                     continue;
@@ -379,7 +464,27 @@ where
             if let Err(err) = next_epoch_committee_sender.send(committee) {
                 error!(error=?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
             } else {
-                info!(committee_epoch=?committee_epoch, "The next epoch committee was sent successfully");
+                // The committee is re-sent every pre-freeze tick; log the
+                // first send for the epoch and the final (frozen) send at
+                // info, intermediate identical re-sends at debug.
+                let send_log_key = (committee_epoch, frozen_at_assembly);
+                if last_logged_committee_send != Some(send_log_key) {
+                    info!(
+                        committee_epoch=?committee_epoch,
+                        frozen = frozen_at_assembly,
+                        "The next epoch committee was sent successfully"
+                    );
+                    last_logged_committee_send = Some(send_log_key);
+                } else {
+                    debug!(
+                        committee_epoch=?committee_epoch,
+                        frozen = frozen_at_assembly,
+                        "re-sent the next epoch committee (unchanged)"
+                    );
+                }
+                if frozen_at_assembly {
+                    final_committee_sent_for_epoch = Some(next_epoch);
+                }
             }
         }
     }
@@ -391,12 +496,13 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
-        class_groups_source: Arc<
-            arc_swap::ArcSwapOption<
-                Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
-            >,
+        class_groups_source: Option<
+            Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
         off_chain_on: bool,
+        frozen_at_assembly: bool,
+        log_state: &mut AssemblyLogState,
+        metrics: &SuiConnectorMetrics,
     ) -> DwalletMPCResult<Committee> {
         // Try the off-chain assembly first. The strict
         // `Complete`/`Incomplete` gate inside the source means we
@@ -409,19 +515,43 @@ where
         // Under legacy mode (`off_chain_on == false`) we fall
         // through to the chain read below so existing clusters
         // keep working.
-        if let Some(source) = class_groups_source.load_full() {
+        if let Some(source) = class_groups_source {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {
                 crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) => {
-                    info!(
+                    metrics.off_chain_assembly_wedged.set(0);
+                    // Pre-freeze, the assembly re-runs (and re-succeeds)
+                    // every sync tick; log at info only when the assembled
+                    // membership/counts change or on the final (frozen)
+                    // assembly, debug otherwise.
+                    let assembly_summary = (
                         epoch,
-                        members = bundles.class_groups.len(),
-                        secp256k1_pvss = bundles.secp256k1_pvss.len(),
-                        secp256r1_pvss = bundles.secp256r1_pvss.len(),
-                        ristretto_pvss = bundles.ristretto_pvss.len(),
-                        "assembled committee mpc_data off-chain"
+                        frozen_at_assembly,
+                        bundles.class_groups.len(),
+                        bundles.secp256k1_pvss.len(),
+                        bundles.secp256r1_pvss.len(),
+                        bundles.ristretto_pvss.len(),
                     );
+                    if log_state.last_logged_assembly != Some(assembly_summary) {
+                        info!(
+                            epoch,
+                            members = bundles.class_groups.len(),
+                            secp256k1_pvss = bundles.secp256k1_pvss.len(),
+                            secp256r1_pvss = bundles.secp256r1_pvss.len(),
+                            ristretto_pvss = bundles.ristretto_pvss.len(),
+                            frozen = frozen_at_assembly,
+                            "assembled committee mpc_data off-chain"
+                        );
+                        log_state.last_logged_assembly = Some(assembly_summary);
+                    } else {
+                        debug!(
+                            epoch,
+                            members = bundles.class_groups.len(),
+                            frozen = frozen_at_assembly,
+                            "re-assembled identical committee mpc_data off-chain"
+                        );
+                    }
                     return Ok(Committee::new(
                         epoch,
                         committee
@@ -445,9 +575,12 @@ where
                         // path; missing entries here are transient
                         // (P2P hasn't converged yet) and the
                         // outer sync loop should retry on the next
-                        // tick. Return a typed error rather than
+                        // tick — expected every epoch during the
+                        // convergence window, so the per-tick log is
+                        // debug (the caller escalates a persistent
+                        // stall). Return a typed error rather than
                         // silently reading from chain.
-                        warn!(
+                        debug!(
                             epoch,
                             missing = missing.len(),
                             ?missing,
@@ -477,15 +610,30 @@ where
                         // an operator is alerted; the likely cause is no
                         // next-committee member's announcement landing
                         // before the freeze (joiner relay / propagation
-                        // failure, or a misfrozen set).
-                        error!(
-                            epoch,
-                            members = authorities.len(),
-                            "off_chain mode: off-chain validator-mpc_data assembly is \
-                             PERMANENTLY incomplete — the freeze excluded EVERY committee \
-                             member, so reconfiguration into this epoch is WEDGED (no attested \
-                             mpc_data). Investigate next-committee announcement propagation."
-                        );
+                        // failure, or a misfrozen set). The state is a fixed
+                        // point for the rest of the epoch, so the error is
+                        // latched once per epoch (repeats at debug); the
+                        // `off_chain_assembly_wedged` gauge carries the
+                        // ongoing state for alerting.
+                        metrics.off_chain_assembly_wedged.set(1);
+                        if log_state.wedge_logged_for_epoch != Some(epoch) {
+                            error!(
+                                epoch,
+                                members = authorities.len(),
+                                "off_chain mode: off-chain validator-mpc_data assembly is \
+                                 PERMANENTLY incomplete — the freeze excluded EVERY committee \
+                                 member, so reconfiguration into this epoch is WEDGED (no attested \
+                                 mpc_data). Investigate next-committee announcement propagation."
+                            );
+                            log_state.wedge_logged_for_epoch = Some(epoch);
+                        } else {
+                            debug!(
+                                epoch,
+                                members = authorities.len(),
+                                "off-chain validator-mpc_data assembly still wedged \
+                                 (EverythingExcluded)"
+                            );
+                        }
                         return Err(DwalletMPCError::OffChainAssemblyIncomplete {
                             epoch,
                             missing: authorities.len(),
@@ -513,7 +661,7 @@ where
             .map_err(DwalletMPCError::IkaError)?;
 
         // Shape-tolerant decode per validator. PVSS HashMaps gain an entry only
-        // when the validator published the post-PR-#1707 bundle shape;
+        // when the validator published the version-3 bundle shape;
         // mainnet-v1.1.8-shape validators contribute only their class-groups key.
         let decoded_per_validator: Vec<_> = committee
             .iter()
@@ -525,7 +673,7 @@ where
                 if decoded.is_none() {
                     warn!(
                         authority = ?name,
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor post-PR-#1707 shape)"
+                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor version-3 shape)"
                     );
                 }
                 decoded.map(|d| (*name, d))
@@ -575,6 +723,8 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
+        mode: NodeMode,
+        metrics: Arc<SuiConnectorMetrics>,
     ) {
         // Last fetched network keys (id -> (epoch, state)). The
         // state is part of the cache key because chain-side state
@@ -588,6 +738,15 @@ where
             ObjectID,
             (u64, DWalletNetworkEncryptionKeyState),
         > = HashMap::new();
+        // Consecutive 5s ticks each key's overlay has been incomplete.
+        // An incomplete overlay is the designed steady state on a
+        // notifier/fullnode (whose overlay is legitimately empty for
+        // keys it didn't compute) and a normal transient on validators
+        // (fresh-key DKG window, chain-state flip before the local
+        // cache write), so the per-tick log is debug; a committee
+        // validator stuck incomplete escalates to warn every 60th
+        // consecutive tick (~5 min).
+        let mut consecutive_overlay_incomplete_ticks: HashMap<ObjectID, u64> = HashMap::new();
         'sync_network_keys: loop {
             time::sleep(Duration::from_secs(5)).await;
 
@@ -647,6 +806,7 @@ where
             }
             let mut all_fetched_network_keys_data: HashMap<_, _> =
                 (*network_keys_sender.borrow().clone()).clone();
+            let mut incomplete_overlay_keys_this_pass: i64 = 0;
             for (key_id, network_dec_key_shares) in keys_to_fetch.into_iter() {
                 // In off-chain mode, synthesize a metadata-only
                 // `DWalletNetworkEncryptionKeyData` from the
@@ -774,19 +934,11 @@ where
                         // EndOfPublish vote (`snapshot_ready_for_signing`
                         // requires a non-empty reconfiguration output),
                         // stalling reconfiguration.
-                        // A key DKG'd THIS epoch has no reconfiguration
-                        // output FOR this epoch by construction (its
-                        // first reconfiguration, even when already
-                        // completed, targets the NEXT epoch's committee
-                        // — same special case the chain read makes), so
-                        // an empty output is final for the epoch, not a
-                        // not-yet-cached race to retry.
                         let reconfiguration_output_missing =
                             matches!(
                                 merged.state,
                                 DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted
-                            ) && merged.current_reconfiguration_public_output.is_empty()
-                                && merged.dkg_at_epoch != current_epoch;
+                            ) && merged.current_reconfiguration_public_output.is_empty();
                         let overlay_incomplete = off_chain_on
                             && (merged.network_dkg_public_output.is_empty()
                                 || reconfiguration_output_missing);
@@ -808,14 +960,38 @@ where
                         let merged_state = merged.state.clone();
                         all_fetched_network_keys_data.insert(key_id, merged);
                         if overlay_incomplete {
-                            warn!(
-                                key = ?key_id,
-                                current_epoch,
-                                "off-chain network-key overlay missing a required output \
-                                 (DKG or reconfiguration) — blob source not installed or \
-                                 output not cached yet; will retry next tick"
-                            );
+                            incomplete_overlay_keys_this_pass += 1;
+                            let incomplete_ticks = consecutive_overlay_incomplete_ticks
+                                .entry(key_id)
+                                .or_insert(0);
+                            *incomplete_ticks += 1;
+                            // Expected-empty on notifier/fullnode overlays and
+                            // during validator convergence windows — per-tick
+                            // log at debug. A committee validator persistently
+                            // incomplete is a real stall: escalate every 60th
+                            // consecutive tick (~5 min at the 5s cadence).
+                            if mode.is_validator() && incomplete_ticks.is_multiple_of(60) {
+                                warn!(
+                                    key = ?key_id,
+                                    current_epoch,
+                                    consecutive_incomplete_ticks = *incomplete_ticks,
+                                    "off-chain network-key overlay still missing a required \
+                                     output (DKG or reconfiguration) after many consecutive \
+                                     sync ticks — blob source not installed or output never \
+                                     cached; investigate the local producer cache"
+                                );
+                            } else {
+                                debug!(
+                                    key = ?key_id,
+                                    current_epoch,
+                                    consecutive_incomplete_ticks = *incomplete_ticks,
+                                    "off-chain network-key overlay missing a required output \
+                                     (DKG or reconfiguration) — blob source not installed or \
+                                     output not cached yet; will retry next tick"
+                                );
+                            }
                         } else {
+                            consecutive_overlay_incomplete_ticks.remove(&key_id);
                             last_fetched_network_keys.insert(key_id, (current_epoch, merged_state));
                         }
                     }
@@ -830,6 +1006,9 @@ where
                     }
                 }
             }
+            metrics
+                .network_key_overlay_incomplete
+                .set(incomplete_overlay_keys_this_pass);
             if let Err(err) = network_keys_sender.send(Arc::new(all_fetched_network_keys_data)) {
                 error!(error=?err, "failed to send network keys data to the channel",);
             }

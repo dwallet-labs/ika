@@ -314,25 +314,6 @@ impl ConsensusAdapter {
         // initializing AuthorityPerEpochStore and here, should not be a big deal but can be optimized
         let recovered = epoch_store.get_all_pending_consensus_transactions();
 
-        // This if can be collapsed but it will be ugly
-        // if epoch_store
-        //     .get_reconfig_state_read_lock_guard()
-        //     .is_reject_user_certs()
-        //     && epoch_store.pending_consensus_certificates_empty()
-        // {
-        //     if recovered
-        //         .iter()
-        //         .any(ConsensusTransaction::is_end_of_publish)
-        //     {
-        //         // There are two cases when this is needed
-        //         // (1) We send EndOfPublish message after removing pending certificates in submit_and_wait_inner
-        //         // It is possible that node will crash between those two steps, in which case we might need to
-        //         // re-introduce EndOfPublish message on restart
-        //         // (2) If node crashed inside ConsensusAdapter::close_epoch,
-        //         // after reconfig lock state was written to DB and before we persisted EndOfPublish message
-        //         recovered.push(ConsensusTransaction::new_end_of_publish(self.authority));
-        //     }
-        // }
         debug!(
             "Submitting {:?} recovered pending consensus transactions to consensus",
             recovered.len()
@@ -347,36 +328,6 @@ impl ConsensusAdapter {
         _committee: &Committee,
         _transactions: &[ConsensusTransaction],
     ) -> (impl Future<Output = ()>, usize, usize, usize) {
-        // if transactions.iter().any(|tx| tx.is_user_transaction()) {
-        //     // UserTransactions are generally sent to just one validator and should
-        //     // be submitted to consensus without delay.
-        //     return (tokio::time::sleep(Duration::ZERO), 0, 0, 0);
-        // }
-
-        // Use the minimum digest to compute submit delay.
-        // let min_digest = transactions
-        //     .iter()
-        //     .filter_map(|tx| match &tx.kind {
-        //         ConsensusTransactionKind::CertifiedTransaction(certificate) => {
-        //             Some(certificate.digest())
-        //         }
-        //         ConsensusTransactionKind::UserTransaction(transaction) => {
-        //             Some(transaction.digest())
-        //         }
-        //         _ => None,
-        //     })
-        //     .min();
-        //
-        // let (duration, position, positions_moved, preceding_disconnected) = match min_digest {
-        //     Some(digest) => self.await_submit_delay_user_transaction(committee, digest),
-        //     _ => (Duration::ZERO, 0, 0, 0),
-        // };
-        // (
-        //     tokio::time::sleep(duration),
-        //     position,
-        //     positions_moved,
-        //     preceding_disconnected,
-        // )
         (tokio::time::sleep(Duration::ZERO), 0, 0, 0)
     }
 
@@ -488,20 +439,6 @@ impl ConsensusAdapter {
         transactions: &[ConsensusTransaction],
         epoch_store: &Arc<AuthorityPerEpochStore>,
     ) -> IkaResult<JoinHandle<()>> {
-        // if transactions.len() > 1 {
-        //     // In soft bundle, we need to check if all transactions are of CertifiedTransaction
-        //     // kind. The check is required because we assume this in submit_and_wait_inner.
-        //     for transaction in transactions {
-        //         fp_ensure!(
-        //             matches!(
-        //                 transaction.kind,
-        //                 ConsensusTransactionKind::CertifiedTransaction(_)
-        //             ),
-        //             IkaError::InvalidTxKindInSoftBundle
-        //         );
-        //         // TODO(fastpath): support batch of UserTransaction.
-        //     }
-        // }
         fp_ensure!(transactions.len() == 1, IkaError::InvalidTxKindInSoftBundle);
 
         //epoch_store.insert_pending_consensus_transactions(transactions, lock)?;
@@ -720,52 +657,6 @@ impl ConsensusAdapter {
         }
         debug!("{transaction_keys:?} processed by consensus");
 
-        //let consensus_keys: Vec<_> = transactions.iter().map(|t| t.key()).collect();
-        // epoch_store
-        //     .remove_pending_consensus_transactions(&consensus_keys)
-        //     .expect("Storage error when removing consensus transaction");
-
-        // let is_user_tx = is_soft_bundle
-        //     || matches!(
-        //         transactions[0].kind,
-        //         ConsensusTransactionKind::CertifiedTransaction(_)
-        //     )
-        //     || matches!(
-        //         transactions[0].kind,
-        //         ConsensusTransactionKind::UserTransaction(_)
-        //     );
-        // let send_end_of_publish = if is_user_tx {
-        //     // If we are in RejectUserCerts state and we just drained the list we need to
-        //     // send EndOfPublish to signal other validators that we are not submitting more certificates to the epoch.
-        //     // Note that there could be a race condition here where we enter this check in RejectAllCerts state.
-        //     // In that case we don't need to send EndOfPublish because condition to enter
-        //     // RejectAllCerts is when 2f+1 other validators already sequenced their EndOfPublish message.
-        //     // Also note that we could sent multiple EndOfPublish due to that multiple tasks can enter here with
-        //     // pending_count == 0. This doesn't affect correctness.
-        //     if epoch_store
-        //         .get_reconfig_state_read_lock_guard()
-        //         .is_reject_user_certs()
-        //     {
-        //         let pending_count = epoch_store.pending_consensus_certificates_count();
-        //         debug!(epoch=?epoch_store.epoch(), ?pending_count, "Deciding whether to send EndOfPublish");
-        //         pending_count == 0 // send end of epoch if empty
-        //     } else {
-        //         false
-        //     }
-        // } else {
-        //     false
-        // };
-        // if send_end_of_publish {
-        //     // sending message outside of any locks scope
-        //     info!(epoch=?epoch_store.epoch(), "Sending EndOfPublish message to consensus");
-        //     if let Err(err) = self.submit(
-        //         ConsensusTransaction::new_end_of_publish(self.authority),
-        //         None,
-        //         epoch_store,
-        //     ) {
-        //         warn!("Error when sending end of publish message: {:?}", err);
-        //     }
-        // }
         self.metrics
             .sequencing_certificate_success
             .with_label_values(&[tx_type])
@@ -842,24 +733,6 @@ impl ConsensusAdapter {
     ) -> ProcessedMethod {
         let notifications = FuturesUnordered::new();
         for transaction_key in transaction_keys {
-            // let transaction_digests = match transaction_key {
-            //     SequencedConsensusTransactionKey::External(
-            //         ConsensusTransactionKey::Certificate(digest),
-            //     ) => vec![digest],
-            //     _ => vec![],
-            // };
-
-            // let checkpoint_synced_future = if let SequencedConsensusTransactionKey::External(
-            //     ConsensusTransactionKey::CheckpointSignature(_, checkpoint_sequence_number),
-            // ) = transaction_key
-            // {
-            //     // If the transaction is a checkpoint signature, we can also wait to get notified when a checkpoint with equal or higher sequence
-            //     // number has been already synced. This way we don't try to unnecessarily sequence the signature for an already verified checkpoint.
-            //     Either::Left(epoch_store.synced_checkpoint_notify(checkpoint_sequence_number))
-            // } else {
-            //     Either::Right(future::pending())
-            // };
-
             // We wait for each transaction individually to be processed by consensus or executed in a checkpoint. We could equally just
             // get notified in aggregate when all transactions are processed, but with this approach can get notified in a more fine-grained way
             // as transactions can be marked as processed in different ways. This is mostly a concern for the soft-bundle transactions.
@@ -870,14 +743,6 @@ impl ConsensusAdapter {
                         self.metrics.sequencing_certificate_processed.with_label_values(&["consensus"]).inc();
                         ProcessedMethod::Consensus
                     },
-                    // processed = epoch_store.transactions_executed_in_checkpoint_notify(transaction_digests), if !transaction_digests.is_empty() => {
-                    //     processed.expect("Storage error when waiting for transaction executed in checkpoint");
-                    //     self.metrics.sequencing_certificate_processed.with_label_values(&["checkpoint"]).inc();
-                    // }
-                    // processed = checkpoint_synced_future => {
-                    //     processed.expect("Error when waiting for checkpoint sequence number");
-                    //     self.metrics.sequencing_certificate_processed.with_label_values(&["synced_checkpoint"]).inc();
-                    // }
                 }
             });
         }

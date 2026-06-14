@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
-    collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
@@ -25,8 +24,8 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Version 2: network_encryption_key_version = 2.
 // Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
 // Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
-//            consensus_skip_gced_blocks_in_direct_finalization on; post-PR-#1707 crypto
-//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
+//            consensus_skip_gced_blocks_in_direct_finalization on; version-3 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3; #1707) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
 // Version 5: noa_checkpoints on.
@@ -180,14 +179,8 @@ struct FeatureFlags {
     off_chain_validator_metadata: bool,
 }
 
-#[allow(unused)]
 fn is_false(b: &bool) -> bool {
     !b
-}
-
-#[allow(unused)]
-fn is_empty(b: &BTreeSet<String>) -> bool {
-    b.is_empty()
 }
 
 /// Ordering mechanism for transactions in one Narwhal consensus output.
@@ -310,6 +303,15 @@ pub struct ProtocolConfig {
     /// validators must agree on it or they fork on the close round.
     end_of_publish_grace_rounds: Option<u64>,
 
+    /// Number of additional consensus leader rounds the mpc_data freeze is
+    /// deferred after a stake-quorum of `EpochMpcDataReadySignal`s is
+    /// observed, unless full coverage (every committee member signaled and
+    /// no announcer is excluded) is reached first. Gives slower validators'
+    /// mpc_data blobs time to propagate — measured in consensus progress,
+    /// not wall-clock — before the input set is pinned. A protocol
+    /// constant: all validators must agree on it or their frozen sets fork.
+    mpc_data_freeze_grace_rounds: Option<u64>,
+
     // === Network Owned Address (NOA) Sign Presign Configuration (per algorithm) ===
     // Pool minimum sizes
     network_owned_address_ecdsa_secp256k1_presign_pool_minimum_size: Option<u64>,
@@ -381,8 +383,8 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
-    /// True iff this protocol_version uses the post-PR-#1707 network DKG /
-    /// validator-key-publication shape — `ValidatorEncryptionKeysAndProofs`
+    /// True iff this protocol_version uses the version-3 network DKG /
+    /// validator-key-publication shape (#1707) — `ValidatorEncryptionKeysAndProofs`
     /// (class-groups + per-curve PVSS HPKE) and
     /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
     /// <= 3 (mainnet-v1.1.8), where the publication is bare
@@ -392,8 +394,8 @@ impl ProtocolConfig {
         self.network_encryption_key_version.is_some_and(|v| v == 3)
     }
 
-    /// True iff this protocol_version uses the post-PR-#1707 reconfiguration
-    /// shape — `twopc_mpc::decentralized_party::reconfiguration::Party` with
+    /// True iff this protocol_version uses the version-3 reconfiguration
+    /// shape (#1707) — `twopc_mpc::decentralized_party::reconfiguration::Party` with
     /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
     /// <= 3, where reconfiguration runs against
     /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
@@ -614,6 +616,7 @@ impl ProtocolConfig {
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
             end_of_publish_grace_rounds: Some(50),
+            mpc_data_freeze_grace_rounds: Some(50),
 
             // === Network Owned Address (NOA) Presign Configuration (per algorithm) ===
             // Non-EdDSA algorithms use the same defaults as their internal presign counterparts.

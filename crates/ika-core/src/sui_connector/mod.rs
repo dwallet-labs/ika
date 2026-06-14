@@ -52,10 +52,6 @@ pub struct SuiConnectorService {
     // todo(zeev): this needs a refactor.
     #[allow(dead_code)]
     task_handles: Vec<JoinHandle<()>>,
-    #[allow(dead_code)]
-    sui_connector_config: SuiConnectorConfig,
-    #[allow(dead_code)]
-    metrics: Arc<SuiConnectorMetrics>,
     /// Late-bindable handle the network-keys sync task reads on each
     /// fetch. Lets ika-node install (and replace, per epoch) the
     /// off-chain `NetworkKeyBlobSource` used to overlay locally-
@@ -153,8 +149,6 @@ impl SuiConnectorService {
                 sui_executor,
                 network_keys_receiver: network_keys_receiver.clone(),
                 task_handles,
-                sui_connector_config,
-                metrics: sui_connector_metrics,
                 network_key_blob_source,
                 class_groups_source,
             }),

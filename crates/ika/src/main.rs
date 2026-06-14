@@ -1,6 +1,13 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
+// Compiled-in jemalloc as the global allocator (mirrors sui-node):
+// better fragmentation behavior than glibc malloc for long-running
+// RocksDB-heavy processes, and arch-independent.
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
+#[global_allocator]
+static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use std::path::PathBuf;
 
 use clap::*;

@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use sui_types::base_types::{EpochId, ObjectID};
 use tracing::{debug, error, info, instrument, trace, warn};
 use typed_store::rocks::{DBBatch, DBMap, DBOptions, MetricConf, default_db_options};
@@ -48,7 +49,7 @@ use crate::dwallet_mpc::{
     authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
 };
 use crate::epoch::epoch_metrics::EpochMetrics;
-use crate::stake_aggregator::StakeAggregator;
+use crate::stake_aggregator::{InsertResult, StakeAggregator};
 use crate::system_checkpoints::{
     BuilderSystemCheckpoint, PendingSystemCheckpoint, PendingSystemCheckpointInfo,
     PendingSystemCheckpointV1, SystemCheckpointHeight, SystemCheckpointService,
@@ -56,6 +57,7 @@ use crate::system_checkpoints::{
 };
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use group::PartyID;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_types::digests::MessageDigest;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
@@ -398,20 +400,11 @@ pub trait AuthorityPerEpochStoreTrait: Sync + Send + 'static {
 
     /// Returns whether the epoch-wide `mpc_data` input set has been
     /// frozen. Network DKG and reconfiguration session kickoff defers
-    /// until this is `true`.
+    /// until this is `true`. The freeze itself is decided at the consensus
+    /// commit boundary (see
+    /// `process_consensus_transactions_and_commit_boundary`), so the frozen
+    /// set is a deterministic function of the consensus sequence.
     fn is_mpc_data_frozen(&self) -> IkaResult<bool>;
-
-    /// Freezes the epoch-wide `mpc_data` input set IF a stake-quorum of
-    /// `EpochMpcDataReadySignal`s has been recorded — the "+ quorum" half
-    /// of the freeze condition. Called from the network DKG /
-    /// reconfiguration session gate (the "dkg or reconfig in progress"
-    /// half), so the freeze fires only once such a session actually starts
-    /// AND quorum coverage exists, rather than prematurely at epoch start
-    /// on a wall-clock ready-signal deadline — which the long genesis-DKG
-    /// transition consumes, locking the freeze at sub-full coverage before
-    /// slower validators' mpc_data has propagated. Idempotent (locks once);
-    /// returns whether the mpc_data is frozen afterward.
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool>;
 
     /// Reflects the per-epoch `protocol_config` flag that gates
     /// the entire off-chain validator-metadata pipeline. When
@@ -692,7 +685,11 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        self.cache_protocol_output(dwallet_network_encryption_key_id, output_bytes)
+        self.cache_protocol_output(
+            ProtocolOutputKind::Dkg,
+            dwallet_network_encryption_key_id,
+            output_bytes,
+        )
     }
 
     fn cache_network_reconfiguration_output(
@@ -701,30 +698,22 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         reconfiguration_epoch: EpochId,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        // Blob into perpetual `mpc_artifact_blobs` + digest into the
-        // epoch-keyed table, keyed by the reconfiguration session's
-        // own epoch (deterministic across validators) rather than the
-        // wall-clock epoch this validator processed the output in.
-        // That single (epoch, key) index serves both consumers: the
-        // handoff items builder reads the `reconfiguration_epoch`
-        // slice, and the off-chain blob overlay resolves the output
-        // FOR epoch `reconfiguration_epoch + 1` through it. The same
-        // canonical-encoding determinism note as
-        // [`Self::cache_protocol_output`] applies — this digest feeds
-        // the cross-epoch handoff attestation.
+        // Per-epoch table + perpetual blob/by-key mirror (feeds the
+        // off-chain overlay's by-key lookup). Unchanged.
+        self.cache_protocol_output(
+            ProtocolOutputKind::Reconfiguration,
+            dwallet_network_encryption_key_id,
+            output_bytes,
+        )?;
+        // Epoch-keyed digest for the handoff attestation, keyed by the
+        // reconfiguration session's own epoch (deterministic across
+        // validators) rather than the wall-clock epoch the per-epoch
+        // table above is implicitly bound to. This is the slice the
+        // handoff items builder reads, so a late-finalized output that
+        // crosses the epoch boundary still certifies under the correct
+        // epoch on every validator.
         if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            use fastcrypto::hash::{Blake2b256, HashFunction};
-            let mut hasher = Blake2b256::default();
-            hasher.update(output_bytes);
-            let digest: [u8; 32] = hasher.finalize().into();
-            if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes) {
-                warn!(
-                    error = ?e,
-                    ?dwallet_network_encryption_key_id,
-                    reconfiguration_epoch,
-                    "failed to persist reconfiguration output blob — next epoch's overlay lookup will miss the bytes"
-                );
-            }
+            let digest = mpc_data_blob_hash(output_bytes);
             if let Err(e) = perpetual.insert_network_reconfiguration_output_digest_for_epoch(
                 reconfiguration_epoch,
                 dwallet_network_encryption_key_id,
@@ -756,23 +745,6 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
         Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
     }
 
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool> {
-        let tables = self.tables()?;
-        if tables.frozen_validator_mpc_data_input_set.is_empty() {
-            let committee = self.committee();
-            let total_stake: u64 = tables
-                .epoch_mpc_data_ready_signals
-                .safe_iter()
-                .filter_map(Result::ok)
-                .map(|(authority, _)| committee.weight(&authority))
-                .sum();
-            if total_stake >= committee.quorum_threshold() {
-                self.freeze_mpc_data_if_first(&tables)?;
-            }
-        }
-        Ok(!tables.frozen_validator_mpc_data_input_set.is_empty())
-    }
-
     fn off_chain_validator_metadata_enabled(&self) -> bool {
         self.protocol_config()
             .off_chain_validator_metadata_enabled()
@@ -789,36 +761,27 @@ impl AuthorityPerEpochStoreTrait for AuthorityPerEpochStore {
     }
 }
 
+/// Discriminator for the two protocol output caches that share an
+/// implementation in [`AuthorityPerEpochStore::cache_protocol_output`].
+#[derive(Copy, Clone)]
+enum ProtocolOutputKind {
+    Dkg,
+    Reconfiguration,
+}
+
 /// Read-only adapter so `validator_metadata::NetworkKeyBlobSource`
 /// can serve protocol output blobs straight out of this validator's
-/// own caches (digest indices + perpetual `mpc_artifact_blobs`).
-/// Returning `None` causes the caller's fallback chain-read path to
-/// kick in.
+/// own caches (`network_dkg_output_digests` /
+/// `network_reconfiguration_output_digests` + perpetual
+/// `mpc_artifact_blobs`). Returning `None` causes the caller's
+/// fallback chain-read path to kick in.
 impl NetworkKeyBlobSource for AuthorityPerEpochStore {
     fn network_dkg_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
-        self.lookup_network_dkg_output_blob(network_key_id)
+        self.lookup_protocol_output_blob(ProtocolOutputKind::Dkg, network_key_id)
     }
 
-    /// The output FOR `for_epoch` is the one produced by the
-    /// reconfiguration session that ran in `for_epoch - 1`, so the
-    /// digest lives under production epoch `for_epoch - 1` in the
-    /// epoch-keyed perpetual table — exactly mirroring the on-chain
-    /// `reconfiguration_public_outputs[for_epoch]` read. `for_epoch
-    /// == 0` (or a missing entry, e.g. the production epoch ran v3
-    /// or this validator didn't participate in it) returns `None`
-    /// and the caller keeps the chain bytes.
-    fn network_reconfiguration_output_blob(
-        &self,
-        network_key_id: &ObjectID,
-        for_epoch: EpochId,
-    ) -> Option<Vec<u8>> {
-        let production_epoch = for_epoch.checked_sub(1)?;
-        let perpetual = self.perpetual_tables_for_handoff.load_full()?;
-        let digest = perpetual
-            .get_network_reconfiguration_output_digest_for_epoch(production_epoch, network_key_id)
-            .ok()
-            .flatten()?;
-        perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
+    fn network_reconfiguration_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
+        self.lookup_protocol_output_blob(ProtocolOutputKind::Reconfiguration, network_key_id)
     }
 }
 
@@ -942,6 +905,14 @@ pub struct AuthorityPerEpochStore {
     /// because no consumer (joiner bootstrap) is wired up yet.
     perpetual_tables_for_handoff:
         ArcSwapOption<super::authority_perpetual_tables::AuthorityPerpetualTables>,
+
+    /// Once-per-epoch latch for the operator-actionable "own mpc_data
+    /// blob missing/invalid in perpetual storage" warn emitted by
+    /// `compute_locally_validated_peers` — the condition has no in-epoch
+    /// self-heal, and the function runs every ~2s announcement-sender
+    /// tick, so without the latch the identical warn floods for hours.
+    /// The `own_mpc_data_blob_unhealthy` gauge carries the ongoing state.
+    self_blob_unhealthy_warned: AtomicBool,
 }
 
 /// The reconfiguration state of the authority.
@@ -1039,6 +1010,21 @@ pub struct AuthorityEpochTables {
     /// its peers (the close — and the final checkpoint it builds — must be
     /// consensus-deterministic).
     end_of_publish_quorum_round: DBMap<u64, u64>,
+
+    /// Single-entry (key `0`) marker set when the deferred (v4) epoch-close
+    /// message set was emitted. Written atomically with that commit's batch;
+    /// on epoch-store open it restores `reconfig_state` to `RejectAllTx` so a
+    /// restarted validator does not re-emit the close at a later commit
+    /// (which would fork its checkpoint stream from peers).
+    epoch_close_emitted: DBMap<u64, ()>,
+
+    /// Single-entry (key `0`) record of the consensus leader round at which
+    /// a stake-quorum of `EpochMpcDataReadySignal`s was first observed this
+    /// epoch. Anchors the `mpc_data_freeze_grace_rounds` (protocol config)
+    /// freeze grace; written atomically with the observing commit's batch so
+    /// every validator (including one restarting mid-grace) freezes at the
+    /// same round on the same signal set.
+    mpc_data_ready_quorum_round: DBMap<u64, u64>,
 
     /// Contains a single key, which overrides the value of
     /// ProtocolConfig::buffer_stake_for_protocol_upgrade_bps
@@ -1179,6 +1165,12 @@ pub struct AuthorityEpochTables {
     /// attestation items list. Blob bytes go into the perpetual
     /// `mpc_artifact_blobs` table so peers can fetch them by digest.
     pub(crate) network_dkg_output_digests: DBMap<ObjectID, [u8; 32]>,
+
+    /// Local cache of network reconfiguration output digests for
+    /// this epoch — same shape and lifecycle as
+    /// `network_dkg_output_digests`. Per-epoch (not perpetual)
+    /// because a key's reconfig output is by definition per-epoch.
+    pub(crate) network_reconfiguration_output_digests: DBMap<ObjectID, [u8; 32]>,
 }
 
 fn pending_consensus_transactions_table_default_config() -> DBOptions {
@@ -1589,6 +1581,59 @@ impl AuthorityPerEpochStore {
         metrics
             .current_voting_right
             .set(committee.weight(&name) as i64);
+        // EpochMetrics is node-lifetime (shared across epoch stores), so the
+        // per-epoch off-chain-metadata gauges must be reset here — and
+        // re-seeded from the per-epoch tables where state survives a
+        // mid-epoch restart, so a restart doesn't false-alarm (e.g. a
+        // freeze-epoch gauge stuck at 0 after the freeze already fired).
+        let recorded_ready_signals = tables
+            .epoch_mpc_data_ready_signals
+            .safe_iter()
+            .filter_map(Result::ok)
+            .count();
+        metrics
+            .dwallet_mpc_data_ready_signals
+            .set(recorded_ready_signals as i64);
+        metrics.dwallet_mpc_data_ready_signal_stake.set(0);
+        metrics.dwallet_mpc_data_locally_validated_peers.set(0);
+        let recorded_announcements = tables
+            .validator_mpc_data_announcements
+            .safe_iter()
+            .filter_map(Result::ok)
+            .count();
+        metrics
+            .dwallet_mpc_data_announcements_received
+            .set(recorded_announcements as i64);
+        let frozen_set_present = !tables.frozen_validator_mpc_data_input_set.is_empty();
+        if frozen_set_present {
+            metrics.dwallet_mpc_data_freeze_epoch.set(epoch_id as i64);
+        }
+        let excluded_validators = tables
+            .epoch_excluded_validators
+            .safe_iter()
+            .filter_map(Result::ok)
+            .count();
+        metrics
+            .dwallet_mpc_data_excluded_validators
+            .set(excluded_validators as i64);
+        let persisted_handoff_signers: Vec<AuthorityName> = tables
+            .handoff_signatures
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(signer, _)| signer)
+            .collect();
+        let persisted_handoff_stake: u64 = persisted_handoff_signers
+            .iter()
+            .map(|signer| committee.weight(signer))
+            .sum();
+        metrics
+            .dwallet_handoff_signatures_collected
+            .set(persisted_handoff_signers.len() as i64);
+        metrics
+            .dwallet_handoff_signatures_stake
+            .set(persisted_handoff_stake as i64);
+        metrics.dwallet_handoff_signatures_buffered.set(0);
+        metrics.own_mpc_data_blob_unhealthy.set(0);
         let protocol_version = epoch_start_configuration
             .epoch_start_state()
             .protocol_version();
@@ -1596,6 +1641,18 @@ impl AuthorityPerEpochStore {
             ProtocolConfig::get_for_version(protocol_version, chain_identifier.chain());
         let end_of_publish =
             StakeAggregator::from_iter(committee.clone(), tables.end_of_publish.safe_iter())?;
+        // Restore the closed state across a restart: the deferred (v4) close
+        // persists `epoch_close_emitted` atomically with the closing commit,
+        // so reopening with `AcceptAllCerts` here would both re-emit the
+        // close set at a later commit (forking this validator's checkpoint
+        // stream from peers) and re-open transaction acceptance that the
+        // rest of the committee has closed. Only the v4 deferred close ever
+        // writes this marker, so v3 restart behavior is unchanged.
+        let initial_reconfig_status = if tables.epoch_close_emitted.get(&0)?.is_some() {
+            ReconfigCertStatus::RejectAllTx
+        } else {
+            ReconfigCertStatus::AcceptAllCerts
+        };
         let s = Arc::new(Self {
             name,
             committee: committee.clone(),
@@ -1614,7 +1671,7 @@ impl AuthorityPerEpochStore {
             chain_identifier,
             packages_config,
             reconfig_state: RwLock::new(ReconfigState {
-                status: ReconfigCertStatus::AcceptAllCerts,
+                status: initial_reconfig_status,
             }),
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
@@ -1624,6 +1681,7 @@ impl AuthorityPerEpochStore {
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
             handoff_aggregator: parking_lot::Mutex::new(None),
             perpetual_tables_for_handoff: ArcSwapOption::empty(),
+            self_blob_unhealthy_warned: AtomicBool::new(false),
         });
 
         s.update_buffer_stake_metric();
@@ -1954,6 +2012,16 @@ impl AuthorityPerEpochStore {
     /// addressed, so a blob from an as-yet-unverified relayed
     /// announcement is inert unless and until a frozen digest matches.
     fn store_announced_mpc_data_blob(&self, digest: [u8; 32], blob: &[u8]) {
+        // Blobs ride consensus with no size cap yet; record the real
+        // distribution so the eventual cap is measured, not guessed.
+        self.metrics
+            .mpc_data_announcement_blob_bytes
+            .observe(blob.len() as f64);
+        info!(
+            blob_bytes = blob.len(),
+            digest = ?digest,
+            "storing in-band mpc_data announcement blob"
+        );
         match crate::validator_metadata::verify_peer_blob_for_relay(blob, &digest) {
             crate::validator_metadata::PeerBlobVerdict::Accept => {}
             verdict => {
@@ -2094,6 +2162,25 @@ impl AuthorityPerEpochStore {
         tables
             .validator_mpc_data_announcements
             .insert(&announcement.validator, announcement)?;
+        // Once per validator per epoch (re-announces are rare and strictly
+        // newer-timestamped). Covers all three entry points — self, relayed
+        // joiner, and buffered replay — and answers "did this node record
+        // V's announcement" when the frozen set later excludes V.
+        let recorded_announcements = tables
+            .validator_mpc_data_announcements
+            .safe_iter()
+            .filter_map(Result::ok)
+            .count();
+        self.metrics
+            .dwallet_mpc_data_announcements_received
+            .set(recorded_announcements as i64);
+        info!(
+            validator = ?announcement.validator,
+            epoch = announcement.epoch,
+            blob_hash = ?announcement.blob_hash,
+            timestamp_ms = announcement.timestamp_ms,
+            "recorded validator mpc_data announcement"
+        );
         Ok(())
     }
 
@@ -2148,6 +2235,31 @@ impl AuthorityPerEpochStore {
     pub fn install_consensus_pubkey_provider(&self, provider: Box<dyn ConsensusPubkeyProvider>) {
         self.consensus_pubkey_provider
             .store(Some(Arc::new(provider)));
+        // Signatures that arrived after the expected attestation installed
+        // but before this provider did were re-buffered (verification was
+        // impossible without consensus pubkeys). Replay them now that it is.
+        // If the expected attestation is still absent they simply re-buffer;
+        // each runs through full verification otherwise.
+        let drained: Vec<_> = std::mem::take(&mut *self.pending_handoff_signatures.lock());
+        if !drained.is_empty() {
+            info!(
+                pending = drained.len(),
+                epoch = self.epoch(),
+                "replaying buffered handoff signatures after consensus-pubkey provider install"
+            );
+            for msg in drained {
+                if let Err(e) = self.record_handoff_signature(&msg) {
+                    warn!(
+                        error = ?e,
+                        signer = ?msg.signer,
+                        "failed to replay buffered handoff signature after provider install"
+                    );
+                }
+            }
+            self.metrics
+                .dwallet_handoff_signatures_buffered
+                .set(self.pending_handoff_signatures.lock().len() as i64);
+        }
     }
 
     /// Install the locally-computed expected handoff attestation
@@ -2189,6 +2301,7 @@ impl AuthorityPerEpochStore {
         // doesn't matter — the aggregator is stake-weighted.
         let provider = self.consensus_pubkey_provider.load_full();
         let tables = self.tables()?;
+        let mut replayed_signatures: usize = 0;
         for entry in tables.handoff_signatures.safe_iter() {
             let (signer, signature) = entry?;
             if let Some(provider) = provider.as_ref() {
@@ -2210,9 +2323,40 @@ impl AuthorityPerEpochStore {
                 }
             }
             aggregator.insert_verified(signer, signature);
+            replayed_signatures += 1;
         }
+        let aggregator_signer_count = aggregator.signer_count();
+        let aggregator_stake = aggregator.accumulated_stake();
+        let replay_certified_epoch = aggregator.certified().map(|cert| cert.attestation.epoch);
         *guard = Some(aggregator);
         drop(guard);
+        // Positive baseline record of what this validator attested to —
+        // needed to interpret later AttestationMismatch warns and
+        // buffered-quorum adoptions. The `attestation_unchanged`
+        // early-return above bounds this to once per distinct
+        // attestation install (once or twice per epoch).
+        info!(
+            epoch = attestation.epoch,
+            items = attestation.items.len(),
+            next_committee_hash = ?attestation.next_committee_pubkey_set_hash,
+            replayed_signatures,
+            "installed expected handoff attestation — aggregating peer signatures against it"
+        );
+        self.metrics
+            .dwallet_handoff_signatures_collected
+            .set(aggregator_signer_count as i64);
+        self.metrics
+            .dwallet_handoff_signatures_stake
+            .set(aggregator_stake as i64);
+        // A restart past quorum re-mints the cert in memory during the
+        // replay above without going through `record_handoff_signature`'s
+        // `Certified` arm — re-seed the gauge here so a restart doesn't
+        // false-fire the cert-lag alert.
+        if let Some(cert_epoch) = replay_certified_epoch {
+            self.metrics
+                .dwallet_handoff_cert_epoch
+                .set(cert_epoch as i64);
+        }
         // Drain peer V2 signatures that arrived before this
         // attestation was installed. Each goes through
         // `process_handoff_signature` for real verification
@@ -2222,7 +2366,7 @@ impl AuthorityPerEpochStore {
         // size in practice.
         let drained: Vec<_> = std::mem::take(&mut *self.pending_handoff_signatures.lock());
         if !drained.is_empty() {
-            debug!(
+            info!(
                 pending = drained.len(),
                 epoch = attestation.epoch,
                 "replaying buffered peer handoff signatures after attestation install"
@@ -2236,6 +2380,9 @@ impl AuthorityPerEpochStore {
                     );
                 }
             }
+            self.metrics
+                .dwallet_handoff_signatures_buffered
+                .set(self.pending_handoff_signatures.lock().len() as i64);
         }
         Ok(())
     }
@@ -2310,20 +2457,17 @@ impl AuthorityPerEpochStore {
         )
     }
 
-    /// Implementation behind `cache_network_dkg_output`. Computes the
+    /// Shared implementation behind `cache_network_dkg_output` and
+    /// `cache_network_reconfiguration_output`. Computes the
     /// Blake2b256 digest of `output_bytes`, writes the digest into
-    /// the per-epoch `network_dkg_output_digests` table, and writes
-    /// the blob into perpetual `mpc_artifact_blobs` so the local node
-    /// can resolve the bytes by digest in later epochs (via
-    /// `EpochStoreBlobSource`, which reads perpetual directly). Unlike
-    /// validator `mpc_data` blobs, these network-key outputs are
-    /// resolved locally — never fetched peer-to-peer — so they
-    /// intentionally do NOT go through the `BlobCache` write-through
-    /// into the in-memory P2P serve store. Both writes are idempotent
-    /// on byte-identical inputs. (Reconfiguration outputs take a
-    /// different path — `cache_network_reconfiguration_output` writes
-    /// the epoch-keyed digest table, since those outputs are
-    /// epoch-specific where the DKG output is one-time.)
+    /// the appropriate per-epoch table, and writes the blob into
+    /// perpetual `mpc_artifact_blobs` so the local node can resolve
+    /// the bytes by digest in later epochs (via `EpochStoreBlobSource`,
+    /// which reads perpetual directly). Unlike validator `mpc_data`
+    /// blobs, these network-key outputs are resolved locally — never
+    /// fetched peer-to-peer — so they intentionally do NOT go through
+    /// the `BlobCache` write-through into the in-memory P2P serve store.
+    /// Both writes are idempotent on byte-identical inputs.
     ///
     /// DETERMINISM: this digest feeds the cross-epoch handoff
     /// attestation, whose items a quorum of signers must byte-match.
@@ -2335,17 +2479,20 @@ impl AuthorityPerEpochStore {
     /// and cross-reject as `AttestationMismatch` with no other symptom.
     fn cache_protocol_output(
         &self,
+        kind: ProtocolOutputKind,
         dwallet_network_encryption_key_id: ObjectID,
         output_bytes: &[u8],
     ) -> IkaResult<()> {
-        use fastcrypto::hash::{Blake2b256, HashFunction};
-        let mut hasher = Blake2b256::default();
-        hasher.update(output_bytes);
-        let digest: [u8; 32] = hasher.finalize().into();
+        let digest = mpc_data_blob_hash(output_bytes);
         let tables = self.tables()?;
-        tables
-            .network_dkg_output_digests
-            .insert(&dwallet_network_encryption_key_id, &digest)?;
+        match kind {
+            ProtocolOutputKind::Dkg => tables
+                .network_dkg_output_digests
+                .insert(&dwallet_network_encryption_key_id, &digest)?,
+            ProtocolOutputKind::Reconfiguration => tables
+                .network_reconfiguration_output_digests
+                .insert(&dwallet_network_encryption_key_id, &digest)?,
+        }
         if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
             if let Err(e) = perpetual.insert_mpc_artifact_blob(digest, output_bytes) {
                 warn!(
@@ -2361,9 +2508,16 @@ impl AuthorityPerEpochStore {
             // returns `None` for any key whose output was produced in
             // a prior epoch, which propagates as `BcsError(Eof)` in
             // `instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output`.
-            if let Err(e) = perpetual
-                .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest)
-            {
+            let perpetual_insert = match kind {
+                ProtocolOutputKind::Dkg => perpetual
+                    .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest),
+                ProtocolOutputKind::Reconfiguration => perpetual
+                    .insert_network_reconfiguration_output_digest(
+                        dwallet_network_encryption_key_id,
+                        digest,
+                    ),
+            };
+            if let Err(e) = perpetual_insert {
                 warn!(
                     error = ?e,
                     ?dwallet_network_encryption_key_id,
@@ -2419,50 +2573,59 @@ impl AuthorityPerEpochStore {
         &self,
         epoch: EpochId,
     ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
-        let mut out: std::collections::BTreeMap<ObjectID, [u8; 32]> =
-            std::collections::BTreeMap::new();
-        if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
-            for entry in perpetual
-                .network_reconfiguration_output_digest_by_epoch_and_key
-                .safe_iter()
-            {
-                let ((entry_epoch, key_id), digest) = entry.map_err(IkaError::from)?;
-                if entry_epoch == epoch {
-                    out.insert(key_id, digest);
-                }
+        match self.perpetual_tables_for_handoff.load_full() {
+            Some(perpetual) => {
+                perpetual.get_network_reconfiguration_output_digests_for_epoch(epoch)
             }
+            None => Ok(std::collections::BTreeMap::new()),
         }
-        Ok(out)
     }
 
-    /// Looks up the cached network DKG output blob for a network key.
-    /// Returns `None` only when no digest exists for this key in
-    /// either the per-epoch table or the perpetual mirror, or when
-    /// the digest is known but the perpetual blob store doesn't hold
-    /// the bytes.
+    /// Looks up the cached blob for a given network key + protocol
+    /// output kind. Returns `None` only when no digest exists for
+    /// this key/kind in either the per-epoch table or the perpetual
+    /// mirror, or when the digest is known but the perpetual blob
+    /// store doesn't hold the bytes.
     ///
     /// Lookup precedence:
-    /// 1. Per-epoch `network_dkg_output_digests` (fresh writes in the
+    /// 1. Per-epoch `network_*_output_digests` (fresh writes in the
     ///    current epoch land here first).
-    /// 2. Perpetual `network_dkg_output_digests_by_key` mirror
-    ///    (covers keys whose DKG ran in a prior epoch — the per-epoch
-    ///    table starts empty after each reconfig).
+    /// 2. Perpetual `network_*_output_digests_by_key` mirror (covers
+    ///    keys whose output was produced in a prior epoch — the
+    ///    per-epoch table starts empty after each reconfig).
     /// 3. Perpetual `mpc_artifact_blobs` keyed by the resolved
     ///    digest.
-    fn lookup_network_dkg_output_blob(&self, network_key_id: &ObjectID) -> Option<Vec<u8>> {
+    fn lookup_protocol_output_blob(
+        &self,
+        kind: ProtocolOutputKind,
+        network_key_id: &ObjectID,
+    ) -> Option<Vec<u8>> {
         let perpetual = self.perpetual_tables_for_handoff.load_full()?;
         let tables = self.tables().ok()?;
-        let digest = tables
-            .network_dkg_output_digests
-            .get(network_key_id)
-            .ok()
-            .flatten()
-            .or_else(|| {
-                perpetual
-                    .get_network_dkg_output_digest(network_key_id)
-                    .ok()
-                    .flatten()
-            })?;
+        let digest = match kind {
+            ProtocolOutputKind::Dkg => tables
+                .network_dkg_output_digests
+                .get(network_key_id)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    perpetual
+                        .get_network_dkg_output_digest(network_key_id)
+                        .ok()
+                        .flatten()
+                })?,
+            ProtocolOutputKind::Reconfiguration => tables
+                .network_reconfiguration_output_digests
+                .get(network_key_id)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    perpetual
+                        .get_network_reconfiguration_output_digest(network_key_id)
+                        .ok()
+                        .flatten()
+                })?,
+        };
         perpetual.get_mpc_artifact_blob(&digest).ok().flatten()
     }
 
@@ -2503,20 +2666,22 @@ impl AuthorityPerEpochStore {
     /// cert to perpetual storage, re-persisting the enriched cert as
     /// each later signer adds slack.
     ///
-    /// Returns whether the bundled `EndOfPublishV2` EndOfPublish vote
-    /// should be counted: `true` when the signature is accepted,
-    /// buffered (not yet verifiable), or certifies quorum; `false` only
-    /// when it *verifiably* fails (`AttestationMismatch` / bad sig), so a
-    /// content-mismatched bundle is rejected atomically.
+    /// The outcome NEVER affects the bundled `EndOfPublishV2` vote: the EOP
+    /// tally must be a deterministic function of the consensus sequence,
+    /// while acceptance here depends on per-validator local state (whether
+    /// this validator's own expected attestation is installed, whether its
+    /// consensus-pubkey provider has loaded). A rejected signature is
+    /// dropped (and logged) for the handoff-cert aggregation only — the
+    /// cert needs a quorum of valid signatures, not all of them.
     pub fn record_handoff_signature(
         &self,
         msg: &ika_types::handoff::HandoffSignatureMessage,
-    ) -> IkaResult<bool> {
+    ) -> IkaResult<()> {
         if !self
             .protocol_config()
             .off_chain_validator_metadata_enabled()
         {
-            return Ok(true);
+            return Ok(());
         }
         let Some(expected) = self.expected_handoff_attestation.load_full() else {
             // No expected attestation yet — this validator hasn't
@@ -2538,7 +2703,7 @@ impl AuthorityPerEpochStore {
                     signer = ?msg.signer,
                     "non-committee handoff signature — dropping before buffer insert"
                 );
-                return Ok(true);
+                return Ok(());
             }
             let mut pending = self.pending_handoff_signatures.lock();
             // Per-signer dedup: a peer re-broadcasting the same V2
@@ -2548,6 +2713,9 @@ impl AuthorityPerEpochStore {
             // already-recorded signer.
             pending.retain(|m| m.signer != msg.signer);
             pending.push(msg.clone());
+            self.metrics
+                .dwallet_handoff_signatures_buffered
+                .set(pending.len() as i64);
             debug!(
                 signer = ?msg.signer,
                 pending_len = pending.len(),
@@ -2574,14 +2742,35 @@ impl AuthorityPerEpochStore {
                 );
                 self.install_expected_handoff_attestation(attestation)?;
             }
-            return Ok(true);
+            return Ok(());
         };
         let Some(provider) = self.consensus_pubkey_provider.load_full() else {
+            // The provider installs asynchronously (a chain-fetch task), and
+            // after a restart consensus replay can deliver the committee's
+            // signatures before its first fetch completes. Dropping here
+            // would lose them permanently — peers stop re-submitting once
+            // their own vote is durable — so re-buffer instead;
+            // `install_consensus_pubkey_provider` re-drains the buffer once
+            // verification becomes possible. Same committee-membership bound
+            // as the pre-install buffer (resistance to byzantine spam).
+            if self.committee.weight(&msg.signer) == 0 {
+                debug!(
+                    signer = ?msg.signer,
+                    "non-committee handoff signature — dropping before buffer insert"
+                );
+                return Ok(());
+            }
             debug!(
                 signer = ?msg.signer,
-                "no consensus pubkey provider installed — dropping handoff signature"
+                "no consensus pubkey provider installed yet — buffering handoff signature"
             );
-            return Ok(true);
+            let mut pending = self.pending_handoff_signatures.lock();
+            pending.retain(|m| m.signer != msg.signer);
+            pending.push(msg.clone());
+            self.metrics
+                .dwallet_handoff_signatures_buffered
+                .set(pending.len() as i64);
+            return Ok(());
         };
         let mut guard = self.handoff_aggregator.lock();
         let Some(aggregator) = guard.as_mut() else {
@@ -2589,7 +2778,7 @@ impl AuthorityPerEpochStore {
             // when `expected_handoff_attestation` is set, but bail
             // safely rather than panic.
             warn!("expected handoff attestation set but aggregator missing — dropping");
-            return Ok(true);
+            return Ok(());
         };
         let outcome = process_handoff_signature(
             msg,
@@ -2597,14 +2786,43 @@ impl AuthorityPerEpochStore {
             provider.as_ref().as_ref(),
             aggregator,
         );
+        let aggregator_signer_count = aggregator.signer_count();
+        let aggregator_stake = aggregator.accumulated_stake();
         match outcome {
             HandoffSignatureRecordOutcome::Recorded => {
+                self.metrics
+                    .dwallet_handoff_signatures_collected
+                    .set(aggregator_signer_count as i64);
+                self.metrics
+                    .dwallet_handoff_signatures_stake
+                    .set(aggregator_stake as i64);
                 self.tables()?
                     .handoff_signatures
                     .insert(&msg.signer, &msg.signature)?;
-                Ok(true)
+                Ok(())
             }
             HandoffSignatureRecordOutcome::Certified(cert) => {
+                // The once-per-epoch milestone of the handoff subsystem:
+                // a stake quorum agreed on the attestation and the cert
+                // exists (formation is logged regardless of whether the
+                // persist below succeeds). Re-fires on each later signer's
+                // enrichment — bounded by committee size per epoch.
+                info!(
+                    epoch = cert.attestation.epoch,
+                    signers = cert.signatures.len(),
+                    items = cert.attestation.items.len(),
+                    "handoff attestation reached stake quorum — certified handoff \
+                     attestation formed"
+                );
+                self.metrics
+                    .dwallet_handoff_cert_epoch
+                    .set(cert.attestation.epoch as i64);
+                self.metrics
+                    .dwallet_handoff_signatures_collected
+                    .set(aggregator_signer_count as i64);
+                self.metrics
+                    .dwallet_handoff_signatures_stake
+                    .set(aggregator_stake as i64);
                 self.tables()?
                     .handoff_signatures
                     .insert(&msg.signer, &msg.signature)?;
@@ -2624,9 +2842,13 @@ impl AuthorityPerEpochStore {
                         "perpetual tables not installed; handoff cert not persisted"
                     );
                 }
-                Ok(true)
+                Ok(())
             }
             HandoffSignatureRecordOutcome::Rejected(verdict) => {
+                self.metrics
+                    .dwallet_handoff_signatures_rejected_total
+                    .with_label_values(&[&format!("{verdict:?}")])
+                    .inc();
                 if matches!(
                     verdict,
                     crate::validator_metadata::HandoffSignatureVerdict::AttestationMismatch
@@ -2666,7 +2888,7 @@ impl AuthorityPerEpochStore {
                 } else {
                     warn!(?verdict, signer = ?msg.signer, "handoff signature rejected");
                 }
-                Ok(false)
+                Ok(())
             }
         }
     }
@@ -2724,16 +2946,33 @@ impl AuthorityPerEpochStore {
             // Own announcement is in the table but the corresponding
             // perpetual blob is missing or fails decode. Attesting
             // to self here would lie to peers (they'd fetch from us
-            // and get nothing); log loudly so operators notice and
-            // restart this validator to re-persist the blob.
-            warn!(
-                validator = ?self.name,
-                "own announcement is in the per-epoch table but the \
-                 corresponding mpc_data blob is missing or invalid in \
-                 perpetual storage; refusing to self-attest until the \
-                 blob is re-persisted (operator should restart this validator)"
-            );
+            // and get nothing); surface loudly ONCE per epoch so
+            // operators notice and restart this validator to re-persist
+            // the blob — the condition has no in-epoch self-heal and
+            // this function runs 1-2x per ~2s tick, so repeats go to
+            // debug and the gauge carries the ongoing state for alerting.
+            self.metrics.own_mpc_data_blob_unhealthy.set(1);
+            if !self.self_blob_unhealthy_warned.swap(true, Ordering::AcqRel) {
+                warn!(
+                    validator = ?self.name,
+                    "own announcement is in the per-epoch table but the \
+                     corresponding mpc_data blob is missing or invalid in \
+                     perpetual storage; refusing to self-attest until the \
+                     blob is re-persisted (operator should restart this validator)"
+                );
+            } else {
+                debug!(
+                    validator = ?self.name,
+                    "own mpc_data blob still missing or invalid in perpetual storage; \
+                     refusing to self-attest"
+                );
+            }
+        } else {
+            self.metrics.own_mpc_data_blob_unhealthy.set(0);
         }
+        self.metrics
+            .dwallet_mpc_data_locally_validated_peers
+            .set(decision.validated.len() as i64);
         Ok(decision.validated.into_iter().collect())
     }
 
@@ -2941,15 +3180,24 @@ impl AuthorityPerEpochStore {
         tables
             .epoch_mpc_data_ready_signals
             .insert(&signal.authority, &canonical)?;
+        let recorded_ready_signals = tables
+            .epoch_mpc_data_ready_signals
+            .safe_iter()
+            .filter_map(Result::ok)
+            .count();
+        self.metrics
+            .dwallet_mpc_data_ready_signals
+            .set(recorded_ready_signals as i64);
 
-        // NOTE: recording a ready-signal no longer triggers the freeze.
-        // The freeze is now gated on a network DKG/reconfiguration session
-        // actually starting (see `freeze_mpc_data_if_quorum`, called from
-        // the session gate in `mpc_session.rs`) so it fires mid-epoch with
-        // full coverage rather than at epoch start on the first quorum —
-        // when slower validators' mpc_data hasn't propagated yet. Signals
-        // keep accruing here (and validators re-emit as their coverage
-        // grows) so the deferred freeze captures the complete set.
+        // NOTE: recording a ready-signal does not trigger the freeze.
+        // The freeze is decided at the consensus commit boundary (see
+        // `process_consensus_transactions_and_commit_boundary`): once a
+        // stake-quorum of signals is in, it fires at full coverage or after
+        // `mpc_data_freeze_grace_rounds` of consensus progress — never at
+        // the first quorum, when slower validators' mpc_data hasn't
+        // propagated yet. Signals keep accruing here (and validators
+        // re-emit as their coverage grows) so the deferred freeze captures
+        // the complete set.
         Ok(())
     }
 
@@ -2957,9 +3205,10 @@ impl AuthorityPerEpochStore {
     /// the frozen working set + excluded set. Idempotent on a
     /// non-empty frozen table.
     ///
-    /// Fired (via `freeze_mpc_data_if_quorum`) once a network DKG /
-    /// reconfiguration session starts AND a stake-quorum of
-    /// `EpochMpcDataReadySignal`s has been recorded. For each
+    /// Fired from the consensus commit boundary once a stake-quorum of
+    /// `EpochMpcDataReadySignal`s has been recorded AND coverage is full
+    /// (or the freeze grace elapsed) — see the freeze block in
+    /// `process_consensus_transactions_and_commit_boundary`. For each
     /// validator V that announced this epoch:
     /// - sum the stake of every signer whose `validated_peers`
     ///   contains V,
@@ -2972,6 +3221,49 @@ impl AuthorityPerEpochStore {
     /// announcer who withheld their blob from honest peers can't
     /// be smuggled into the working set, even if they signed a
     /// valid announcement digest.
+    /// The prior epoch's handoff-certificate `validator -> mpc_data
+    /// digest` map, used to carry forward stable mpc_data for committee
+    /// members that did not freshly announce this epoch (see
+    /// `carry_forward_stable_mpc_data`). Empty when there is no prior
+    /// certificate (genesis epoch, v3, or a read error) — carry-forward
+    /// then degrades to announce-only. The certificate is perpetual and
+    /// stake-quorum-signed, and the prepare-then-start barrier guarantees
+    /// every validator holds the prior-epoch certificate before
+    /// processing this epoch's consensus, so the returned map is
+    /// identical across honest validators — a precondition for the freeze
+    /// staying deterministic.
+    fn prior_epoch_mpc_data_digests(&self) -> HashMap<AuthorityName, [u8; 32]> {
+        let Some(prior_epoch) = self.epoch().checked_sub(1) else {
+            return HashMap::new();
+        };
+        let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() else {
+            return HashMap::new();
+        };
+        let cert = match perpetual.get_certified_handoff_attestation(prior_epoch) {
+            Ok(Some(cert)) => cert,
+            Ok(None) => return HashMap::new(),
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    prior_epoch,
+                    "failed to read prior-epoch handoff cert for mpc_data carry-forward; \
+                     degrading to announce-only",
+                );
+                return HashMap::new();
+            }
+        };
+        cert.attestation
+            .items
+            .iter()
+            .filter_map(|(key, digest)| match key {
+                ika_types::handoff::HandoffItemKey::ValidatorMpcData { validator } => {
+                    Some((*validator, *digest))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     fn freeze_mpc_data_if_first(&self, tables: &AuthorityEpochTables) -> IkaResult {
         if !tables.frozen_validator_mpc_data_input_set.is_empty() {
             return Ok(());
@@ -2993,17 +3285,41 @@ impl AuthorityPerEpochStore {
             signals.insert(signer, signal.validated_peers);
         }
         let committee_for_tally = committee.clone();
-        let partition = crate::validator_metadata::compute_freeze_partition(
+        let attested = crate::validator_metadata::compute_freeze_partition(
             &signals,
             |authority| committee_for_tally.weight(authority),
             committee.quorum_threshold(),
         );
+        // Carry forward stable mpc_data: a committee member that did not
+        // freshly announce this epoch is frozen at the digest the prior
+        // epoch's handoff cert already agreed for it. The blob is a pure
+        // function of the validator's root seed, so the carried digest is
+        // byte-identical to a fresh announcement. Without this, a member
+        // that entered the epoch late — a routine restart near the
+        // boundary — is dropped from the frozen set, and the
+        // reconfiguration into the next epoch is rejected forever because
+        // a still-seated member's class-groups material is missing. Only
+        // first-time joiners (no prior-cert digest) remain excludable.
+        let attested_frozen = attested.frozen.len();
+        let committee_members: Vec<AuthorityName> = committee
+            .voting_rights
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        let prior_mpc_data = self.prior_epoch_mpc_data_digests();
+        let partition = crate::validator_metadata::carry_forward_stable_mpc_data(
+            attested,
+            &committee_members,
+            &prior_mpc_data,
+        );
         info!(
             current_epoch = self.epoch(),
             frozen = partition.frozen.len(),
+            attested = attested_frozen,
+            carried_forward = partition.frozen.len().saturating_sub(attested_frozen),
             excluded = partition.excluded.len(),
             excluded_set = ?partition.excluded,
-            "ready quorum reached — freezing attestation-validated mpc_data input set"
+            "ready quorum reached — freezing attestation-validated mpc_data input set (stable carry-forward applied)"
         );
         for (authority, blob_hash) in &partition.frozen {
             tables
@@ -3013,6 +3329,12 @@ impl AuthorityPerEpochStore {
         for authority in &partition.excluded {
             tables.epoch_excluded_validators.insert(authority, &())?;
         }
+        self.metrics
+            .dwallet_mpc_data_freeze_epoch
+            .set(self.epoch() as i64);
+        self.metrics
+            .dwallet_mpc_data_excluded_validators
+            .set(partition.excluded.len() as i64);
         Ok(())
     }
 
@@ -3046,6 +3368,21 @@ impl AuthorityPerEpochStore {
             .safe_iter()
             .filter_map(Result::ok)
             .collect())
+    }
+
+    /// The consensus leader round at which this validator observed the
+    /// `EndOfPublish` stake quorum — the persisted anchor of the
+    /// deferred-close grace countdown — or `None` if quorum hasn't been
+    /// reached this epoch (or the epoch closed inline under v3 rules).
+    pub fn end_of_publish_quorum_round(&self) -> IkaResult<Option<u64>> {
+        Ok(self.tables()?.end_of_publish_quorum_round.get(&0)?)
+    }
+
+    /// Whether this validator has already emitted the epoch-close
+    /// checkpoint message set. Persisted through the emitting commit's
+    /// batch so a restart cannot re-emit the close at a later commit.
+    pub fn is_epoch_close_emitted(&self) -> IkaResult<bool> {
+        Ok(self.tables()?.epoch_close_emitted.get(&0)?.is_some())
     }
 
     pub async fn user_certs_closed_notify(&self) {
@@ -3435,11 +3772,9 @@ impl AuthorityPerEpochStore {
                 checkpoint_service,
                 system_checkpoint_service,
                 consensus_commit_info,
-                //&mut roots,
                 authority_metrics,
             )
             .await?;
-        //self.finish_consensus_certificate_process_with_batch(&mut output, &verified_transactions)?;
         output.record_verified_dwallet_checkpoint_messages(
             verified_dwallet_checkpoint_messages.clone(),
         );
@@ -3569,12 +3904,24 @@ impl AuthorityPerEpochStore {
                     // filter_roots = true;
                 }
                 ConsensusCertificateResult::EndOfPublish => {
-                    // The EndOfPublish quorum no longer closes the epoch inline.
-                    // `process_end_of_publish_vote` returns `ConsensusMessage`
-                    // now, so this arm is effectively unreachable; the close is
-                    // deferred to the grace check at the commit boundary below
-                    // (`end_of_publish_grace_rounds` (protocol config) rounds past quorum). Kept
-                    // for match exhaustiveness.
+                    // v3 inline close (pre-v4 binaries close here too, so the
+                    // timing and per-commit transaction cutoff must match them
+                    // exactly — including the `break` that stops processing the
+                    // remainder of this commit). Under v4 this arm is
+                    // unreachable: `process_end_of_publish_vote` returns
+                    // `ConsensusMessage` and the close is deferred to the
+                    // grace check at the commit boundary below.
+                    let (dwallet_close_messages, system_close_messages) =
+                        self.build_epoch_close_checkpoint_messages()?;
+                    for message in system_close_messages {
+                        verified_system_checkpoint_certificates.push_back(message);
+                    }
+                    for message in dwallet_close_messages {
+                        verified_dwallet_checkpoint_certificates.push_back(message);
+                    }
+                    let mut reconfig_state = self.reconfig_state.write();
+                    reconfig_state.status = ReconfigCertStatus::RejectAllTx;
+                    break;
                 }
             }
             if !ignored {
@@ -3582,10 +3929,14 @@ impl AuthorityPerEpochStore {
             }
         }
 
-        // EndOfPublish close grace: once a stake-quorum of EndOfPublish votes
-        // is in, defer the epoch close `end_of_publish_grace_rounds` (protocol config) more
-        // consensus rounds (unless every committee member has already voted)
-        // so stragglers' `EndOfPublishV2` bundles — carrying their handoff
+        // EndOfPublish close grace (v4 ONLY — under v3 the epoch closes inline
+        // at the quorum-crossing vote, matching pre-v4 binaries; gating here
+        // keeps the close timing identical across binaries at the same
+        // protocol version during a rolling upgrade): once a stake-quorum of
+        // EndOfPublish votes is in, defer the epoch close
+        // `end_of_publish_grace_rounds` (protocol config) more consensus
+        // rounds (unless every committee member has already voted) so
+        // stragglers' `EndOfPublishV2` bundles — carrying their handoff
         // signatures — are still sequenced before the epoch closes. The anchor
         // round is persisted, so a validator restarting mid-grace closes at the
         // same round as its peers (the final checkpoint must be deterministic).
@@ -3593,18 +3944,36 @@ impl AuthorityPerEpochStore {
             self.reconfig_state.read().status,
             ReconfigCertStatus::RejectAllTx
         );
-        if !already_closed {
+        if self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+            && !already_closed
+        {
             let (has_quorum, voted_count) = {
                 let end_of_publish = self.end_of_publish.lock();
                 (end_of_publish.has_quorum(), end_of_publish.keys().count())
             };
             if has_quorum {
+                // The anchor round is written through the commit batch (not
+                // out-of-band) so it commits atomically with the commit that
+                // observed quorum — a crash before the batch replays the
+                // whole commit and re-derives the same round.
                 let quorum_round = match self.tables()?.end_of_publish_quorum_round.get(&0)? {
                     Some(round) => round,
                     None => {
-                        self.tables()?
-                            .end_of_publish_quorum_round
-                            .insert(&0, &consensus_commit_info.round)?;
+                        // Once per epoch: the anchor of the deferred-close
+                        // grace countdown. Without this, an epoch hanging
+                        // between quorum and close leaves no info-level
+                        // evidence that quorum was ever reached.
+                        info!(
+                            validator = ?self.name,
+                            quorum_round = consensus_commit_info.round,
+                            voted_count,
+                            grace_rounds = self.protocol_config().end_of_publish_grace_rounds(),
+                            "EndOfPublish stake quorum reached — deferring epoch close for \
+                             grace rounds",
+                        );
+                        output.set_end_of_publish_quorum_round(consensus_commit_info.round);
                         consensus_commit_info.round
                     }
                 };
@@ -3624,6 +3993,9 @@ impl AuthorityPerEpochStore {
                     for message in system_close_messages {
                         verified_system_checkpoint_certificates.push_back(message);
                     }
+                    // Persist the close marker through this commit's batch so a
+                    // restart cannot re-emit the close set at a later commit.
+                    output.set_epoch_close_emitted();
                     self.reconfig_state.write().status = ReconfigCertStatus::RejectAllTx;
                     info!(
                         validator = ?self.name,
@@ -3631,6 +4003,87 @@ impl AuthorityPerEpochStore {
                         close_round = consensus_commit_info.round,
                         all_voted,
                         "EndOfPublish grace elapsed — closing the epoch",
+                    );
+                }
+            }
+        }
+
+        // mpc_data freeze (v4 only): decided HERE, at the commit boundary,
+        // so the frozen set is a deterministic function of the consensus
+        // sequence — every validator evaluates the same ready-signal table
+        // at the same commit. (Triggering the freeze from the wall-clock
+        // MPC-service loop let two validators tally different signal sets —
+        // re-emits land between their service ticks — and the divergent
+        // frozen/excluded sets fork the handoff items and the
+        // reconfiguration participant set.) Freeze once a stake-quorum of
+        // ready-signals is in AND either:
+        //   - full coverage: every committee member has signaled and the
+        //     freeze partition excludes no announcer (nothing left to wait
+        //     for), or
+        //   - the grace elapsed: `mpc_data_freeze_grace_rounds` (protocol
+        //     config) leader rounds past the quorum-observing round —
+        //     consensus progress, not wall-clock — giving slower
+        //     validators' blobs time to propagate before the set is pinned.
+        if self
+            .protocol_config()
+            .off_chain_validator_metadata_enabled()
+            && !self.is_mpc_data_frozen().unwrap_or(false)
+        {
+            let tables = self.tables()?;
+            let mut signals: std::collections::BTreeMap<
+                AuthorityName,
+                Vec<(AuthorityName, [u8; 32])>,
+            > = std::collections::BTreeMap::new();
+            for entry in tables.epoch_mpc_data_ready_signals.safe_iter() {
+                let (signer, signal) = entry?;
+                signals.insert(signer, signal.validated_peers);
+            }
+            let committee = self.committee();
+            let signal_stake: u64 = signals
+                .keys()
+                .map(|authority| committee.weight(authority))
+                .sum();
+            self.metrics
+                .dwallet_mpc_data_ready_signal_stake
+                .set(signal_stake as i64);
+            if signal_stake >= committee.quorum_threshold() {
+                let quorum_round = match tables.mpc_data_ready_quorum_round.get(&0)? {
+                    Some(round) => round,
+                    None => {
+                        // Once per epoch: the anchor of the freeze grace
+                        // countdown. Lets an operator distinguish "quorum
+                        // never reached" from "grace still counting" when
+                        // the freeze is late.
+                        info!(
+                            validator = ?self.name,
+                            quorum_round = consensus_commit_info.round,
+                            signers = signals.len(),
+                            signal_stake,
+                            grace_rounds = self.protocol_config().mpc_data_freeze_grace_rounds(),
+                            "mpc_data ready-signal stake quorum reached — freeze grace \
+                             countdown anchored",
+                        );
+                        output.set_mpc_data_ready_quorum_round(consensus_commit_info.round);
+                        consensus_commit_info.round
+                    }
+                };
+                let partition = crate::validator_metadata::compute_freeze_partition(
+                    &signals,
+                    |authority| committee.weight(authority),
+                    committee.quorum_threshold(),
+                );
+                let full_coverage =
+                    signals.len() >= committee.num_members() && partition.excluded.is_empty();
+                let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
+                    >= self.protocol_config().mpc_data_freeze_grace_rounds();
+                if full_coverage || grace_elapsed {
+                    self.freeze_mpc_data_if_first(&tables)?;
+                    info!(
+                        validator = ?self.name,
+                        quorum_round,
+                        freeze_round = consensus_commit_info.round,
+                        full_coverage,
+                        "mpc_data ready — freezing the input set at the commit boundary",
                     );
                 }
             }
@@ -3944,25 +4397,22 @@ impl AuthorityPerEpochStore {
                 ..
             }) => {
                 // V2 bundles the signed handoff attestation with the
-                // EndOfPublish vote. Process the bundled handoff first
-                // (it persists the cert internally on quorum), then —
-                // only if the signature didn't *verifiably* fail —
-                // fall into the shared EOP epoch-advance accounting.
-                // A content-mismatched / bad signature rejects the
-                // whole bundle: the EndOfPublish vote is NOT counted,
-                // so "observed together" becomes "processed together".
-                // A merely-buffered (not-yet-verifiable) signature
-                // returns `true` and the vote still counts.
-                if self.record_handoff_signature(handoff_signature)? {
-                    self.process_end_of_publish_vote(authority)
-                } else {
-                    warn!(
-                        ?authority,
-                        "EndOfPublishV2 bundled handoff signature failed verification — \
-                         rejecting the bundle; its EndOfPublish vote is not counted"
-                    );
-                    Ok(ConsensusCertificateResult::ConsensusMessage)
-                }
+                // EndOfPublish vote. The EOP vote is counted
+                // UNCONDITIONALLY: the vote tally feeds the epoch close,
+                // which must be a deterministic function of the consensus
+                // sequence — whether the bundled signature verifies
+                // depends on per-validator local state (whether this
+                // validator's own expected attestation is installed yet,
+                // whether its pubkey provider has loaded), so gating the
+                // vote on it lets honest validators disagree on the tally
+                // and close the epoch at different rounds. The handoff
+                // signature half is best-effort: a mismatched/bad
+                // signature is rejected (and logged) inside
+                // `record_handoff_signature` without affecting the vote —
+                // the handoff cert only needs a quorum of valid
+                // signatures, not all of them.
+                self.record_handoff_signature(handoff_signature)?;
+                self.process_end_of_publish_vote(authority)
             }
         }
     }
@@ -4040,13 +4490,31 @@ impl AuthorityPerEpochStore {
         authority: &AuthorityName,
     ) -> IkaResult<ConsensusCertificateResult> {
         self.record_end_of_publish_vote(authority)?;
-        // Update the in-memory aggregator, but do NOT close the epoch here.
-        // The close is deferred `end_of_publish_grace_rounds` (protocol config) more consensus
-        // rounds past quorum (the close grace at the commit boundary in
-        // `process_consensus_transactions_and_commit_boundary`), so straggler
-        // EndOfPublish/handoff-signature bundles are still collected.
+        let mut end_of_publish = self.end_of_publish.lock();
         // Duplicate votes can't double-count (the aggregator is a HashMap).
-        self.end_of_publish.lock().insert_generic(*authority, ());
+        let quorum_crossed = !end_of_publish.has_quorum()
+            && matches!(
+                end_of_publish.insert_generic(*authority, ()),
+                InsertResult::QuorumReached(_)
+            );
+        // Version split — the close timing is consensus-critical and must
+        // match what every binary at the SAME protocol version does:
+        // - v3 (off_chain_validator_metadata disabled): close inline at the
+        //   quorum-crossing vote, exactly like the pre-v4 binaries this
+        //   network may still be running during a rolling upgrade.
+        // - v4: do NOT close here. The close is deferred
+        //   `end_of_publish_grace_rounds` (protocol config) more consensus
+        //   rounds past quorum (the grace check at the commit boundary in
+        //   `process_consensus_transactions_and_commit_boundary`), so
+        //   straggler `EndOfPublishV2` bundles — carrying their handoff
+        //   signatures — are still collected before the epoch closes.
+        if quorum_crossed
+            && !self
+                .protocol_config()
+                .off_chain_validator_metadata_enabled()
+        {
+            return Ok(ConsensusCertificateResult::EndOfPublish);
+        }
         Ok(ConsensusCertificateResult::ConsensusMessage)
     }
 
@@ -4358,6 +4826,22 @@ pub(crate) struct ConsensusCommitOutput {
 
     verified_dwallet_checkpoint_messages: Vec<DWalletCheckpointMessageKind>,
     verified_system_checkpoint_messages: Vec<SystemCheckpointMessageKind>,
+
+    /// First commit round at which the EndOfPublish stake quorum was
+    /// observed (the grace anchor). Written through this batch so it
+    /// commits atomically with the commit that observed it — an
+    /// out-of-band write could desync from the commit on crash-replay.
+    end_of_publish_quorum_round: Option<u64>,
+    /// Set when this commit emitted the deferred (v4) epoch-close message
+    /// set. Persisted atomically with the commit so a restarted validator
+    /// neither re-emits the close (marker present ⇒ `reconfig_state` is
+    /// restored to `RejectAllTx` on epoch-store open) nor loses it (a crash
+    /// before the batch commit replays the whole commit deterministically).
+    epoch_close_emitted: bool,
+    /// First commit round at which the mpc_data ready-signal stake quorum
+    /// was observed (the freeze-grace anchor). Same atomicity rationale as
+    /// `end_of_publish_quorum_round`.
+    mpc_data_ready_quorum_round: Option<u64>,
 }
 
 impl ConsensusCommitOutput {
@@ -4370,6 +4854,18 @@ impl ConsensusCommitOutput {
 
     pub(crate) fn set_dwallet_mpc_round_messages(&mut self, new_value: Vec<DWalletMPCMessage>) {
         self.dwallet_mpc_round_messages = new_value;
+    }
+
+    pub(crate) fn set_end_of_publish_quorum_round(&mut self, round: u64) {
+        self.end_of_publish_quorum_round = Some(round);
+    }
+
+    pub(crate) fn set_epoch_close_emitted(&mut self) {
+        self.epoch_close_emitted = true;
+    }
+
+    pub(crate) fn set_mpc_data_ready_quorum_round(&mut self, round: u64) {
+        self.mpc_data_ready_quorum_round = Some(round);
     }
 
     pub(crate) fn set_dwallet_mpc_round_outputs(&mut self, new_value: Vec<DWalletMPCOutput>) {
@@ -4472,6 +4968,8 @@ impl ConsensusCommitOutput {
                 self.verified_dwallet_checkpoint_messages,
             )],
         )?;
+        // `network_key_data_messages` (the consensus network-key vote stream)
+        // is removed on this branch — the handoff cert supersedes it.
 
         // Internal presign & sign sessions (#1623): internal MPC outputs, global
         // presign requests, and idle-status (presign-pool) updates.
@@ -4511,6 +5009,16 @@ impl ConsensusCommitOutput {
                 &tables.sui_chain_observation_updates,
                 [(self.consensus_round, self.sui_chain_observation_updates)],
             )?;
+        }
+
+        if let Some(round) = self.end_of_publish_quorum_round {
+            batch.insert_batch(&tables.end_of_publish_quorum_round, [(0u64, round)])?;
+        }
+        if self.epoch_close_emitted {
+            batch.insert_batch(&tables.epoch_close_emitted, [(0u64, ())])?;
+        }
+        if let Some(round) = self.mpc_data_ready_quorum_round {
+            batch.insert_batch(&tables.mpc_data_ready_quorum_round, [(0u64, round)])?;
         }
 
         batch.insert_batch(
@@ -4817,5 +5325,33 @@ mod tests {
         assert_eq!(collected.len(), 2);
         assert_eq!(collected.get(&key_a), Some(&[0x11; 32]));
         assert_eq!(collected.get(&key_b), Some(&[0x22; 32]));
+    }
+
+    #[tokio::test]
+    async fn network_dkg_and_reconfig_caches_are_independent() {
+        // Same key id appearing in both caches doesn't collide —
+        // they're separate tables addressing different artifacts.
+        let tables = create_tables();
+        let key = ObjectID::random();
+        tables
+            .network_dkg_output_digests
+            .insert(&key, &[0xAA; 32])
+            .unwrap();
+        tables
+            .network_reconfiguration_output_digests
+            .insert(&key, &[0xBB; 32])
+            .unwrap();
+
+        assert_eq!(
+            tables.network_dkg_output_digests.get(&key).unwrap(),
+            Some([0xAA; 32])
+        );
+        assert_eq!(
+            tables
+                .network_reconfiguration_output_digests
+                .get(&key)
+                .unwrap(),
+            Some([0xBB; 32])
+        );
     }
 }

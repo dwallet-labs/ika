@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use sui_types::base_types::ObjectID;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Selects the validator-ids whose consensus pubkeys to install. An
 /// empty result means "nothing to install yet" (e.g. the next-epoch
@@ -270,6 +270,13 @@ where
                 poll_interval,
             );
         }
+        // Throttle the failure-path warn: a fullnode RPC outage would
+        // otherwise repeat the identical line every poll tick for the
+        // outage's duration (two updater instances run per epoch). Warn
+        // on the first failure and every 12th thereafter (~1/minute at
+        // the 5s production cadence), debug in between, and log recovery
+        // once so the outage's end is visible.
+        let mut consecutive_refresh_failures: u64 = 0;
         loop {
             // Exit once the epoch store this updater serves has been
             // dropped (the epoch advanced) — otherwise the task would
@@ -282,8 +289,35 @@ where
                 );
                 return;
             }
-            if let Err(err) = self.refresh().await {
-                warn!(error=?err, label = self.label, "pubkey provider refresh failed; will retry");
+            match self.refresh().await {
+                Ok(()) => {
+                    if consecutive_refresh_failures > 0 {
+                        info!(
+                            label = self.label,
+                            consecutive_failures = consecutive_refresh_failures,
+                            "pubkey provider refresh recovered"
+                        );
+                    }
+                    consecutive_refresh_failures = 0;
+                }
+                Err(err) => {
+                    if consecutive_refresh_failures.is_multiple_of(12) {
+                        warn!(
+                            error=?err,
+                            label = self.label,
+                            consecutive_failures = consecutive_refresh_failures,
+                            "pubkey provider refresh failed; will retry"
+                        );
+                    } else {
+                        debug!(
+                            error=?err,
+                            label = self.label,
+                            consecutive_failures = consecutive_refresh_failures,
+                            "pubkey provider refresh failed; will retry"
+                        );
+                    }
+                    consecutive_refresh_failures += 1;
+                }
             }
             tokio::time::sleep(poll_interval).await;
         }

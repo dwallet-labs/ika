@@ -15,6 +15,7 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::committee::Committee;
 use ika_types::crypto::AuthorityName;
 use ika_types::error::IkaResult;
+use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_consensus::{ConsensusTransaction, ConsensusTransactionKind};
 use ika_types::messages_dwallet_checkpoint::DWalletCheckpointSignatureMessage;
@@ -71,6 +72,11 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
     pub(crate) assigned_presigns:
         Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>,
+    /// Configurable certified handoff attestations, keyed by epoch.
+    /// Empty by default (the cert-gated adoption path then behaves as
+    /// "cert absent"); tests for the cert-digest gate insert one here.
+    pub(crate) certified_handoff_attestations:
+        Arc<Mutex<HashMap<EpochId, CertifiedHandoffAttestation>>>,
 }
 
 pub(crate) struct IntegrationTestState {
@@ -135,6 +141,7 @@ impl TestingAuthorityPerEpochStore {
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
+            certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -436,12 +443,17 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
 
     fn get_certified_handoff_attestation(
         &self,
-        _epoch: sui_types::base_types::EpochId,
+        epoch: sui_types::base_types::EpochId,
     ) -> IkaResult<Option<ika_types::handoff::CertifiedHandoffAttestation>> {
-        // Testing impl: no persisted certs; the cert-verified
-        // instantiation path is a no-op and tests exercise the
-        // consensus-voted path.
-        Ok(None)
+        // Testing impl: serves the configurable in-memory map (empty by
+        // default, in which case the cert-verified adoption path behaves
+        // as "cert absent" and tests exercise the consensus-voted path).
+        Ok(self
+            .certified_handoff_attestations
+            .lock()
+            .unwrap()
+            .get(&epoch)
+            .cloned())
     }
 
     fn is_mpc_data_frozen(&self) -> IkaResult<bool> {
@@ -449,13 +461,6 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
         // doesn't block tests that never produce the actual freeze
         // signal flow. Production builds use the real per-epoch
         // store, where this reflects the attestation-tally snapshot.
-        Ok(true)
-    }
-
-    fn freeze_mpc_data_if_quorum(&self) -> IkaResult<bool> {
-        // Testing impl: report frozen for the same reason as
-        // `is_mpc_data_frozen` — the DKG/reconfiguration session gate
-        // calls this, and tests don't drive the real ready-signal flow.
         Ok(true)
     }
 
@@ -887,7 +892,17 @@ pub(crate) fn send_advance_results_between_parties(
 /// At 100ms per iteration, this gives ~180 seconds before failing.
 /// The generous limit accounts for rayon thread pool contention when
 /// the full integration test suite runs in a single process.
+/// Overridable via `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` — lets
+/// slower or heavily-loaded environments extend the budget without
+/// recompiling.
 const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
+
+fn max_computation_wait_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_COMPUTATION_WAIT_ITERATIONS)
+}
 
 /// Wait for all parties' in-flight rayon computations to complete.
 ///
@@ -900,7 +915,8 @@ const MAX_COMPUTATION_WAIT_ITERATIONS: usize = 1800;
 /// real wall-clock time plus tokio runtime polls to deliver their results
 /// through the completion channel.
 pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState) {
-    for iteration in 0..MAX_COMPUTATION_WAIT_ITERATIONS {
+    let max_iterations = max_computation_wait_iterations();
+    for iteration in 0..max_iterations {
         let all_idle = test_state.dwallet_mpc_services.iter().all(|s| {
             s.dwallet_mpc_manager()
                 .cryptographic_computations_orchestrator
@@ -927,8 +943,42 @@ pub(crate) async fn wait_for_computations(test_state: &mut IntegrationTestState)
     }
     panic!(
         "Rayon computations did not complete within {} seconds",
-        MAX_COMPUTATION_WAIT_ITERATIONS / 10
+        max_iterations / 10
     );
+}
+
+/// Runs service-loop iterations (with 100ms sleeps) until every given
+/// service has `key_id` installed in its `network_keys`. The network-key
+/// instantiation is spawned on the rayon pool and lands on a LATER
+/// service tick — a single post-adoption iteration no longer observes it.
+/// Panics after the computation-wait budget.
+pub(crate) async fn run_service_loops_until_network_key_installed(
+    dwallet_mpc_services: &mut [DWalletMPCService],
+    key_id: ObjectID,
+) {
+    let mut iterations = 0usize;
+    loop {
+        let all_installed = dwallet_mpc_services.iter().all(|service| {
+            service
+                .dwallet_mpc_manager()
+                .network_keys
+                .get_network_encryption_key_public_data(&key_id)
+                .is_ok()
+        });
+        if all_installed {
+            return;
+        }
+        iterations += 1;
+        if iterations >= max_computation_wait_iterations() {
+            panic!(
+                "network key {key_id:?} was not installed on every party after {iterations} iterations"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for service in dwallet_mpc_services.iter_mut() {
+            service.run_service_loop_iteration(vec![]).await;
+        }
+    }
 }
 
 pub(crate) async fn advance_all_parties_and_wait_for_completions(
@@ -953,7 +1003,16 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
 /// At 100ms per iteration, this gives ~60 seconds before failing.
 /// This needs to be long enough to complete internal presign sessions
 /// which run in parallel and can be CPU-intensive.
+/// Overridable via `IKA_TEST_MAX_PARTY_ITERATIONS` (see
+/// `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` above for why).
 const MAX_PARTY_ITERATIONS: usize = 600;
+
+fn max_party_iterations() -> usize {
+    std::env::var("IKA_TEST_MAX_PARTY_ITERATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_PARTY_ITERATIONS)
+}
 
 pub(crate) async fn advance_some_parties_and_wait_for_completions(
     committee: &Committee,
@@ -968,19 +1027,19 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     let mut iterations = 0usize;
     // Track per-party newly-instantiated network key IDs so that sessions waiting
     // for a key (in `requests_pending_for_network_key`) are activated as soon as the
-    // key is voted-in through a consensus round, without requiring a second outer-loop
+    // key is adopted and installed, without requiring a second outer-loop
     // iteration.
     let mut party_newly_instantiated_network_key_ids: Vec<Vec<ObjectID>> =
         vec![vec![]; committee.voting_rights.len()];
     while completed_parties.len() < parties_to_advance.len() {
         iterations += 1;
-        if iterations >= MAX_PARTY_ITERATIONS {
+        if iterations >= max_party_iterations() {
             panic!(
                 "Party advancement did not complete after {} iterations (~{} seconds). \
                 Completed {}/{} parties. Completed: {:?}, Expected: {:?}. \
                 This likely indicates a bug in the test or the MPC flow.",
-                MAX_PARTY_ITERATIONS,
-                MAX_PARTY_ITERATIONS / 10,
+                max_party_iterations(),
+                max_party_iterations() / 10,
                 completed_parties.len(),
                 parties_to_advance.len(),
                 completed_parties,
@@ -1165,39 +1224,6 @@ pub(crate) async fn advance_some_parties_and_wait_for_completions(
     None
 }
 
-/// Overrides the legitimate messages of malicious parties with false messages for the given crypto round and
-/// malicious parties. When other validators receive these messages, they will mark the malicious parties as malicious.
-// TODO: itay
-#[allow(dead_code)]
-pub(crate) fn override_legit_messages_with_false_messages(
-    malicious_parties: &[usize],
-    sent_consensus_messages_collectors: &mut [Arc<TestingSubmitToConsensus>],
-    crypto_round: u64,
-) {
-    for malicious_party_index in malicious_parties {
-        // Create a malicious message for round 1, and set it as the patty's message.
-        let original_message = sent_consensus_messages_collectors[*malicious_party_index]
-            .submitted_messages
-            .lock()
-            .unwrap()
-            .pop();
-        if let Some(mut original_message) = original_message {
-            let ConsensusTransactionKind::DWalletMPCMessage(ref mut msg) = original_message.kind
-            else {
-                panic!("Only DWalletMPCMessage messages can be overridden with false messages");
-            };
-            let mut new_message: Vec<u8> = vec![0];
-            new_message.extend(bcs::to_bytes::<u64>(&crypto_round).unwrap());
-            new_message.extend([3; 48]);
-            msg.message = new_message;
-            sent_consensus_messages_collectors[*malicious_party_index]
-                .submitted_messages
-                .lock()
-                .unwrap()
-                .push(original_message);
-        };
-    }
-}
 use crate::dwallet_mpc::mpc_session::SessionStatus;
 use crate::dwallet_session_request::DWalletSessionRequest;
 use crate::request_protocol_data::{DWalletDKGData, NetworkEncryptionKeyDkgData, ProtocolData};

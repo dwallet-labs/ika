@@ -714,14 +714,6 @@ impl AuthorityState {
             .check_system_overload_at_signing
     }
 
-    #[allow(dead_code)]
-    fn update_overload_metrics(&self, source: &str) {
-        self.metrics
-            .transaction_overload_sources
-            .with_label_values(&[source])
-            .inc();
-    }
-
     fn check_protocol_version(
         supported_protocol_versions: SupportedProtocolVersions,
         current_version: ProtocolVersion,
@@ -832,7 +824,6 @@ impl AuthorityState {
             .reopen_epoch_db(cur_epoch_store, new_committee, epoch_start_configuration)
             .await?;
         assert_eq!(new_epoch_store.epoch(), new_epoch);
-        //self.transaction_manager.reconfigure(new_epoch);
         *execution_lock = new_epoch;
         // drop execution_lock after epoch store was updated
         // see also assert in AuthorityState::process_certificate

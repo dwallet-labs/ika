@@ -2,18 +2,10 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
 use prometheus::{
-    IntGauge, IntGaugeVec, Registry, register_int_gauge_vec_with_registry,
-    register_int_gauge_with_registry,
+    IntCounter, IntGauge, IntGaugeVec, Registry, register_int_counter_with_registry,
+    register_int_gauge_vec_with_registry, register_int_gauge_with_registry,
 };
 use std::sync::Arc;
-
-#[allow(unused)]
-const FINE_GRAINED_LATENCY_SEC_BUCKETS: &[f64] = &[
-    0.001, 0.005, 0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9,
-    1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-    10., 15., 20., 25., 30., 35., 40., 45., 50., 60., 70., 80., 90., 100., 120., 140., 160., 180.,
-    200., 250., 300., 350., 400.,
-];
 
 #[derive(Clone, Debug)]
 pub struct SuiConnectorMetrics {
@@ -50,6 +42,22 @@ pub struct SuiConnectorMetrics {
 
     /// Total number of failed system checkpoint writes to Sui.
     pub(crate) system_checkpoint_writes_failure_total: IntGauge,
+
+    /// Number of network keys whose off-chain overlay is currently
+    /// missing a required output (DKG or reconfiguration). Expected to
+    /// be transiently non-zero during convergence windows; alert on a
+    /// committee validator stuck non-zero.
+    pub(crate) network_key_overlay_incomplete: IntGauge,
+
+    /// Total sync ticks on which the off-chain next-committee
+    /// validator-mpc_data assembly was incomplete (benign retry while
+    /// announcements/blobs converge; a stall shows as sustained growth).
+    pub(crate) off_chain_assembly_incomplete_ticks_total: IntCounter,
+
+    /// 1 while the off-chain assembly is PERMANENTLY incomplete (the
+    /// freeze excluded every committee member — reconfiguration into the
+    /// next epoch is wedged); cleared on the next successful assembly.
+    pub(crate) off_chain_assembly_wedged: IntGauge,
 }
 
 impl SuiConnectorMetrics {
@@ -130,6 +138,24 @@ impl SuiConnectorMetrics {
             last_written_system_checkpoint_sequence: register_int_gauge_with_registry!(
                 "sui_connector_last_written_system_checkpoint_sequence",
                 "Sequence number of the last system checkpoint successfully written to Sui",
+                registry,
+            )
+            .unwrap(),
+            network_key_overlay_incomplete: register_int_gauge_with_registry!(
+                "network_key_overlay_incomplete",
+                "Number of network keys whose off-chain overlay is missing a required output",
+                registry,
+            )
+            .unwrap(),
+            off_chain_assembly_incomplete_ticks_total: register_int_counter_with_registry!(
+                "off_chain_assembly_incomplete_ticks_total",
+                "Total sync ticks on which the off-chain validator-mpc_data assembly was incomplete",
+                registry,
+            )
+            .unwrap(),
+            off_chain_assembly_wedged: register_int_gauge_with_registry!(
+                "off_chain_assembly_wedged",
+                "1 while the off-chain validator-mpc_data assembly is permanently incomplete",
                 registry,
             )
             .unwrap(),

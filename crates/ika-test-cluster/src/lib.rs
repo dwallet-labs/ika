@@ -14,6 +14,7 @@ use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey};
 use fastcrypto::hash::{HashFunction, Keccak256};
 use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
+use ika_config::local_ip_utils;
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiConnectorClient;
@@ -37,9 +38,12 @@ use ika_types::crypto::AuthorityPublicKeyBytes;
 use ika_types::messages_dwallet_mpc::{IkaNetworkConfig, SessionIdentifier, SessionType};
 use ika_types::supported_protocol_versions::SupportedProtocolVersions;
 use rand::rngs::OsRng;
+use std::sync::atomic::{AtomicU16, Ordering};
 use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_keys::key_derive::generate_new_key;
 use sui_sdk::SuiClientBuilder;
+use sui_swarm_config::genesis_config::ValidatorGenesisConfigBuilder;
+use sui_swarm_config::network_config_builder::ConfigBuilder;
 use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SignatureScheme;
 use test_cluster::{TestCluster, TestClusterBuilder};
@@ -58,6 +62,20 @@ const DEFAULT_NUM_VALIDATORS: usize = 4;
 /// orders of magnitude over what's needed; faucet calls fund similarly.
 const VALIDATOR_FUNDING_MIST: u64 = 100_000_000_000;
 
+/// Ports reserved per test process for deterministic swarm-node allocation.
+/// Generous headroom over one cluster's needs (Sui + ika validators, joiners,
+/// the notifier fullnode RPC).
+const PORTS_PER_TEST_SLOT: u16 = 1000;
+/// Ports each swarm node consumes; the validator builders lay out up to 7
+/// addresses per node, so 10 leaves headroom.
+const NODE_PORT_STRIDE: u16 = 10;
+/// Sui fullnode RPC port offset within a test's slot (past the Sui validator
+/// sub-block `[0, IKA_NODE_PORT_OFFSET)`).
+const SUI_FULLNODE_RPC_PORT_OFFSET: u16 = 280;
+/// Offset of the ika-node sub-block within a test's slot; Sui nodes occupy
+/// `[0, IKA_NODE_PORT_OFFSET)`, ika nodes the remainder up to PORTS_PER_TEST_SLOT.
+const IKA_NODE_PORT_OFFSET: u16 = 300;
+
 pub struct IkaTestCluster {
     pub test_cluster: TestCluster,
     pub swarm: Swarm,
@@ -75,6 +93,14 @@ pub struct IkaTestCluster {
     /// swarm stores nodes in a HashMap and `validator_nodes()` order is
     /// otherwise unspecified.
     pub validator_names: Vec<ika_types::crypto::AuthorityName>,
+    /// Base port of this process's ika-node port block. Joiners added after
+    /// build draw deterministic ports from here so they don't race a
+    /// concurrently-running test process (see
+    /// `local_ip_utils::deterministic_port_base`).
+    pub ika_node_port_base: u16,
+    /// Next deterministic ika-node port index. Initial validators take
+    /// `[0, num_validators)`; each joiner claims the next slot.
+    pub next_ika_node_index: AtomicU16,
 }
 
 /// Handle to a validator that joined the network after the initial
@@ -183,8 +209,24 @@ impl IkaTestCluster {
     /// boundary (the same lifecycle the bootstrap path drives for the
     /// initial set). Caller is responsible for `wait_for_epoch` after.
     pub async fn add_joiner_validator(&mut self) -> Result<JoinerHandle> {
+        // The joiner's ports are probed when the initialization config is
+        // built here, but only bound by `spawn_new_node` after the whole
+        // candidate→stake→add transaction sequence — a multi-second window
+        // in which a concurrently booting test process can claim the probed
+        // ports ("Address already in use" on the joiner spawn). Hold the
+        // same cross-process lock that serializes cluster boots for the
+        // full probe-to-bind span.
+        #[cfg(not(msim))]
+        let boot_lock = acquire_cluster_boot_lock().await;
+
         let mut rng = OsRng;
-        let mut joiner_init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
+        // Deterministic ports from this process's ika-node block so the joiner
+        // doesn't race a concurrently-booting test process during its
+        // probe-to-bind window.
+        let joiner_index = self.next_ika_node_index.fetch_add(1, Ordering::SeqCst);
+        let mut joiner_init = ValidatorInitializationConfigBuilder::new()
+            .with_deterministic_ports(self.ika_node_port_base + joiner_index * NODE_PORT_STRIDE)
+            .build(&mut rng);
         joiner_init.name = Some(format!(
             "joiner-{}",
             self.swarm.validator_node_handles().len()
@@ -271,6 +313,9 @@ impl IkaTestCluster {
             self.system.ika_dwallet_coordinator_object_id,
         );
         let node_handle = self.swarm.spawn_new_node(validator_config).await;
+        // The joiner's listeners are bound; release the probe-to-bind lock.
+        #[cfg(not(msim))]
+        drop(boot_lock);
 
         Ok(JoinerHandle {
             address: joiner_address,
@@ -945,6 +990,49 @@ pub struct IkaTestClusterBuilder {
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
 }
 
+/// Cross-process mutex for the port-sensitive boot window. The Sui and
+/// ika swarms pick "available" ports by probing and bind them later, so
+/// two test PROCESSES booting concurrently (nextest runs each test in
+/// its own process) can probe the same free port and the loser dies
+/// with `EADDRINUSE` at node start. A fixed-port listener is a
+/// dependency-free cross-process lock: bind success = lock acquired;
+/// the OS releases it whenever the holder exits — including on panic or
+/// kill — so a dead test can never wedge the rest of the suite. Not
+/// compiled under msim (ports there are simulated per-node; no real
+/// port space to race on).
+#[cfg(not(msim))]
+async fn acquire_cluster_boot_lock() -> std::net::TcpListener {
+    const BOOT_LOCK_PORT: u16 = 48751;
+    let started = std::time::Instant::now();
+    let mut contended = false;
+    loop {
+        match std::net::TcpListener::bind(("127.0.0.1", BOOT_LOCK_PORT)) {
+            Ok(listener) => {
+                // Log only when there was contention, so a waiter blocked
+                // behind another test process's multi-minute boot is
+                // distinguishable from a hung cluster boot.
+                if contended {
+                    tracing::info!(
+                        waited_ms = started.elapsed().as_millis() as u64,
+                        "cluster boot lock acquired"
+                    );
+                }
+                return listener;
+            }
+            Err(_) => {
+                if !contended {
+                    contended = true;
+                    tracing::info!(
+                        port = BOOT_LOCK_PORT,
+                        "cluster boot lock held by another test process; waiting"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+    }
+}
+
 impl IkaTestClusterBuilder {
     pub fn new() -> Self {
         Self {
@@ -987,8 +1075,41 @@ impl IkaTestClusterBuilder {
     }
 
     pub async fn build(self) -> Result<IkaTestCluster> {
+        // Serialize the boot window across concurrently-running test
+        // processes (see `acquire_cluster_boot_lock`). Held until every
+        // node's listeners are actually bound (after `swarm.launch()`);
+        // the long-running test body executes unlocked and fully
+        // parallel.
+        #[cfg(not(msim))]
+        let boot_lock = acquire_cluster_boot_lock().await;
+
+        // Pre-allocate a disjoint, per-test-process port block so that parallel
+        // `nextest` test processes never probe-then-bind the same port (the
+        // `Address already in use` swarm-boot flake). The Sui validators (via an
+        // injected NetworkConfig below) and the ika validators/joiners both draw
+        // deterministic ports from this block.
+        let port_base = local_ip_utils::deterministic_port_base(PORTS_PER_TEST_SLOT);
+        let ika_node_port_base = port_base + IKA_NODE_PORT_OFFSET;
+
+        // Build the Sui validators with deterministic ports and inject them as a
+        // NetworkConfig — `TestClusterBuilder::new().build()` would otherwise let
+        // the upstream Sui swarm probe its own (racy) ports, which we can't
+        // otherwise control. The default genesis still funds `get_address_0()`
+        // and the validators (ConfigBuilder uses `GenesisConfig::for_local_testing`).
+        let mut sui_validator_rng = OsRng;
+        let sui_validators = (0..self.num_validators)
+            .map(|i| {
+                ValidatorGenesisConfigBuilder::new()
+                    .with_deterministic_ports(port_base + i as u16 * NODE_PORT_STRIDE)
+                    .build(&mut sui_validator_rng)
+            })
+            .collect::<Vec<_>>();
+        let sui_network_config = ConfigBuilder::new_with_temp_dir()
+            .with_validators(sui_validators)
+            .build();
         let mut test_cluster = TestClusterBuilder::new()
-            .with_num_validators(self.num_validators)
+            .set_network_config(sui_network_config)
+            .with_fullnode_rpc_port(port_base + SUI_FULLNODE_RPC_PORT_OFFSET)
             .build()
             .await;
 
@@ -999,7 +1120,9 @@ impl IkaTestClusterBuilder {
         let validator_initialization_configs: Vec<ValidatorInitializationConfig> = (0..self
             .num_validators)
             .map(|i| {
-                let mut cfg = ValidatorInitializationConfigBuilder::new().build(&mut rng);
+                let mut cfg = ValidatorInitializationConfigBuilder::new()
+                    .with_deterministic_ports(ika_node_port_base + i as u16 * NODE_PORT_STRIDE)
+                    .build(&mut rng);
                 cfg.name = Some(format!("validator-{i}"));
                 cfg
             })
@@ -1174,6 +1297,11 @@ impl IkaTestClusterBuilder {
             .await?;
         swarm.launch().await?;
 
+        // Every listener (Sui swarm + ika swarm) is bound — concurrent
+        // boots can no longer collide with this process's ports.
+        #[cfg(not(msim))]
+        drop(boot_lock);
+
         Ok(IkaTestCluster {
             test_cluster,
             swarm,
@@ -1182,6 +1310,10 @@ impl IkaTestClusterBuilder {
             sui_rpc_url,
             publisher_address,
             validator_names,
+            ika_node_port_base,
+            // Initial validators consumed indices [0, num_validators); joiners
+            // claim the next deterministic slots.
+            next_ika_node_index: AtomicU16::new(self.num_validators as u16),
         })
     }
 }

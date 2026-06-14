@@ -43,7 +43,7 @@ use ika_types::messages_consensus::ConsensusTransaction;
 use ika_types::validator_metadata::{
     EpochMpcDataReadySignal, SignedValidatorMpcDataAnnouncement, ValidatorMpcDataAnnouncement,
 };
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
@@ -282,7 +282,7 @@ pub fn reevaluate_buffered_joiner_announcements(
 /// paths hashing this output produce the same digest.
 ///
 /// At `network_encryption_key_version == 3` (the v4 protocol shape)
-/// the inner bytes are the post-PR-#1707 `ValidatorEncryptionKeysAndProofs`
+/// the inner bytes are the `ValidatorEncryptionKeysAndProofs`
 /// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
 /// `decode_validator_encryption_keys` accepts either shape (new or
 /// mainnet-v1.1.8 class-groups-only); using the new shape here is
@@ -489,6 +489,60 @@ where
     let excluded: Vec<AuthorityName> = peers_seen
         .into_iter()
         .filter(|peer| !frozen_peers.contains(peer))
+        .collect();
+    FreezePartition { frozen, excluded }
+}
+
+/// Supplements a freeze partition with carry-forward of stable
+/// mpc_data. A validator's mpc_data blob is a pure function of its root
+/// seed (`derive_mpc_data_blob`) — byte-identical every epoch — so a
+/// committee member that did not freshly announce this epoch can be
+/// frozen at the digest the PRIOR epoch's handoff certificate already
+/// agreed for it. `prior_mpc_data` is that `validator -> digest` map
+/// (the cert's `ValidatorMpcData` items); it is consensus-anchored and
+/// perpetual, so every honest validator supplements identically.
+///
+/// Any committee member not already in `partition.frozen` but present
+/// in `prior_mpc_data` is moved into `frozen` at its prior digest and
+/// removed from `excluded` (the prior digest is the validator's true,
+/// already-quorum-attested blob — a divergent fresh announcement that
+/// landed it in `excluded` was byzantine/transient). Members with no
+/// prior digest — first-time joiners — are left untouched: they must
+/// announce fresh, and a joiner that never announces is excluded, per
+/// the announcements spec.
+///
+/// This restores the v3 "always available" property for any validator
+/// ever frozen. Because the carried digest re-enters this epoch's
+/// certificate, coverage chains across epochs: a validator frozen even
+/// once stays covered while it is down, so a continuing member that is
+/// slow — or even a permanently-down-but-staked one — never wedges the
+/// reconfiguration into the next epoch.
+pub fn carry_forward_stable_mpc_data(
+    partition: FreezePartition,
+    committee_members: &[AuthorityName],
+    prior_mpc_data: &HashMap<AuthorityName, [u8; 32]>,
+) -> FreezePartition {
+    let FreezePartition {
+        mut frozen,
+        excluded,
+    } = partition;
+    let mut frozen_peers: HashSet<AuthorityName> =
+        frozen.iter().map(|(authority, _)| *authority).collect();
+    for member in committee_members {
+        if frozen_peers.contains(member) {
+            continue;
+        }
+        if let Some(digest) = prior_mpc_data.get(member) {
+            frozen.push((*member, *digest));
+            frozen_peers.insert(*member);
+        }
+    }
+    // Keep `frozen` sorted by (authority, hash) — the invariant
+    // `compute_freeze_partition` documents and downstream relies on.
+    frozen.sort();
+    let excluded = excluded
+        .into_iter()
+        .filter(|authority| !frozen_peers.contains(authority))
         .collect();
     FreezePartition { frozen, excluded }
 }
@@ -811,7 +865,7 @@ pub fn default_handoff_items_builders(
 /// off-chain. `class_groups` is required for every authority in the
 /// working set (the strict gate). The three PVSS halves are
 /// opportunistic per-validator: present only when the validator
-/// published under the post-PR-#1707 shape
+/// published under the version-3 shape
 /// (`network_encryption_key_version == 3`).
 ///
 /// Under v4 the off-chain producer (`derive_mpc_data_blob`) always
@@ -820,7 +874,7 @@ pub fn default_handoff_items_builders(
 /// legacy / mixed-shape validators read via the chain fallback
 /// (mainnet-v1.1.8 bare class-groups shape) — matching the
 /// `filter_map` semantics in `sui_syncer::new_committee`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OffChainCommitteeBundles {
     pub class_groups: std::collections::HashMap<
         AuthorityName,
@@ -1094,19 +1148,9 @@ pub trait NetworkKeyBlobSource: Send + Sync + 'static {
         network_key_id: &sui_types::base_types::ObjectID,
     ) -> Option<Vec<u8>>;
 
-    /// The reconfiguration output FOR epoch `for_epoch` — the output
-    /// whose shares are encrypted to `for_epoch`'s committee, i.e.
-    /// the one produced by the reconfiguration session that ran in
-    /// `for_epoch - 1`. This mirrors the on-chain
-    /// `reconfiguration_public_outputs` table, which is keyed by
-    /// target epoch and read at the current epoch. Serving a
-    /// "latest" output regardless of epoch is wrong: mid-epoch, the
-    /// latest output targets the NEXT epoch's party IDs and fails
-    /// decryption under the current epoch's identity.
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
-        for_epoch: EpochId,
     ) -> Option<Vec<u8>>;
 }
 
@@ -1122,6 +1166,12 @@ pub trait OffChainCommitteeMpcDataSource: Send + Sync + 'static {
         &self,
         committee_authorities: &[AuthorityName],
     ) -> OffChainMpcDataAssembly;
+
+    /// Whether the epoch's mpc_data freeze has fired. Post-freeze,
+    /// `try_assemble_mpc_data` is a pure function of the immutable
+    /// frozen set, so a `Complete` assembly observed while frozen is
+    /// final for the epoch and the caller may stop re-assembling.
+    fn is_frozen(&self) -> bool;
 }
 
 /// Adapter that lets the long-lived `SuiConnectorService` hold a
@@ -1155,11 +1205,10 @@ impl NetworkKeyBlobSource for EpochStoreBlobSource {
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
-        for_epoch: EpochId,
     ) -> Option<Vec<u8>> {
         self.inner
             .upgrade()
-            .and_then(|store| store.network_reconfiguration_output_blob(network_key_id, for_epoch))
+            .and_then(|store| store.network_reconfiguration_output_blob(network_key_id))
     }
 }
 
@@ -1179,7 +1228,18 @@ pub struct EpochStoreMpcDataSource {
     epoch_store:
         std::sync::Weak<crate::authority::authority_per_epoch_store::AuthorityPerEpochStore>,
     perpetual: Arc<crate::authority::authority_perpetual_tables::AuthorityPerpetualTables>,
+    /// Last successful assembly, keyed by the exact `(authority,
+    /// digest)` input pairs. Blobs are content-addressed by digest,
+    /// so identical pairs imply an identical assembly — the cache
+    /// skips the per-tick blob reads + class-groups decode that the
+    /// sync loop would otherwise redo every poll for the rest of the
+    /// epoch.
+    assembled_cache: std::sync::Mutex<Option<CachedAssembly>>,
 }
+
+/// `(input pairs, assembled bundles)` of the last successful
+/// off-chain assembly in [`EpochStoreMpcDataSource`].
+type CachedAssembly = (Vec<(AuthorityName, [u8; 32])>, OffChainCommitteeBundles);
 
 impl EpochStoreMpcDataSource {
     pub fn new(
@@ -1191,6 +1251,7 @@ impl EpochStoreMpcDataSource {
         Self {
             epoch_store,
             perpetual,
+            assembled_cache: std::sync::Mutex::new(None),
         }
     }
 }
@@ -1228,11 +1289,26 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
                     return OffChainMpcDataAssembly::EverythingExcluded;
                 }
             };
+        if let Some((cached_pairs, cached_bundles)) = self
+            .assembled_cache
+            .lock()
+            .expect("assembled_cache lock poisoned")
+            .as_ref()
+            && *cached_pairs == pairs
+        {
+            return OffChainMpcDataAssembly::Complete(cached_bundles.clone());
+        }
         let perpetual = self.perpetual.clone();
         let assembly_pairs: Vec<_> = pairs.clone();
         let result = assemble_committee_mpc_data_off_chain(assembly_pairs, move |digest| {
             perpetual.get_mpc_artifact_blob(digest).ok().flatten()
         });
+        if let OffChainMpcDataAssembly::Complete(ref bundles) = result {
+            *self
+                .assembled_cache
+                .lock()
+                .expect("assembled_cache lock poisoned") = Some((pairs.clone(), bundles.clone()));
+        }
         if let OffChainMpcDataAssembly::Incomplete { ref missing } = result {
             let blob_only_missing: Vec<_> = missing
                 .iter()
@@ -1251,15 +1327,22 @@ impl OffChainCommitteeMpcDataSource for EpochStoreMpcDataSource {
         }
         result
     }
+
+    fn is_frozen(&self) -> bool {
+        self.epoch_store.upgrade().is_some_and(|store| {
+            store
+                .get_frozen_validator_mpc_data_input_set()
+                .is_ok_and(|frozen| !frozen.is_empty())
+        })
+    }
 }
 
 /// In-memory `NetworkKeyBlobSource` for tests and as a typed
-/// empty default. DKG outputs keyed by `network_key_id`;
-/// reconfiguration outputs keyed by `(network_key_id, target_epoch)`.
+/// empty default. Keyed by `network_key_id`.
 #[derive(Default)]
 pub struct StaticNetworkKeyBlobSource {
     dkg: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
-    reconfig: BTreeMap<(sui_types::base_types::ObjectID, EpochId), Vec<u8>>,
+    reconfig: BTreeMap<sui_types::base_types::ObjectID, Vec<u8>>,
 }
 
 impl StaticNetworkKeyBlobSource {
@@ -1269,15 +1352,6 @@ impl StaticNetworkKeyBlobSource {
 
     pub fn insert_dkg(&mut self, key_id: sui_types::base_types::ObjectID, bytes: Vec<u8>) {
         self.dkg.insert(key_id, bytes);
-    }
-
-    pub fn insert_reconfig(
-        &mut self,
-        key_id: sui_types::base_types::ObjectID,
-        for_epoch: EpochId,
-        bytes: Vec<u8>,
-    ) {
-        self.reconfig.insert((key_id, for_epoch), bytes);
     }
 }
 
@@ -1292,9 +1366,8 @@ impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {
     fn network_reconfiguration_output_blob(
         &self,
         network_key_id: &sui_types::base_types::ObjectID,
-        for_epoch: EpochId,
     ) -> Option<Vec<u8>> {
-        self.reconfig.get(&(*network_key_id, for_epoch)).cloned()
+        self.reconfig.get(network_key_id).cloned()
     }
 }
 
@@ -1306,16 +1379,6 @@ impl NetworkKeyBlobSource for StaticNetworkKeyBlobSource {
 ///    `current_reconfiguration_public_output`). If `source` doesn't
 ///    have a blob, the corresponding field on `chain_data` is used
 ///    as the fallback.
-///
-/// The reconfiguration blob is requested FOR `chain_data.current_epoch`
-/// — the same target-epoch semantics as the on-chain read that
-/// produced `chain_data` — so the overlay can never substitute an
-/// output dealt to a different epoch's committee. In particular, at
-/// the first off-chain epoch after the v3→v4 upgrade no off-chain
-/// output targets the current epoch (it was produced under v3), so
-/// the chain copy is used; and mid-epoch, the freshly-produced
-/// output targeting the NEXT epoch is invisible to the current
-/// epoch's request.
 ///
 /// The chain blob is read by the caller and stitched into
 /// `chain_data` already; this function just chooses whether to
@@ -1330,7 +1393,7 @@ pub fn fetch_network_key_data_with_off_chain_blobs(
         .network_dkg_output_blob(&chain_data.id)
         .unwrap_or(chain_data.network_dkg_public_output);
     let current_reconfiguration_public_output = source
-        .network_reconfiguration_output_blob(&chain_data.id, chain_data.current_epoch)
+        .network_reconfiguration_output_blob(&chain_data.id)
         .unwrap_or(chain_data.current_reconfiguration_public_output);
     ika_types::messages_dwallet_mpc::DWalletNetworkEncryptionKeyData {
         id: chain_data.id,
@@ -2600,46 +2663,16 @@ mod tests {
 
         let mut source = StaticNetworkKeyBlobSource::new();
         source.insert_dkg(key_id, vec![0x11; 8]);
-        source.insert_reconfig(key_id, 5, vec![0x22; 8]);
+        // No reconfig blob in source → caller should keep chain's
+        // reconfig bytes.
 
         let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
         assert_eq!(merged.id, key_id);
         assert_eq!(merged.current_epoch, 5);
         assert_eq!(merged.dkg_at_epoch, 3);
         assert_eq!(merged.network_dkg_public_output, vec![0x11; 8]);
-        assert_eq!(merged.current_reconfiguration_public_output, vec![0x22; 8]);
-        assert_eq!(merged.state, chain.state);
-    }
-
-    #[test]
-    fn fetch_network_key_data_ignores_reconfig_output_for_other_epochs() {
-        use ika_types::messages_dwallet_mpc::{
-            DWalletNetworkEncryptionKeyData, DWalletNetworkEncryptionKeyState,
-        };
-        let key_id = ObjectID::random();
-        let chain = DWalletNetworkEncryptionKeyData {
-            id: key_id,
-            current_epoch: 5,
-            dkg_at_epoch: 3,
-            network_dkg_public_output: vec![0xCC; 16],
-            current_reconfiguration_public_output: vec![0xDD; 16],
-            state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
-        };
-
-        let mut source = StaticNetworkKeyBlobSource::new();
-        // The mid-epoch hazard: the freshly-produced output targeting
-        // the NEXT epoch's committee. It must be invisible to the
-        // current epoch's request — adopting it here is exactly the
-        // ClassGroup(Decryption) failure (shares encrypted to
-        // next-epoch party IDs, decrypted with current-epoch
-        // identity).
-        source.insert_reconfig(key_id, 6, vec![0xEE; 8]);
-        // And a stale prior-epoch output, equally wrong.
-        source.insert_reconfig(key_id, 4, vec![0xFF; 8]);
-
-        let merged = fetch_network_key_data_with_off_chain_blobs(chain.clone(), &source);
-        // Neither overlaid — chain's epoch-5 bytes kept.
         assert_eq!(merged.current_reconfiguration_public_output, vec![0xDD; 16]);
+        assert_eq!(merged.state, chain.state);
     }
 
     #[test]
@@ -3049,6 +3082,151 @@ mod tests {
         let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
         assert_eq!(frozen_authorities, vec![a, b, c]);
         assert!(partition.excluded.is_empty());
+    }
+
+    // -------- carry_forward_stable_mpc_data --------
+
+    /// The fix for the freeze wedge: a continuing committee member that
+    /// went silent this epoch (the "silent withholding" scenario above)
+    /// but was frozen in the prior epoch is restored to the frozen set at
+    /// its prior digest, instead of being dropped. This is what keeps a
+    /// member that restarted near the epoch boundary from leaving a gap
+    /// the next reconfiguration rejects forever.
+    #[test]
+    fn carry_forward_restores_silent_continuing_member() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // Only a, b, c were freshly attested this epoch; d went silent.
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert_eq!(attested.frozen.len(), 3);
+
+        // d carries a prior-epoch digest (a/b/c also do — a no-op for them).
+        let prior: HashMap<_, _> = [
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0xDD; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.frozen.contains(&(d, [0xDD; 32])));
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// A first-time joiner (no prior-epoch digest) that went silent is
+    /// NOT carried forward — there is no stable data to reuse, so it must
+    /// announce fresh. Only members with a prior digest are restored.
+    #[test]
+    fn carry_forward_does_not_invent_data_for_a_joiner() {
+        let (a, b, c, joiner) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xEE));
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+
+        // Prior epoch knows a/b/c but NOT the joiner.
+        let prior: HashMap<_, _> = [(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])]
+            .into_iter()
+            .collect();
+        let committee = [a, b, c, joiner];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 3);
+        let frozen_authorities: Vec<_> = partition.frozen.iter().map(|(a, _)| *a).collect();
+        assert!(!frozen_authorities.contains(&joiner));
+    }
+
+    /// A member that announced a divergent blob this epoch (so it landed
+    /// in `excluded`) but has a known-good prior digest is carried forward
+    /// at the prior digest and removed from `excluded`: its true blob is
+    /// root-seed-deterministic, so the divergent fresh one was
+    /// byzantine/transient.
+    #[test]
+    fn carry_forward_overrides_exclusion_with_known_good_prior() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        let honest_view = vec![(a, [0x11; 32]), (b, [0x22; 32]), (c, [0x33; 32])];
+        let mut signals: BTreeMap<_, _> = [
+            (a, honest_view.clone()),
+            (b, honest_view.clone()),
+            (c, honest_view.clone()),
+        ]
+        .into_iter()
+        .collect();
+        // d self-votes a lone hash (1/4) — below quorum → excluded.
+        signals.insert(d, vec![(d, [0x99; 32])]);
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert!(attested.excluded.contains(&d));
+
+        let prior: HashMap<_, _> = [(d, [0xDD; 32])].into_iter().collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        // d frozen at the prior (good) digest, not its divergent fresh one.
+        assert!(partition.frozen.contains(&(d, [0xDD; 32])));
+        assert!(!partition.frozen.contains(&(d, [0x99; 32])));
+        assert!(partition.excluded.is_empty());
+    }
+
+    /// A FRESH quorum attestation always wins over carry-forward: a member
+    /// frozen this epoch keeps its fresh digest and the prior-cert digest
+    /// is ignored — carry-forward only fills gaps, it never overrides a
+    /// fresh announcement. In production an existing validator's blob is
+    /// root-seed-deterministic (fresh == prior), but this pins the
+    /// precedence so a future change can't let a stale carried digest
+    /// shadow a fresh one.
+    #[test]
+    fn carry_forward_never_overrides_a_fresh_attestation() {
+        let (a, b, c, d) = (auth(0xAA), auth(0xBB), auth(0xCC), auth(0xDD));
+        // All four freshly attested this epoch at their current hashes.
+        let view = vec![
+            (a, [0x11; 32]),
+            (b, [0x22; 32]),
+            (c, [0x33; 32]),
+            (d, [0x44; 32]),
+        ];
+        let signals: BTreeMap<_, _> = [a, b, c, d]
+            .into_iter()
+            .map(|s| (s, view.clone()))
+            .collect();
+        let attested = compute_freeze_partition(&signals, |_| 1, 3);
+        assert_eq!(attested.frozen.len(), 4);
+
+        // Prior cert held a DIFFERENT digest for every member. Since all
+        // four are freshly frozen, carry-forward must use NONE of them.
+        let prior: HashMap<_, _> = [
+            (a, [0x99; 32]),
+            (b, [0x99; 32]),
+            (c, [0x99; 32]),
+            (d, [0x99; 32]),
+        ]
+        .into_iter()
+        .collect();
+        let committee = [a, b, c, d];
+        let partition = carry_forward_stable_mpc_data(attested, &committee, &prior);
+
+        assert_eq!(partition.frozen.len(), 4);
+        assert!(partition.frozen.contains(&(a, [0x11; 32])));
+        assert!(partition.frozen.contains(&(d, [0x44; 32])));
+        assert!(
+            !partition.frozen.iter().any(|(_, hash)| *hash == [0x99; 32]),
+            "a stale prior-cert digest shadowed a fresh attestation",
+        );
     }
 
     /// Byzantine scenario: validator D serves bytes but they're

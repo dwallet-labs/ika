@@ -7,6 +7,7 @@ use std::path::Path;
 use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use typed_store::DBMapUtils;
@@ -51,6 +52,12 @@ pub struct AuthorityPerpetualTables {
     /// in the originating epoch — this is its perpetual mirror.
     pub(crate) network_dkg_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
 
+    /// Per-key map `network_key_id -> blob digest` for the LATEST
+    /// network reconfiguration output. Reconfig outputs change each
+    /// epoch, but only the most recent one matters for class-groups
+    /// assembly + downstream MPC, so we overwrite on each write.
+    pub(crate) network_reconfiguration_output_digests_by_key: DBMap<ObjectID, [u8; 32]>,
+
     /// `(reconfiguration_epoch, network_key_id) -> reconfig output
     /// digest`, keyed by the reconfiguration session's *own* epoch
     /// (the on-chain request event's epoch, identical across
@@ -65,12 +72,6 @@ pub struct AuthorityPerpetualTables {
     /// cross-reject as `AttestationMismatch` — wedging EndOfPublish.
     /// One small entry per (epoch, key); never overwritten, so the
     /// historical slice stays available for late handoff retries.
-    ///
-    /// This is also the index behind the off-chain blob overlay's
-    /// reconfiguration lookup: the output FOR epoch `e` (the one
-    /// `e`'s committee decrypts with) is the one recorded under
-    /// production epoch `e - 1`, mirroring the on-chain
-    /// `reconfiguration_public_outputs` table keyed by target epoch.
     pub(crate) network_reconfiguration_output_digest_by_epoch_and_key:
         DBMap<(EpochId, ObjectID), [u8; 32]>,
 }
@@ -181,10 +182,7 @@ impl AuthorityPerpetualTables {
     /// they don't verify. Caller bugs are caught here at the
     /// boundary rather than detonating downstream.
     pub fn insert_mpc_artifact_blob(&self, digest: [u8; 32], bytes: &[u8]) -> IkaResult {
-        use fastcrypto::hash::{Blake2b256, HashFunction};
-        let mut hasher = Blake2b256::default();
-        hasher.update(bytes);
-        let computed: [u8; 32] = hasher.finalize().into();
+        let computed = mpc_data_blob_hash(bytes);
         if computed != digest {
             return Err(IkaError::SuiConnectorInternalError(format!(
                 "insert_mpc_artifact_blob: digest mismatch — caller passed {} but Blake2b256(bytes) = {}",
@@ -234,11 +232,26 @@ impl AuthorityPerpetualTables {
         Ok(self.network_dkg_output_digests_by_key.get(network_key_id)?)
     }
 
+    /// Records the LATEST known digest of a network key's
+    /// reconfiguration output. Reconfig outputs change every epoch,
+    /// so the table stores only the most recent digest per key —
+    /// downstream class-groups assembly + reconfig MPC only ever
+    /// need the latest.
+    pub fn insert_network_reconfiguration_output_digest(
+        &self,
+        network_key_id: ObjectID,
+        digest: [u8; 32],
+    ) -> IkaResult {
+        self.network_reconfiguration_output_digests_by_key
+            .insert(&network_key_id, &digest)?;
+        Ok(())
+    }
+
     /// Records a reconfiguration output digest under the
     /// reconfiguration session's own epoch (deterministic across
-    /// validators). Read both by the epoch-keyed handoff attestation
-    /// builder and by the off-chain blob overlay (which resolves the
-    /// output FOR epoch `e` via production epoch `e - 1`).
+    /// validators), for the epoch-keyed handoff attestation lookup.
+    /// Distinct from [`Self::insert_network_reconfiguration_output_digest`],
+    /// which keeps only the latest per key for the off-chain overlay.
     pub fn insert_network_reconfiguration_output_digest_for_epoch(
         &self,
         reconfiguration_epoch: EpochId,
@@ -250,19 +263,34 @@ impl AuthorityPerpetualTables {
         Ok(())
     }
 
-    /// Point lookup of the digest recorded by
-    /// [`Self::insert_network_reconfiguration_output_digest_for_epoch`] —
-    /// the digest of the reconfiguration output produced by
-    /// `reconfiguration_epoch`'s reconfiguration session for this key
-    /// (i.e. the output targeting `reconfiguration_epoch + 1`'s committee).
-    pub fn get_network_reconfiguration_output_digest_for_epoch(
+    pub fn get_network_reconfiguration_output_digest(
         &self,
-        reconfiguration_epoch: EpochId,
         network_key_id: &ObjectID,
     ) -> IkaResult<Option<[u8; 32]>> {
         Ok(self
+            .network_reconfiguration_output_digests_by_key
+            .get(network_key_id)?)
+    }
+
+    /// Returns the `key_id -> digest` slice recorded for `epoch` by
+    /// [`Self::insert_network_reconfiguration_output_digest_for_epoch`].
+    /// Keys are be-fix-int serialized, so the `(epoch, key)` tuples sort
+    /// epoch-major and the epoch slice is a bounded range scan — the
+    /// table is perpetual and this is read from per-second loops.
+    pub fn get_network_reconfiguration_output_digests_for_epoch(
+        &self,
+        epoch: EpochId,
+    ) -> IkaResult<std::collections::BTreeMap<ObjectID, [u8; 32]>> {
+        let upper_bound = epoch.checked_add(1).map(|next| (next, ObjectID::ZERO));
+        let mut out = std::collections::BTreeMap::new();
+        for entry in self
             .network_reconfiguration_output_digest_by_epoch_and_key
-            .get(&(reconfiguration_epoch, *network_key_id))?)
+            .safe_iter_with_bounds(Some((epoch, ObjectID::ZERO)), upper_bound)
+        {
+            let ((_, key_id), digest) = entry?;
+            out.insert(key_id, digest);
+        }
+        Ok(out)
     }
 
     /// Persists a `CertifiedHandoffAttestation` for the epoch it
@@ -343,6 +371,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reconfiguration_digest_epoch_slice_returns_exactly_that_epoch() {
+        let (_dir, tables) = open_tables();
+        let first_key = ObjectID::from_single_byte(0x11);
+        let second_key = ObjectID::from_single_byte(0x22);
+        // Neighboring epochs on both sides must NOT leak into the slice —
+        // this is what the range bounds (epoch-major be-fix-int key order)
+        // are trusted for.
+        for (epoch, key_id, digest) in [
+            (4u64, first_key, [0x04; 32]),
+            (5, first_key, [0x51; 32]),
+            (5, second_key, [0x52; 32]),
+            (6, first_key, [0x06; 32]),
+        ] {
+            tables
+                .insert_network_reconfiguration_output_digest_for_epoch(epoch, key_id, digest)
+                .unwrap();
+        }
+        let slice = tables
+            .get_network_reconfiguration_output_digests_for_epoch(5)
+            .unwrap();
+        assert_eq!(slice.len(), 2);
+        assert_eq!(slice.get(&first_key), Some(&[0x51; 32]));
+        assert_eq!(slice.get(&second_key), Some(&[0x52; 32]));
+        assert!(
+            tables
+                .get_network_reconfiguration_output_digests_for_epoch(7)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn certified_handoff_attestation_insert_get_roundtrip() {
         let (_dir, tables) = open_tables();
         let cert = empty_cert(5);
@@ -392,18 +452,11 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    fn blake2b_digest(bytes: &[u8]) -> [u8; 32] {
-        use fastcrypto::hash::{Blake2b256, HashFunction};
-        let mut hasher = Blake2b256::default();
-        hasher.update(bytes);
-        hasher.finalize().into()
-    }
-
     #[tokio::test]
     async fn insert_mpc_artifact_blob_accepts_matching_digest() {
         let (_dir, tables) = open_tables();
         let bytes = b"hello world".to_vec();
-        let digest = blake2b_digest(&bytes);
+        let digest = mpc_data_blob_hash(&bytes);
         tables
             .insert_mpc_artifact_blob(digest, &bytes)
             .expect("insert with correct digest must succeed");

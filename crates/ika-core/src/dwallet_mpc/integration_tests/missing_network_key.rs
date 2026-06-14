@@ -16,7 +16,19 @@ use tracing::info;
 #[tokio::test]
 #[cfg(test)]
 async fn network_key_received_after_start_event() {
-    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    // Honors RUST_LOG when this test sets up tracing first (the plain
+    // fmt subscriber caps at INFO and silently ignores RUST_LOG — which
+    // repeatedly sabotaged debug-tracing this test), and silently defers
+    // to whichever subscriber another in-process test installed first
+    // (init() and telemetry's init_for_testing() both PANIC in that
+    // case under parallel `cargo test`).
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
     let (committee, _) = Committee::new_simple_test_committee();
 
     let parties_that_receive_network_key_after_start_event = vec![0, 1];
@@ -43,6 +55,16 @@ async fn network_key_received_after_start_event() {
         network_owned_address_sign_request_senders,
         network_owned_address_sign_output_receivers,
     };
+
+    // The harness never syncs the epoch-close lock target from a chain, so
+    // it stays 0 and every user-session consensus submission (computation
+    // advance, rejection) would be held back; set it past the sequence
+    // numbers this test uses, like the other harness tests do.
+    for dwallet_mpc_service in &mut test_state.dwallet_mpc_services {
+        dwallet_mpc_service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
 
     send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
     let mut consensus_round = 1;

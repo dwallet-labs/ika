@@ -134,8 +134,6 @@ async function makeDWalletPublic(
 	const publicDWallet = await retryUntil(
 		() => ikaClient.getDWalletInParticularState(activeDWallet.id, 'Active'),
 		(wallet) => wallet !== null && wallet.public_user_secret_key_share !== null,
-		30,
-		2000,
 	);
 
 	expect(publicDWallet).toBeDefined();
@@ -174,8 +172,6 @@ async function requestAndWaitForPresign(
 		() =>
 			ikaClient.getPresignInParticularState(presignRequestEvent.event_data.presign_id, 'Completed'),
 		(presign) => presign !== null,
-		30,
-		2000,
 	);
 
 	expect(presignObject).toBeDefined();

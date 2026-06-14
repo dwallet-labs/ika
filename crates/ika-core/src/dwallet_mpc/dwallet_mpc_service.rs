@@ -36,7 +36,7 @@ use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
-use ika_types::committee::{Committee, EpochId, decode_validator_encryption_keys};
+use ika_types::committee::{Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -66,7 +66,7 @@ use mpc::GuaranteedOutputDeliveryRoundResult;
 use prometheus::Registry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use sui_types::messages_consensus::Round;
 #[cfg(any(test, feature = "test-utils"))]
@@ -105,12 +105,23 @@ pub struct DWalletMPCService {
     network_is_idle: bool,
     agreed_global_presign_requests_queue: Vec<GlobalPresignRequest>,
     processed_global_presign_sequence_numbers: HashSet<u64>,
+    /// Admission-rejected requests whose rejection output is held back until
+    /// the epoch-close lock target covers their sequence number; retried each
+    /// service loop iteration. A rejection that reaches quorum completes the
+    /// session on-chain, and completing a user session beyond the locked
+    /// target permanently wedges the epoch (the end-of-publish predicate is
+    /// a strict equality).
+    pending_rejected_sessions: Vec<DWalletSessionRequest>,
     /// Receiver for network-owned-address sign requests.
     network_owned_address_sign_requests_receiver:
         tokio::sync::mpsc::Receiver<NetworkOwnedAddressSignRequest>,
     /// Buffer for network-owned-address sign requests that couldn't be processed yet
     /// (e.g., key not yet agreed). Retried each service loop iteration.
     pending_network_owned_address_sign_requests: Vec<NetworkOwnedAddressSignRequest>,
+    /// Last time the NOA-sign starvation warn fired. The service loop runs
+    /// every 20ms, so the "requests waiting, pool empty / key unavailable"
+    /// warn MUST be throttled (at most once per 30s).
+    last_noa_starvation_log: Option<Instant>,
     /// Set of message hashes that have already been submitted for signing.
     /// Uses 32-byte Blake2b digests instead of full messages to bound memory.
     submitted_noa_sign_messages: HashSet<[u8; 32]>,
@@ -216,8 +227,10 @@ impl DWalletMPCService {
             network_is_idle: false,
             agreed_global_presign_requests_queue: Vec::new(),
             processed_global_presign_sequence_numbers: HashSet::new(),
+            pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            last_noa_starvation_log: None,
             submitted_noa_sign_messages: HashSet::new(),
             last_sent_sui_chain_observation: None,
             current_agreed_sui_chain_context: None,
@@ -293,9 +306,11 @@ impl DWalletMPCService {
             network_is_idle: false,
             processed_global_presign_sequence_numbers: HashSet::new(),
             agreed_global_presign_requests_queue: Vec::new(),
+            pending_rejected_sessions: Vec::new(),
             network_owned_address_sign_requests_receiver:
                 network_owned_address_sign_request_receiver,
             pending_network_owned_address_sign_requests: Vec::new(),
+            last_noa_starvation_log: None,
             submitted_noa_sign_messages: HashSet::new(),
             last_sent_sui_chain_observation: None,
             current_agreed_sui_chain_context: None,
@@ -475,12 +490,36 @@ impl DWalletMPCService {
                 vec![]
             });
 
-        let newly_instantiated_network_key_ids = self.process_consensus_rounds_from_storage().await;
+        // Adopt locally-observed network-key outputs (cert-digest-gated)
+        // and spawn instantiation for any not yet installed — once per
+        // ITERATION, not per consensus round: the inputs (overlay watch,
+        // persisted cert) don't depend on round content, and gating this
+        // on fresh rounds deadlocks the key-arrives-after-request
+        // bootstrap (nothing can emit a round WITHOUT the key, and no
+        // round would mean no adoption). The adoption pass early-returns
+        // in O(1) when neither the overlay Arc nor the cert changed.
+        let overlay_snapshot = self
+            .sui_data_requests
+            .network_keys_receiver
+            .borrow()
+            .clone();
+        self.dwallet_mpc_manager
+            .adopt_cert_verified_keys(&overlay_snapshot);
+        self.dwallet_mpc_manager.instantiate_adopted_network_keys();
+
+        self.process_consensus_rounds_from_storage().await;
+        // Network-key instantiations complete asynchronously on the rayon
+        // pool; poll them once per ITERATION (not per consensus round) so
+        // a completed key installs even when no new rounds arrived.
+        let newly_instantiated_network_key_ids = self
+            .dwallet_mpc_manager
+            .poll_pending_network_key_instantiations()
+            .await;
 
         self.process_cryptographic_computations().await;
         self.handle_noa_sign_outputs().await;
         self.poll_noa_chain_status().await;
-        self.handle_failed_requests_and_submit_reject_to_consensus(rejected_sessions)
+        self.submit_rejections_covered_by_lock_target(rejected_sessions)
             .await;
 
         newly_instantiated_network_key_ids
@@ -548,6 +587,25 @@ impl DWalletMPCService {
                 }
                 !instantiated // keep in buffer if instantiation failed
             });
+        // Starvation signal: requests are waiting and this pass made no
+        // progress — the signing network key is unavailable or the internal
+        // presign pool for the requested algorithm is empty. Without this,
+        // a wedged pool looks identical to no demand. Throttled to once per
+        // 30s (the loop runs every 20ms).
+        let starvation_persists = newly_submitted.is_empty()
+            && !self.pending_network_owned_address_sign_requests.is_empty();
+        if starvation_persists
+            && self
+                .last_noa_starvation_log
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(30))
+        {
+            self.last_noa_starvation_log = Some(Instant::now());
+            warn!(
+                pending_requests = self.pending_network_owned_address_sign_requests.len(),
+                "network-owned-address sign requests waiting: internal presign pool \
+                 empty or signing key unavailable"
+            );
+        }
         self.submitted_noa_sign_messages.extend(newly_submitted);
     }
 
@@ -781,17 +839,16 @@ impl DWalletMPCService {
         Ok(rejected_sessions)
     }
 
-    async fn process_consensus_rounds_from_storage(&mut self) -> Vec<ObjectID> {
+    async fn process_consensus_rounds_from_storage(&mut self) {
         // `EpochEnded` from a per-epoch-store read is the normal reconfiguration
         // boundary: the store's tables were swapped out from under this
         // (per-epoch) service while it was mid-iteration. Stop the iteration
         // gracefully — the loop's sleep and the service teardown take over —
         // instead of panicking, which crashed the node and stalled reconfiguration
-        // under churn. `$on_epoch_end` is the value to return (nothing useful is
-        // left to process for the ended epoch); other results pass through to the
-        // caller's existing handling unchanged.
+        // under churn. Nothing useful is left to process for the ended epoch;
+        // other results pass through to the caller's existing handling unchanged.
         macro_rules! stop_on_epoch_end {
-            ($read:expr, $on_epoch_end:expr) => {
+            ($read:expr) => {
                 match $read {
                     Err(IkaError::EpochEnded(ended_epoch)) => {
                         info!(
@@ -799,7 +856,7 @@ impl DWalletMPCService {
                             "epoch ended while reading the per-epoch DWallet MPC store; \
                              stopping this service iteration gracefully"
                         );
-                        return $on_epoch_end;
+                        return;
                     }
                     other => other,
                 }
@@ -808,31 +865,27 @@ impl DWalletMPCService {
 
         // The last consensus round for MPC messages is also the last one for MPC outputs and verified dWallet checkpoint messages,
         // as they are all written in an atomic batch manner as part of committing the consensus commit outputs.
-        let last_consensus_round = if let Ok(last_consensus_round) = stop_on_epoch_end!(
-            self.epoch_store.last_dwallet_mpc_message_round(),
-            Vec::new()
-        ) {
+        let last_consensus_round = if let Ok(last_consensus_round) =
+            stop_on_epoch_end!(self.epoch_store.last_dwallet_mpc_message_round())
+        {
             if let Some(last_consensus_round) = last_consensus_round {
                 last_consensus_round
             } else {
                 info!("No consensus round from DB yet, retrying in {DELAY_NO_ROUNDS_SEC} seconds.");
                 tokio::time::sleep(Duration::from_secs(DELAY_NO_ROUNDS_SEC)).await;
-                return Vec::new();
+                return;
             }
         } else {
             error!("failed to get last consensus round from DB");
             panic!("failed to get last consensus round from DB");
         };
 
-        let mut accumulated_new_key_ids = Vec::new();
-
         while Some(last_consensus_round) > self.last_read_consensus_round {
             self.number_of_consensus_rounds += 1;
 
             let mpc_messages = stop_on_epoch_end!(
                 self.epoch_store
-                    .next_dwallet_mpc_message(self.last_read_consensus_round),
-                accumulated_new_key_ids
+                    .next_dwallet_mpc_message(self.last_read_consensus_round)
             );
             let (mpc_messages_consensus_round, mpc_messages) = match mpc_messages {
                 Ok(mpc_messages) => {
@@ -877,12 +930,21 @@ impl DWalletMPCService {
                 }
             };
 
-            // Internal presign is a v4 feature; the dense per-round assertion
-            // below only holds once every replayed round was produced by a
-            // binary with internal presign live. Gate the read on the same flag
-            // that gates instantiation so a pre-v4 node (e.g. mid rolling
-            // upgrade) skips the sparse stream instead of panicking. See PR
-            // #1728.
+            // Internal presign sessions are a v4 feature
+            // (`internal_presign_sessions_enabled`), and only a binary with the
+            // feature live ever writes `dwallet_internal_mpc_outputs` records.
+            // The round assertion below assumes a *dense* stream — one record
+            // per processed consensus round — which holds only when every round
+            // in the replayed history was produced by such a binary. While the
+            // feature is disabled the stream is empty; worse, when replaying a
+            // history whose earlier rounds were produced by a binary that never
+            // wrote internal outputs (a pre-v4 node, e.g. during a rolling
+            // protocol/binary upgrade) the stream is *sparse*:
+            // `next_dwallet_internal_mpc_output` returns the next future record,
+            // whose round is ahead of the round being processed, and the
+            // dense-stream assertion trips. Gate the read on the same feature
+            // flag that gates instantiation so a node ignores the internal-output
+            // stream until internal presign is actually live.
             let internal_mpc_outputs = if self.protocol_config.internal_presign_sessions_enabled() {
                 let mpc_outputs = self
                     .epoch_store
@@ -929,13 +991,9 @@ impl DWalletMPCService {
                         error!(
                             ?mpc_messages_consensus_round,
                             ?round,
-                            last_read_consensus_round = ?self.last_read_consensus_round,
                             "consensus round mismatch for verified checkpoint messages"
                         );
-                        panic!(
-                            "consensus round mismatch for verified checkpoint messages: last_read={:?} mpc_messages_round={:?} got_round={:?}",
-                            self.last_read_consensus_round, mpc_messages_consensus_round, round
-                        );
+                        panic!("consensus round mismatch for verified checkpoint messages");
                     }
                     messages
                 }
@@ -972,12 +1030,10 @@ impl DWalletMPCService {
                             error!(
                                 ?mpc_messages_consensus_round,
                                 ?round,
-                                last_read_consensus_round = ?self.last_read_consensus_round,
                                 "consensus round mismatch for verified system checkpoint messages"
                             );
                             panic!(
-                                "consensus round mismatch for verified system checkpoint messages: last_read={:?} mpc_messages_round={:?} got_round={:?}",
-                                self.last_read_consensus_round, mpc_messages_consensus_round, round
+                                "consensus round mismatch for verified system checkpoint messages"
                             );
                         }
                         messages
@@ -1209,30 +1265,13 @@ impl DWalletMPCService {
                 }
             }
 
-            // 1f. Adopt this validator's own locally-observed network-key
-            // outputs into the instantiation set, verified against the
-            // prior epoch's handoff cert (the cross-epoch agreement that
-            // gates which keys may be instantiated). Sourced from the
-            // overlay but cert-digest-gated, so a stale/wrong local value
-            // is skipped.
-            // Cheap Arc clone; the borrow guard is dropped before the
-            // instantiation await below.
-            let overlay_snapshot = self
-                .sui_data_requests
-                .network_keys_receiver
-                .borrow()
-                .clone();
-            self.dwallet_mpc_manager
-                .adopt_cert_verified_keys(&overlay_snapshot);
-
-            // 2. Instantiate any keys we don't have yet, from the
-            // cert-verified local outputs adopted above (the consensus
-            // vote that previously fed this set has been removed).
-            let new_key_ids = self
-                .dwallet_mpc_manager
-                .instantiate_agreed_keys_from_voted_data()
-                .await;
-            accumulated_new_key_ids.extend(new_key_ids);
+            // Network-key adoption + instantiation spawning deliberately do
+            // NOT live in this per-round loop — see the per-ITERATION block
+            // in `run_service_loop_iteration`: their inputs (overlay watch,
+            // persisted cert) don't depend on round content, and gating them
+            // on fresh consensus rounds deadlocks the key-arrives-after-
+            // request bootstrap (no validator can emit a round WITHOUT the
+            // key, and no round means no adoption).
 
             // 3. Instantiate internal presign sessions (now uses agreed values).
             if self.protocol_config.internal_presign_sessions_enabled() {
@@ -1314,6 +1353,13 @@ impl DWalletMPCService {
                                         );
 
                                     global_presign_checkpoint_messages.push(checkpoint_message);
+                                    self.dwallet_mpc_metrics
+                                        .global_presigns_served_total
+                                        .with_label_values(&[&format!(
+                                            "{:?}",
+                                            request.signature_algorithm
+                                        )])
+                                        .inc();
                                     self.processed_global_presign_sequence_numbers
                                         .insert(request.session_sequence_number);
                                     // Mark this request as fulfilled in the manager to skip future voting
@@ -1355,6 +1401,12 @@ impl DWalletMPCService {
             } else {
                 Vec::new()
             };
+            // Set unconditionally (including the queue-empty branch above,
+            // which skips the retain) so the gauge can't read stale-nonzero
+            // after the queue drains or across the per-epoch service rebuild.
+            self.dwallet_mpc_metrics
+                .global_presign_requests_waiting
+                .set(self.agreed_global_presign_requests_queue.len() as i64);
 
             // Group checkpoint messages by chain.
             let mut messages_by_chain: HashMap<
@@ -1521,11 +1573,9 @@ impl DWalletMPCService {
                 .set(consensus_round as i64);
             tokio::task::yield_now().await;
         }
-
-        accumulated_new_key_ids
     }
 
-    async fn handle_computation_results_and_submit_to_consensus(
+    pub(crate) async fn handle_computation_results_and_submit_to_consensus(
         &mut self,
         completed_computation_results: HashMap<
             ComputationId,
@@ -1547,6 +1597,14 @@ impl DWalletMPCService {
                 ComputationResultData::Native
             };
 
+            // Skip ONLY this result on a missing/non-active session —
+            // never abandon the rest of the batch. A result for a session
+            // that went non-active while its computation was in flight is
+            // routine under load (e.g., it completed via the peers' output
+            // quorum); a `return` here used to drop every other session's
+            // round messages and outputs in the same batch, starving those
+            // sessions below the message threshold network-wide and wedging
+            // the epoch close (locked-set sessions could never complete).
             let Some(session) = self.dwallet_mpc_manager.sessions.get(&session_identifier) else {
                 error!(
                     should_never_happen = true,
@@ -1555,7 +1613,7 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "failed to retrieve session for which a computation update was received"
                 );
-                return;
+                continue;
             };
 
             let SessionStatus::Active { request, .. } = session.status.clone() else {
@@ -1565,7 +1623,7 @@ impl DWalletMPCService {
                     ?computation_result_data,
                     "received a computation update for a non-active session"
                 );
-                return;
+                continue;
             };
 
             match computation_result {
@@ -1660,6 +1718,54 @@ impl DWalletMPCService {
                 },
             }
         }
+    }
+
+    /// Submit rejection outputs for admission-failed requests, holding back
+    /// user-session rejections beyond the epoch-close lock target: a
+    /// rejection that reaches quorum completes the session on-chain
+    /// (Rejected counts as completed), and completing a user session beyond
+    /// the locked target permanently wedges the epoch — the end-of-publish
+    /// predicate is a strict equality and the completed counter never goes
+    /// back down. Held rejections retry each iteration as the synced target
+    /// advances; past the epoch boundary the request is re-pulled and
+    /// re-rejected under the next epoch's target. System and internal
+    /// sessions are not lock-gated and submit immediately.
+    async fn submit_rejections_covered_by_lock_target(
+        &mut self,
+        rejected_sessions: Vec<DWalletSessionRequest>,
+    ) {
+        let lock_target = self
+            .dwallet_mpc_manager
+            .last_session_to_complete_in_current_epoch;
+        let covered_by_lock_target = |request: &DWalletSessionRequest| match request.session_type {
+            SessionType::User => match request.session_sequence_number {
+                Some(session_sequence_number) => session_sequence_number <= lock_target,
+                // Should never happen (user sessions always carry a sequence
+                // number); submit rather than buffer forever.
+                None => true,
+            },
+            _ => true,
+        };
+
+        for request in &rejected_sessions {
+            if !covered_by_lock_target(request) {
+                info!(
+                    session_identifier = ?request.session_identifier,
+                    session_sequence_number = ?request.session_sequence_number,
+                    last_session_to_complete_in_current_epoch = lock_target,
+                    "holding session rejection until the epoch-close lock target covers it; retried as the target advances, re-pulled next epoch otherwise"
+                );
+            }
+        }
+        self.pending_rejected_sessions.extend(rejected_sessions);
+
+        let (covered, deferred): (Vec<_>, Vec<_>) = self
+            .pending_rejected_sessions
+            .drain(..)
+            .partition(covered_by_lock_target);
+        self.pending_rejected_sessions = deferred;
+        self.handle_failed_requests_and_submit_reject_to_consensus(covered)
+            .await;
     }
 
     async fn handle_failed_requests_and_submit_reject_to_consensus(
@@ -2053,7 +2159,7 @@ impl DWalletMPCService {
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V2(_))
                         | Ok(dwallet_mpc_types::dwallet_mpc::VersionedNetworkDkgOutput::V3(_)) => {
-                            // V2 (bwd-compat) and V3 (post-PR-#1707 main) both support all curves.
+                            // V2 (bwd-compat) and V3 (current main) both support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2121,7 +2227,7 @@ impl DWalletMPCService {
                         }
                         Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V2(_))
                         | Ok(dwallet_mpc_types::dwallet_mpc::VersionedDecryptionKeyReconfigurationOutput::V3(_)) => {
-                            // V2 (bwd-compat) and V3 (post-PR-#1707 main) both support all curves.
+                            // V2 (bwd-compat) and V3 (current main) both support all curves.
                             vec![
                                 DWalletCurve::Secp256k1 as u32,
                                 DWalletCurve::Secp256r1 as u32,
@@ -2271,33 +2377,20 @@ impl DWalletMPCService {
 
         let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
 
-        // Verify that the validator's local class-groups key is the same as stored
-        // in the system state object on-chain. This makes sure the seed we are using
-        // is the same seed we used at setup to create the encryption key, and thus it
-        // assures we will generate the same decryption key too.
+        // Verify that the validators local class-groups key is the
+        // same as stored in the system state object onchain.
+        // This makes sure the seed we are using is the same seed we used at setup
+        // to create the encryption key, and thus it assures we will generate the same decryption key too.
         //
-        // The on-chain bytes are shape-versioned: mainnet-v1.1.8 publishes the bare
-        // `ClassGroupsEncryptionKeyAndProof`, while the post-bump combined
-        // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) travels
-        // off-chain via validator P2P. During the upgrade window the on-chain record
-        // is always the bare shape, so this boot-time identity check must be
-        // shape-tolerant: decode whatever shape is on-chain and compare only the
-        // class-groups component — the part both shapes carry and the only part that
-        // identifies the seed. (PVSS keys are verified off-chain on the assembly path
-        // in `assemble_committee_mpc_data_off_chain`.)
-        let onchain_bytes = onchain_validator
+        // Post-bump: the on-chain bytes are now `ValidatorEncryptionKeysAndProofs` (class
+        // groups + 3 PVSS keys); compare against the same combined struct re-derived from
+        // the local key material. See the wire-incompat warning on
+        // `ValidatorEncryptionKeysAndProofs`.
+        if onchain_validator
             .get_mpc_data()
             .unwrap()
-            .class_groups_public_key_and_proof();
-        let Some(onchain_keys) = decode_validator_encryption_keys(&onchain_bytes) else {
-            return Err(DwalletMPCError::MPCManagerError(
-                "could not decode the validator's class-groups key stored in the system state object".to_string(),
-            ));
-        };
-        if onchain_keys.class_groups
-            != class_groups_key_pair
-                .class_groups
-                .encryption_key_and_proof()
+            .class_groups_public_key_and_proof()
+            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),

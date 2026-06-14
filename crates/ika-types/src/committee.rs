@@ -593,14 +593,15 @@ pub struct ValidatorEncryptionKeysAndProofs {
 /// Result of shape-tolerant decoding of the Move-side validator encryption-key
 /// bytes. The class-groups CRT key is always present (both shapes carry it);
 /// the three PVSS halves are present only when the validator published the
-/// post-PR-#1707 bundle shape ([`ValidatorEncryptionKeysAndProofs`]).
+/// version-3 bundle shape ([`ValidatorEncryptionKeysAndProofs`]).
 ///
 /// Validators that published under the mainnet-v1.1.8 shape (bare
 /// `ClassGroupsEncryptionKeyAndProof`) come back here with PVSS halves as
 /// `None`; downstream DKG / Reconfiguration dispatch picks the
 /// `decentralized_party_backward_compatible` Party (which needs no PVSS keys).
 ///
-/// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707 transition window.
+/// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+/// bare-class-groups key shape to the version-3 bundle (#1707).
 /// Once every validator has republished under the new shape and the network has
 /// settled at `network_encryption_key_version == 3`, delete this struct and have
 /// the decode sites read [`ValidatorEncryptionKeysAndProofs`] directly.
@@ -615,7 +616,7 @@ pub struct DecodedValidatorEncryptionKeys {
 /// Decode the bytes from `MPCDataV1::class_groups_public_key_and_proof()`
 /// accepting either publication shape:
 ///
-/// - [`ValidatorEncryptionKeysAndProofs`] — post-PR-#1707 bundle (class-groups
+/// - [`ValidatorEncryptionKeysAndProofs`] — version-3 bundle (class-groups
 ///   CRT key + 3 per-curve PVSS HPKE keys). Validators publish this at
 ///   `ProtocolConfig::network_encryption_key_version() == 3` (protocol_version
 ///   `>= 5`).
@@ -629,7 +630,8 @@ pub struct DecodedValidatorEncryptionKeys {
 /// shape: the old-shape parse path consumes the leading class-groups array and
 /// errors on the trailing PVSS section, then the new-shape arm succeeds.
 ///
-/// TEMPORARY: only exists for the mainnet-v1.1.8 → post-PR-#1707 transition window.
+/// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+/// bare-class-groups key shape to the version-3 bundle (#1707).
 /// Delete this function (and the old-shape fallback) once the network has settled
 /// at `network_encryption_key_version == 3` and every validator publishes
 /// [`ValidatorEncryptionKeysAndProofs`]; decode sites can then call

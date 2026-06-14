@@ -1,0 +1,97 @@
+name: Scheduled — All Heavy Suites
+
+# Orchestrator that fans out the heavy, normally-manual test suites across
+# BOTH long-lived branches (`main` and `dev`) on a nightly cadence.
+#
+# What it does:
+#   For each (branch x suite) pair it calls `gh workflow run <suite>.yaml
+#   --ref <branch>` with that suite's sensible default inputs. It only
+#   DISPATCHES the suites — it does not wait for them and does not report
+#   their pass/fail. Each dispatched run shows up under its OWN workflow
+#   (Test Cluster / Integration Tests CI / TS Integration Tests / Simtest)
+#   on the targeted branch, with its own logs and artifacts. This job
+#   succeeds as long as the dispatch calls themselves succeed.
+#
+# Cadence:
+#   - schedule: nightly at 03:00 UTC (off-peak; well clear of typical
+#     working-hours merges into dev). Each suite is 35-60 min, so a
+#     per-push trigger on the frequently-merged `dev` branch would be
+#     wasteful — nightly + on-demand is the intended cadence.
+#   - workflow_dispatch: run on demand at any time.
+#
+# IMPORTANT — scheduled triggers only fire from the repository DEFAULT
+# branch. The default branch here is `main`. A `schedule:` defined on a
+# workflow that exists only on `dev` will NOT fire on cron until this file
+# also lands on `main` (or the default branch is changed). The
+# `workflow_dispatch` path works as soon as this file is merged to either
+# branch. See the PR body for the follow-up needed to activate the cron.
+
+on:
+  schedule:
+    # 03:00 UTC nightly. (cron is UTC; GitHub has no per-workflow tz.)
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+# Dispatching another workflow requires `actions: write`; nothing here
+# touches repo contents beyond reading the checked-out workflow list.
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: dispatch ${{ matrix.suite }} on ${{ matrix.branch }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Never let one suite's dispatch failure cancel the rest of the fan-out.
+      fail-fast: false
+      matrix:
+        branch: [main, dev]
+        suite:
+          - integration-tests-ci.yaml
+          - test-cluster.yaml
+          - ts-integration-tests.yaml
+          - simtest.yaml
+    steps:
+      # The `gh` CLI is preinstalled on GitHub-hosted ubuntu-latest runners.
+      # `github.token` (a.k.a. secrets.GITHUB_TOKEN) carries the
+      # `actions: write` permission granted above, which is all `gh workflow
+      # run` needs to dispatch a sibling workflow.
+      - name: Dispatch ${{ matrix.suite }} against ${{ matrix.branch }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ matrix.branch }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -euo pipefail
+          # Per-suite default inputs mirror each suite's own documented
+          # defaults (see dev-docs/playbooks/ci-suites.md). Threads stay at
+          # the validated 4-way for the memory-bound suites.
+          case "$SUITE" in
+            integration-tests-ci.yaml)
+              gh workflow run "$SUITE" --ref "$BRANCH" \
+                -f scope=integration \
+                -f test_threads=4
+              ;;
+            test-cluster.yaml)
+              gh workflow run "$SUITE" --ref "$BRANCH" \
+                -f package=ika-test-cluster \
+                -f test_threads=4
+              ;;
+            ts-integration-tests.yaml)
+              gh workflow run "$SUITE" --ref "$BRANCH" \
+                -f epoch_duration_ms=900000
+              ;;
+            simtest.yaml)
+              gh workflow run "$SUITE" --ref "$BRANCH"
+              ;;
+            *)
+              echo "unknown suite: $SUITE" >&2
+              exit 1
+              ;;
+          esac
+          echo "dispatched $SUITE against $BRANCH"

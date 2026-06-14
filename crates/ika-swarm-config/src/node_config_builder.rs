@@ -167,6 +167,8 @@ impl ValidatorConfigBuilder {
 
             authority_overload_config: self.authority_overload_config.unwrap_or_default(),
             run_with_range: None,
+            authority_db_retention_epochs: None,
+            authority_db_pruner_period_secs: None,
         }
     }
 
@@ -383,6 +385,8 @@ impl FullnodeConfigBuilder {
             state_archive_read_config: vec![],
             authority_overload_config: Default::default(),
             run_with_range: self.run_with_range,
+            authority_db_retention_epochs: None,
+            authority_db_pruner_period_secs: None,
         }
     }
 }

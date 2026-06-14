@@ -8,6 +8,7 @@
 
 use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_owned_address_sign_dkg_emulation::compute_noa_dkg;
 use crate::dwallet_mpc::crytographic_computation::protocol_public_parameters::ProtocolPublicParametersByCurve;
+use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::reconfiguration::instantiate_dwallet_mpc_network_encryption_key_public_data_from_reconfiguration_public_output;
 use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
@@ -31,9 +32,10 @@ use mpc::{
 use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use sui_types::base_types::ObjectID;
 use tokio::sync::oneshot;
-use tracing::error;
+use tracing::{error, info};
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::decentralized_party_backward_compatible::dkg as bwd_compat_dkg;
 
@@ -72,8 +74,9 @@ async fn get_decryption_key_shares_from_public_output(
 ) -> DwalletMPCResult<HashMap<PartyID, SecretKeyShareSizedInteger>> {
     let (key_shares_sender, key_shares_receiver) = oneshot::channel();
 
-    // See orchestrator.rs for the rationale: msim panics when tokio APIs or
-    // tracing fire on a rayon worker thread that has no node context.
+    // msim: rayon worker threads have no simulated-node context, so capture
+    // the originating NodeHandle and enter it before any tracing or tokio
+    // call inside the worker.
     #[cfg(msim)]
     let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
 
@@ -430,15 +433,25 @@ pub(crate) fn network_dkg_v2_public_input(
     Ok(public_input)
 }
 
-pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
+/// Spawns the network-key public-data instantiation on the rayon pool
+/// and returns the receiver for its result WITHOUT awaiting it. The
+/// instantiation (per-curve protocol + decryption-key-share public
+/// parameters, plus the NOA DKG outputs) is an expensive, long-running
+/// class-groups computation; the MPC service loop polls the receiver
+/// across ticks so session processing keeps advancing while the key
+/// instantiates, instead of freezing the whole validator pipeline for
+/// its duration.
+pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
     epoch: u64,
     access_structure: WeightedThresholdAccessStructure,
     key_data: DWalletNetworkEncryptionKeyData,
-) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+    metrics: Arc<DWalletMPCMetrics>,
+) -> oneshot::Receiver<DwalletMPCResult<NetworkEncryptionKeyPublicData>> {
     let (key_public_data_sender, key_public_data_receiver) = oneshot::channel();
 
-    // See orchestrator.rs: enter the originating node before any tracing or
-    // tokio call inside the rayon worker.
+    // msim: rayon worker threads have no simulated-node context, so capture
+    // the originating NodeHandle and enter it before any tracing or tokio
+    // call inside the worker.
     #[cfg(msim)]
     let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
 
@@ -456,6 +469,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                     &access_structure,
                     &key_data.network_dkg_public_output,
                     key_data.id.into_bytes(),
+                    &metrics,
                 )
             }
         } else {
@@ -466,6 +480,7 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
                 key_data.id.into_bytes(),
+                &metrics,
             )
         };
 
@@ -475,8 +490,6 @@ pub(crate) async fn instantiate_dwallet_mpc_network_encryption_key_public_data_f
     });
 
     key_public_data_receiver
-        .await
-        .map_err(|_| DwalletMPCError::TokioRecv)?
 }
 
 /// Per-curve DKG output and public key for network-owned-address signing.
@@ -589,12 +602,38 @@ pub(crate) fn build_network_encryption_key_public_data(
     }
 }
 
+/// Times one instantiation sub-call, logs its duration at info level, and
+/// feeds the `dwallet_mpc_network_key_instantiation_sub_call_duration_seconds`
+/// histogram for cross-epoch/release trending. The instantiation dominates
+/// the epoch-boundary cost; the per-sub-call breakdown localizes any
+/// slowdown to a concrete operation instead of one opaque call.
+pub(crate) fn timed_sub_call<T, E>(
+    metrics: &DWalletMPCMetrics,
+    label: &str,
+    sub_call: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let start = Instant::now();
+    let result = sub_call();
+    let elapsed = start.elapsed();
+    metrics
+        .network_key_instantiation_sub_call_duration_seconds
+        .with_label_values(&[label])
+        .observe(elapsed.as_secs_f64());
+    info!(
+        sub_call = label,
+        elapsed_ms = elapsed.as_millis() as u64,
+        "network key instantiation sub-call finished"
+    );
+    result
+}
+
 fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_output(
     epoch: u64,
     dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
     network_key_id: [u8; 32],
+    metrics: &DWalletMPCMetrics,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
         bcs::from_bytes(public_output_bytes).map_err(DwalletMPCError::BcsError)?;
@@ -602,40 +641,65 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     // Macro extracts the 8 protocol+decryption-key-share Arcs from a decoded
     // DKG `PublicOutput` (either `bwd_compat_dkg::Party::PublicOutput` or
     // `dkg::Party::PublicOutput`; both expose the same per-curve accessor API).
+    // Each sub-call is individually timed: the instantiation dominates the
+    // epoch-boundary cost, and the per-sub-call breakdown localizes any
+    // slowdown to a concrete operation instead of one opaque call.
     macro_rules! build_from_public_output {
         ($public_output:expr) => {{
             let public_output = $public_output;
-            let secp256k1_protocol_public_parameters =
-                Arc::new(public_output.secp256k1_protocol_public_parameters()?);
-            let secp256k1_decryption_key_share_public_parameters = Arc::new(
-                public_output
-                    .secp256k1_decryption_key_share_public_parameters(access_structure)
-                    .map_err(DwalletMPCError::from)?,
-            );
-            let secp256r1_protocol_public_parameters =
-                Arc::new(public_output.secp256r1_protocol_public_parameters()?);
-            let secp256r1_decryption_key_share_public_parameters = Arc::new(
-                public_output.secp256r1_decryption_key_share_public_parameters(access_structure)?,
-            );
-            let ristretto_protocol_public_parameters =
-                Arc::new(public_output.ristretto_protocol_public_parameters()?);
-            let ristretto_decryption_key_share_public_parameters = Arc::new(
-                public_output.ristretto_decryption_key_share_public_parameters(access_structure)?,
-            );
-            let curve25519_protocol_public_parameters =
-                Arc::new(public_output.curve25519_protocol_public_parameters()?);
-            let curve25519_decryption_key_share_public_parameters = Arc::new(
-                public_output
-                    .curve25519_decryption_key_share_public_parameters(access_structure)?,
-            );
+            let secp256k1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_protocol_public_parameters",
+                || public_output.secp256k1_protocol_public_parameters(),
+            )?);
+            let secp256k1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256k1_decryption_key_share",
+                || public_output.secp256k1_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let secp256r1_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_protocol_public_parameters",
+                || public_output.secp256r1_protocol_public_parameters(),
+            )?);
+            let secp256r1_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "secp256r1_decryption_key_share",
+                || public_output.secp256r1_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let ristretto_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_protocol_public_parameters",
+                || public_output.ristretto_protocol_public_parameters(),
+            )?);
+            let ristretto_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "ristretto_decryption_key_share",
+                || public_output.ristretto_decryption_key_share_public_parameters(access_structure),
+            )?);
+            let curve25519_protocol_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_protocol_public_parameters",
+                || public_output.curve25519_protocol_public_parameters(),
+            )?);
+            let curve25519_decryption_key_share_public_parameters = Arc::new(timed_sub_call(
+                metrics,
+                "curve25519_decryption_key_share",
+                || {
+                    public_output
+                        .curve25519_decryption_key_share_public_parameters(access_structure)
+                },
+            )?);
 
-            let noa_dkg_data = compute_all_network_owned_address_dkg_outputs(
-                &network_key_id,
-                &secp256k1_protocol_public_parameters,
-                &secp256r1_protocol_public_parameters,
-                &ristretto_protocol_public_parameters,
-                &curve25519_protocol_public_parameters,
-            )?;
+            let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
+                compute_all_network_owned_address_dkg_outputs(
+                    &network_key_id,
+                    &secp256k1_protocol_public_parameters,
+                    &secp256r1_protocol_public_parameters,
+                    &ristretto_protocol_public_parameters,
+                    &curve25519_protocol_public_parameters,
+                )
+            })?;
 
             Ok::<NetworkEncryptionKeyPublicData, DwalletMPCError>(
                 build_network_encryption_key_public_data(

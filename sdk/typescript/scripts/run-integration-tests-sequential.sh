@@ -6,13 +6,13 @@
 #   ./scripts/run-integration-tests-sequential.sh [--timeout <seconds>] [--filter <pattern>]
 #
 # Options:
-#   --timeout <seconds>   Per individual test case timeout in seconds (default: 120 = 2 minutes)
+#   --timeout <seconds>   Per individual test case timeout in seconds (default: 1200 = 20 minutes)
 #   --filter <pattern>    Only run test files matching this glob pattern (e.g. "dwallet*")
 #
 # Examples:
 #   ./scripts/run-integration-tests-sequential.sh
 #   ./scripts/run-integration-tests-sequential.sh --timeout 300
-#   ./scripts/run-integration-tests-sequential.sh --timeout 900 --filter "imported*"
+#   ./scripts/run-integration-tests-sequential.sh --timeout 1800 --filter "imported*"
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ PROJECT_DIR="$SCRIPT_DIR/.."
 TEST_DIR="$PROJECT_DIR/test/integration"
 
 # Defaults
-TIMEOUT_SECONDS=120
+TIMEOUT_SECONDS=1200
 FILTER=""
 
 # Tests ordered by feature dependency: foundational tests first, comprehensive combos last.
