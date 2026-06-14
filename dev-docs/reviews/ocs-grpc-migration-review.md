@@ -7,11 +7,13 @@ the push/cache fast path, the committee ratchet).
 31 commits).
 **Dates:** multi-agent review 2026-06-13; reconciled against HEAD
 2026-06-14.
-**Verdict:** sound-with-concerns. Of 16 enumerated findings: **9 fixed,
-3 partial, 3 open, 1 obsolete.** All three independent design judges rated
-the branch sound-with-concerns. The directly-exploitable proof-binding and
-boot-liveness concerns are resolved; remaining work is DoS hardening,
-adversarial test coverage, and the redesign of the push/cache fast path.
+**Verdict:** sound-with-concerns. At the 2026-06-14 reconcile, of 16
+enumerated findings: 9 fixed, 3 partial, 3 open, 1 obsolete. All three
+independent design judges rated the branch sound-with-concerns.
+**Status (updated):** **13 resolved** (the 9 fixed + 10/11/12/15), **2 open**
+(13 adversarial tests, 14 serving caps), **1 obsolete** (16) — see each
+finding's RESOLUTION and the remaining-work list. The directly-exploitable
+proof-binding and boot-liveness concerns are resolved.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a
 > source of current truth. Current behavior lives in
@@ -148,9 +150,16 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 ### Open
 
-13. **[high→low] Peer-only ratchet retry was unbounded on permanent errors.**
-    See finding 6 — this was the open instance; now fixed.
-    *(Kept for traceability; resolved.)*
+13. **[medium] Security-critical paths have zero negative/adversarial tests.**
+    Proof rejection, high-water rollback, the BagMembership binding, and the
+    legacy-JSON-RPC vs new-style gate truth-table are exercised only by
+    happy-path cluster tests — nothing asserts they *reject* forged, stale, or
+    foreign-owned input, so a future weakening of any proof or gate check
+    would still pass CI. Anchor: the OCS read + transport-gate paths in
+    `crates/ika-core/src/sui_connector/`. RESOLUTION: open. Finding 6's fix
+    added the first negative unit test (ratchet error classification), and
+    finding 12 deferred its metric-assert test here; the four adversarial
+    paths still need coverage.
 
 14. **[medium] Serving side has no caps.** No limits on batch ids / bag
     page_size / `GetVerifiedSnapshot` (which deep-clones the whole cache
@@ -188,6 +197,15 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     machinery, now always operating on an empty map) — a hygiene item, not a
     correctness defect.
 
+### Not enumerated (gap)
+
+The working notes also reference an earlier-confirmed **"K1–K9"** set
+(predating this ultrareview) as *"still present at HEAD"*, but those nine
+were never broken out into individual findings — neither here nor in the
+notes. They are **not** covered by findings 1–16 above and would need to be
+recovered from the original ultrareview run to be re-checked. Flagged so the
+"16 findings" count is not mistaken for the full set of known issues.
+
 ## Remaining work (risk-ordered)
 
 DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 15 (S4) fixed; 10/11
@@ -197,11 +215,10 @@ clone (part of 14) in one removal. Open items below.
 
 1. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-2. **Adversarial tests** — the review noted security-critical paths
-   (proof-rejection, high-water rollback, BagMembership binding, the legacy
-   JSON-RPC gate truth-table) had zero negative tests; only happy-path
-   cluster tests existed. Finding 6's fix added the first such unit test
-   (ratchet error classification). Build out the rest.
+2. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
+   high-water rollback, BagMembership binding, and the JSON-RPC gate
+   truth-table. Finding 6's fix added the first (ratchet error
+   classification); build out the rest.
 3. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
