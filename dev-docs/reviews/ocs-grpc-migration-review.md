@@ -194,11 +194,15 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     counter increments (finding 12's deferred metric-assert). Finding 6's fix
     added the ratchet error-classification negative test.
 
-    Not covered (out of this finding's proof-path scope): the legacy-JSON-RPC
-    vs new-style transport gate is computed inline in `ika-node`'s boot path
-    (`config.sui_data_source.is_none() && mode.is_validator()`), not a pure
-    function, so a truth-table unit test would need a boot-logic refactor; left
-    as a separate follow-up.
+    The legacy-JSON-RPC vs new-style transport gate (the last sliver) was
+    extracted from `ika-node`'s boot path into a pure
+    `ika_config::node::select_sui_transport(data_source, sui_rpc_url_present,
+    has_anchor, is_validator) -> Result<SuiTransportPlan, String>` and given an
+    exhaustive truth-table test (`node::tests`) over all 4 data-source shapes ×
+    rpc × anchor × role — the three reject combinations (no endpoint;
+    anchor-without-data-source; new-style-validator-without-anchor) and the
+    three plans (LegacyJsonRpc / PeerOnlyRelay / Grpc). The extraction was
+    independently verified behavior-preserving across all 32 input rows.
 
 14. **[medium] Serving side has no caps.** No limits on batch ids / bag
     page_size / `GetVerifiedSnapshot` (which deep-clones the whole cache
@@ -295,11 +299,12 @@ single-object substitution gap, comparable in class to finding 1).
 DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 13 (H2), 14 (S2),
 15 (S4) fixed + K1, K5; 10/11 closed by removing the push/cache gossip
 subsystem (`b9be273a74`). All 16 enumerated findings are now resolved or
-obsolete. Remaining items below are residuals, not enumerated findings.
+obsolete, including finding 13's transport-gate truth-table (the gate is now
+the pure `select_sui_transport`). Remaining items are the low-severity
+K-residuals only.
 
-1. **JSON-RPC-vs-new-style gate truth-table** (the one sliver of finding 13
-   left uncovered) — the gate is inline boot logic in `ika-node`, not a pure
-   function; a unit test needs a small boot-logic extraction. Low risk.
+1. **K2–K4, K6–K9** — config / docs / defense-in-depth residuals (K8/K9 are
+   the eclipse/currency residuals the changeset-stream design addresses).
 2. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
    residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
    design addresses; K5 dead-code removal done in `31d8c71120`).

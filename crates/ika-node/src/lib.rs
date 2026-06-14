@@ -366,7 +366,9 @@ impl IkaNode {
         // JSON-RPC. The decision mirrors `ocs_enabled` further down and must
         // be made before constructing `sui_client` so the right backend is
         // built. See the OCS startup comment below for the data-source modes.
-        use ika_config::node::{SuiDataSource, compiled_in_trusted_anchor};
+        use ika_config::node::{
+            SuiDataSource, SuiTransportPlan, compiled_in_trusted_anchor, select_sui_transport,
+        };
         let perpetual_has_committees = perpetual_tables
             .highest_sui_committee_epoch()
             .map_err(|e| anyhow!("read sui_committee_head: {e}"))?
@@ -469,40 +471,17 @@ impl IkaNode {
                  be removed from the node config"
             );
         }
-        // Mixed shapes fail closed here rather than guessing:
-        if config.sui_connector_config.sui_data_source.is_none()
-            && config.sui_connector_config.sui_rpc_url.is_none()
-        {
-            return Err(anyhow!(
-                "no Sui endpoint configured: set `sui-data-source` (gRPC; the supported path) — \
-                 the legacy `sui-rpc-url` field alone selects the deprecated JSON-RPC path"
-            ));
-        }
-        if has_anchor && config.sui_connector_config.sui_data_source.is_none() {
-            return Err(anyhow!(
-                "a Sui trust anchor is configured but `sui-data-source` is not; the \
-                 anchor-verified OCS path runs over gRPC — add a sui-data-source section"
-            ));
-        }
-        if config.sui_connector_config.sui_data_source.is_some()
-            && mode.is_validator()
-            && !has_anchor
-        {
-            return Err(anyhow!(
-                "`sui-data-source` is set but no Sui trust anchor is configured: a validator on \
-                 the gRPC path has no MPC event source without one (no JSON-RPC `query_events`, \
-                 and the verified BagEventPump requires the anchor); set sui_trusted_anchor (or \
-                 sui_unsafe_genesis_committee on private nets)"
-            ));
-        }
-        let legacy_json_rpc =
-            config.sui_connector_config.sui_data_source.is_none() && mode.is_validator();
-        let peer_only = matches!(
-            config.sui_connector_config.sui_data_source,
-            Some(SuiDataSource::SuiStateMirrored {
-                fallback_grpc_url: None
-            })
-        );
+        // Mixed/invalid shapes fail closed inside `select_sui_transport`; it
+        // returns the plan the branches below execute.
+        let plan = select_sui_transport(
+            config.sui_connector_config.sui_data_source.as_ref(),
+            config.sui_connector_config.sui_rpc_url.is_some(),
+            has_anchor,
+            mode.is_validator(),
+        )
+        .map_err(|e| anyhow!(e))?;
+        let legacy_json_rpc = matches!(plan, SuiTransportPlan::LegacyJsonRpc);
+        let peer_only = matches!(plan, SuiTransportPlan::PeerOnlyRelay);
         // A peer-only validator stands up its p2p network + OCS stack inside the
         // transport gate below (it needs them to read any Sui state), then
         // reuses them — the normal post-read network/stack builds are skipped.

@@ -263,6 +263,95 @@ fn default_true() -> bool {
     true
 }
 
+/// The Sui read-transport a node boots, decided by [`select_sui_transport`]
+/// purely from config shape + role — never from chain state, so a protocol
+/// flag can't halt running validators en masse at an upgrade boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuiTransportPlan {
+    /// Old-style config (no `sui-data-source`) on a validator: the deprecated
+    /// JSON-RPC read path — the only one that serves `query_events`, which a
+    /// validator needs for MPC event ingestion. Sui is sunsetting JSON-RPC.
+    LegacyJsonRpc,
+    /// `sui-state-mirrored` with no `fallback-grpc-url`: the node has no direct
+    /// Sui uplink, so every read crosses the verified OCS relay.
+    PeerOnlyRelay,
+    /// A direct gRPC uplink: `sui-state-direct`, `sui-state-mirrored` with a
+    /// fallback, or a notifier/fullnode on an old-style config (Sui fullnodes
+    /// serve gRPC at the same endpoint as JSON-RPC).
+    Grpc,
+}
+
+/// Decide the Sui read-transport from a node's config shape and role, rejecting
+/// the invalid combinations. Pure so it can be exhaustively unit-tested; the
+/// `ika-node` boot path executes the returned plan (build the client, stand up
+/// the relay, …).
+///
+/// The choice keys off the SHAPE of the node's own config, never off chain
+/// state — both read paths consume the same on-chain state, and transport must
+/// stay node-local so a protocol flag can't halt running validators at an
+/// upgrade boundary. Inputs:
+/// - `data_source`: the `sui-data-source` section, if present (new-style).
+/// - `sui_rpc_url_present`: whether the legacy `sui-rpc-url` field is set. Only
+///   consulted on an old-style config; ignored (but loggable) once
+///   `data_source` is present.
+/// - `has_anchor`: whether a Sui trust anchor is configured (enables OCS).
+/// - `is_validator`: whether this node runs MPC and so needs a Sui event
+///   source; notifiers and fullnodes do not.
+pub fn select_sui_transport(
+    data_source: Option<&SuiDataSource>,
+    sui_rpc_url_present: bool,
+    has_anchor: bool,
+    is_validator: bool,
+) -> Result<SuiTransportPlan, String> {
+    match data_source {
+        // Old-style config (no `sui-data-source` section).
+        None => {
+            if !sui_rpc_url_present {
+                // No endpoint at all — fail closed rather than guess.
+                return Err(
+                    "no Sui endpoint configured: set `sui-data-source` (gRPC; the \
+                     supported path) — the legacy `sui-rpc-url` field alone selects the \
+                     deprecated JSON-RPC path"
+                        .to_string(),
+                );
+            }
+            if has_anchor {
+                return Err(
+                    "a Sui trust anchor is configured but `sui-data-source` is not; the \
+                     anchor-verified OCS path runs over gRPC — add a sui-data-source section"
+                        .to_string(),
+                );
+            }
+            // A validator reads MPC events over JSON-RPC `query_events` (gRPC
+            // cannot serve them); notifiers/fullnodes run no event ingestion and
+            // read gRPC at the same fullnode endpoint.
+            Ok(if is_validator {
+                SuiTransportPlan::LegacyJsonRpc
+            } else {
+                SuiTransportPlan::Grpc
+            })
+        }
+        // New-style config (`sui-data-source` present): all Sui I/O over gRPC.
+        Some(source) => {
+            if is_validator && !has_anchor {
+                return Err(
+                    "`sui-data-source` is set but no Sui trust anchor is configured: a \
+                     validator on the gRPC path has no MPC event source without one (no JSON-RPC \
+                     `query_events`, and the verified BagEventPump requires the anchor); set \
+                     sui_trusted_anchor (or sui_unsafe_genesis_committee on private nets)"
+                        .to_string(),
+                );
+            }
+            Ok(match source {
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                } => SuiTransportPlan::PeerOnlyRelay,
+                _ => SuiTransportPlan::Grpc,
+            })
+        }
+    }
+}
+
 #[serde_as]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -893,5 +982,140 @@ impl RootSeedWithPath {
                 RootSeed::from_file(path.clone()).unwrap()
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn direct() -> SuiDataSource {
+        SuiDataSource::SuiStateDirect {
+            url: "http://direct:9000".to_string(),
+            serve_mirror: true,
+        }
+    }
+    fn mirrored_with_fallback() -> SuiDataSource {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: Some("http://fallback:9000".to_string()),
+        }
+    }
+    fn peer_only_source() -> SuiDataSource {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: None,
+        }
+    }
+
+    // ---- old-style config (no `sui-data-source`) ----
+
+    /// No endpoint at all is rejected before anything else — independent of
+    /// anchor/role, the operator gets the "no Sui endpoint" error.
+    #[test]
+    fn no_endpoint_is_rejected() {
+        for has_anchor in [false, true] {
+            for is_validator in [false, true] {
+                let err = select_sui_transport(None, false, has_anchor, is_validator).unwrap_err();
+                assert!(
+                    err.contains("no Sui endpoint configured"),
+                    "anchor={has_anchor} validator={is_validator}: {err}"
+                );
+            }
+        }
+    }
+
+    /// An old-style validator (only `sui-rpc-url`, no anchor) keeps the
+    /// deprecated JSON-RPC path; a notifier/fullnode on the same config reads
+    /// gRPC at that endpoint.
+    #[test]
+    fn old_style_routes_by_role() {
+        assert_eq!(
+            select_sui_transport(None, true, false, true),
+            Ok(SuiTransportPlan::LegacyJsonRpc)
+        );
+        assert_eq!(
+            select_sui_transport(None, true, false, false),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// A trust anchor without a `sui-data-source` section is rejected (the
+    /// anchor-verified OCS path runs over gRPC) — for every role.
+    #[test]
+    fn anchor_without_data_source_is_rejected() {
+        for is_validator in [false, true] {
+            let err = select_sui_transport(None, true, true, is_validator).unwrap_err();
+            assert!(
+                err.contains("trust anchor is configured but `sui-data-source` is not"),
+                "validator={is_validator}: {err}"
+            );
+        }
+    }
+
+    // ---- new-style config (`sui-data-source` present) ----
+
+    /// A validator on the gRPC path with no anchor has no MPC event source —
+    /// rejected for every data-source variant.
+    #[test]
+    fn new_style_validator_without_anchor_is_rejected() {
+        for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
+            let err = select_sui_transport(Some(&source), false, false, true).unwrap_err();
+            assert!(
+                err.contains("no Sui trust anchor is configured"),
+                "{source:?}: {err}"
+            );
+        }
+    }
+
+    /// Direct and mirrored-with-fallback both use a direct gRPC uplink.
+    #[test]
+    fn direct_and_mirrored_with_fallback_use_grpc() {
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, true, true),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&mirrored_with_fallback()), false, true, true),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// `sui-state-mirrored` with no fallback is the peer-only relay path.
+    #[test]
+    fn peer_only_uses_the_relay() {
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, true, true),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+    }
+
+    /// A non-validator (notifier/fullnode) is exempt from the anchor
+    /// requirement and routes purely on the data-source variant. (A peer-only
+    /// non-validator stays peer-only — a separate config-validation gap, not
+    /// re-decided here.)
+    #[test]
+    fn non_validator_is_exempt_from_the_anchor_requirement() {
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, false, false),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, false, false),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+    }
+
+    /// Once `sui-data-source` is present, the legacy `sui-rpc-url` field never
+    /// changes the decision — the new-style section always wins.
+    #[test]
+    fn data_source_presence_ignores_the_legacy_rpc_url() {
+        for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
+            for is_validator in [false, true] {
+                assert_eq!(
+                    select_sui_transport(Some(&source), true, true, is_validator),
+                    select_sui_transport(Some(&source), false, true, is_validator),
+                    "{source:?} validator={is_validator}: rpc-url presence must not matter"
+                );
+            }
+        }
     }
 }
