@@ -20,7 +20,7 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedNetworkDkgOutput, VersionedPresignOutput, VersionedPublicKeyShareAndProof,
     VersionedSignOutput, VersionedUserSignedMessage,
 };
-use group::{CyclicGroupElement, GroupElement, HashContext, HashScheme, OsCsRng, Samplable};
+use group::{CyclicGroupElement, GroupElement, HashScheme, OsCsRng, Samplable};
 use mpc::Party;
 use mpc::two_party::Round;
 use rand_core::SeedableRng;
@@ -33,7 +33,7 @@ use twopc_mpc::class_groups::DKGCentralizedPartyVersionedOutput;
 use twopc_mpc::decentralized_party::dkg;
 use twopc_mpc::dkg::Protocol;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature, VerifyingKey};
-use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
+use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
 use twopc_mpc::secp256k1::class_groups::{ProtocolPublicParameters, TaprootProtocol};
 use twopc_mpc::sign::EncodableSignature;
 
@@ -45,12 +45,20 @@ pub use dwallet_mpc_types::mpc_protocol_configuration::try_into_curve;
 type Secp256k1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProtocol;
 type Secp256r1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 type EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
-type SchnorrkelProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelProtocol;
+type SchnorrkelSubstrateProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
 
 type Secp256k1DKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
 type Secp256r1DKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;
 type Curve25519DKGProtocol = twopc_mpc::curve25519::class_groups::DKGProtocol;
 type RistrettoDKGProtocol = twopc_mpc::ristretto::class_groups::DKGProtocol;
+
+// Fast Schnorr (VSS) sign protocols. The centralized party reuses the shared
+// sign implementation (same PrivateInput / OutgoingMessage / 5-tuple public
+// input); only the decentralized party differs. Module path is `<curve>::vss`.
+type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::vss::TaprootVSSProtocol;
+type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::vss::EdDSAVSSProtocol;
+type RistrettoSchnorrkelSubstrateVSSProtocol =
+    twopc_mpc::ristretto::vss::SchnorrkelSubstrateVSSProtocol;
 
 type DKGCentralizedParty =
     <Secp256k1DKGProtocol as twopc_mpc::dkg::Protocol>::DKGCentralizedPartyRound;
@@ -431,7 +439,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                 <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
                     try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?,
-                    HashContext::None,
                     centralized_dkg_output,
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
@@ -453,7 +460,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
         VersionedPresignOutput::V2(presign) => {
             let signature_scheme_enum = try_into_signature_algorithm(curve, signature_algorithm)?;
             let hash_scheme = try_into_hash_scheme(curve, signature_algorithm, hash_scheme)?;
-            let hash_context = signature_scheme_enum.hash_context();
             match signature_scheme_enum {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_with_centralized_party_dkg_output::<
@@ -464,7 +470,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -478,7 +483,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -492,7 +496,6 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -506,26 +509,69 @@ pub fn advance_centralized_sign_party_with_centralized_party_dkg_output(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureAlgorithm::Schnorrkel => {
+                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     advance_sign_with_centralized_party_dkg_output::<
-                        SchnorrkelProtocol,
+                        SchnorrkelSubstrateProtocol,
                         RistrettoDKGProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                // Fast Schnorr (VSS): centralized party identical to AHE sibling.
+                DWalletSignatureAlgorithm::TaprootVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        Secp256k1TaprootVSSProtocol,
+                        Secp256k1DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::EdDSAVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        Curve25519EdDSAVSSProtocol,
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &centralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                    advance_sign_with_centralized_party_dkg_output::<
+                        RistrettoSchnorrkelSubstrateVSSProtocol,
+                        RistrettoDKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
                         &centralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
             }
+        }
+        VersionedPresignOutput::V3(_) => {
+            anyhow::bail!(
+                "Fast Schnorr (VSS) presigns (V3) are not consumable from the centralized party"
+            )
         }
     }
 }
@@ -575,7 +621,6 @@ pub fn advance_centralized_sign_party(
                 <Secp256k1ECDSAProtocol as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
                     message,
                     hash_scheme,
-                    HashContext::None,
                     centralized_public_output.clone(),
                     presign,
                     bcs::from_bytes(&protocol_pp)?,
@@ -596,7 +641,6 @@ pub fn advance_centralized_sign_party(
         }
         VersionedPresignOutput::V2(presign) => {
             let signature_algorithm = try_into_signature_algorithm(curve, signature_algorithm)?;
-            let hash_context = signature_algorithm.hash_context();
             match signature_algorithm {
                 DWalletSignatureAlgorithm::ECDSASecp256k1 => {
                     advance_sign_with_decentralized_party_dkg_output::<
@@ -607,7 +651,6 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -621,7 +664,6 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -635,7 +677,6 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
@@ -649,26 +690,71 @@ pub fn advance_centralized_sign_party(
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
-                DWalletSignatureAlgorithm::Schnorrkel => {
+                DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                     advance_sign_with_decentralized_party_dkg_output::<
-                        SchnorrkelProtocol,
+                        SchnorrkelSubstrateProtocol,
                         RistrettoDKGProtocol,
                     >(
                         &centralized_party_secret_key_share,
                         &presign,
                         message,
                         hash_scheme,
-                        hash_context,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                // Fast Schnorr (VSS): the centralized party's sign step is identical
+                // to its AHE sibling on the same curve; only the decentralized party
+                // differs. Reuse the same generic helper with the per-curve DKG protocol.
+                DWalletSignatureAlgorithm::TaprootVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        Secp256k1TaprootVSSProtocol,
+                        Secp256k1DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::EdDSAVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        Curve25519EdDSAVSSProtocol,
+                        Curve25519DKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
+                        &decentralized_party_dkg_public_output,
+                        &protocol_pp,
+                    )
+                }
+                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                    advance_sign_with_decentralized_party_dkg_output::<
+                        RistrettoSchnorrkelSubstrateVSSProtocol,
+                        RistrettoDKGProtocol,
+                    >(
+                        &centralized_party_secret_key_share,
+                        &presign,
+                        message,
+                        hash_scheme,
                         &decentralized_party_dkg_public_output,
                         &protocol_pp,
                     )
                 }
             }
+        }
+        VersionedPresignOutput::V3(_) => {
+            anyhow::bail!(
+                "Fast Schnorr (VSS) presigns (V3) are not consumable from the centralized party"
+            )
         }
     }
 }
@@ -684,7 +770,6 @@ fn advance_sign_with_decentralized_party_dkg_output<P, D>(
     presign: &[u8],
     message: Vec<u8>,
     hash_scheme: HashScheme,
-    hash_context: HashContext,
     decentralized_party_dkg_public_output: &[u8],
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>>
@@ -694,7 +779,6 @@ where
     P::SignCentralizedPartyPublicInput: From<(
         Vec<u8>,
         HashScheme,
-        HashContext,
         D::CentralizedPartyDKGOutput,
         <P as twopc_mpc::presign::Protocol>::Presign,
         D::ProtocolPublicParameters,
@@ -723,7 +807,6 @@ where
         presign,
         message,
         hash_scheme,
-        hash_context,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -734,7 +817,6 @@ fn advance_sign_with_centralized_party_dkg_output<P, D>(
     presign: &[u8],
     message: Vec<u8>,
     hash_scheme: HashScheme,
-    hash_context: HashContext,
     centralized_party_dkg_public_output: &[u8],
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>>
@@ -744,7 +826,6 @@ where
     P::SignCentralizedPartyPublicInput: From<(
         Vec<u8>,
         HashScheme,
-        HashContext,
         D::CentralizedPartyDKGOutput,
         <P as twopc_mpc::presign::Protocol>::Presign,
         D::ProtocolPublicParameters,
@@ -769,7 +850,6 @@ where
         presign,
         message,
         hash_scheme,
-        hash_context,
         centralized_party_dkg_public_output,
         protocol_pp,
     )
@@ -780,7 +860,6 @@ fn advance_sign<P, D>(
     presign: &[u8],
     message: Vec<u8>,
     hash_scheme: HashScheme,
-    hash_context: HashContext,
     centralized_party_dkg_public_output: D::CentralizedPartyDKGOutput,
     protocol_pp: &[u8],
 ) -> anyhow::Result<Vec<u8>>
@@ -790,7 +869,6 @@ where
     P::SignCentralizedPartyPublicInput: From<(
         Vec<u8>,
         HashScheme,
-        HashContext,
         D::CentralizedPartyDKGOutput,
         <P as twopc_mpc::presign::Protocol>::Presign,
         D::ProtocolPublicParameters,
@@ -801,7 +879,6 @@ where
         presign,
         message,
         hash_scheme,
-        hash_context,
         centralized_party_dkg_public_output,
         protocol_pp,
         &mut OsCsRng,
@@ -825,7 +902,6 @@ pub fn advance_sign_with_rng<P, D, R>(
     presign: &[u8],
     message: Vec<u8>,
     hash_scheme: HashScheme,
-    hash_context: HashContext,
     centralized_party_dkg_public_output: D::CentralizedPartyDKGOutput,
     protocol_pp: &[u8],
     rng: &mut R,
@@ -837,7 +913,6 @@ where
     P::SignCentralizedPartyPublicInput: From<(
         Vec<u8>,
         HashScheme,
-        HashContext,
         D::CentralizedPartyDKGOutput,
         <P as twopc_mpc::presign::Protocol>::Presign,
         D::ProtocolPublicParameters,
@@ -856,7 +931,6 @@ where
         <P as twopc_mpc::sign::Protocol>::SignCentralizedPartyPublicInput::from((
             message,
             hash_scheme,
-            hash_context,
             centralized_party_dkg_public_output,
             presign,
             bcs::from_bytes(protocol_pp)?,
@@ -1439,11 +1513,13 @@ fn decrypt_user_share_inner<P: twopc_mpc::dkg::Protocol>(
         bcs::from_bytes(encrypted_user_share_and_proof)?;
     let dwallet_dkg_output = match bcs::from_bytes(dwallet_dkg_output)? {
         VersionedDwalletDKGPublicOutput::V1(output) => {
+            // return Err(anyhow::anyhow!("2.1"));
             let versioned_output: P::DecentralizedPartyDKGOutput =
                 bcs::from_bytes::<P::DecentralizedPartyTargetedDKGOutput>(&output)?.into();
             versioned_output
         }
         VersionedDwalletDKGPublicOutput::V2 { dkg_output, .. } => {
+            // return Err(anyhow::anyhow!("2.2"));
             bcs::from_bytes::<P::DecentralizedPartyDKGOutput>(&dkg_output)?
         }
     };
@@ -1481,12 +1557,26 @@ pub fn parse_signature_from_sign_output_inner(
             let signature: EdDSASignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureAlgorithm::Schnorrkel => {
-            let signature: SchnorrkelSignature = bcs::from_bytes(&signature_output)?;
+        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
         DWalletSignatureAlgorithm::Taproot => {
             let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        // Fast Schnorr (VSS) variants produce the same standard signature object as
+        // their AHE sibling on the same curve (VSS only changes how it's computed).
+        DWalletSignatureAlgorithm::TaprootVSS => {
+            let signature: TaprootSignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::EdDSAVSS => {
+            let signature: EdDSASignature = bcs::from_bytes(&signature_output)?;
+            Ok(signature.to_bytes().to_vec())
+        }
+        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&signature_output)?;
             Ok(signature.to_bytes().to_vec())
         }
     }

@@ -3,7 +3,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::KeyPair;
@@ -61,17 +61,18 @@ impl ValidatorInitializationConfig {
 
         // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
         //
-        // Publish the BARE mainnet-v1.1.8 `ClassGroupsEncryptionKeyAndProof` shape
-        // on-chain (matching the off-chain-metadata PR's `legacy_class_groups_only`
-        // publication path), so a mainnet-v1.1.8 binary can decode this record. The
-        // richer `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
-        // PVSS) travels off-chain via validator P2P. Reading is shape-tolerant on the
-        // dev side via `decode_validator_encryption_keys`.
+        // Publish the BARE mainnet-v1.1.8 `ClassGroupsEncryptionKeyAndProof`
+        // shape on-chain — the `.class_groups` component of the full validator
+        // bundle — so a mainnet-v1.1.8 binary can decode this record and the
+        // v118 upgrade rehearsal boots. The richer `ValidatorEncryptionKeysAndProofs`
+        // bundle (class groups + per-curve PVSS + the Fast Schnorr VSS HPKE key)
+        // travels off-chain via validator P2P; chain reads decode the bare shape,
+        // and shape-tolerant `decode_validator_encryption_keys` accepts either.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-            class_groups_public_key_and_proof: bcs::to_bytes(
-                &ClassGroupsAndPvssKeyPairAndProof::from_seed(&self.root_seed)
-                    .class_groups
-                    .encryption_key_and_proof(),
+            mpc_data_bytes: bcs::to_bytes(
+                &ValidatorMPCSecrets::from_seed(&self.root_seed)
+                    .1
+                    .class_groups,
             )
             .unwrap(),
         });

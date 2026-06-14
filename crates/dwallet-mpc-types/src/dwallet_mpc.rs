@@ -5,7 +5,6 @@ use crate::mpc_protocol_configuration::try_into_curve;
 use class_groups::CiphertextSpaceValue;
 use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
-use group::HashContext;
 use group::secp256k1;
 use k256::elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
@@ -208,30 +207,31 @@ pub enum DWalletSignatureAlgorithm {
     Taproot,
     #[strum(to_string = "EdDSA")]
     EdDSA,
-    #[strum(to_string = "Schnorrkel")]
-    Schnorrkel,
+    #[strum(to_string = "SchnorrkelSubstrate")]
+    SchnorrkelSubstrate,
+    /// Fast Schnorr (VSS) variant of Taproot on secp256k1. DKG-created keys only.
+    #[strum(to_string = "TaprootVSS")]
+    TaprootVSS,
+    /// Fast Schnorr (VSS) variant of EdDSA on curve25519. DKG-created keys only.
+    #[strum(to_string = "EdDSAVSS")]
+    EdDSAVSS,
+    /// Fast Schnorr (VSS) variant of SchnorrkelSubstrate on ristretto. DKG-created keys only.
+    #[strum(to_string = "SchnorrkelSubstrateVSS")]
+    SchnorrkelSubstrateVSS,
 }
 
 impl DWalletSignatureAlgorithm {
-    /// Returns the [`HashContext`] that pairs with this algorithm under cryptography-private
-    /// PR 547's domain-separation matrix.
-    ///
-    /// TODO(domain-separation): Schnorrkel currently hard-codes `b"substrate"` as the
-    /// signing-context bytes. Once the per-chain plumbing lands (PR 547 Part 2 / ika-private
-    /// wiring), the context should be sourced from `SignRequestEvent` so each chain can
-    /// supply its own. The byte literal here is byte-identical to what the crypto crate
-    /// previously hard-coded inside the Schnorrkel sign path and matches the already-deployed
-    /// schnorrkel domain separator — do not change without a coordinated upgrade.
-    pub fn hash_context(&self) -> HashContext {
-        match self {
-            DWalletSignatureAlgorithm::Schnorrkel => HashContext::Schnorrkel {
-                signing_context: b"substrate".to_vec(),
-            },
-            DWalletSignatureAlgorithm::ECDSASecp256k1
-            | DWalletSignatureAlgorithm::ECDSASecp256r1
-            | DWalletSignatureAlgorithm::Taproot
-            | DWalletSignatureAlgorithm::EdDSA => HashContext::None,
-        }
+    /// True for the Fast Schnorr (VSS) signature algorithms. These are gated by
+    /// the `fast_schnorr_supported` protocol feature flag, support DKG-created
+    /// keys only (never imported), and do not support the combined
+    /// DKG-and-sign fast path.
+    pub fn is_vss(&self) -> bool {
+        matches!(
+            self,
+            DWalletSignatureAlgorithm::TaprootVSS
+                | DWalletSignatureAlgorithm::EdDSAVSS
+                | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS
+        )
     }
 }
 
@@ -261,13 +261,6 @@ pub enum DWalletHashScheme {
     SHA512,
     #[strum(to_string = "Merlin")]
     Merlin,
-    // Appended at the end so existing variant discriminants (0..=4) — which are
-    // what bcs/bincode persists for this Serialize-derived enum — stay stable.
-    // No current ika protocol maps to Blake2b256 in `try_into_hash_scheme`; it
-    // exists here only so the bidirectional From conversions to `group::HashScheme`
-    // remain total after cryptography-private PR 547.
-    #[strum(to_string = "Blake2b256")]
-    Blake2b256,
 }
 
 impl From<DWalletHashScheme> for group::HashScheme {
@@ -278,7 +271,6 @@ impl From<DWalletHashScheme> for group::HashScheme {
             DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
             DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
             DWalletHashScheme::Merlin => group::HashScheme::Merlin,
-            DWalletHashScheme::Blake2b256 => group::HashScheme::Blake2b256,
         }
     }
 }
@@ -291,7 +283,6 @@ impl From<group::HashScheme> for DWalletHashScheme {
             group::HashScheme::DoubleSHA256 => DWalletHashScheme::DoubleSHA256,
             group::HashScheme::SHA512 => DWalletHashScheme::SHA512,
             group::HashScheme::Merlin => DWalletHashScheme::Merlin,
-            group::HashScheme::Blake2b256 => DWalletHashScheme::Blake2b256,
         }
     }
 }
@@ -326,7 +317,18 @@ pub enum DwalletNetworkMPCError {
     MissingProtocolPublicParametersForCurve(DWalletCurve),
 }
 
-pub type ClassGroupsPublicKeyAndProofBytes = Vec<u8>;
+/// Opaque BCS bytes of a validator's published MPC public-key payload.
+///
+/// Shape depends on the propagation path:
+/// - Chain reads (Move `MPCDataV1::mpc_data_bytes`) — bare
+///   `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8).
+/// - Off-chain pipeline (`derive_mpc_data_blob` → consensus + P2P) — the full
+///   5-field `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve PVSS
+///   HPKE + Fast Schnorr VSS HPKE).
+///
+/// Each consumer decodes directly to its expected shape with
+/// `bcs::from_bytes::<T>` — no try-then-fallback.
+pub type MpcDataBytes = Vec<u8>;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub enum VersionedEncryptionKeyValue {
@@ -351,6 +353,10 @@ pub enum VersionedDwalletDKGPublicOutput {
 pub enum VersionedPresignOutput {
     V1(MPCPublicOutput),
     V2(MPCPublicOutput),
+    /// Fast Schnorr (VSS) presign. Distinct shape from V2 — the inner bytes
+    /// decode to a curve-specific `schnorr::vss::Presign`, not the AHE
+    /// presign decoded by V2 consumers.
+    V3(MPCPublicOutput),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -461,17 +467,17 @@ pub enum VersionedMPCData {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Eq, PartialEq)]
 pub struct MPCDataV1 {
-    pub class_groups_public_key_and_proof: ClassGroupsPublicKeyAndProofBytes,
+    pub mpc_data_bytes: MpcDataBytes,
 }
 
 #[enum_dispatch]
 pub trait MPCDataTrait {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes;
+    fn mpc_data_bytes(&self) -> MpcDataBytes;
 }
 
 impl MPCDataTrait for MPCDataV1 {
-    fn class_groups_public_key_and_proof(&self) -> ClassGroupsPublicKeyAndProofBytes {
-        self.class_groups_public_key_and_proof.clone()
+    fn mpc_data_bytes(&self) -> MpcDataBytes {
+        self.mpc_data_bytes.clone()
     }
 }
 

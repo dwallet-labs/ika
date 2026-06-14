@@ -26,7 +26,8 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::noa_checkpoints::NOACheckpointHandler;
 use crate::request_protocol_data::ProtocolData;
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use commitment::CommitmentSizedNumber;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::MPCDataTrait;
 use dwallet_mpc_types::dwallet_mpc::VersionedPresignOutput;
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, MPCMessage};
@@ -1649,7 +1650,7 @@ impl DWalletMPCService {
                 }
                 Ok(GuaranteedOutputDeliveryRoundResult::Finalize {
                     malicious_parties,
-                    private_output: _,
+                    private_output,
                     public_output_value,
                 }) => {
                     debug!(
@@ -1657,6 +1658,61 @@ impl DWalletMPCService {
                         validator=?validator_name,
                         "Reached output for session"
                     );
+
+                    // Fast Schnorr (VSS) presign: persist the private nonce-share
+                    // output. The GOD layer produces a blended
+                    // `bcs(Vec<PrivatePresignOutput>)`; split it into one serialized
+                    // `PrivatePresignOutput` per blending index and persist each row
+                    // keyed by `(presign session id, blending index)`, for the later
+                    // sign to recover. All other protocols (AHE presign, DKG, reconfig,
+                    // sign) have empty/irrelevant private outputs — skip.
+                    if matches!(
+                        request.protocol_data,
+                        ProtocolData::Presign { .. } | ProtocolData::InternalPresign { .. }
+                    ) && let Some(signature_algorithm) = request
+                        .protocol_data
+                        .signature_algorithm()
+                        .filter(|algorithm| algorithm.is_vss())
+                    {
+                        let presign_session_id = CommitmentSizedNumber::from_le_slice(
+                            session_identifier.to_vec().as_slice(),
+                        );
+                        match crate::dwallet_mpc::sign::split_vss_presign_private_outputs(
+                            signature_algorithm,
+                            &private_output,
+                        ) {
+                            Ok(entries) => {
+                                entries
+                                    .into_iter()
+                                    .for_each(|(blending_index, entry_bytes)| {
+                                        if let Err(err) =
+                                            self.epoch_store.store_presign_private_output(
+                                                presign_session_id,
+                                                blending_index,
+                                                entry_bytes,
+                                            )
+                                        {
+                                            error!(
+                                                ?session_identifier,
+                                                validator=?validator_name,
+                                                ?blending_index,
+                                                error=?err,
+                                                "failed to persist VSS presign private output"
+                                            );
+                                        }
+                                    });
+                            }
+                            Err(err) => {
+                                error!(
+                                    ?session_identifier,
+                                    validator=?validator_name,
+                                    error=?err,
+                                    "failed to split blended VSS presign private output"
+                                );
+                            }
+                        }
+                    }
+
                     let consensus_adapter = self.dwallet_submit_to_consensus.clone();
                     let malicious_authorities = if !malicious_parties.is_empty() {
                         let malicious_authorities =
@@ -2375,36 +2431,31 @@ impl DWalletMPCService {
             .root_seed()
             .clone();
 
-        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
+        let (_validator_mpc_secrets, validator_encryption_keys_and_proofs) =
+            ValidatorMPCSecrets::from_seed(&root_seed);
 
         // Verify that the validator's local class-groups key is the same as stored
         // in the system state object on-chain. This makes sure the seed we are using
         // is the same seed we used at setup to create the encryption key, and thus it
         // assures we will generate the same decryption key too.
         //
-        // The on-chain bytes are shape-versioned: mainnet-v1.1.8 publishes the bare
-        // `ClassGroupsEncryptionKeyAndProof`, while the post-bump combined
-        // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) travels
-        // off-chain via validator P2P. During the upgrade window the on-chain record
-        // is always the bare shape, so this boot-time identity check must be
-        // shape-tolerant: decode whatever shape is on-chain and compare only the
-        // class-groups component — the part both shapes carry and the only part that
-        // identifies the seed. (PVSS keys are verified off-chain on the assembly path
-        // in `assemble_committee_mpc_data_off_chain`.)
-        let onchain_bytes = onchain_validator
-            .get_mpc_data()
-            .unwrap()
-            .class_groups_public_key_and_proof();
+        // The on-chain bytes are shape-versioned: mainnet-v1.1.8 publishes the
+        // bare `ClassGroupsEncryptionKeyAndProof`, while the full
+        // `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
+        // PVSS + the Fast Schnorr VSS HPKE key) travels off-chain via validator
+        // P2P. During the upgrade window the on-chain record is always the bare
+        // shape, so this boot-time identity check must be shape-tolerant: decode
+        // whatever shape is on-chain and compare only the class-groups component
+        // — the part both shapes carry and the only part that identifies the
+        // seed. (PVSS / VSS keys are verified off-chain on the assembly path in
+        // `assemble_committee_mpc_data_off_chain`.)
+        let onchain_bytes = onchain_validator.get_mpc_data().unwrap().mpc_data_bytes();
         let Some(onchain_keys) = decode_validator_encryption_keys(&onchain_bytes) else {
             return Err(DwalletMPCError::MPCManagerError(
                 "could not decode the validator's class-groups key stored in the system state object".to_string(),
             ));
         };
-        if onchain_keys.class_groups
-            != class_groups_key_pair
-                .class_groups
-                .encryption_key_and_proof()
-        {
+        if onchain_keys.class_groups != validator_encryption_keys_and_proofs.class_groups {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
             ));

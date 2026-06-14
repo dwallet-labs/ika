@@ -158,6 +158,9 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         HashMap::new(),
         HashMap::new(),
         HashMap::new(),
+        // VSS HPKE keys arrive via the off-chain pipeline; empty for this
+        // chain-derived prior-committee bootstrap anchor.
+        HashMap::new(),
         bls_committee.quorum_threshold,
         bls_committee.validity_threshold,
     ))

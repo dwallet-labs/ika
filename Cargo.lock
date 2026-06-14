@@ -3272,7 +3272,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "commitment",
  "criterion",
@@ -3379,7 +3379,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3388,7 +3388,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3404,7 +3404,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "crypto-bigint 0.7.0-rc.9",
  "group 0.2.0",
@@ -4710,6 +4710,7 @@ dependencies = [
  "dwallet-rng",
  "group 0.2.0",
  "ika-types",
+ "mpc",
  "serde",
  "twopc_mpc",
 ]
@@ -5079,7 +5080,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5343,7 +5344,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5859,9 +5860,8 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
- "blake2b_simd",
  "crypto-bigint 0.7.0-rc.9",
  "curve25519-dalek 5.0.0-pre.1",
  "getrandom 0.3.1",
@@ -6172,7 +6172,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "criterion",
  "crypto-bigint 0.7.0-rc.9",
@@ -7293,7 +7293,7 @@ checksum = "e19b23d53f35ce9f56aebc7d1bb4e6ac1e9c0db7ac85c8d1760c04379edced37"
 dependencies = [
  "hermit-abi 0.4.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7909,7 +7909,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -8304,7 +8304,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.0-rc.9",
@@ -9522,7 +9522,7 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "aead 0.5.2",
  "bcs",
@@ -11251,7 +11251,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.0-rc.9",
@@ -11268,7 +11268,7 @@ dependencies = [
 [[package]]
 name = "proof_aggregation"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "commitment",
  "crypto-bigint 0.7.0-rc.9",
@@ -11582,7 +11582,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.8",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12327,7 +12327,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12340,7 +12340,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12408,7 +12408,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13372,7 +13372,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16092,7 +16092,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -17195,7 +17195,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=b2a01b3c#b2a01b3c50b34ba3f08d18fa7772fce048006afd"
 dependencies = [
  "class_groups",
  "commitment",
@@ -17954,7 +17954,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

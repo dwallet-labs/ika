@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use std::{
     cell::RefCell,
+    collections::BTreeSet,
     sync::atomic::{AtomicBool, Ordering},
 };
 use sui_protocol_config_macros::{
@@ -24,8 +25,9 @@ const MAX_PROTOCOL_VERSION: u64 = 4;
 // Version 2: network_encryption_key_version = 2.
 // Version 3: reconfiguration_message_version = 2 (mainnet-v1.1.8).
 // Version 4: off_chain_validator_metadata pipeline on; internal_presign_sessions on;
-//            consensus_skip_gced_blocks_in_direct_finalization on; version-3 crypto
-//            (network_encryption_key_version = 3, reconfiguration_message_version = 3; #1707) —
+//            consensus_skip_gced_blocks_in_direct_finalization on; bls_checkpoints on;
+//            fast_schnorr_supported on (internal NOA-VSS only); post-PR-#1707 crypto
+//            (network_encryption_key_version = 3, reconfiguration_message_version = 3) —
 //            validators publish `ValidatorEncryptionKeysAndProofs` (class-groups + per-curve
 //            PVSS HPKE) and DKG/Reconfiguration use `twopc_mpc::decentralized_party::*`.
 // Version 5: noa_checkpoints on.
@@ -168,6 +170,11 @@ struct FeatureFlags {
     #[serde(skip_serializing_if = "is_false")]
     noa_checkpoints: bool,
 
+    // If true, enables Fast Schnorr (VSS) signature algorithms: TaprootVSS,
+    // EdDSAVSS, SchnorrkelSubstrateVSS. DKG-created keys only.
+    #[serde(skip_serializing_if = "is_false")]
+    fast_schnorr_supported: bool,
+
     // If true, enables the off-chain validator-metadata pipeline:
     // per-epoch `ValidatorMpcDataAnnouncement` + ready signals
     // broadcast over consensus, the step-14 kickoff gate, the
@@ -179,8 +186,14 @@ struct FeatureFlags {
     off_chain_validator_metadata: bool,
 }
 
+#[allow(unused)]
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+#[allow(unused)]
+fn is_empty(b: &BTreeSet<String>) -> bool {
+    b.is_empty()
 }
 
 /// Ordering mechanism for transactions in one Narwhal consensus output.
@@ -291,6 +304,11 @@ pub struct ProtocolConfig {
     consensus_gc_depth: Option<u32>,
     decryption_key_reconfiguration_third_round_delay: Option<u64>,
     schnorr_presign_second_round_delay: Option<u64>,
+    /// Consensus-round delay for the VSS (Fast Schnorr) presign Aggregation
+    /// round (round 3). AHE Schnorr presign is 2 rounds and ignores this; only
+    /// VSS presign (Dealing → Accusation → Aggregation) uses it. Defaults to the
+    /// same value as `schnorr_presign_second_round_delay`.
+    schnorr_presign_third_round_delay: Option<u64>,
     network_dkg_third_round_delay: Option<u64>,
     network_encryption_key_version: Option<u64>,
     reconfiguration_message_version: Option<u64>,
@@ -383,8 +401,15 @@ impl ProtocolConfig {
         self.feature_flags.internal_presign_sessions
     }
 
-    /// True iff this protocol_version uses the version-3 network DKG /
-    /// validator-key-publication shape (#1707) — `ValidatorEncryptionKeysAndProofs`
+    /// True iff Fast Schnorr (VSS) signature algorithms are enabled at this
+    /// protocol version (>= 4). Gates the internal NOA-VSS presign pool and
+    /// the Rust-side defense-in-depth VSS request guard.
+    pub fn fast_schnorr_supported(&self) -> bool {
+        self.feature_flags.fast_schnorr_supported
+    }
+
+    /// True iff this protocol_version uses the post-PR-#1707 network DKG /
+    /// validator-key-publication shape — `ValidatorEncryptionKeysAndProofs`
     /// (class-groups + per-curve PVSS HPKE) and
     /// `twopc_mpc::decentralized_party::dkg::Party`. False at protocol_version
     /// <= 3 (mainnet-v1.1.8), where the publication is bare
@@ -394,8 +419,8 @@ impl ProtocolConfig {
         self.network_encryption_key_version.is_some_and(|v| v == 3)
     }
 
-    /// True iff this protocol_version uses the version-3 reconfiguration
-    /// shape (#1707) — `twopc_mpc::decentralized_party::reconfiguration::Party` with
+    /// True iff this protocol_version uses the post-PR-#1707 reconfiguration
+    /// shape — `twopc_mpc::decentralized_party::reconfiguration::Party` with
     /// per-curve PVSS HPKE keys in `PublicInput`. False at protocol_version
     /// <= 3, where reconfiguration runs against
     /// `twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`.
@@ -465,6 +490,10 @@ static POISON_VERSION_METHODS: AtomicBool = AtomicBool::new(false);
 thread_local! {
     static POISON_VERSION_METHODS: AtomicBool = AtomicBool::new(false);
 }
+
+/// Set once by `enable_small_presign_pools_for_local_swarm` so a single host
+/// running the whole validator set keeps its presign pools fillable.
+static SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM: AtomicBool = AtomicBool::new(false);
 
 // Instantiations for each protocol version.
 impl ProtocolConfig {
@@ -612,6 +641,7 @@ impl ProtocolConfig {
             // The delay is measured in consensus rounds.
             decryption_key_reconfiguration_third_round_delay: Some(10),
             schnorr_presign_second_round_delay: Some(8),
+            schnorr_presign_third_round_delay: Some(8),
             network_dkg_third_round_delay: Some(10),
             network_encryption_key_version: Some(1),
             reconfiguration_message_version: Some(1),
@@ -699,6 +729,7 @@ impl ProtocolConfig {
                         .consensus_skip_gced_blocks_in_direct_finalization = true;
                     cfg.feature_flags.bls_checkpoints = true;
                     cfg.feature_flags.off_chain_validator_metadata = true;
+                    cfg.feature_flags.fast_schnorr_supported = true;
                     cfg.network_encryption_key_version = Some(3);
                     cfg.reconfiguration_message_version = Some(3);
                 }
@@ -750,6 +781,22 @@ impl ProtocolConfig {
         cfg
     }
 
+    /// Enable the small-presign-pool override for this process. Called by the
+    /// local in-memory swarm / `ika start` so a single host running the whole
+    /// validator set can keep both the internal and network-owned-address
+    /// presign pools filled instead of pegging the CPU and stalling epoch
+    /// advance. No-op (production sizes retained) when the
+    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set.
+    pub fn enable_small_presign_pools_for_local_swarm() {
+        if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
+            info!(
+                "IKA_DISABLE_SMALL_PRESIGN_POOLS set; keeping production presign pool sizes for the local swarm"
+            );
+            return;
+        }
+        SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.store(true, Ordering::Relaxed);
+    }
+
     /// Override one or more settings in the config, for testing.
     /// This must be called at the beginning of the test, before get_for_(min|max)_version is
     /// called, since those functions cache their return value.
@@ -762,24 +809,6 @@ impl ProtocolConfig {
             *cur = Some(Box::new(override_fn));
             OverrideGuard
         })
-    }
-
-    /// Enable the small-presign-pool override for this process. Called by the
-    /// local in-memory swarm / `ika start` so a single host running the whole
-    /// validator set can keep both the internal and network-owned-address
-    /// presign pools filled instead of pegging the CPU and stalling epoch
-    /// advance. No-op (production sizes retained) when the
-    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set, so a local network can
-    /// still exercise production-scale pools. Validator binaries never call it,
-    /// so testnet/mainnet are unaffected.
-    pub fn enable_small_presign_pools_for_local_swarm() {
-        if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
-            info!(
-                "IKA_DISABLE_SMALL_PRESIGN_POOLS set; keeping production presign pool sizes for the local swarm"
-            );
-            return;
-        }
-        SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM.store(true, Ordering::Relaxed);
     }
 
     /// Get the minimum size of the NOA sign presign pool for a given signature algorithm.
@@ -797,11 +826,21 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_pool_minimum_size()
             }
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_pool_minimum_size()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool sizing.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_minimum_size()
             }
         }
     }
@@ -821,11 +860,21 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_consensus_round_delay()
             }
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.network_owned_address_schnorrkel_substrate_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_consensus_round_delay()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's delay.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_consensus_round_delay()
             }
         }
     }
@@ -845,11 +894,21 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_sessions_to_instantiate()
             }
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_sessions_to_instantiate()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's instantiation rate.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
         }
     }
@@ -869,11 +928,21 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.network_owned_address_eddsa_presign_pool_maximum_size()
             }
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.network_owned_address_taproot_presign_pool_maximum_size()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool cap.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.network_owned_address_taproot_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.network_owned_address_eddsa_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.network_owned_address_schnorrkel_substrate_presign_pool_maximum_size()
             }
         }
     }
@@ -893,10 +962,18 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_minimum_size(),
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.internal_schnorrkel_substrate_presign_pool_minimum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_minimum_size(),
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool sizing.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_pool_minimum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => self.internal_eddsa_presign_pool_minimum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_pool_minimum_size()
+            }
         }
     }
 
@@ -914,11 +991,21 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_consensus_round_delay(),
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.internal_schnorrkel_substrate_presign_consensus_round_delay()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.internal_taproot_presign_consensus_round_delay()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's delay.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.internal_eddsa_presign_consensus_round_delay()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_consensus_round_delay()
             }
         }
     }
@@ -939,11 +1026,21 @@ impl ProtocolConfig {
             DWalletSignatureAlgorithm::EdDSA => {
                 self.internal_eddsa_presign_sessions_to_instantiate()
             }
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
             DWalletSignatureAlgorithm::Taproot => {
                 self.internal_taproot_presign_sessions_to_instantiate()
+            }
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's instantiation rate.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => {
+                self.internal_eddsa_presign_sessions_to_instantiate()
+            }
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_sessions_to_instantiate()
             }
         }
     }
@@ -963,10 +1060,18 @@ impl ProtocolConfig {
                 self.internal_secp256r1_ecdsa_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::EdDSA => self.internal_eddsa_presign_pool_maximum_size(),
-            DWalletSignatureAlgorithm::Schnorrkel => {
+            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
                 self.internal_schnorrkel_substrate_presign_pool_maximum_size()
             }
             DWalletSignatureAlgorithm::Taproot => self.internal_taproot_presign_pool_maximum_size(),
+            // VSS (Fast Schnorr) variants reuse their AHE curve-sibling's pool cap.
+            DWalletSignatureAlgorithm::TaprootVSS => {
+                self.internal_taproot_presign_pool_maximum_size()
+            }
+            DWalletSignatureAlgorithm::EdDSAVSS => self.internal_eddsa_presign_pool_maximum_size(),
+            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+                self.internal_schnorrkel_substrate_presign_pool_maximum_size()
+            }
         }
     }
 }
@@ -1006,16 +1111,6 @@ type OverrideFn = dyn Fn(ProtocolVersion, ProtocolConfig) -> ProtocolConfig + Se
 thread_local! {
     static CONFIG_OVERRIDE: RefCell<Option<Box<OverrideFn>>> = RefCell::new(None);
 }
-
-/// Process-global switch, set by the local in-memory swarm / `ika start`, to
-/// shrink both the internal and network-owned-address presign pools so a single
-/// host running the whole validator set can keep them filled. The production
-/// pool sizes (thousands of presigns per curve) peg the CPU there and stall
-/// epoch advance. Unlike the thread-local `CONFIG_OVERRIDE` (which only the
-/// calling thread sees), this is honored by `get_for_version_impl` on every
-/// thread and every epoch. Off by default — only the local swarm turns it on,
-/// so testnet/mainnet binaries keep the production sizes.
-static SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM: AtomicBool = AtomicBool::new(false);
 
 #[must_use]
 pub struct OverrideGuard;
