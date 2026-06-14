@@ -230,10 +230,11 @@ single-object substitution gap, comparable in class to finding 1).
   `ocs_verifier.rs` installs `extract_new_committee_info` output without the
   explicit check. (Also a spec residual.)
 - **K5 [low — dead code] The `sui_checkpoint_cache` table + pruner are dead.**
-  `get_sui_checkpoint`/`put_sui_checkpoint` (+ inline pruning) have zero
-  callers; `CheckpointCache` is never instantiated (referenced only in a
-  `transport.rs` doc comment). A CLAUDE.md no-dead-code violation — clean
-  removal. Anchor: `authority_perpetual_tables.rs`.
+  `get_sui_checkpoint`/`put_sui_checkpoint` (+ inline pruning) had zero
+  callers; `CheckpointCache` was never even a real type (referenced only in a
+  `transport.rs` doc comment). RESOLUTION (`31d8c71120`): removed the column
+  (auto-deregistered by the `DBMapUtils` derive; new/undeployed table, no
+  migration), the accessors, and the doc-lie.
 - **K6 [low] Stale old-style config templates** — `validator.template.yaml`,
   `fullnode.template.yaml`, `shared.sh`,
   `skills/ika-operator/references/configuration.md` still use the deprecated
@@ -265,9 +266,9 @@ clone (part of 14) in one removal. Open items below.
    high-water rollback, BagMembership binding, and the JSON-RPC gate
    truth-table. Finding 6's fix added the first (ratchet error
    classification); build out the rest.
-3. **K5** (dead code) — remove the unused `sui_checkpoint_cache` table +
-   pruner. K2–K4, K6–K9 are lower-severity config/docs/defense-in-depth
-   residuals.
+3. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
+   residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
+   design addresses; K5 dead-code removal done in `31d8c71120`).
 4. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
