@@ -3,14 +3,10 @@
 
 //! Per-validator cache of OCS-verified Ika state.
 //!
-//! On `sui-state-direct`, populated by `IkaCheckpointPusher` as it
-//! observes each Ika-relevant checkpoint and builds inclusion proofs.
-//! On `sui-state-mirrored`, populated by `IkaPushHandler` after it
-//! verifies an incoming `PushVerifiedObjectsRequest`.
-//!
-//! Step 1 (this module) introduces the storage primitive. Consumers do
-//! not yet read from it — `OcsVerifiedReader` still hits the network.
-//! Subsequent steps wire the readers and shrink the pull surface.
+//! On `sui-state-direct`, populated by `IkaCheckpointPusher` as it folds
+//! each Ika-relevant checkpoint's modified objects (with inclusion proofs)
+//! via `absorb_entries`. On `sui-state-mirrored` it is a read-through memo
+//! populated by the reader's own per-read-verified relay reads.
 //!
 //! # What the cache stores
 //!
@@ -19,19 +15,15 @@
 //! children index so verified bag walks resolve from the cache without
 //! a network call.
 //!
-//! Eviction on deletion is intentionally deferred to step 3, when the
-//! push payload grows a `deleted` field. Until then the cache only
-//! grows; live-set churn (sessions completing) keeps it bounded
-//! enough to be harmless during shadow-population.
+//! Eviction on deletion is not yet implemented; the cache only grows, and
+//! live-set churn (sessions completing) keeps it bounded enough to be
+//! harmless in practice.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ika_network::proof_provider::VerifiedObjectEntry;
-use ika_network::sui_state_mirror::{
-    GetVerifiedSnapshotResponse, PushVerifiedObjectsRequest, VerifiedSnapshotProvider,
-};
 use parking_lot::RwLock;
 use sui_light_client::proof::ocs::OCSInclusionProof;
 use sui_types::base_types::ObjectID;
@@ -105,51 +97,11 @@ impl VerifiedStateCache {
         self.objects.read().is_empty()
     }
 
-    /// One-shot snapshot of every cached `(object, proof)` plus the
-    /// deduplicated summaries each entry's proof anchors against.
-    /// Used by the `GetVerifiedSnapshot` anemo RPC for bootstrap and
-    /// gap recovery.
-    pub fn take_snapshot(&self) -> GetVerifiedSnapshotResponse {
-        let objects = self.objects.read();
-        let mut summaries: std::collections::BTreeMap<
-            CheckpointSequenceNumber,
-            CertifiedCheckpointSummary,
-        > = std::collections::BTreeMap::new();
-        let mut entries: Vec<VerifiedObjectEntry> = Vec::with_capacity(objects.len());
-        for snapshot in objects.values() {
-            summaries
-                .entry(snapshot.source_checkpoint_seq)
-                .or_insert_with(|| snapshot.summary.clone());
-            entries.push(VerifiedObjectEntry {
-                object: snapshot.object.clone(),
-                checkpoint_seq: snapshot.source_checkpoint_seq,
-                proof: clone_proof(&snapshot.proof),
-                dynamic_field_name_type: String::new(),
-                dynamic_field_name_bcs: Vec::new(),
-            });
-        }
-        GetVerifiedSnapshotResponse {
-            summaries,
-            objects_with_proofs: entries,
-            head_seq: self.head_seq(),
-        }
-    }
-
-    /// Fold every `(object, proof)` from `push` into the cache. Updates
-    /// the parent→children index from each object's owner. Bumps
-    /// `head_seq` to the push's summary sequence (monotonically).
-    pub fn absorb_push(&self, push: &PushVerifiedObjectsRequest) {
-        let summary = &push.summary;
-        let source_seq = *summary.sequence_number();
-        for entry in &push.objects_with_proofs {
-            self.insert_inner(entry, summary, source_seq);
-        }
-        self.advance_head(source_seq);
-    }
-
-    /// Direct-side entry point that doesn't require constructing a full
-    /// `PushVerifiedObjectsRequest` first. Equivalent to absorbing one
-    /// push payload built from the same `(summary, entries)`.
+    /// Fold every `(object, proof)` from one checkpoint into the cache.
+    /// Updates the parent→children index from each object's owner and bumps
+    /// `head_seq` to the summary's sequence (monotonically). The caller
+    /// (direct pusher, or the reader after a per-read verify) is responsible
+    /// for having verified each entry against `summary` first.
     pub fn absorb_entries(
         &self,
         summary: &CertifiedCheckpointSummary,
@@ -160,24 +112,6 @@ impl VerifiedStateCache {
             self.insert_inner(entry, summary, source_seq);
         }
         self.advance_head(source_seq);
-    }
-
-    /// Mirrored-side bootstrap / gap recovery: fold the contents of a
-    /// `GetVerifiedSnapshot` response into the cache. Caller is
-    /// responsible for verifying every `(object, proof)` against its
-    /// referenced summary before calling — this method trusts the
-    /// inputs.
-    pub fn absorb_snapshot(&self, snapshot: &GetVerifiedSnapshotResponse) {
-        for entry in &snapshot.objects_with_proofs {
-            let Some(summary) = snapshot.summaries.get(&entry.checkpoint_seq) else {
-                // Entry references a summary that wasn't shipped — drop
-                // it on the floor; missing summary means we can't bind
-                // the proof to a committee anyway.
-                continue;
-            };
-            self.insert_inner(entry, summary, entry.checkpoint_seq);
-        }
-        self.advance_head(snapshot.head_seq);
     }
 
     fn insert_inner(
@@ -258,12 +192,6 @@ impl VerifiedStateCache {
 impl Default for VerifiedStateCache {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl VerifiedSnapshotProvider for VerifiedStateCache {
-    fn snapshot(&self) -> GetVerifiedSnapshotResponse {
-        self.take_snapshot()
     }
 }
 

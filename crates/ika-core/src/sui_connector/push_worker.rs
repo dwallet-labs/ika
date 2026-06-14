@@ -4,32 +4,32 @@
 //! sui-state-direct worker that polls Sui for new checkpoints, filters to
 //! Ika-relevant ones (any output object whose Move type tree touches an Ika
 //! package id — see `object_touches_ika`) plus all end-of-epoch checkpoints,
-//! builds OCS inclusion proofs for the Ika-modified objects, and pushes
-//! `(summary, [(object, proof), ...])` to connected peers via
-//! [`SuiStateMirrorClient::push_verified_objects`].
+//! builds OCS inclusion proofs for the Ika-modified objects, and folds
+//! `(summary, [(object, proof), ...])` into the local verified state cache
+//! that sui-state-direct consumers read cache-first.
 //!
-//! Bandwidth: scanning every Sui checkpoint requires a raw fetch; that
-//! cost is unchanged. The *push* drops every non-Ika object plus all tx /
-//! effects, shipping one summary plus, per Ika-touched object, its full Move
-//! `Object` bytes and one Merkle path — a few KB to tens of KB per checkpoint
-//! instead of the full checkpoint contents (the object bytes, not the proofs,
-//! dominate for large inner state).
+//! This is the authoritative cache populator on a direct node: it folds
+//! every Ika-modified object of every checkpoint, in order, so a cache hit
+//! is the object's current state up to the poll lag.
+//!
+//! Bandwidth: scanning every Sui checkpoint requires a raw fetch; that cost
+//! is unchanged. Only Ika-touched objects (with their proofs) are kept; all
+//! non-Ika objects plus tx / effects are dropped.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use anemo::{Network, PeerId, Request, types::response::StatusCode};
 use ika_network::proof_provider::VerifiedObjectEntry;
-use ika_network::sui_state_mirror::{PushVerifiedObjectsRequest, SuiStateMirrorClient};
 use ika_sui_client::transport::SuiTransport;
 use ika_types::messages_dwallet_mpc::IkaPackageConfig;
-use parking_lot::Mutex;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
 use sui_types::TypeTag;
 use sui_types::base_types::ObjectID;
 use sui_types::full_checkpoint_content::CheckpointData;
-use sui_types::messages_checkpoint::{CheckpointArtifacts, CheckpointSequenceNumber};
+use sui_types::messages_checkpoint::{
+    CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
+};
 use sui_types::object::Object;
 use tracing::{debug, info, warn};
 
@@ -42,35 +42,20 @@ pub struct IkaCheckpointPusher {
     /// construction. Kept off the cached layer so this scan doesn't
     /// pollute consumer caches.
     transport: Arc<dyn SuiTransport>,
-    network: Network,
     perpetual: Arc<AuthorityPerpetualTables>,
     metrics: Arc<OcsMetrics>,
     ika_packages: HashSet<ObjectID>,
     poll_interval: Duration,
     cursor: CheckpointSequenceNumber,
-    /// Peers that recently returned `NotFound` on `push_verified_objects`,
-    /// i.e. they don't have a `PushVerifiedObjectsHandler` installed.
-    /// TTL'd so a peer upgrading mid-run heals itself.
-    no_push_handler_peers: Mutex<HashMap<PeerId, Instant>>,
-    /// Direct-side write target for the verified state cache. Same
-    /// `(summary, entries)` we just built into a push payload is also
-    /// folded here so local consumers can read it without a network
-    /// round-trip. Step 1 is shadow-population only — readers do not
-    /// yet hit this cache.
+    /// Direct-side write target for the verified state cache: each
+    /// checkpoint's `(summary, entries)` is folded here so sui-state-direct
+    /// consumers read it cache-first without a network round-trip.
     cache: SharedVerifiedStateCache,
-    /// Sequence number of the last push we sent (any peer). Stamped on
-    /// the next push as `prev_checkpoint_seq` so receivers can detect
-    /// dropped pushes by comparing against their cache's head_seq.
-    /// `None` until the first push since boot.
-    last_push_seq: Option<CheckpointSequenceNumber>,
 }
-
-const NO_PUSH_HANDLER_TTL: Duration = Duration::from_secs(300);
 
 impl IkaCheckpointPusher {
     pub async fn new(
         transport: Arc<dyn SuiTransport>,
-        network: Network,
         perpetual: Arc<AuthorityPerpetualTables>,
         metrics: Arc<OcsMetrics>,
         packages: &IkaPackageConfig,
@@ -109,15 +94,12 @@ impl IkaCheckpointPusher {
 
         Ok(Self {
             transport,
-            network,
             perpetual,
             metrics,
             ika_packages,
             poll_interval,
             cursor,
-            no_push_handler_peers: Mutex::new(HashMap::new()),
             cache,
-            last_push_seq: None,
         })
     }
 
@@ -180,18 +162,12 @@ impl IkaCheckpointPusher {
                     continue;
                 }
             };
-            if let Some(mut push) = self.build_push(&data)? {
-                // Stamp the sequence of our previous push so receivers
-                // can detect if any push was lost in transit (gap
-                // recovery via `GetVerifiedSnapshot`).
-                push.prev_checkpoint_seq = self.last_push_seq;
-                // Shadow-populate the local verified state cache with the
-                // same payload we're about to ship to peers. Step 1: cache
-                // is written but no consumer reads from it yet.
-                self.cache.absorb_push(&push);
+            if let Some((summary, entries)) = self.build_entries(&data)? {
+                // Fold this checkpoint's Ika-modified objects into the local
+                // verified state cache that sui-state-direct consumers read
+                // cache-first.
+                self.cache.absorb_entries(&summary, &entries);
                 self.metrics.pusher_pushed_total.inc();
-                self.fanout(seq, push).await;
-                self.last_push_seq = Some(seq);
             } else {
                 self.metrics.pusher_skipped_irrelevant_total.inc();
             }
@@ -204,8 +180,9 @@ impl IkaCheckpointPusher {
         Ok(())
     }
 
-    /// Returns `Some(push)` for Ika-relevant or end-of-epoch checkpoints
-    /// (with proofs for each Ika-modified object) and `None` otherwise.
+    /// Returns `Some((summary, entries))` for Ika-relevant or end-of-epoch
+    /// checkpoints (with a proof for each Ika-modified object) and `None`
+    /// otherwise.
     ///
     /// "Ika-relevant" is determined per-output, by walking the Move
     /// type of each output and checking whether any address in the
@@ -222,10 +199,10 @@ impl IkaCheckpointPusher {
     /// Ika-namespace events (notably bag-removal during session
     /// completion via epoch advance), which left consumer caches
     /// stale and produced spurious bag-omission warnings.
-    fn build_push(
+    fn build_entries(
         &self,
         data: &CheckpointData,
-    ) -> anyhow::Result<Option<PushVerifiedObjectsRequest>> {
+    ) -> anyhow::Result<Option<(CertifiedCheckpointSummary, Vec<VerifiedObjectEntry>)>> {
         let is_end_of_epoch = data.checkpoint_summary.end_of_epoch_data.is_some();
         let mut ika_object_ids: HashSet<ObjectID> = HashSet::new();
         for tx in &data.transactions {
@@ -286,84 +263,7 @@ impl IkaCheckpointPusher {
             return Ok(None);
         }
 
-        Ok(Some(PushVerifiedObjectsRequest {
-            summary: data.checkpoint_summary.clone(),
-            objects_with_proofs,
-            // Caller stamps this before fanout. We default to None
-            // here because `build_push` doesn't track push history.
-            prev_checkpoint_seq: None,
-        }))
-    }
-
-    async fn fanout(&self, seq: CheckpointSequenceNumber, push: PushVerifiedObjectsRequest) {
-        let peer_ids: Vec<_> = self.network.peers();
-        debug!(
-            seq,
-            peer_count = peer_ids.len(),
-            "fanning out PushVerifiedObjects"
-        );
-        // PushVerifiedObjectsRequest is not Clone (proofs aren't Clone), so
-        // each peer gets a fresh value decoded from these bytes. Encode once
-        // up front; the per-peer decode is the cheap half of the round-trip.
-        let push_bytes = match bcs::to_bytes(&push) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                warn!(seq, error = ?e, "failed to encode push payload; skipping fanout");
-                return;
-            }
-        };
-        for peer_id in peer_ids {
-            if self.is_known_no_handler(&peer_id) {
-                self.metrics.pusher_fanout_skipped_no_handler_total.inc();
-                continue;
-            }
-            let Some(peer) = self.network.peer(peer_id) else {
-                continue;
-            };
-            let mut client = SuiStateMirrorClient::new(peer);
-            let req_value = match bcs::from_bytes::<PushVerifiedObjectsRequest>(&push_bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    // One peer's clone failing must not starve the rest.
-                    warn!(seq, error = ?e, "failed to decode push payload clone");
-                    continue;
-                }
-            };
-            let req = Request::new(req_value).with_timeout(Duration::from_secs(30));
-            if let Err(status) = client.push_verified_objects(req).await {
-                if status.status() == StatusCode::NotFound {
-                    self.no_push_handler_peers
-                        .lock()
-                        .insert(peer_id, Instant::now());
-                    self.metrics.pusher_fanout_skipped_no_handler_total.inc();
-                    debug!(
-                        ?peer_id,
-                        seq,
-                        ttl_secs = NO_PUSH_HANDLER_TTL.as_secs(),
-                        "peer has no push handler; suppressing pushes"
-                    );
-                    continue;
-                }
-                let reason = format!("{:?}", status.status());
-                self.metrics
-                    .pusher_fanout_failures_total
-                    .with_label_values(&[&reason])
-                    .inc();
-                warn!(?peer_id, seq, reason = %reason, "push to peer failed");
-            }
-        }
-    }
-
-    fn is_known_no_handler(&self, peer_id: &PeerId) -> bool {
-        let mut cache = self.no_push_handler_peers.lock();
-        match cache.get(peer_id) {
-            Some(at) if at.elapsed() < NO_PUSH_HANDLER_TTL => true,
-            Some(_) => {
-                cache.remove(peer_id);
-                false
-            }
-            None => false,
-        }
+        Ok(Some((data.checkpoint_summary.clone(), objects_with_proofs)))
     }
 }
 

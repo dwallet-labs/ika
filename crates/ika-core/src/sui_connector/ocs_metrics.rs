@@ -38,22 +38,7 @@ pub struct OcsMetrics {
     pub pusher_stalled: IntGauge,
     pub pusher_pushed_total: IntCounter,
     pub pusher_skipped_irrelevant_total: IntCounter,
-    pub pusher_fanout_failures_total: IntCounterVec, // labels: ["reason"]
-    pub pusher_fanout_skipped_no_handler_total: IntCounter,
     pub pusher_fetch_failures_total: IntCounter,
-
-    // Push handler (receive side)
-    pub push_received_total: IntCounter,
-    pub push_accepted_total: IntCounter,
-    pub push_rejected_total: IntCounterVec, // labels: ["reason"]
-    pub push_duplicate_total: IntCounter,
-    /// Pushes whose `prev_checkpoint_seq` exceeds the receiver's local
-    /// `cache.head_seq` — at least one prior push was lost in transit.
-    /// Each gap should be followed by a `GetVerifiedSnapshot` recovery.
-    pub push_gap_detected_total: IntCounter,
-    /// Gap-recovery `GetVerifiedSnapshot` pulls that succeeded (verified
-    /// against the local committee store and folded into the cache).
-    pub push_gap_recovered_total: IntCounter,
 
     // OcsVerifiedReader (consumer-side proof verification)
     pub proof_verify_total: IntCounterVec, // labels: ["kind"]
@@ -123,62 +108,9 @@ impl OcsMetrics {
                 registry,
             )
             .unwrap(),
-            pusher_fanout_failures_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_pusher_fanout_failures_total",
-                "Per-peer push attempts that failed, labelled by anemo StatusCode (excludes NotFound from a peer without a PushCheckpointHandler — see pusher_fanout_skipped_no_handler_total)",
-                &["reason"],
-                registry,
-            )
-            .unwrap(),
-            pusher_fanout_skipped_no_handler_total: register_int_counter_with_registry!(
-                "ika_ocs_pusher_fanout_skipped_no_handler_total",
-                "Per-peer push attempts skipped because the peer recently returned NotFound for push_checkpoint_data (no PushCheckpointHandler installed; e.g. an ika fullnode in the swarm)",
-                registry,
-            )
-            .unwrap(),
             pusher_fetch_failures_total: register_int_counter_with_registry!(
                 "ika_ocs_pusher_fetch_failures_total",
                 "Number of get_full_checkpoint failures during the pusher walk",
-                registry,
-            )
-            .unwrap(),
-            push_received_total: register_int_counter_with_registry!(
-                "ika_ocs_push_received_total",
-                "Number of CheckpointData pushes received from peers",
-                registry,
-            )
-            .unwrap(),
-            push_accepted_total: register_int_counter_with_registry!(
-                "ika_ocs_push_accepted_total",
-                "Number of received pushes that BLS-verified and were persisted",
-                registry,
-            )
-            .unwrap(),
-            push_rejected_total: register_int_counter_vec_with_registry!(
-                "ika_ocs_push_rejected_total",
-                "Number of received pushes that failed verification or persistence",
-                &["reason"],
-                registry,
-            )
-            .unwrap(),
-            push_duplicate_total: register_int_counter_with_registry!(
-                "ika_ocs_push_duplicate_total",
-                "Number of received pushes that were already present in the perpetual cache",
-                registry,
-            )
-            .unwrap(),
-            push_gap_detected_total: register_int_counter_with_registry!(
-                "ika_ocs_push_gap_detected_total",
-                "Pushes whose prev_checkpoint_seq exceeds our local head_seq, \
-                 indicating at least one prior push was lost. Drives \
-                 GetVerifiedSnapshot recovery.",
-                registry,
-            )
-            .unwrap(),
-            push_gap_recovered_total: register_int_counter_with_registry!(
-                "ika_ocs_push_gap_recovered_total",
-                "Gap-recovery GetVerifiedSnapshot pulls that verified against \
-                 the local committee store and were folded into the cache",
                 registry,
             )
             .unwrap(),

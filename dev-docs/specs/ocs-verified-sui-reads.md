@@ -32,9 +32,9 @@ until it passes:
    against the Sui committee for *its own* `epoch()` (aggregate
    signature over the intent-scoped summary, plus epoch-binding). The
    committee comes from the local `CommitteeStore`; `verify_summary` is
-   the single chokepoint, so reader, push handler, and snapshot verifier
-   cannot drift apart. Missing committee → retriable; bad signature →
-   terminal.
+   the single chokepoint, so the reader and the direct-side checkpoint
+   folder cannot drift apart. Missing committee → retriable; bad signature
+   → terminal.
 2. **Artifacts-digest binding** — the proof's `tree_root` is believed
    only because `from_artifact_digests(vec![tree_root])` reproduces the
    `checkpoint_artifacts_digest` the committee signed. A fabricated tree
@@ -238,23 +238,27 @@ committed under a BLS-signed checkpoint, but does **not** verify the
 effects bytes. This is acceptable only because no live caller reaches it
 (writes are notifier-gated, and notifiers run direct gRPC).
 
-## The push/cache fast path (optimization)
+## The cache fast path (sui-state-direct only)
 
-Direct validators run a checkpoint pusher that builds inclusion proofs
-for Ika-modified objects and fans them to peers; receivers verify every
-pushed entry against their own `CommitteeStore` before caching, and
-direct nodes serve verified reads cache-first (with the staleness
-tripwire above falling through to the network when the cache lags).
-**Pushed/cached state is never trusted on the basis of the push** — the
-cache only ever holds committee-verified state, which is why a cache hit
-may skip re-running the proof.
+Direct validators run a checkpoint folder (`IkaCheckpointPusher`) that
+folds every Ika-modified object of every checkpoint, in order, into a
+local verified state cache — building each object's inclusion proof from
+the checkpoint's `ModifiedObjectTree`. Direct nodes then serve verified
+reads **cache-first** (with the staleness tripwire above falling through
+to the network when the cache lags). Because the folder reads from the
+node's own authoritative Sui access and folds in order, a cache hit is
+the object's current state up to the poll lag, and may skip re-running
+the proof.
 
-Known reachability gap at HEAD: the push handler and snapshot provider
-are installed only on direct `serve_mirror` nodes, but the doc-comments
-name *mirrored* nodes as the intended receivers; mirrored nodes build no
-handler and read with `cache_first = false`. So pushes are accepted only
-by other direct nodes (which already self-populate), and the push /
-gap-recovery path is effectively dead for its stated consumer.
+The cache is authoritatively populated *only* by the node's own folder —
+it does not ingest peer state. Mirrored and peer-only validators have no
+such folder; they read with `cache_first = false`, pulling each object
+over the relay and re-verifying it per read.
+
+> Giving mirrored/peer-only nodes a committee-attested cache-first path
+> (so they don't re-pull every read) needs a currency mechanism the pull
+> path doesn't require — see
+> [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
 
 ## Key invariants
 
@@ -283,8 +287,9 @@ gap-recovery path is effectively dead for its stated consumer.
 7. Transport selection is a function of config shape, never of chain
    state — OCS opt-in is a node-level trust-anchor choice, not a
    protocol feature.
-8. Cached/pushed state is committee-verified before it enters the cache;
-   the cache never holds unverified state.
+8. Cached state is committee-verified before it enters the cache; the
+   cache never holds unverified state, and on a direct node it is folded
+   only from the node's own authoritative Sui access, never from peers.
 
 ## Residuals and known gaps
 
@@ -297,9 +302,6 @@ gap-recovery path is effectively dead for its stated consumer.
   gain `has_anchor` and trip the anchor-without-data-source guard —
   the compiled-in contribution should be gated on `sui-data-source`
   being present.
-- **Peer-only initial ratchet retries forever** on permanent errors
-  (a misconfigured anchor that cannot chain to the current epoch),
-  blocking boot with only warn-level logs and no deadline.
 - The verified ratchet path relies on the structural uniqueness of an
   epoch's end-of-epoch checkpoint for `next.epoch == head + 1`; the
   explicit assertion exists only on the unverified fallback path.
@@ -309,8 +311,8 @@ Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 `committee_store.rs` (committee trust + ratchet install),
 `ocs_verifier.rs` (ratchet loop + fallback), `setup.rs` (bootstrap plan,
 anchor digest gate, stack wiring), `bag_event_pump.rs` (event pump +
-omission detector), `push_worker.rs` / `push_handler.rs` /
-`verified_state_cache.rs` (push/cache fast path);
+omission detector), `push_worker.rs` / `verified_state_cache.rs`
+(direct-side checkpoint folder + cache fast path);
 `crates/ika-network/src/sui_state_mirror/` (relay client/server) and
 `proof_provider.rs` (serving side); `crates/ika-node/src/lib.rs`
 (role/transport gate, peer-only boot); `crates/ika-config/src/node.rs`

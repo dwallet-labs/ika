@@ -786,7 +786,6 @@ impl IkaNode {
             sui_state_mirror_server,
             raw_transport_for_pushing,
             mut state_cache_opt,
-            push_handler_opt,
         ) = {
             // Spread a built stack into the individually-wired component
             // slots the rest of boot threads around.
@@ -797,7 +796,6 @@ impl IkaNode {
                     stack.mirror_server,
                     stack.raw_transport_for_pushing,
                     Some(stack.state_cache),
-                    stack.push_handler,
                 )
             };
             if is_sui_state_direct {
@@ -830,7 +828,7 @@ impl IkaNode {
                     .expect("peer-only OCS stack built in the transport gate above");
                 unpack(stack)
             } else {
-                (None, None, None, None, None, None)
+                (None, None, None, None, None)
             }
         };
 
@@ -857,13 +855,6 @@ impl IkaNode {
                 sui_state_mirror_server,
             )?
         };
-
-        // Hand the (sui-state-direct) push handler the bound network so a
-        // detected push gap can pull a verified snapshot from the peer that
-        // revealed it. The handler was built before the network existed.
-        if let Some(push_handler) = &push_handler_opt {
-            push_handler.set_network(p2p_network.clone());
-        }
 
         if is_sui_state_mirrored && !peer_only {
             // sui-state-mirrored *with* a fallback URL: the OCS stack is built
@@ -951,14 +942,12 @@ impl IkaNode {
                     .ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             };
-            let network_for_push = p2p_network.clone();
             let perpetual_for_push = perpetual_tables.clone();
             let metrics_for_push = ocs_metrics.clone();
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 match IkaCheckpointPusher::new(
                     raw_transport,
-                    network_for_push,
                     perpetual_for_push,
                     metrics_for_push,
                     &packages,
@@ -968,7 +957,7 @@ impl IkaNode {
                 .await
                 {
                     Ok(pusher) => pusher.run().await,
-                    Err(e) => warn!(error = ?e, "checkpoint pusher failed to start; not pushing"),
+                    Err(e) => warn!(error = ?e, "checkpoint folder failed to start"),
                 }
             });
         }

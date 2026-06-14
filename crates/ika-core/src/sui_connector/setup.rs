@@ -54,7 +54,6 @@ use crate::sui_connector::committee_store::{CommitteeBootstrap, CommitteeStore};
 use crate::sui_connector::fallback_transport::FallbackTransport;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
-use crate::sui_connector::push_handler::IkaPushHandler;
 use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, VerifiedStateCache};
 use sui_types::digests::CheckpointDigest;
@@ -73,14 +72,11 @@ pub struct SuiConnectorStack {
     /// [`crate::sui_connector::push_worker::IkaCheckpointPusher`] once
     /// the anemo network is up. `None` for sui-state-mirrored.
     pub raw_transport_for_pushing: Option<Arc<dyn SuiTransport>>,
-    /// Per-validator verified state cache. Both roles get one;
-    /// the writer differs (direct: `IkaCheckpointPusher`; mirrored:
-    /// `IkaPushHandler`). Step 1 only wires the direct-side writer.
+    /// Per-validator verified state cache. On sui-state-direct the
+    /// `IkaCheckpointPusher` folds every checkpoint's Ika-modified objects
+    /// here and consumers read cache-first; on sui-state-mirrored it is a
+    /// read-through memo of per-read-verified relay reads.
     pub state_cache: SharedVerifiedStateCache,
-    /// `Some` alongside `mirror_server`: the same push handler the server
-    /// holds, so the caller can hand it the bound anemo network
-    /// (`set_network`) for push-gap recovery once the network is up.
-    pub push_handler: Option<Arc<IkaPushHandler>>,
     pub metrics: Arc<OcsMetrics>,
 }
 
@@ -345,9 +341,10 @@ pub async fn build_sui_connector_stack(
         .with_label_values(&[&anchor_epoch.to_string()])
         .set(1);
 
-    // 5. sui-state-direct relay server (Some iff configured to serve), with the push
-    //    handler attached so peers can broadcast checkpoints to us.
-    let (mirror_server, push_handler) = if mirror_capable
+    // 5. sui-state-direct relay server (Some iff configured to serve): exposes
+    //    the verified-read RPCs (VerifiedObject / BatchVerifiedObjects /
+    //    VerifiedBagPage) to mirrored and peer-only peers.
+    let mirror_server = if mirror_capable
         && matches!(
             cfg.sui_data_source,
             Some(SuiDataSource::SuiStateDirect {
@@ -355,22 +352,13 @@ pub async fn build_sui_connector_stack(
                 ..
             })
         ) {
-        let handler = Arc::new(IkaPushHandler::new(
-            committees,
-            ratchet.clone(),
-            metrics.clone(),
-            state_cache.clone(),
-        ));
-        let server = sui_state_mirror::make_server(
+        Some(sui_state_mirror::make_server(
             ratchet.transport().clone(),
             proof_provider,
-            Some(handler.clone()),
-            Some(state_cache.clone()),
             provider_metrics.clone(),
-        );
-        (Some(server), Some(handler))
+        ))
     } else {
-        (None, None)
+        None
     };
 
     info!(
@@ -384,7 +372,6 @@ pub async fn build_sui_connector_stack(
         mirror_server,
         raw_transport_for_pushing: raw_for_pushing,
         state_cache,
-        push_handler,
         metrics,
     })
 }

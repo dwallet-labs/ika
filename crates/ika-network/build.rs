@@ -255,30 +255,6 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
-        // Push side: sui-state-direct pushes Ika-modified objects + their inclusion
-        // proofs to peers (instead of the full checkpoint we used to ship).
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("push_verified_objects")
-                .route_name("PushVerifiedObjects")
-                .request_type("crate::sui_state_mirror::PushVerifiedObjectsRequest")
-                .response_type("()")
-                .codec_path(codec_path)
-                .build(),
-        )
-        // Bootstrap / gap-recovery: serve a one-shot snapshot of the
-        // direct's current verified state cache so a fresh sui-state-mirrored
-        // (or one that detected a push gap) can seed without waiting for
-        // organic activity to refill it.
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("get_verified_snapshot")
-                .route_name("GetVerifiedSnapshot")
-                .request_type("crate::sui_state_mirror::GetVerifiedSnapshotRequest")
-                .response_type("crate::sui_state_mirror::GetVerifiedSnapshotResponse")
-                .codec_path(codec_path)
-                .build(),
-        )
         // Peer-only tx submission: a sui-state-mirrored validator with no
         // direct full-node connection forwards its own signed transaction to
         // a direct peer, which submits it and returns the committed effects
