@@ -162,8 +162,15 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     one entry per Sui epoch forever, with no pruner (the only pruner is on
     the checkpoint cache). Slow but perpetual RocksDB/RAM growth on
     long-lived nodes. Anchor:
-    `crates/ika-core/src/sui_connector/committee_store.rs`. RESOLUTION: open
-    — add retention/pruning.
+    `crates/ika-core/src/sui_connector/committee_store.rs`. RESOLUTION
+    (`cc62581c5e`): the per-epoch committee store was redundant — an
+    end-of-epoch summary carries the next committee, so persist only the
+    verified summaries and derive committees on demand (a DB read + decode).
+    `sui_committees` is now sparse (no-summary cases only), and the in-memory
+    map is a fixed-cap cache instead of an all-epochs mirror, bounding RAM.
+    The summaries themselves are kept (needed to verify old-anchored proofs);
+    serving them to peers ratcheting from an old anchor is a separate future
+    feature.
 
 ### Obsolete
 
@@ -179,21 +186,20 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 ## Remaining work (risk-ordered)
 
-DONE since the audit: findings 6 (S1), 9 (H3) fixed; 10/11 closed by removing
-the push/cache gossip subsystem (`b9be273a74`) — which also took out the
-sequential fanout (11) and the unbounded `GetVerifiedSnapshot` clone (part of
-14) in one removal. Open items below.
+DONE since the audit: findings 6 (S1), 9 (H3), 15 (S4) fixed; 10/11 closed by
+removing the push/cache gossip subsystem (`b9be273a74`) — which also took out
+the sequential fanout (11) and the unbounded `GetVerifiedSnapshot` clone (part
+of 14) in one removal. Open items below.
 
-1. **Finding 15** — committee trust-table retention (slow unbounded leak).
-2. **Finding 12** — security-counter coverage on batch/bag verify.
-3. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
+1. **Finding 12** — security-counter coverage on batch/bag verify.
+2. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-4. **Adversarial tests** — the review noted security-critical paths
+3. **Adversarial tests** — the review noted security-critical paths
    (proof-rejection, high-water rollback, BagMembership binding, the legacy
    JSON-RPC gate truth-table) had zero negative tests; only happy-path
    cluster tests existed. Finding 6's fix added the first such unit test
    (ratchet error classification). Build out the rest.
-5. **Mirrored-node currency redesign** (future feature, not a finding) —
+4. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
 
