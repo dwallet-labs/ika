@@ -6,9 +6,6 @@
 //! Two implementations exist:
 //! - [`crate::grpc::SuiGrpcClient`]: direct gRPC to a Sui fullnode.
 //! - `SuiMirrorTransport` (in `ika-network`): peer-relayed reads via Ika p2p.
-//!
-//! `CheckpointCache` (in `ika-core::sui_connector`) decorates either of these
-//! with an L1 in-memory cache and an L2 backed by `AuthorityPerpetualTables`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
