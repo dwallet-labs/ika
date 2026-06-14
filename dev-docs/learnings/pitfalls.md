@@ -106,6 +106,22 @@ rule, not the instance.
   → Rule: budgets guard against "never", not "slow" — set them
   generously and keep the budget hierarchy ordered (per-call < per-case
   < per-job) so the failure surfaces with the most specific error.
+- **Time-compressed epoch tests: a protocol WINDOW that is a fraction of
+  the epoch races a crypto cost that does NOT compress.** Cluster tests
+  shrink the epoch (e.g. 120s) to run fast, but the mid-epoch-joiner
+  freeze window is `epoch/4`, while the per-peer class-groups
+  decode-validate the joiner must clear inside it is a fixed multi-second
+  cost. Under 4-way suite parallelism the 30s window fell below the
+  contended propagation floor, the `3·epoch/4` deadline froze the input
+  set without the joiner, and `test_joiner_lands_in_next_committee_class_groups`
+  flaked (joiner missing from `class_groups_public_keys_and_proofs`). The
+  production behavior is correct — at hour-long epochs the window is
+  minutes; a joiner that truly can't propagate is excluded by design.
+  → Rule: when a test compresses the epoch, size it so every
+  epoch-FRACTION window still exceeds the ABSOLUTE (non-compressing) work
+  inside it WITH margin for CI contention; don't tune to "passes alone".
+  (`epoch_scaled_poll_interval` compresses poll cadences but cannot
+  compress the crypto.)
 - **Test-harness state that production syncs from chain must be set
   explicitly.** The in-process harness never syncs the epoch-close lock
   target, so it stays 0 and (correctly) gates everything; tests set it
