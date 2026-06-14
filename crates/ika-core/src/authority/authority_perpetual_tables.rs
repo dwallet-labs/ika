@@ -82,11 +82,15 @@ pub struct AuthorityPerpetualTables {
         DBMap<(EpochId, ObjectID), [u8; 32]>,
 
     // -- OCS verifier (Sui state ingest) ----------------------------------------------------
-    /// Sui committee BLS-verified for each Sui epoch we've ratcheted through.
-    /// Append-only across Sui epoch transitions; survives Ika epoch boundaries.
+    /// Sui committees with NO backing end-of-epoch summary: the bootstrap
+    /// base committee and any unverified-fallback installs. Sparse — every
+    /// other committee is derived on demand from `sui_committee_summaries`
+    /// (see `CommitteeStore`). Survives Ika epoch boundaries.
     pub(crate) sui_committees: DBMap<u64, SuiCommittee>,
 
-    /// Highest Sui epoch for which `sui_committees` holds a verified entry.
+    /// Highest Sui epoch we hold a (derivable) committee for — the ratchet
+    /// head. Advanced by `record_sui_committee_transition` (verified path) or
+    /// `install_sui_committee` (no-summary path).
     pub(crate) sui_committee_head: DBMap<(), u64>,
 
     /// Verified end-of-epoch `CertifiedCheckpointSummary` keyed by the epoch
