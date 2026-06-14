@@ -13,7 +13,9 @@ independent design judges rated the branch sound-with-concerns.
 **Status (updated):** **13 resolved** (the 9 fixed + 10/11/12/15), **2 open**
 (13 adversarial tests, 14 serving caps), **1 obsolete** (16) — see each
 finding's RESOLUTION and the remaining-work list. The directly-exploitable
-proof-binding and boot-liveness concerns are resolved.
+proof-binding and boot-liveness concerns are resolved. A separate
+earlier-confirmed **K1–K9** set (recovered below) is also still open —
+notably **K1**, a single-object relay-substitution gap.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a
 > source of current truth. Current behavior lives in
@@ -197,14 +199,53 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     machinery, now always operating on an empty map) — a hygiene item, not a
     correctness defect.
 
-### Not enumerated (gap)
+### K-findings — earlier-confirmed set (recovered 2026-06-14)
 
-The working notes also reference an earlier-confirmed **"K1–K9"** set
-(predating this ultrareview) as *"still present at HEAD"*, but those nine
-were never broken out into individual findings — neither here nor in the
-notes. They are **not** covered by findings 1–16 above and would need to be
-recovered from the original ultrareview run to be re-checked. Flagged so the
-"16 findings" count is not mistaken for the full set of known issues.
+A separate **"K1–K9"** set predates the ultrareview; the ultrareview
+confirmed all nine still-present at HEAD. They are distinct from findings
+1–16. Recovered from the original review run and re-checked against current
+HEAD below — all still open unless noted. **K1 is the standout** (a real
+single-object substitution gap, comparable in class to finding 1).
+
+- **K1 [high — security] Single-object reads don't verify the returned
+  object is the one requested.** `verified_reader.rs::verify_response` (~:596)
+  checks the inclusion proof, freshness, and high-water but never asserts
+  `resp.object.id() == requested id` — it isn't even *passed* the id. A
+  malicious relay asked for object X can return any validly-proven object Y
+  and the reader accepts it (substitution). The **batch** path guards this
+  (`verified_objects`, the `entry.object.id() != *id` check); the
+  single-object path does not. Anchor: `verified_object`/`verify_response`.
+- **K2 [low] `compiled_in_trusted_anchor` ORs into `has_anchor` regardless of
+  `sui_data_source`.** When release tooling fills it, old-style configs on
+  that chain gain an anchor and trip the anchor-without-data-source boot
+  guard. (Also a spec residual.) Anchor: `ika-node/src/lib.rs`.
+- **K3 [low] No guard rejects a notifier/fullnode configured peer-only**
+  (`SuiStateMirrored{fallback:None}`) — fails late with an unclear error.
+  Anchor: `ika-node/src/lib.rs`.
+- **K4 [low — defense-in-depth] The BLS-verified ratchet path lacks the
+  `next.epoch == head+1` assert** the unverified fallback has;
+  `ocs_verifier.rs` installs `extract_new_committee_info` output without the
+  explicit check. (Also a spec residual.)
+- **K5 [low — dead code] The `sui_checkpoint_cache` table + pruner are dead.**
+  `get_sui_checkpoint`/`put_sui_checkpoint` (+ inline pruning) have zero
+  callers; `CheckpointCache` is never instantiated (referenced only in a
+  `transport.rs` doc comment). A CLAUDE.md no-dead-code violation — clean
+  removal. Anchor: `authority_perpetual_tables.rs`.
+- **K6 [low] Stale old-style config templates** — `validator.template.yaml`,
+  `fullnode.template.yaml`, `shared.sh`,
+  `skills/ika-operator/references/configuration.md` still use the deprecated
+  `sui-rpc-url`-only shape.
+- **K7 [low — docs] `SuiTransport::batch_get_objects` same-order contract is
+  undocumented** while callers zip results positionally with inputs. Anchor:
+  `ika-sui-client/src/transport.rs`.
+- **K8 [residual] Eclipse** — a peer-only node talking to a single malicious
+  relay can be served a self-consistent stale world (freshness head seeded by
+  the relay). The currency limitation addressed by the changeset-stream
+  design (`../plans/`); open by design.
+- **K9 [residual] `get_current_epoch` is a relay-claimed/unverified
+  passthrough** used as the ratchet target; with the fallback flag off it only
+  stalls, with it on the head can be walked one real epoch per call. Accepted
+  degradation; open by design.
 
 ## Remaining work (risk-ordered)
 
@@ -213,13 +254,19 @@ closed by removing the push/cache gossip subsystem (`b9be273a74`) — which also
 took out the sequential fanout (11) and the unbounded `GetVerifiedSnapshot`
 clone (part of 14) in one removal. Open items below.
 
-1. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
+1. **K1** (single-object id-substitution) — *highest priority*: on the
+   single-object read path, assert the returned object's id equals the
+   requested id (the batch path already does). A real relay-substitution gap.
+2. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-2. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
+3. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
    high-water rollback, BagMembership binding, and the JSON-RPC gate
    truth-table. Finding 6's fix added the first (ratchet error
    classification); build out the rest.
-3. **Mirrored-node currency redesign** (future feature, not a finding) —
+4. **K5** (dead code) — remove the unused `sui_checkpoint_cache` table +
+   pruner. K2–K4, K6–K9 are lower-severity config/docs/defense-in-depth
+   residuals.
+5. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
 
