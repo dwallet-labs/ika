@@ -7,11 +7,15 @@
 //!   [`crate::proof_provider::ProofProvider`] — the verified-read surface
 //!   the consumer uses (see `OcsVerifiedReader`).
 //! - [`SuiMirrorTransport`] implements [`SuiTransport`] for the
-//!   committee-ratchet primitives only (full-checkpoint fetch,
-//!   end-of-epoch resolution, tx→checkpoint lookup). Methods that
-//!   can't be relayed (`get_object`, `get_committee`, `get_transaction`,
-//!   `execute_transaction`, ...) error out — the OCS verifier should be
-//!   reaching for the proof-bearing surface instead.
+//!   committee-ratchet primitives (full-checkpoint fetch, end-of-epoch
+//!   resolution, tx→checkpoint lookup) and peer-only tx submission
+//!   (`execute_transaction` — forward our own signed tx to a direct peer;
+//!   its `SubmittedTransaction` return is `Deserialize`, so it relays).
+//!   The non-ratchet reads error out: `get_object` (use the proof-bearing
+//!   surface instead), and `get_committee` / `get_transaction` /
+//!   `list_owned_gas_coins` (served by the direct fallback — only
+//!   `get_transaction`'s `ExecutedTransaction` return is genuinely
+//!   non-`Deserialize`).
 //!
 //! Both adapters share an identical multi-peer health strategy: try
 //! peers in order, demote on failure.

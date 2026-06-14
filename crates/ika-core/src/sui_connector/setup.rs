@@ -25,7 +25,7 @@
 //!     │ sui-state-direct   │ SuiGrpcClient             │
 //!     │ sui-state-mirrored │ SuiMirrorTransport (+opt. │
 //!     │                    │   FallbackTransport for   │
-//!     │                    │   non-relayable methods)  │
+//!     │                    │   directly-routed methods)│
 //! ```
 //!
 //! A `sui-state-direct` validator also exposes a `SuiStateMirrorServer`

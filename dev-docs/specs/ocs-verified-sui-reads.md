@@ -63,8 +63,8 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
   source for the cluster.
 - **Mirrored validator (with fallback)** — `SuiStateMirrored { fallback_grpc_url: Some(url) }`:
   verified reads relayed over p2p; the fallback gRPC is used only for
-  the methods that cannot be relayed (tx submission, `get_transaction`)
-  and as the bootstrap uplink.
+  the reads it does not relay (`get_transaction`, `get_committee`,
+  `list_owned_gas_coins`) and as the bootstrap uplink.
 - **Peer-only validator** — `SuiStateMirrored { fallback_grpc_url: None }`:
   no Sui uplink at all; every read, including committee/epoch bootstrap,
   flows over the verified relay. This is the *sole* identifier of the
@@ -208,10 +208,14 @@ The relay exposes verified-read RPCs (`VerifiedObject`,
 `BatchVerifiedObjects`, `VerifiedBagPage`), committee-ratchet plumbing
 (checkpoint summary/full/by-digest, `LastCheckpointOfEpoch`,
 `GetTransactionCheckpoint`, `get_current_epoch`, `get_reference_gas_price`),
-and `SubmitTransaction`. `get_committee`, `get_transaction`,
-`execute_transaction`, and `list_owned_gas_coins` **cannot** be relayed
-(non-Deserializable returns) and must error on the relay surface so
-callers fall through to a direct gRPC fallback.
+and `SubmitTransaction` (peer-only `execute_transaction` — its
+`SubmittedTransaction` return is Deserializable, so it relays).
+`get_committee`, `get_transaction`, and `list_owned_gas_coins` are **not**
+relayed and error on the relay surface so callers fall through to a direct
+gRPC fallback. Only `get_transaction` is *un*-relayable for a hard reason
+(its `ExecutedTransaction` return isn't Deserializable); the other two are
+a routing choice — committee comes from the ratchet/anchor, and gas
+selection rides with the writer.
 
 The client (`SuiMirrorPeers::try_peers`) is the failover engine: it
 rotates the peer list round-robin but every pass visits all peers,

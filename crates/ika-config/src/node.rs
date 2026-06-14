@@ -226,9 +226,11 @@ pub fn compiled_in_trusted_anchor(
 /// `SuiStateMirrored` reads Sui state through the mirror service of a
 /// peer instead of connecting to Sui directly. Reads are still verified
 /// end-to-end via OCS, so the relayer is untrusted; an optional
-/// `fallback_grpc_url` is used for transaction submission and
-/// `get_transaction` (which can't be relayed because their return types
-/// aren't Deserializable).
+/// `fallback_grpc_url` supplies a direct uplink for the methods the mirror
+/// doesn't serve — `get_transaction` (genuinely un-relayable: its
+/// `ExecutedTransaction` return isn't `Deserialize`), `get_committee` /
+/// `list_owned_gas_coins`, and transaction submission (which a peer-only
+/// node relays, but a fallback-equipped node sends over its own uplink).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 // `rename_all` covers the variant tags; `rename_all_fields` is required to also
 // kebab-case the fields *inside* struct variants (e.g. `fallback-grpc-url`).
@@ -283,16 +285,18 @@ pub struct SuiConnectorConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sui_data_source: Option<SuiDataSource>,
     /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
-    /// If empty in `PeerMirror` mode, the connector will try every connected
-    /// peer (relying on those that don't implement the service to error fast).
+    /// If empty when reading over the mirror (`SuiDataSource::SuiStateMirrored`),
+    /// the connector will try every connected peer (relying on those that
+    /// don't implement the service to error fast).
     #[serde(default)]
     pub sui_state_mirror_peers: Vec<String>,
     /// Trust anchor: digest of an end-of-epoch
     /// `CertifiedCheckpointSummary`. At boot the validator looks the
     /// summary up by digest, asserts `summary.digest() == this`,
     /// extracts `committee[E+1]` from `end_of_epoch_data`, and
-    /// installs it. Operators mint a fresh digest with
-    /// `ika validator anchor-last-eoe-checkpoint`.
+    /// installs it. The value is the digest of an end-of-epoch
+    /// `CertifiedCheckpointSummary`; obtain it from a trusted Sui fullnode
+    /// (the last checkpoint of a recent epoch).
     ///
     /// Ignored when the perpetual `sui_committees` table already
     /// contains entries (we've already verified past this point). To

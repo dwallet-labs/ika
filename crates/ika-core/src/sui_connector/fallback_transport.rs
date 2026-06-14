@@ -3,13 +3,17 @@
 
 //! A [`SuiTransport`] decorator that splits operations between a primary
 //! transport (typically the relayed [`SuiMirrorTransport`]) and a direct gRPC
-//! fallback for the four methods that cannot be relayed:
+//! fallback for the four methods it routes directly:
 //!
-//! - `get_committee` — only used by the OCS ratchet's prune fallback path.
+//! - `get_committee` — not served as a verified read; only the OCS ratchet's
+//!   prune fallback path needs it.
 //! - `get_transaction` — returns `sui_rpc_api::client::ExecutedTransaction`,
 //!   which is `Serialize`-only (not `Deserialize`), so the relay can't carry
-//!   it back over the wire.
-//! - `execute_transaction` — same `ExecutedTransaction` constraint.
+//!   it back over the wire — genuinely un-relayable.
+//! - `execute_transaction` — *can* be relayed (its `SubmittedTransaction`
+//!   return is `Deserialize`, and a peer-only node submits over the relay),
+//!   but a fallback-equipped node submits writes over its own direct uplink
+//!   rather than trust the relay's unverified effects bytes.
 //! - `list_owned_gas_coins` — owned coins aren't in the OCS-mirrored set, and
 //!   gas selection is a tx-submission concern (routes with the writer).
 //!
@@ -17,10 +21,11 @@
 //! returns. The fallback is simply a different uplink for the operator.
 //!
 //! When no `fallback_grpc_url` is configured, the operator can still run
-//! sui-state-mirrored; the relay's errors on those four methods just propagate. The
-//! ratchet keeps working as long as the upstream isn't pruned past our
-//! committee head, and sui-state-mirrored validators don't submit transactions through
-//! the OCS path anyway.
+//! sui-state-mirrored: the relay errors on `get_committee` / `get_transaction`
+//! / `list_owned_gas_coins`, which is fine — the ratchet keeps working as long
+//! as the upstream isn't pruned past our committee head, and sui-state-mirrored
+//! validators don't submit transactions through the OCS path anyway (writes
+//! are notifier-gated).
 
 use std::sync::Arc;
 
@@ -38,7 +43,7 @@ use ika_sui_client::transport::{
 pub struct FallbackTransport {
     /// Primary transport. In sui-state-mirrored this is `SuiMirrorTransport`.
     primary: Arc<dyn SuiTransport>,
-    /// Direct-gRPC fallback used for the four un-relayable methods.
+    /// Direct-gRPC fallback used for the four directly-routed methods.
     fallback: Arc<dyn SuiTransport>,
 }
 
@@ -111,7 +116,7 @@ impl SuiTransport for FallbackTransport {
         self.primary.get_transaction_checkpoint(tx).await
     }
 
-    // -- direct-gRPC fallback (un-relayable) ----------------------------------------------
+    // -- direct-gRPC fallback (routed directly, not over the relay) -----------------------
     async fn get_committee(
         &self,
         epoch: Option<u64>,
