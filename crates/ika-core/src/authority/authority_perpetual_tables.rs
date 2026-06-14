@@ -394,10 +394,12 @@ impl AuthorityPerpetualTables {
         Ok(self.sui_committee_head.get(&())?)
     }
 
-    /// Install a verified Sui committee. Bumps `sui_committee_head` to
-    /// `committee.epoch`. Does NOT write a summary — use
-    /// [`Self::record_sui_committee_summary`] for that, since it's typically
-    /// keyed at a different epoch (the summary's epoch == the prior head).
+    /// Install a Sui committee directly, bumping `sui_committee_head` to
+    /// `committee.epoch`. Used only for committees with no backing
+    /// end-of-epoch summary — the bootstrap genesis committee and
+    /// unverified-fallback installs. Verified transitions instead persist the
+    /// summary via [`Self::record_sui_committee_transition`] and derive the
+    /// committee from it.
     pub fn install_sui_committee(&self, committee: &SuiCommittee) -> IkaResult {
         let epoch = committee.epoch;
         let mut wb = self.sui_committees.batch();
@@ -407,28 +409,22 @@ impl AuthorityPerpetualTables {
         Ok(())
     }
 
-    /// Install a committee at `epoch` without bumping `sui_committee_head`.
-    /// Used by trusted-anchor seeding when we install committee[E] alongside
-    /// committee[E+1] but want head to land on E+1.
-    pub fn insert_sui_committee_without_head(&self, committee: &SuiCommittee) -> IkaResult {
-        let epoch = committee.epoch;
-        let mut wb = self.sui_committees.batch();
-        wb.insert_batch(&self.sui_committees, [(epoch, committee.clone())])?;
-        wb.write()?;
-        Ok(())
-    }
-
-    /// Persist a verified end-of-epoch summary, keyed by `summary.epoch()`.
-    /// Independent of committee installs.
-    pub fn record_sui_committee_summary(
+    /// Record a verified end-of-epoch summary for epoch `E` and advance
+    /// `sui_committee_head` to `E+1` in the same batch. Recording the
+    /// transition summary *is* the head advance: `committee[E+1]` is derived
+    /// from this summary's `next_epoch_committee` on demand, so there is no
+    /// separate per-epoch committee write.
+    pub fn record_sui_committee_transition(
         &self,
         summary: &SuiCertifiedCheckpointSummary,
     ) -> IkaResult {
+        let next_epoch = summary.epoch() + 1;
         let mut wb = self.sui_committee_summaries.batch();
         wb.insert_batch(
             &self.sui_committee_summaries,
             [(summary.epoch(), summary.clone())],
         )?;
+        wb.insert_batch(&self.sui_committee_head, [((), next_epoch)])?;
         wb.write()?;
         Ok(())
     }
@@ -438,15 +434,6 @@ impl AuthorityPerpetualTables {
         sui_epoch: u64,
     ) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
         Ok(self.sui_committee_summaries.get(&sui_epoch)?)
-    }
-
-    pub fn iter_sui_committees(&self) -> IkaResult<Vec<(u64, SuiCommittee)>> {
-        let mut out = Vec::new();
-        for r in self.sui_committees.safe_iter() {
-            let (epoch, c) = r?;
-            out.push((epoch, c));
-        }
-        Ok(out)
     }
 
     pub fn get_sui_end_of_epoch_seq(
