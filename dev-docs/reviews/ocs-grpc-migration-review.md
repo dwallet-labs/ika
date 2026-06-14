@@ -120,17 +120,19 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     (`try_cache_hit`). Re-severity: the local pusher already holds
     authoritative state, so the peer-push ingest is *redundant* and the
     attack vector — this is a "remove a needless untrusted write path", not a
-    critical hole. RESOLUTION (in progress): remove the push-objects gossip
-    entirely (the subsystem is documented as effectively dead — see finding
-    12), and build committee-attested currency for mirrored nodes per
-    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
+    critical hole. RESOLUTION: removed the push-objects gossip entirely
+    (`b9be273a74`) — the direct pusher keeps its authoritative local fold, so
+    no untrusted peer state ever enters the served cache. Committee-attested
+    cache-first currency for mirrored nodes is specced separately in
+    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
+    (a future feature, gated on a non-inclusion id-binding fix).
 
 11. **[low] Checkpoint pusher fanout is sequential.** One slow/hung peer
     serially delays the cursor advance up to P×30s, widening replication lag
     (the cache itself is written before fanout, so it's safe). Anchor:
-    `crates/ika-core/src/sui_connector/push_worker.rs::fanout`. RESOLUTION
-    (in progress): the fanout is being removed with the rest of the
-    push-objects gossip (finding 12 / 10).
+    `crates/ika-core/src/sui_connector/push_worker.rs::fanout`. RESOLUTION:
+    moot — the fanout was removed with the rest of the push-objects gossip
+    (`b9be273a74`).
 
 12. **[low] Failure-observability gaps on batch/bag verify paths.** Only
     inclusion-proof and batch id-mismatch failures increment
@@ -177,21 +179,23 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 ## Remaining work (risk-ordered)
 
-1. **Finding 10/11/14** — remove the push/cache gossip subsystem (handler +
-   pusher fanout + `GetVerifiedSnapshot`); keep the pusher's local fold. This
-   closes the first-sight stale-serve path *and* the sequential-fanout lag
-   *and* the unbounded `GetVerifiedSnapshot` clone in one removal.
-2. **Mirrored-node currency redesign** —
-   [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
-3. **Finding 12** — security-counter coverage on batch/bag verify.
-4. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
+DONE since the audit: findings 6 (S1), 9 (H3) fixed; 10/11 closed by removing
+the push/cache gossip subsystem (`b9be273a74`) — which also took out the
+sequential fanout (11) and the unbounded `GetVerifiedSnapshot` clone (part of
+14) in one removal. Open items below.
+
+1. **Finding 15** — committee trust-table retention (slow unbounded leak).
+2. **Finding 12** — security-counter coverage on batch/bag verify.
+3. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-5. **Finding 15** — committee trust-table retention.
-6. **Adversarial tests** — the review noted security-critical paths
+4. **Adversarial tests** — the review noted security-critical paths
    (proof-rejection, high-water rollback, BagMembership binding, the legacy
    JSON-RPC gate truth-table) had zero negative tests; only happy-path
    cluster tests existed. Finding 6's fix added the first such unit test
    (ratchet error classification). Build out the rest.
+5. **Mirrored-node currency redesign** (future feature, not a finding) —
+   [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
+   gated on a non-inclusion id-binding fix.
 
 ## Distilled pitfalls
 
