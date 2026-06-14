@@ -36,7 +36,7 @@ use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
-use ika_types::committee::{Committee, EpochId};
+use ika_types::committee::{Committee, EpochId, decode_validator_encryption_keys};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -2377,20 +2377,33 @@ impl DWalletMPCService {
 
         let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&root_seed);
 
-        // Verify that the validators local class-groups key is the
-        // same as stored in the system state object onchain.
-        // This makes sure the seed we are using is the same seed we used at setup
-        // to create the encryption key, and thus it assures we will generate the same decryption key too.
+        // Verify that the validator's local class-groups key is the same as stored
+        // in the system state object on-chain. This makes sure the seed we are using
+        // is the same seed we used at setup to create the encryption key, and thus it
+        // assures we will generate the same decryption key too.
         //
-        // Post-bump: the on-chain bytes are now `ValidatorEncryptionKeysAndProofs` (class
-        // groups + 3 PVSS keys); compare against the same combined struct re-derived from
-        // the local key material. See the wire-incompat warning on
-        // `ValidatorEncryptionKeysAndProofs`.
-        if onchain_validator
+        // The on-chain bytes are shape-versioned: mainnet-v1.1.8 publishes the bare
+        // `ClassGroupsEncryptionKeyAndProof`, while the post-bump combined
+        // `ValidatorEncryptionKeysAndProofs` (class groups + 3 PVSS keys) travels
+        // off-chain via validator P2P. During the upgrade window the on-chain record
+        // is always the bare shape, so this boot-time identity check must be
+        // shape-tolerant: decode whatever shape is on-chain and compare only the
+        // class-groups component — the part both shapes carry and the only part that
+        // identifies the seed. (PVSS keys are verified off-chain on the assembly path
+        // in `assemble_committee_mpc_data_off_chain`.)
+        let onchain_bytes = onchain_validator
             .get_mpc_data()
             .unwrap()
-            .class_groups_public_key_and_proof()
-            != bcs::to_bytes(&class_groups_key_pair.validator_encryption_keys_and_proofs())?
+            .class_groups_public_key_and_proof();
+        let Some(onchain_keys) = decode_validator_encryption_keys(&onchain_bytes) else {
+            return Err(DwalletMPCError::MPCManagerError(
+                "could not decode the validator's class-groups key stored in the system state object".to_string(),
+            ));
+        };
+        if onchain_keys.class_groups
+            != class_groups_key_pair
+                .class_groups
+                .encryption_key_and_proof()
         {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
