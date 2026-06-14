@@ -90,16 +90,29 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
     //      keygen (a fixed, multi-second cost) and land `add_validator`
     //      on-chain so it's selected into `V_{e+1}`. This is gated by
     //      crypto/tx time, NOT by poll cadence, so it needs absolute
-    //      wall-clock — a 60s epoch (30s window) is too tight.
+    //      wall-clock.
     //   2. Freeze `[epoch/2 → 3·epoch/4]`: fan out → relay → fetch →
-    //      decode-validate → re-emit, so the freeze captures its
-    //      mpc_data. `epoch_scaled_poll_interval` shrinks this path's
-    //      cadences to fit the window.
-    // 120s gives a 60s registration window and a 30s freeze window —
-    // both comfortable.
+    //      decode-validate → re-emit, so a stake quorum's ready signals
+    //      cover the joiner before the `3·epoch/4` deadline forces the
+    //      freeze without it. `epoch_scaled_poll_interval` shrinks this
+    //      path's cadences to fit the window, but the per-peer
+    //      class-groups decode-validate is a fixed crypto cost that does
+    //      NOT compress with the epoch.
+    //
+    // This is a deliberately time-compressed epoch (production epochs are
+    // hours, where these windows are minutes and a joiner never misses).
+    // At 120s the freeze window is only `epoch/4` = 30s, and under the
+    // Test Cluster suite's 4-way parallelism — four full Sui+ika swarms
+    // contending for CPU — the quorum decode-validate of the joiner's blob
+    // intermittently overran 30s, so the deadline froze the input set
+    // without the joiner and this assertion flaked. 240s doubles the
+    // freeze window to 60s (and keeps the registration window at a roomy
+    // 120s) — comfortable margin over the contended propagation floor,
+    // while staying well under the epoch length at which the network-key
+    // DKG starts to stall.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
-        .with_epoch_duration_ms(120_000)
+        .with_epoch_duration_ms(240_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .build()
         .await
