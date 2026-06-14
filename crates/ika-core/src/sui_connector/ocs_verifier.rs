@@ -59,6 +59,24 @@ impl From<ika_types::error::IkaError> for OcsError {
     }
 }
 
+impl OcsError {
+    /// Whether retrying the same operation could plausibly succeed *without
+    /// operator intervention*. Only transport failures qualify: the relay or a
+    /// peer may recover, or an as-yet-unindexed checkpoint may appear on a
+    /// later attempt. Every other variant is a determinate condition that a
+    /// retry cannot heal — a pruned/broken proof chain (`ProofChainBroken`), a
+    /// checkpoint that fails BLS verification (`BadCheckpointSig`) or isn't
+    /// end-of-epoch (`NotEndOfEpoch`), an endpoint returning the wrong epoch
+    /// (`FallbackEpochMismatch`), or a missing local committee
+    /// (`MissingCommittee`/`Ika`) — and needs the operator to act (typically
+    /// re-anchor). A caller that loops on the ratchet (the peer-only boot
+    /// ratchet) MUST stop and surface a fatal error on a non-retryable result
+    /// rather than spin forever against an unhealable condition.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, OcsError::Transport(_))
+    }
+}
+
 pub struct OcsVerifyingClient {
     transport: Arc<dyn SuiTransport>,
     committees: Arc<CommitteeStore>,
@@ -197,5 +215,37 @@ impl OcsVerifyingClient {
             info!(epoch = head + 1, last_seq, "ratcheted Sui committee");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The peer-only boot ratchet loops on this classification: only transport
+    // failures are retried, every determinate (proof/committee) failure must be
+    // fatal so boot fails fast instead of spinning forever.
+    #[test]
+    fn only_transport_errors_are_retryable() {
+        // Transport failures may clear on a later attempt (relay/peer recovers,
+        // checkpoint gets indexed) — retryable.
+        assert!(OcsError::Transport(TransportError::Network("relay down".into())).is_retryable());
+        assert!(
+            OcsError::Transport(TransportError::NotFound("not indexed yet".into())).is_retryable()
+        );
+
+        // Determinate conditions a retry cannot heal — must be fatal.
+        assert!(!OcsError::ProofChainBroken { epoch: 7 }.is_retryable());
+        assert!(
+            !OcsError::FallbackEpochMismatch {
+                requested: 8,
+                returned: 9,
+            }
+            .is_retryable()
+        );
+        assert!(!OcsError::NotEndOfEpoch(42).is_retryable());
+        assert!(!OcsError::BadCheckpointSig(42, "bad bls".into()).is_retryable());
+        assert!(!OcsError::MissingCommittee(3).is_retryable());
+        assert!(!OcsError::Ika("store write failed".into()).is_retryable());
     }
 }

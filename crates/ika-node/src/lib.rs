@@ -583,17 +583,31 @@ impl IkaNode {
             // has nothing to heal it and the reads retry forever. (The
             // mirrored-with-fallback path tolerates a failed initial ratchet
             // because its bootstrap reads go over direct gRPC instead.)
-            // Retry with backoff until the ratchet succeeds; the relay peer
-            // was reachable moments ago in wait_for_specific_peers.
+            // Retry *transient* (transport) failures with capped backoff — the
+            // relay peer was reachable moments ago in wait_for_specific_peers,
+            // so a flake should clear. But a non-retryable result (a broken or
+            // pruned proof chain, a checkpoint that fails BLS verification or
+            // isn't end-of-epoch, a wrong-epoch fallback, a missing committee)
+            // cannot be healed by retrying — spinning on it is exactly the
+            // silent boot hang we are guarding against. Fail boot with an
+            // actionable error so the operator can re-anchor instead.
             let mut ratchet_backoff = std::time::Duration::from_secs(1);
             loop {
                 match stack.ratchet.ratchet_to_current_epoch().await {
                     Ok(()) => break,
+                    Err(e) if !e.is_retryable() => {
+                        return Err(anyhow!(
+                            "initial ratchet to current epoch (peer-only) hit a permanent error \
+                             that retrying cannot heal; the node cannot boot as peer-only until it \
+                             is resolved (typically re-anchor): {e}"
+                        ));
+                    }
                     Err(e) => {
                         warn!(
                             error = ?e,
                             retry_in = ?ratchet_backoff,
-                            "initial ratchet to current epoch (peer-only) failed; retrying"
+                            "initial ratchet to current epoch (peer-only) failed (transient); \
+                             retrying"
                         );
                         tokio::time::sleep(ratchet_backoff).await;
                         ratchet_backoff =
