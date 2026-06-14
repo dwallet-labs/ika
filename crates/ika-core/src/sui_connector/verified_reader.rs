@@ -211,16 +211,24 @@ impl OcsVerifiedReader {
                 entry_result?;
             }
             let seq = entry.checkpoint_seq;
-            self.check_freshness(seq, observed_head)?;
+            self.check_freshness(seq, observed_head)
+                .map_err(|e| self.record_fail("batch_objects", e))?;
             if !verified_summaries.contains_key(&seq) {
                 let summary = resp
                     .summaries
                     .get(&seq)
                     .ok_or_else(|| {
-                        ReaderError::Decode(format!("missing summary {seq} for batch entry {id}"))
+                        self.record_fail(
+                            "batch_objects",
+                            ReaderError::Decode(format!(
+                                "missing summary {seq} for batch entry {id}"
+                            )),
+                        )
                     })?
                     .clone();
-                let verified_summary = self.verify_summary(summary)?;
+                let verified_summary = self
+                    .verify_summary(summary)
+                    .map_err(|e| self.record_fail("batch_objects", e))?;
                 verified_summaries.insert(seq, verified_summary);
             }
             // unwrap: inserted just above for this `seq`.
@@ -232,7 +240,8 @@ impl OcsVerifiedReader {
                 self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
             self.record_verify_outcome_unit("batch_objects", &entry_result);
             entry_result?;
-            self.record_high_water(entry.object.id(), entry.object.version())?;
+            self.record_high_water(entry.object.id(), entry.object.version())
+                .map_err(|e| self.record_fail("batch_objects", e))?;
             if let Some(proof) = cache_proof {
                 let cache_summary = resp
                     .summaries
@@ -362,9 +371,16 @@ impl OcsVerifiedReader {
                 let summary = resp
                     .summaries
                     .get(&seq)
-                    .ok_or_else(|| ReaderError::Decode("missing summary for bag entry".into()))?
+                    .ok_or_else(|| {
+                        self.record_fail(
+                            "bag_entry",
+                            ReaderError::Decode("missing summary for bag entry".into()),
+                        )
+                    })?
                     .clone();
-                let verified_summary = self.verify_summary(summary)?;
+                let verified_summary = self
+                    .verify_summary(summary)
+                    .map_err(|e| self.record_fail("bag_entry", e))?;
                 verified_summaries.insert(seq, verified_summary);
             }
             // unwrap: inserted just above for this `seq`.
@@ -417,11 +433,14 @@ impl OcsVerifiedReader {
                 _ => false,
             };
             if !bound_to_collection {
-                return Err(ReaderError::BagMembership {
-                    bag_id,
-                    entry: entry.object.id(),
-                    owner: format!("{:?}", entry.object.owner()),
-                });
+                return Err(self.record_fail(
+                    "bag_entry",
+                    ReaderError::BagMembership {
+                        bag_id,
+                        entry: entry.object.id(),
+                        owner: format!("{:?}", entry.object.owner()),
+                    },
+                ));
             }
             if let Some(proof) = cache_proof {
                 let cache_entry = VerifiedObjectEntry {
@@ -473,21 +492,37 @@ impl OcsVerifiedReader {
                     .with_label_values(&[kind])
                     .inc();
             }
-            Err(e) => {
-                let reason = classify_verify_error(e);
-                self.metrics
-                    .proof_verify_failures_total
-                    .with_label_values(&[kind, reason])
-                    .inc();
-                if matches!(e, ReaderError::StaleVersion { .. }) {
-                    self.metrics.high_water_violations_total.inc();
-                }
-            }
+            Err(e) => self.record_verify_failure(kind, e),
+        }
+    }
+
+    /// Count one verify failure under `(kind, reason)`, plus the high-water
+    /// violation gauge for a stale version.
+    fn record_verify_failure(&self, kind: &'static str, e: &ReaderError) {
+        let reason = classify_verify_error(e);
+        self.metrics
+            .proof_verify_failures_total
+            .with_label_values(&[kind, reason])
+            .inc();
+        if matches!(e, ReaderError::StaleVersion { .. }) {
+            self.metrics.high_water_violations_total.inc();
         }
     }
 
     fn record_verify_outcome_unit(&self, kind: &'static str, result: &Result<(), ReaderError>) {
         self.record_verify_outcome(kind, result);
+    }
+
+    /// Record a verify failure under `kind` (lands in
+    /// `proof_verify_failures_total`, and `high_water_violations_total` for a
+    /// stale version) and return it. For failure points on the batch/bag
+    /// paths that would otherwise `?`-propagate or return *around* the
+    /// per-entry [`Self::record_verify_outcome`] — the summary BLS verify, the
+    /// missing-summary decode, the freshness/high-water checks, and the
+    /// bag-membership binding — so no verified-read failure mode is silent.
+    fn record_fail(&self, kind: &'static str, e: ReaderError) -> ReaderError {
+        self.record_verify_failure(kind, &e);
+        e
     }
 
     fn observe_verify_latency(&self, kind: &'static str, started: std::time::Instant) {
