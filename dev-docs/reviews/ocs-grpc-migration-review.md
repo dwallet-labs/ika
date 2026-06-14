@@ -14,8 +14,9 @@ independent design judges rated the branch sound-with-concerns.
 (13 adversarial tests, 14 serving caps), **1 obsolete** (16) — see each
 finding's RESOLUTION and the remaining-work list. The directly-exploitable
 proof-binding and boot-liveness concerns are resolved. A separate
-earlier-confirmed **K1–K9** set (recovered below) is also still open —
-notably **K1**, a single-object relay-substitution gap.
+earlier-confirmed **K1–K9** set (recovered below) is mostly still open; its
+standout **K1** (single-object relay-substitution gap) is now fixed
+(`e04b516490`).
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a
 > source of current truth. Current behavior lives in
@@ -208,13 +209,15 @@ HEAD below — all still open unless noted. **K1 is the standout** (a real
 single-object substitution gap, comparable in class to finding 1).
 
 - **K1 [high — security] Single-object reads don't verify the returned
-  object is the one requested.** `verified_reader.rs::verify_response` (~:596)
-  checks the inclusion proof, freshness, and high-water but never asserts
-  `resp.object.id() == requested id` — it isn't even *passed* the id. A
-  malicious relay asked for object X can return any validly-proven object Y
-  and the reader accepts it (substitution). The **batch** path guards this
-  (`verified_objects`, the `entry.object.id() != *id` check); the
-  single-object path does not. Anchor: `verified_object`/`verify_response`.
+  object is the one requested.** `verified_reader.rs::verify_response` checked
+  the inclusion proof, freshness, and high-water but never asserted
+  `resp.object.id() == requested id` — it wasn't even *passed* the id. A
+  malicious relay asked for object X could return any validly-proven object Y
+  and the reader accepted it (substitution). The **batch** path guarded this;
+  the single-object path did not. RESOLUTION (`e04b516490`): pass the
+  requested id into `verify_response` and reject a mismatch with `InvalidProof`
+  before absorbing anything; the cache-hit path was already safe (keyed by the
+  object's own id).
 - **K2 [low] `compiled_in_trusted_anchor` ORs into `has_anchor` regardless of
   `sui_data_source`.** When release tooling fills it, old-style configs on
   that chain gain an anchor and trip the anchor-without-data-source boot
@@ -254,19 +257,18 @@ closed by removing the push/cache gossip subsystem (`b9be273a74`) — which also
 took out the sequential fanout (11) and the unbounded `GetVerifiedSnapshot`
 clone (part of 14) in one removal. Open items below.
 
-1. **K1** (single-object id-substitution) — *highest priority*: on the
-   single-object read path, assert the returned object's id equals the
-   requested id (the batch path already does). A real relay-substitution gap.
-2. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
+(K1 — the single-object substitution gap — fixed in `e04b516490`.)
+
+1. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
    service rate-limit.
-3. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
+2. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
    high-water rollback, BagMembership binding, and the JSON-RPC gate
    truth-table. Finding 6's fix added the first (ratchet error
    classification); build out the rest.
-4. **K5** (dead code) — remove the unused `sui_checkpoint_cache` table +
+3. **K5** (dead code) — remove the unused `sui_checkpoint_cache` table +
    pruner. K2–K4, K6–K9 are lower-severity config/docs/defense-in-depth
    residuals.
-5. **Mirrored-node currency redesign** (future feature, not a finding) —
+4. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
 
