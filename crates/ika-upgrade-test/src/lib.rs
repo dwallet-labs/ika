@@ -16,7 +16,7 @@
 //! real child processes via the existing admin HTTP RPC
 //! (`ika-node/src/admin.rs`) and the coordinator Move contract on Sui.
 //!
-//! See `docs/cross-binary-upgrade-testing*.md` for the design.
+//! See `dev-docs/plans/cross-binary-upgrade-testing.md` for the design.
 
 pub mod binary;
 pub mod cluster;

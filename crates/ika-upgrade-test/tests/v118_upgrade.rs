@@ -143,9 +143,16 @@ async fn v118_atomic_upgrade_to_local_build() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
+    // Longer epochs give a loaded CI runner more slack to finish each epoch's
+    // crypto before the boundary; override via `EPOCH_DURATION_MS`.
+    let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300_000);
+
     Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
-        .with_epoch_duration_ms(300_000)
+        .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
         .with_ika_cli(ika_cli)
         // The verified mainnet on-chain state: the config is populated, so
