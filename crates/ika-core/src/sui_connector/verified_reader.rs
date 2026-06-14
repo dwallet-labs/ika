@@ -169,7 +169,7 @@ impl OcsVerifiedReader {
             return Ok(hit);
         }
         let resp = self.provider.verified_object(id).await?;
-        let result = self.verify_response(resp);
+        let result = self.verify_response(id, resp);
         self.record_verify_outcome("object", &result);
         self.observe_verify_latency("object", started);
         result
@@ -593,7 +593,22 @@ impl OcsVerifiedReader {
         }
     }
 
-    fn verify_response(&self, resp: VerifiedObjectResponse) -> Result<VerifiedObject, ReaderError> {
+    fn verify_response(
+        &self,
+        requested_id: ObjectID,
+        resp: VerifiedObjectResponse,
+    ) -> Result<VerifiedObject, ReaderError> {
+        // Bind the response to the request: the inclusion proof attests that
+        // the returned object existed on-chain, NOT that it is the object we
+        // asked for. Without this a malicious relay could answer `get(X)` with
+        // any other validly-proven object `Y`. (The batch path does the same
+        // per-entry check.)
+        if resp.object.id() != requested_id {
+            return Err(ReaderError::InvalidProof(format!(
+                "verified_object response for {requested_id} carries object {}",
+                resp.object.id()
+            )));
+        }
         let proof_seq = *resp.summary.sequence_number();
         self.note_upstream_head(resp.claimed_latest_checkpoint_seq);
         // Freshness is measured against the locally-monotonic observed head,
