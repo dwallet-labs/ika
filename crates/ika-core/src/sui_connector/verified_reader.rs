@@ -791,7 +791,17 @@ mod tests {
     use crate::sui_connector::verified_state_cache::VerifiedStateCache;
     use async_trait::async_trait;
     use ika_network::proof_provider::{BatchVerifiedObjectsResponse, VerifiedBagPageResponse};
+    use parking_lot::Mutex;
+    use std::collections::BTreeMap;
+    use sui_light_client::proof::ocs::ModifiedObjectTree;
+    use sui_types::base_types::ObjectDigest;
     use sui_types::committee::Committee as SuiCommittee;
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
+    };
 
     /// The two rejection gates exercised below — high-water rollback and
     /// freshness — are pure local checks that never reach the network, so the
@@ -929,5 +939,372 @@ mod tests {
     async fn freshness_is_disabled_when_no_bound_is_set() {
         let (_dir, reader) = test_reader(None);
         reader.check_freshness(0, 1_000_000).unwrap();
+    }
+
+    // ===== End-to-end crypto-fixture tests =====
+    //
+    // These build a *self-consistent* OCS fixture: a test committee signs a
+    // checkpoint summary that commits (via its `CheckpointArtifactsDigest`) to a
+    // `ModifiedObjectTree` of synthesized objects, plus the matching inclusion
+    // proof. The reader, bootstrapped with the same committee, accepts the valid
+    // fixture and rejects every tampered variant — exercising the BLS, Merkle,
+    // id-binding, and bag-membership gates the local-only tests above can't
+    // reach. No chain data or real checkpoint files are needed.
+
+    /// A provider that hands back one pre-staged response, then is empty.
+    struct StagedProvider {
+        object: Mutex<Option<VerifiedObjectResponse>>,
+        bag: Mutex<Option<VerifiedBagPageResponse>>,
+    }
+
+    impl StagedProvider {
+        fn object(resp: VerifiedObjectResponse) -> Arc<Self> {
+            Arc::new(Self {
+                object: Mutex::new(Some(resp)),
+                bag: Mutex::new(None),
+            })
+        }
+        fn bag(resp: VerifiedBagPageResponse) -> Arc<Self> {
+            Arc::new(Self {
+                object: Mutex::new(None),
+                bag: Mutex::new(Some(resp)),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ProofProvider for StagedProvider {
+        async fn verified_object(
+            &self,
+            _id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            Ok(self
+                .object
+                .lock()
+                .take()
+                .expect("no staged verified_object response"))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unreachable!("batch path not exercised by these fixtures")
+        }
+        async fn verified_bag_page(
+            &self,
+            _request: VerifiedBagPageRequest,
+        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            Ok(self
+                .bag
+                .lock()
+                .take()
+                .expect("no staged verified_bag_page response"))
+        }
+    }
+
+    fn reader_with(
+        provider: Arc<dyn ProofProvider>,
+        committee: SuiCommittee,
+        freshness_bound: Option<u64>,
+    ) -> (tempfile::TempDir, OcsVerifiedReader, Arc<OcsMetrics>) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            provider,
+            committees,
+            metrics.clone(),
+            freshness_bound,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        );
+        (dir, reader, metrics)
+    }
+
+    fn test_object(id: ObjectID, version: u64, owner: Owner) -> Object {
+        Object::with_id_owner_version_for_testing(id, SequenceNumber::from(version), owner)
+    }
+
+    fn address_owner(byte: u8) -> Owner {
+        Owner::AddressOwner(ObjectID::from_single_byte(byte).into())
+    }
+
+    /// Build a committee-signed summary committing to a tree of `leaves`, plus
+    /// the inclusion proof for `target`. Summary + proof verify together against
+    /// `committee` — the digest linkage holds because both the summary's
+    /// commitment and the proof's tree root come from the *same* artifacts.
+    fn sign_inclusion(
+        committee: &SuiCommittee,
+        keypairs: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        leaves: &[&Object],
+        target: &Object,
+    ) -> (CertifiedCheckpointSummary, OCSInclusionProof) {
+        let object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)> = leaves
+            .iter()
+            .map(|o| {
+                let (id, version, digest) = o.compute_object_reference();
+                (id, (version, digest))
+            })
+            .collect();
+        let artifacts = CheckpointArtifacts::from_object_states(object_states);
+        let artifacts_digest = artifacts.digest().expect("artifacts digest");
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts_digest)],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let cert =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keypairs, committee);
+        let proof = ModifiedObjectTree::new(&artifacts)
+            .expect("modified object tree")
+            .get_inclusion_proof(target.compute_object_reference())
+            .expect("inclusion proof");
+        (cert, proof)
+    }
+
+    fn object_response(
+        object: Object,
+        summary: CertifiedCheckpointSummary,
+        proof: OCSInclusionProof,
+        seq: CheckpointSequenceNumber,
+    ) -> VerifiedObjectResponse {
+        VerifiedObjectResponse {
+            object,
+            summary,
+            proof,
+            claimed_latest_checkpoint_seq: seq,
+        }
+    }
+
+    fn bag_entry(
+        object: Object,
+        proof: OCSInclusionProof,
+        seq: CheckpointSequenceNumber,
+        name_type: &str,
+        name_bcs: Vec<u8>,
+    ) -> VerifiedObjectEntry {
+        VerifiedObjectEntry {
+            object,
+            checkpoint_seq: seq,
+            proof,
+            dynamic_field_name_type: name_type.to_string(),
+            dynamic_field_name_bcs: name_bcs,
+        }
+    }
+
+    fn bag_response(
+        summary: CertifiedCheckpointSummary,
+        entry: VerifiedObjectEntry,
+        seq: CheckpointSequenceNumber,
+    ) -> VerifiedBagPageResponse {
+        VerifiedBagPageResponse {
+            bag: None,
+            summaries: BTreeMap::from([(seq, summary)]),
+            entries: vec![entry],
+            next_page_token: None,
+            claimed_latest_checkpoint_seq: seq,
+        }
+    }
+
+    fn failure_count(metrics: &Arc<OcsMetrics>, kind: &str, reason: &str) -> u64 {
+        metrics
+            .proof_verify_failures_total
+            .with_label_values(&[kind, reason])
+            .get()
+    }
+
+    /// The fixture itself is sound: a committee-signed summary + matching
+    /// inclusion proof verifies through the full BLS + Merkle path. Without
+    /// this, every rejection test below would be vacuous.
+    #[tokio::test]
+    async fn a_valid_inclusion_proof_is_accepted() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let object = test_object(id, 7, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::object(object_response(object, summary, proof, 100));
+        let (_dir, reader, _metrics) = reader_with(provider, committee, None);
+
+        let verified = reader
+            .verified_object(id)
+            .await
+            .expect("a committee-signed, correctly-proven object must verify");
+        assert_eq!(verified.object.id(), id);
+        assert_eq!(verified.source_checkpoint_seq, 100);
+    }
+
+    /// A proof for object X is cryptographically valid, but the relay is
+    /// answering `get(Y)` with it. The id binding must reject the substitution.
+    #[tokio::test]
+    async fn an_object_id_substitution_is_rejected() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let proven_id = ObjectID::from_single_byte(0x21);
+        let requested_id = ObjectID::from_single_byte(0x99);
+        let object = test_object(proven_id, 1, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::object(object_response(object, summary, proof, 100));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader.verified_object(requested_id).await.unwrap_err();
+        assert!(matches!(err, ReaderError::InvalidProof(_)), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "object", "invalid_proof"), 1);
+    }
+
+    /// The summary is well-formed and the proof matches it, but it is signed by
+    /// a committee the reader does not trust — the BLS gate must reject it.
+    /// (The test committees are seeded deterministically, so the "foreign" one
+    /// is given a different size to guarantee a divergent authority set.)
+    #[tokio::test]
+    async fn a_summary_signed_by_a_foreign_committee_is_rejected() {
+        let (store_committee, _) = SuiCommittee::new_simple_test_committee_of_size(4);
+        let (foreign_committee, foreign_keys) = SuiCommittee::new_simple_test_committee_of_size(7);
+        let id = ObjectID::from_single_byte(0x21);
+        let object = test_object(id, 1, address_owner(0xAA));
+        let (summary, proof) =
+            sign_inclusion(&foreign_committee, &foreign_keys, 100, &[&object], &object);
+        let provider = StagedProvider::object(object_response(object, summary, proof, 100));
+        let (_dir, reader, metrics) = reader_with(provider, store_committee, None);
+
+        let err = reader.verified_object(id).await.unwrap_err();
+        assert!(matches!(err, ReaderError::InvalidProof(_)), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "object", "invalid_proof"), 1);
+    }
+
+    /// Prove version 1, but serve the *same* id at version 2: the id binding
+    /// passes, but the served object's ref isn't the one the tree commits to —
+    /// the Merkle path must reject the substituted state.
+    #[tokio::test]
+    async fn a_substituted_object_state_is_rejected() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let proven = test_object(id, 1, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&proven], &proven);
+        let lied = test_object(id, 2, address_owner(0xAA));
+        let provider = StagedProvider::object(object_response(lied, summary, proof, 100));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader.verified_object(id).await.unwrap_err();
+        assert!(matches!(err, ReaderError::InvalidProof(_)), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "object", "invalid_proof"), 1);
+    }
+
+    /// Plain `Bag`/`Table`: the value `Field` is owned directly by the bag UID.
+    #[tokio::test]
+    async fn a_bag_entry_owned_by_the_bag_is_accepted() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(bag_id.into()));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::bag(bag_response(
+            summary,
+            bag_entry(object, proof, 100, "", vec![]),
+            100,
+        ));
+        let (_dir, reader, _metrics) = reader_with(provider, committee, None);
+
+        let page = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .expect("an entry owned by the bag must be accepted");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].object.id(), entry_id);
+    }
+
+    /// `ObjectTable`/`ObjectBag`: the value object is owned by its
+    /// `Field<Wrapper<K>, ID>` wrapper, whose id derives from `(bag_id, key)`.
+    #[tokio::test]
+    async fn a_bag_entry_owned_via_the_object_field_wrapper_is_accepted() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        let name_type = "u64";
+        let name_bcs = bcs::to_bytes(&7u64).unwrap();
+        let field_id = derive_object_field_wrapper_id(bag_id, name_type, &name_bcs)
+            .expect("wrapper id derivation");
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(field_id.into()));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::bag(bag_response(
+            summary,
+            bag_entry(object, proof, 100, name_type, name_bcs),
+            100,
+        ));
+        let (_dir, reader, _metrics) = reader_with(provider, committee, None);
+
+        let page = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .expect("an ObjectTable entry owned by its derived field must be accepted");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.entries[0].object.id(), entry_id);
+    }
+
+    /// Validly proven, but owned by a *different* collection — a relay replaying
+    /// a foreign dynamic field. `foreign_id` is neither `bag_id` nor the derived
+    /// field id, so the binding must reject it.
+    #[tokio::test]
+    async fn a_bag_entry_owned_by_a_foreign_object_is_rejected() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        let foreign_id = ObjectID::from_single_byte(0x77);
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(foreign_id.into()));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::bag(bag_response(
+            summary,
+            bag_entry(object, proof, 100, "u64", bcs::to_bytes(&7u64).unwrap()),
+            100,
+        ));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ReaderError::BagMembership { .. }),
+            "got {err:?}"
+        );
+        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+    }
+
+    /// Address-owned (not object-owned at all): a dynamic-field child is always
+    /// object-owned, so this can never be a member of the bag.
+    #[tokio::test]
+    async fn a_bag_entry_owned_by_an_address_is_rejected() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        let object = test_object(entry_id, 1, address_owner(0x77));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let provider = StagedProvider::bag(bag_response(
+            summary,
+            bag_entry(object, proof, 100, "", vec![]),
+            100,
+        ));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ReaderError::BagMembership { .. }),
+            "got {err:?}"
+        );
+        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
     }
 }
