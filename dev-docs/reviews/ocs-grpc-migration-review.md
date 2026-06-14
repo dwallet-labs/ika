@@ -10,9 +10,9 @@ the push/cache fast path, the committee ratchet).
 **Verdict:** sound-with-concerns. At the 2026-06-14 reconcile, of 16
 enumerated findings: 9 fixed, 3 partial, 3 open, 1 obsolete. All three
 independent design judges rated the branch sound-with-concerns.
-**Status (updated):** **13 resolved** (the 9 fixed + 10/11/12/15), **2 open**
-(13 adversarial tests, 14 serving caps), **1 obsolete** (16) — see each
-finding's RESOLUTION and the remaining-work list. The directly-exploitable
+**Status (updated):** **14 resolved** (the 9 fixed + 10/11/12/14/15), **1 open**
+(13 — adversarial tests), **1 obsolete** (16) — see each finding's RESOLUTION
+and the remaining-work list. The directly-exploitable
 proof-binding and boot-liveness concerns are resolved. A separate
 earlier-confirmed **K1–K9** set (recovered below) is mostly still open; its
 standout **K1** (single-object relay-substitution gap) is now fixed
@@ -168,10 +168,13 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     page_size / `GetVerifiedSnapshot` (which deep-clones the whole cache
     under the objects read lock); no inflight/rate-limit on the mirror anemo
     service. A peer can request unbounded server work. Anchors:
-    `crates/ika-network/src/sui_state_mirror/`,
-    `crates/ika-core/src/sui_connector/verified_state_cache.rs::take_snapshot`.
-    RESOLUTION: open — add caps + an inflight/rate-limit layer (note:
-    `GetVerifiedSnapshot` is being removed with the push gossip, finding 10).
+    `crates/ika-network/src/sui_state_mirror/`, `proof_provider.rs`.
+    RESOLUTION (`efeba7726b`): cap `BatchVerifiedObjects` ids (4096, > the
+    validator set), clamp `VerifiedBagPage` page_size (1000), and add
+    per-method anemo inflight limits on the heavy RPCs (verified_object 256,
+    batch 64, bag_page 64, full_checkpoint 32, `WaitMode::ReturnError`). The
+    `GetVerifiedSnapshot` deep-clone was already removed with the push gossip
+    (`b9be273a74`).
 
 15. **[low] OCS committee trust tables grow unbounded.** `sui_committees` /
     `sui_committee_summaries` DBMaps + the in-memory `BTreeMap` mirror grow
@@ -253,23 +256,19 @@ single-object substitution gap, comparable in class to finding 1).
 
 ## Remaining work (risk-ordered)
 
-DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 15 (S4) fixed; 10/11
-closed by removing the push/cache gossip subsystem (`b9be273a74`) — which also
-took out the sequential fanout (11) and the unbounded `GetVerifiedSnapshot`
-clone (part of 14) in one removal. Open items below.
+DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 14 (S2), 15 (S4) fixed
++ K1, K5; 10/11 closed by removing the push/cache gossip subsystem
+(`b9be273a74`). **Finding 13 (H2 — adversarial tests) is the only enumerated
+audit finding still open.** Open items below.
 
-(K1 — the single-object substitution gap — fixed in `e04b516490`.)
-
-1. **Finding 14** (remaining caps) — batch/bag page_size limits + mirror
-   service rate-limit.
-2. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
+1. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
    high-water rollback, BagMembership binding, and the JSON-RPC gate
    truth-table. Finding 6's fix added the first (ratchet error
    classification); build out the rest.
-3. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
+2. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
    residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
    design addresses; K5 dead-code removal done in `31d8c71120`).
-4. **Mirrored-node currency redesign** (future feature, not a finding) —
+3. **Mirrored-node currency redesign** (future feature, not a finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
    gated on a non-inclusion id-binding fix.
 
