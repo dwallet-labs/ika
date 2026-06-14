@@ -777,3 +777,152 @@ fn clone_inclusion_proof(
     let bytes = bcs::to_bytes(p).ok()?;
     bcs::from_bytes(&bytes).ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::sui_connector::committee_store::CommitteeBootstrap;
+    use crate::sui_connector::verified_state_cache::VerifiedStateCache;
+    use async_trait::async_trait;
+    use ika_network::proof_provider::{BatchVerifiedObjectsResponse, VerifiedBagPageResponse};
+    use sui_types::committee::Committee as SuiCommittee;
+
+    /// The two rejection gates exercised below — high-water rollback and
+    /// freshness — are pure local checks that never reach the network, so the
+    /// provider must never be called. Every method panics to prove that.
+    struct UnusedProvider;
+
+    #[async_trait]
+    impl ProofProvider for UnusedProvider {
+        async fn verified_object(
+            &self,
+            _id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            unreachable!("provider must not be hit by a local rejection test")
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unreachable!("provider must not be hit by a local rejection test")
+        }
+        async fn verified_bag_page(
+            &self,
+            _request: VerifiedBagPageRequest,
+        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            unreachable!("provider must not be hit by a local rejection test")
+        }
+    }
+
+    /// A reader wired to a never-called provider and an empty cache. The
+    /// committee is an unsafe-genesis test committee — irrelevant to the
+    /// rollback/freshness gates, which touch neither committees nor the cache,
+    /// but required to construct the store.
+    fn test_reader(freshness_bound: Option<u64>) -> (tempfile::TempDir, OcsVerifiedReader) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap(),
+        );
+        let reader = OcsVerifiedReader::new(
+            Arc::new(UnusedProvider),
+            committees,
+            OcsMetrics::new_for_testing(),
+            freshness_bound,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        );
+        (dir, reader)
+    }
+
+    /// Per-object version monotonicity: once we've accepted version N for an
+    /// id, a later response carrying an older version is a rollback (a relay
+    /// replaying stale state) and must be rejected — without lowering the mark.
+    #[tokio::test]
+    async fn high_water_rejects_a_version_rollback() {
+        let (_dir, reader) = test_reader(None);
+        let id = ObjectID::from_single_byte(0x07);
+
+        // First sight sets the mark; same-or-newer is always fine.
+        reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+        reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+        reader
+            .record_high_water(id, SequenceNumber::from(9u64))
+            .unwrap();
+
+        let err = reader
+            .record_high_water(id, SequenceNumber::from(8u64))
+            .unwrap_err();
+        match err {
+            ReaderError::StaleVersion {
+                id: got_id,
+                got,
+                cached,
+            } => {
+                assert_eq!(got_id, id);
+                assert_eq!(got, SequenceNumber::from(8u64));
+                assert_eq!(cached, SequenceNumber::from(9u64));
+            }
+            other => panic!("expected StaleVersion, got {other:?}"),
+        }
+
+        // The rejected rollback must not have lowered the mark: 9 still holds,
+        // so an even-older version is still rejected.
+        reader
+            .record_high_water(id, SequenceNumber::from(9u64))
+            .unwrap();
+        assert!(matches!(
+            reader.record_high_water(id, SequenceNumber::from(0u64)),
+            Err(ReaderError::StaleVersion { .. })
+        ));
+
+        // A different id has its own independent mark.
+        let other = ObjectID::from_single_byte(0x08);
+        reader
+            .record_high_water(other, SequenceNumber::from(1u64))
+            .unwrap();
+    }
+
+    /// A proof anchored more than `freshness_bound` checkpoints behind the
+    /// provider's claimed head is too stale to trust and must be rejected.
+    #[tokio::test]
+    async fn freshness_rejects_a_checkpoint_too_far_behind_the_head() {
+        let (_dir, reader) = test_reader(Some(10));
+
+        // gap <= bound is accepted (10 == bound is the boundary, still ok).
+        reader.check_freshness(100, 100).unwrap();
+        reader.check_freshness(90, 100).unwrap();
+
+        let err = reader.check_freshness(89, 100).unwrap_err();
+        match err {
+            ReaderError::StaleCheckpoint {
+                object_seq,
+                head,
+                gap,
+                bound,
+            } => {
+                assert_eq!(object_seq, 89);
+                assert_eq!(head, 100);
+                assert_eq!(gap, 11);
+                assert_eq!(bound, 10);
+            }
+            other => panic!("expected StaleCheckpoint, got {other:?}"),
+        }
+    }
+
+    /// `freshness_bound: None` disables the gate entirely — an arbitrarily old
+    /// proof passes. (Production peer-only readers run with no bound.)
+    #[tokio::test]
+    async fn freshness_is_disabled_when_no_bound_is_set() {
+        let (_dir, reader) = test_reader(None);
+        reader.check_freshness(0, 1_000_000).unwrap();
+    }
+}

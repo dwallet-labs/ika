@@ -10,8 +10,9 @@ the push/cache fast path, the committee ratchet).
 **Verdict:** sound-with-concerns. At the 2026-06-14 reconcile, of 16
 enumerated findings: 9 fixed, 3 partial, 3 open, 1 obsolete. All three
 independent design judges rated the branch sound-with-concerns.
-**Status (updated):** **14 resolved** (the 9 fixed + 10/11/12/14/15), **1 open**
-(13 — adversarial tests), **1 obsolete** (16) — see each finding's RESOLUTION
+**Status (updated):** **14 resolved** (the 9 fixed + 10/11/12/14/15), **1 partial**
+(13 — adversarial tests: the fixture-free rejection gates now have negative
+tests; the crypto-fixture-dependent paths remain), **1 obsolete** (16) — see each finding's RESOLUTION
 and the remaining-work list. The directly-exploitable
 proof-binding and boot-liveness concerns are resolved. A separate
 earlier-confirmed **K1–K9** set (recovered below) is mostly still open; its
@@ -159,10 +160,26 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     happy-path cluster tests — nothing asserts they *reject* forged, stale, or
     foreign-owned input, so a future weakening of any proof or gate check
     would still pass CI. Anchor: the OCS read + transport-gate paths in
-    `crates/ika-core/src/sui_connector/`. RESOLUTION: open. Finding 6's fix
-    added the first negative unit test (ratchet error classification), and
-    finding 12 deferred its metric-assert test here; the four adversarial
-    paths still need coverage.
+    `crates/ika-core/src/sui_connector/`. RESOLUTION: partial. Negative tests
+    now cover the checks that need no crypto fixtures:
+    - **high-water rollback** — `verified_reader::tests::high_water_rejects_a_version_rollback`:
+      a lower version after a higher one yields `StaleVersion`, the rejected
+      rollback does *not* lower the mark, and ids are independent.
+    - **freshness bound** — `freshness_rejects_a_checkpoint_too_far_behind_the_head`
+      (exact `gap`/`bound` on `StaleCheckpoint`) and
+      `freshness_is_disabled_when_no_bound_is_set`.
+    - **BagMembership binding derivation** — `transport::tests` assert
+      `derive_object_field_wrapper_id` re-wraps `K` into `Wrapper<K>` (≠ bare
+      `K`) and matches the canonical on-chain `dynamic_object_field` id, for
+      both a `u64`- and an `ID`-keyed table, and returns `None` on an
+      unparseable key type. This is the derivation a regression would have to
+      break to let a relay substitute a foreign-owned entry.
+    Finding 6's fix added the ratchet error-classification negative test.
+    Still uncovered (each needs a valid BLS summary + OCS Merkle fixture, so
+    deferred): forged-proof / bad-signature *rejection*, the end-to-end
+    `verified_bag_page` owner-mismatch reject path, the single-object
+    `verify_response` id-substitution reject (finding K1's logic), finding
+    12's metric-assert, and the legacy-JSON-RPC vs new-style gate truth-table.
 
 14. **[medium] Serving side has no caps.** No limits on batch ids / bag
     page_size / `GetVerifiedSnapshot` (which deep-clones the whole cache
@@ -258,13 +275,17 @@ single-object substitution gap, comparable in class to finding 1).
 
 DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 14 (S2), 15 (S4) fixed
 + K1, K5; 10/11 closed by removing the push/cache gossip subsystem
-(`b9be273a74`). **Finding 13 (H2 — adversarial tests) is the only enumerated
-audit finding still open.** Open items below.
+(`b9be273a74`). **Finding 13 (H2 — adversarial tests) is now partial** — the
+fixture-free rejection gates have negative tests; the crypto-fixture paths
+remain. Open items below.
 
-1. **Finding 13** (adversarial tests) — negative tests for proof-rejection,
-   high-water rollback, BagMembership binding, and the JSON-RPC gate
-   truth-table. Finding 6's fix added the first (ratchet error
-   classification); build out the rest.
+1. **Finding 13** (adversarial tests) — DONE: high-water rollback, freshness
+   bound, and BagMembership-binding derivation negative tests
+   (`verified_reader::tests`, `transport::tests`). REMAINING (each needs a
+   valid BLS summary + OCS Merkle fixture): forged-proof / bad-signature
+   *rejection*, the end-to-end `verified_bag_page` owner-mismatch path, the
+   single-object `verify_response` id-substitution reject, finding 12's
+   metric-assert, and the JSON-RPC-vs-new-style gate truth-table.
 2. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
    residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
    design addresses; K5 dead-code removal done in `31d8c71120`).

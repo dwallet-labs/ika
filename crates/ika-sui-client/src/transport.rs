@@ -175,3 +175,60 @@ pub trait SuiTransport: Send + Sync {
         tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sui_types::dynamic_field::{DynamicFieldInfo, derive_dynamic_field_id};
+
+    fn wrapper_tag(inner: sui_types::TypeTag) -> sui_types::TypeTag {
+        sui_types::TypeTag::Struct(Box::new(DynamicFieldInfo::dynamic_object_field_wrapper(
+            inner,
+        )))
+    }
+
+    /// The dynamic *object* field id derives from `Wrapper<K>`, not the bare
+    /// `K` — re-wrapping must change the id, and the result must equal the
+    /// canonical `Wrapper<K>` derivation Sui's `dynamic_object_field::add`
+    /// uses on-chain. This is what binds an ObjectTable/ObjectBag entry to its
+    /// parent in `verified_bag_page`; a regression that dropped the wrapper
+    /// would silently let a relay substitute a foreign-owned entry.
+    #[test]
+    fn wrapper_id_re_wraps_and_matches_the_object_field_layout() {
+        let parent = ObjectID::from_single_byte(0x42);
+        let name_bcs = bcs::to_bytes(&7u64).unwrap();
+
+        let wrapped = derive_object_field_wrapper_id(parent, "u64", &name_bcs).unwrap();
+        let bare = derive_dynamic_field_id(parent, &sui_types::TypeTag::U64, &name_bcs).unwrap();
+        assert_ne!(wrapped, bare, "must derive from Wrapper<K>, not bare K");
+
+        let canonical =
+            derive_dynamic_field_id(parent, &wrapper_tag(sui_types::TypeTag::U64), &name_bcs)
+                .unwrap();
+        assert_eq!(wrapped, canonical);
+    }
+
+    /// The `dwallet_network_encryption_keys` ObjectTable is keyed by `ID`;
+    /// the gRPC reports the unwrapped inner type as a canonical string.
+    #[test]
+    fn wrapper_id_works_for_an_id_keyed_object_table() {
+        let parent = ObjectID::from_single_byte(0x11);
+        let key_id = ObjectID::from_single_byte(0x99);
+        let name_bcs = bcs::to_bytes(&key_id).unwrap();
+        let id_type =
+            "0x0000000000000000000000000000000000000000000000000000000000000002::object::ID";
+
+        let wrapped = derive_object_field_wrapper_id(parent, id_type, &name_bcs).unwrap();
+        let inner = sui_types::TypeTag::from_str(id_type).unwrap();
+        assert_eq!(
+            wrapped,
+            derive_dynamic_field_id(parent, &wrapper_tag(inner), &name_bcs).unwrap()
+        );
+    }
+
+    #[test]
+    fn wrapper_id_rejects_an_unparseable_type() {
+        let parent = ObjectID::from_single_byte(0x01);
+        assert!(derive_object_field_wrapper_id(parent, "not a valid type", &[]).is_none());
+    }
+}
