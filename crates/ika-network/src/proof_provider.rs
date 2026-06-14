@@ -40,6 +40,18 @@ use sui_types::object::Object;
 
 use ika_sui_client::transport::{SuiTransport, TransportError};
 
+/// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
+/// request may carry — each id costs one inclusion-proof build, so this bounds
+/// per-request work. Sized to comfortably exceed the largest legitimate batch
+/// (the validator set, read whole by `get_validators` / `get_validator_inners`;
+/// `max_validator_count` is configurable but realistically in the hundreds)
+/// while still cutting off an abusive flood.
+const MAX_BATCH_OBJECTS: usize = 4096;
+
+/// Serving-side cap on `VerifiedBagPage` page size — one inclusion-proof build
+/// per entry. The gRPC backend clamps too; this is the relay's own bound.
+const MAX_BAG_PAGE_SIZE: u32 = 1000;
+
 /// Producer-side metrics for the `ProofProvider` layer. sui-state-direct nodes
 /// running [`LocalProofProvider`] populate the local-only counters
 /// (`*_built_total`, `tree_cache_*`); sui-state-mirrored nodes running
@@ -524,6 +536,16 @@ impl ProofProvider for LocalProofProvider {
         &self,
         ids: &[ObjectID],
     ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+        // Bound per-request work: the serving side builds one inclusion proof
+        // per id, so an unbounded id list is unbounded server work. Reject
+        // (rather than truncate) — the response is positional, so a silent
+        // truncation would mis-align results with the caller's ids.
+        if ids.len() > MAX_BATCH_OBJECTS {
+            return Err(TransportError::Network(format!(
+                "batch_verified_objects request has {} ids, over the {MAX_BATCH_OBJECTS} cap",
+                ids.len()
+            )));
+        }
         let started = std::time::Instant::now();
         let head = self.current_head_seq().await?;
         let raw_objects = self.raw.batch_get_objects(ids).await?;
@@ -570,9 +592,13 @@ impl ProofProvider for LocalProofProvider {
         // Bag-size omission detection is therefore deferred to the
         // consumer via the parent's verified state.
         let head = self.current_head_seq().await?;
+        // Cap page size (the serving side builds one proof per entry). The
+        // gRPC backend already clamps, but don't rely on the upstream's cap.
+        // `None` keeps the backend default; a `Some` is clamped to our max.
+        let page_size = request.page_size.map(|n| n.min(MAX_BAG_PAGE_SIZE));
         let page = self
             .raw
-            .list_dynamic_fields(request.bag_id, request.page_size, request.page_token)
+            .list_dynamic_fields(request.bag_id, page_size, request.page_token)
             .await?;
 
         let mut summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary> =

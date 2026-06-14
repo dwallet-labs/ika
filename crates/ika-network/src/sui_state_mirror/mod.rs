@@ -26,7 +26,9 @@ pub mod client;
 
 use std::sync::Arc;
 
+use anemo::codegen::InboundRequestLayer;
 use anemo::{PeerId, Request, Response, rpc::Status, types::response::StatusCode};
+use anemo_tower::inflight_limit;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{ObjectID, TransactionDigest};
@@ -297,12 +299,47 @@ impl SuiStateMirror for Server {
     }
 }
 
+/// Coarse per-method concurrency ceilings for the heaviest serving RPCs, to
+/// bound a peer flooding a sui-state-direct node: each proof-building method
+/// costs CPU + DB per request, and `get_full_checkpoint` ships a large
+/// payload. Generous (well above normal fleet load); over the limit a peer
+/// gets an error and fails over to another direct node (its relay client
+/// retries). Per-request size is also capped in `proof_provider.rs`.
+const INFLIGHT_VERIFIED_OBJECT: usize = 256;
+const INFLIGHT_BATCH_VERIFIED_OBJECTS: usize = 64;
+const INFLIGHT_VERIFIED_BAG_PAGE: usize = 64;
+const INFLIGHT_GET_FULL_CHECKPOINT: usize = 32;
+
 /// Build the anemo router service serving the verified-read and
-/// committee-ratchet RPCs.
+/// committee-ratchet RPCs, with per-method inflight caps on the heavy ones.
 pub fn make_server(
     transport: Arc<dyn SuiTransport>,
     provider: Arc<dyn ProofProvider>,
     metrics: Arc<ProofProviderMetrics>,
 ) -> SuiStateMirrorServer<Server> {
     SuiStateMirrorServer::new(Server::new(transport, provider, metrics))
+        .add_layer_for_verified_object(InboundRequestLayer::new(
+            inflight_limit::InflightLimitLayer::new(
+                INFLIGHT_VERIFIED_OBJECT,
+                inflight_limit::WaitMode::ReturnError,
+            ),
+        ))
+        .add_layer_for_batch_verified_objects(InboundRequestLayer::new(
+            inflight_limit::InflightLimitLayer::new(
+                INFLIGHT_BATCH_VERIFIED_OBJECTS,
+                inflight_limit::WaitMode::ReturnError,
+            ),
+        ))
+        .add_layer_for_verified_bag_page(InboundRequestLayer::new(
+            inflight_limit::InflightLimitLayer::new(
+                INFLIGHT_VERIFIED_BAG_PAGE,
+                inflight_limit::WaitMode::ReturnError,
+            ),
+        ))
+        .add_layer_for_get_full_checkpoint(InboundRequestLayer::new(
+            inflight_limit::InflightLimitLayer::new(
+                INFLIGHT_GET_FULL_CHECKPOINT,
+                inflight_limit::WaitMode::ReturnError,
+            ),
+        ))
 }
