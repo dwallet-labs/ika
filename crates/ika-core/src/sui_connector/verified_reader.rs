@@ -15,6 +15,7 @@
 //! own object: compare `bag.size` against accumulated children.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -213,26 +214,28 @@ impl OcsVerifiedReader {
             let seq = entry.checkpoint_seq;
             self.check_freshness(seq, observed_head)
                 .map_err(|e| self.record_fail("batch_objects", e))?;
-            if !verified_summaries.contains_key(&seq) {
-                let summary = resp
-                    .summaries
-                    .get(&seq)
-                    .ok_or_else(|| {
-                        self.record_fail(
-                            "batch_objects",
-                            ReaderError::Decode(format!(
-                                "missing summary {seq} for batch entry {id}"
-                            )),
-                        )
-                    })?
-                    .clone();
-                let verified_summary = self
-                    .verify_summary(summary)
-                    .map_err(|e| self.record_fail("batch_objects", e))?;
-                verified_summaries.insert(seq, verified_summary);
-            }
-            // unwrap: inserted just above for this `seq`.
-            let verified_summary = verified_summaries.get(&seq).expect("summary present");
+            // Verify each distinct checkpoint's summary once, then reuse it.
+            let verified_summary = match verified_summaries.entry(seq) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    let summary = resp
+                        .summaries
+                        .get(&seq)
+                        .ok_or_else(|| {
+                            self.record_fail(
+                                "batch_objects",
+                                ReaderError::Decode(format!(
+                                    "missing summary {seq} for batch entry {id}"
+                                )),
+                            )
+                        })?
+                        .clone();
+                    let verified_summary = self
+                        .verify_summary(summary)
+                        .map_err(|e| self.record_fail("batch_objects", e))?;
+                    e.insert(verified_summary)
+                }
+            };
 
             let cache_proof = clone_inclusion_proof(&entry.proof);
             let cache_object = entry.object.clone();
@@ -367,24 +370,26 @@ impl OcsVerifiedReader {
             HashMap::new();
         for entry in resp.entries {
             let seq = entry.checkpoint_seq;
-            if !verified_summaries.contains_key(&seq) {
-                let summary = resp
-                    .summaries
-                    .get(&seq)
-                    .ok_or_else(|| {
-                        self.record_fail(
-                            "bag_entry",
-                            ReaderError::Decode("missing summary for bag entry".into()),
-                        )
-                    })?
-                    .clone();
-                let verified_summary = self
-                    .verify_summary(summary)
-                    .map_err(|e| self.record_fail("bag_entry", e))?;
-                verified_summaries.insert(seq, verified_summary);
-            }
-            // unwrap: inserted just above for this `seq`.
-            let verified_summary = verified_summaries.get(&seq).expect("summary present");
+            // Verify each distinct checkpoint's summary once, then reuse it.
+            let verified_summary = match verified_summaries.entry(seq) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    let summary = resp
+                        .summaries
+                        .get(&seq)
+                        .ok_or_else(|| {
+                            self.record_fail(
+                                "bag_entry",
+                                ReaderError::Decode("missing summary for bag entry".into()),
+                            )
+                        })?
+                        .clone();
+                    let verified_summary = self
+                        .verify_summary(summary)
+                        .map_err(|e| self.record_fail("bag_entry", e))?;
+                    e.insert(verified_summary)
+                }
+            };
 
             let cache_proof = clone_inclusion_proof(&entry.proof);
             let cache_object = entry.object.clone();
