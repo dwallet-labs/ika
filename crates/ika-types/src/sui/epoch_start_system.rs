@@ -140,27 +140,28 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .active_validators
             .iter()
             .map(|validator| {
-                // Shape-tolerant decode: accepts both the mainnet-v1.1.8
-                // bare-class-groups payload and the version-3 bundle. PVSS
-                // halves come back as `None` for validators publishing the old
-                // shape; downstream DKG/Reconfig dispatch picks the bwd-compat
-                // Party in that case.
-                let (
-                    class_groups_public_key_and_proof,
-                    secp256k1_pvss_public_key_and_proof,
-                    secp256r1_pvss_public_key_and_proof,
-                    ristretto_pvss_public_key_and_proof,
-                ) = match validator.mpc_data.as_ref().and_then(|mpc_data| {
-                    decode_validator_encryption_keys(&mpc_data.class_groups_public_key_and_proof())
-                }) {
-                    Some(v) => (
-                        Some(v.class_groups),
-                        v.secp256k1_pvss,
-                        v.secp256r1_pvss,
-                        v.ristretto_pvss,
-                    ),
-                    None => (None, None, None, None),
-                };
+                // Chain reads are shape-tolerant: the Move-side
+                // `MPCDataV1::mpc_data_bytes` is either the bare mainnet-v1.1.8
+                // `ClassGroupsEncryptionKeyAndProof` or the full version-3
+                // `ValidatorEncryptionKeysAndProofs` bundle (the CLI publishes
+                // the bundle unless `--legacy-class-groups-only`). Decode either
+                // and populate the per-curve PVSS keys when present; they're
+                // `None` for the bare shape. (`NetworkMetadata` carries no VSS
+                // HPKE key — that reaches `Committee` via the off-chain pipeline.)
+                let decoded = validator.mpc_data.as_ref().and_then(|mpc_data| {
+                    decode_validator_encryption_keys(&mpc_data.mpc_data_bytes())
+                });
+                let class_groups_public_key_and_proof =
+                    decoded.as_ref().map(|decoded| decoded.class_groups.clone());
+                let secp256k1_pvss_public_key_and_proof = decoded
+                    .as_ref()
+                    .and_then(|decoded| decoded.secp256k1_pvss.clone());
+                let secp256r1_pvss_public_key_and_proof = decoded
+                    .as_ref()
+                    .and_then(|decoded| decoded.secp256r1_pvss.clone());
+                let ristretto_pvss_public_key_and_proof = decoded
+                    .as_ref()
+                    .and_then(|decoded| decoded.ristretto_pvss.clone());
 
                 (
                     validator.authority_name(),
@@ -191,43 +192,56 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .map(|validator| (validator.authority_name(), validator.voting_power))
             .collect();
 
-        // Shape-tolerant decode per validator. Mainnet-v1.1.8-shape payloads
-        // (bare class-groups) populate only the class-groups HashMap; PVSS
-        // HashMaps gain an entry only when the validator published the
-        // version-3 bundle shape.
+        // Chain reads are shape-tolerant: the Move-side
+        // `MPCDataV1::mpc_data_bytes` is either the bare mainnet-v1.1.8
+        // `ClassGroupsEncryptionKeyAndProof` or the full version-3
+        // `ValidatorEncryptionKeysAndProofs` bundle (the CLI publishes the
+        // bundle unless `--legacy-class-groups-only`). Decode either shape and
+        // populate every key map from it; PVSS + VSS HPKE are absent for the
+        // bare shape. The off-chain validator-metadata pipeline (PR #1721)
+        // overlays the full bundle onto `Committee` separately; this chain read
+        // must not silently drop a bundle-shape validator from the load-bearing
+        // class-groups map.
         let decoded_per_validator: Vec<_> = self
             .active_validators
             .iter()
             .filter_map(|validator| {
                 let mpc_data = validator.mpc_data.as_ref()?;
-                let decoded = decode_validator_encryption_keys(
-                    &mpc_data.class_groups_public_key_and_proof(),
-                );
+                let decoded = decode_validator_encryption_keys(&mpc_data.mpc_data_bytes());
                 if decoded.is_none() {
                     error!(
                         authority = ?validator.authority_name(),
-                        "Failed to decode validator encryption keys (neither mainnet-v1.1.8 nor version-3 shape)"
+                        "Failed to decode validator encryption keys from Move-side mpc_data \
+                         (neither bare class-groups nor version-3 bundle shape)"
                     );
                 }
-                decoded.map(|d| (validator.authority_name(), d))
+                decoded.map(|decoded| (validator.authority_name(), decoded))
             })
             .collect();
-
         let class_groups_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .map(|(name, v)| (*name, v.class_groups.clone()))
+            .map(|(name, decoded)| (*name, decoded.class_groups.clone()))
             .collect();
         let secp256k1_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .filter_map(|(name, v)| v.secp256k1_pvss.clone().map(|k| (*name, k)))
+            .filter_map(|(name, decoded)| decoded.secp256k1_pvss.clone().map(|key| (*name, key)))
             .collect();
         let secp256r1_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .filter_map(|(name, v)| v.secp256r1_pvss.clone().map(|k| (*name, k)))
+            .filter_map(|(name, decoded)| decoded.secp256r1_pvss.clone().map(|key| (*name, key)))
             .collect();
         let ristretto_pvss_public_keys_and_proofs = decoded_per_validator
             .iter()
-            .filter_map(|(name, v)| v.ristretto_pvss.clone().map(|k| (*name, k)))
+            .filter_map(|(name, decoded)| decoded.ristretto_pvss.clone().map(|key| (*name, key)))
+            .collect();
+        let vss_hpke_public_keys_and_proofs = decoded_per_validator
+            .iter()
+            .filter_map(|(name, decoded)| {
+                decoded
+                    .vss_hpke_public_key_and_proof
+                    .clone()
+                    .map(|key| (*name, key))
+            })
             .collect();
 
         Committee::new(
@@ -237,6 +251,7 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             secp256k1_pvss_public_keys_and_proofs,
             secp256r1_pvss_public_keys_and_proofs,
             ristretto_pvss_public_keys_and_proofs,
+            vss_hpke_public_keys_and_proofs,
             self.quorum_threshold,
             self.validity_threshold,
         )

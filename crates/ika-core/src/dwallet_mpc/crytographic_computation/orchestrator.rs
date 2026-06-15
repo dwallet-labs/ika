@@ -80,6 +80,20 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
+
+    /// Fast Schnorr (VSS) HPKE curve25519 secret key, derived once at startup
+    /// from `root_seed` and reused for every VSS presign — avoids re-running
+    /// the HPKE keypair generation per presign.
+    vss_hpke_secret_key: group::curve25519::Scalar,
+
+    /// Under msim, the simulated node this orchestrator belongs to, captured at
+    /// construction (which runs inside the validator's node context). The rayon
+    /// worker that runs a cryptographic computation has no node context, so it uses
+    /// this handle to re-enter the node (for the compute's tracing) and to spawn the
+    /// completion task via `NodeHandle::spawn` — `Handle::spawn` would call
+    /// `NodeHandle::current().unwrap()` on the rayon worker and abort the process.
+    #[cfg(msim)]
+    sim_node: Option<sui_simulator::runtime::NodeHandle>,
 }
 
 impl CryptographicComputationsOrchestrator {
@@ -101,6 +115,17 @@ impl CryptographicComputationsOrchestrator {
             "Available CPU cores for Rayon cryptographic computations"
         );
 
+        // Capture the simulated node here: construction runs in the validator's
+        // node context (the log above succeeds via tracing), whereas `try_spawn`'s
+        // rayon-dispatching task can run outside one. No-op under non-msim.
+        #[cfg(msim)]
+        let sim_node = sui_simulator::runtime::NodeHandle::try_current();
+
+        let vss_hpke_secret_key =
+            dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(
+                &root_seed,
+            );
+
         Ok(CryptographicComputationsOrchestrator {
             available_cores_for_cryptographic_computations: available_cores_for_computations,
             completed_computation_sender: report_computation_completed_sender,
@@ -108,6 +133,9 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
+            vss_hpke_secret_key,
+            #[cfg(msim)]
+            sim_node,
         })
     }
 
@@ -150,7 +178,7 @@ impl CryptographicComputationsOrchestrator {
                     "Cryptographic computation failed"
                 );
             } else {
-                debug!(
+                info!(
                     party_id,
                     ?session_identifier,
                     ?computation_result_data,
@@ -232,7 +260,7 @@ impl CryptographicComputationsOrchestrator {
         }
 
         if !self.has_available_cores_to_perform_computation() {
-            debug!(
+            info!(
                 session_identifier=?computation_id.session_identifier,
                 mpc_round=?computation_id.mpc_round,
                 attempt_number=?computation_id.attempt_number,
@@ -244,11 +272,13 @@ impl CryptographicComputationsOrchestrator {
 
             return false;
         }
+        let handle = Handle::current();
+
         let party_id = computation_request.party_id;
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
 
-        debug!(
+        info!(
             party_id,
             session_identifier=?computation_id.session_identifier,
             current_round=?computation_id.mpc_round,
@@ -259,68 +289,59 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
+        let vss_hpke_secret_key = self.vss_hpke_secret_key;
 
-        // Under msim, run the computation INLINE in the calling task instead
-        // of on rayon. Crypto is sequential under msim anyway (the `parallel`
-        // feature is dropped in that profile), and a rayon worker has no
-        // simulated-node context: even with a captured-NodeHandle re-entry
-        // guard, msim's `Handle::spawn` re-resolves the CURRENT node at spawn
-        // time, so a computation whose node was torn down mid-compute (an
-        // epoch swap in the simulation) panics at
-        // `NodeHandle::current().unwrap()` and rayon-core aborts the whole
-        // process. Inline, the send happens in the same task context — which
-        // dies cleanly WITH the node, dropping the now-moot result.
+        // Under msim, tokio APIs and tracing instrumentation require a simulated
+        // node context; rayon worker threads have none and abort at
+        // `NodeHandle::current().unwrap()`. Use the node captured at construction
+        // (`try_current()` on this rayon-dispatching task can already be outside a
+        // node). Enter it for the compute's tracing, and spawn the completion via
+        // `NodeHandle::spawn` (targets the node directly) rather than `Handle::spawn`
+        // (which calls `NodeHandle::current()`). No-op under non-msim.
         #[cfg(msim)]
-        {
+        let sim_node = self.sim_node.clone();
+
+        rayon::spawn_fifo(move || {
+            #[cfg(msim)]
+            let _node_guard = sim_node.as_ref().map(|n| n.enter_node());
+
             let advance_start_time = Instant::now();
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
-            let elapsed_ms = advance_start_time.elapsed().as_millis();
-            if let Err(err) = computation_channel_sender
-                .send(ComputationCompletionUpdate {
-                    computation_id,
-                    party_id,
-                    protocol_metadata,
-                    computation_result,
-                    elapsed_ms,
-                })
-                .await
-            {
-                error!(error=?err, "failed to send a computation completion update");
+
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                vss_hpke_secret_key,
+                dwallet_mpc_metrics.clone(),
+            );
+
+            let elapsed = advance_start_time.elapsed();
+            let elapsed_ms = elapsed.as_millis();
+
+            let completion_update = ComputationCompletionUpdate {
+                computation_id,
+                party_id,
+                protocol_metadata,
+                computation_result,
+                elapsed_ms,
+            };
+            let send_completion = async move {
+                if let Err(err) = computation_channel_sender.send(completion_update).await {
+                    error!(error=?err, "failed to send a computation completion update");
+                }
+            };
+
+            #[cfg(msim)]
+            match sim_node.as_ref() {
+                Some(node) => {
+                    node.spawn(send_completion);
+                }
+                None => {
+                    handle.spawn(send_completion);
+                }
             }
-        }
-
-        #[cfg(not(msim))]
-        {
-            let handle = Handle::current();
-            rayon::spawn_fifo(move || {
-                let advance_start_time = Instant::now();
-
-                let computation_result = computation_request.compute(
-                    computation_id,
-                    root_seed,
-                    dwallet_mpc_metrics.clone(),
-                );
-
-                let elapsed = advance_start_time.elapsed();
-                let elapsed_ms = elapsed.as_millis();
-
-                handle.spawn(async move {
-                    if let Err(err) = computation_channel_sender
-                        .send(ComputationCompletionUpdate {
-                            computation_id,
-                            party_id,
-                            protocol_metadata,
-                            computation_result,
-                            elapsed_ms,
-                        })
-                        .await
-                    {
-                        error!(error=?err, "failed to send a computation completion update");
-                    }
-                });
-            });
-        }
+            #[cfg(not(msim))]
+            handle.spawn(send_completion);
+        });
 
         self.currently_running_cryptographic_computations
             .insert(computation_id);

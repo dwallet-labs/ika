@@ -6,6 +6,7 @@ use crate::dwallet_mpc::dwallet_dkg::{
 };
 use crate::dwallet_mpc::mpc_manager::DWalletMPCManager;
 use crate::dwallet_mpc::mpc_session::{PublicInput, SessionComputationType};
+use crate::dwallet_mpc::network_dkg::VssShamirCachePerKey;
 use crate::dwallet_mpc::presign::{PresignAdvanceRequestByProtocol, PresignPublicInputByProtocol};
 use crate::dwallet_mpc::sign::{
     DKGAndSignPublicInputByProtocol, DWalletDKGAndSignAdvanceRequestByProtocol,
@@ -73,11 +74,55 @@ pub(crate) enum ProtocolCryptographicData {
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
     },
 
+    /// Fast Schnorr (VSS) sign for the EXTERNAL (`ProtocolData::Sign`) path only.
+    /// VSS has no AHE decrypters, so unlike AHE `Sign`, the private input is the
+    /// validator's pre-derived VSS secret-key Shamir shares (looked up by
+    /// network key id at the build site — derivation happens once at
+    /// network-key ingestion, NOT per sign) joined with the persisted presign
+    /// nonce data (`presign_private_output`).
+    SignVSS {
+        data: SignData,
+        public_input: SignPublicInputByProtocol,
+        advance_request: SignAdvanceRequestByProtocol,
+        /// Pre-derived (at network-key ingestion) per-curve VSS Shamir-share +
+        /// polynomial-commitments cache for this network key. The sign compute
+        /// site picks the curve matching `data.signature_algorithm`.
+        vss_shamir_cache: VssShamirCachePerKey,
+        /// `bcs(PrivatePresignOutput)` for this presign's `(session_id, blending_index)`;
+        /// `None` if the row is missing (disk loss / cross-epoch) → this validator
+        /// soft-fails.
+        presign_private_output: Option<Vec<u8>>,
+    },
+
+    /// Fast Schnorr (VSS) sign for the NOA (`ProtocolData::NetworkOwnedAddressSign`)
+    /// path. Compute is identical to `SignVSS` (VSS has no AHE decrypters, so the
+    /// AHE NOA-vs-external compute split collapses), but kept a separate variant for
+    /// symmetry with the AHE `Sign`/`NetworkOwnedAddressSign` split. Its `data` stays
+    /// the native `NetworkOwnedAddressSignData` and is coerced to `SignData` only at
+    /// the compute site (mirroring the AHE `NetworkOwnedAddressSign` compute arms).
+    NetworkOwnedAddressSignVSS {
+        data: NetworkOwnedAddressSignData,
+        public_input: SignPublicInputByProtocol,
+        advance_request: SignAdvanceRequestByProtocol,
+        vss_shamir_cache: VssShamirCachePerKey,
+        presign_private_output: Option<Vec<u8>>,
+    },
+
     DWalletDKGAndSign {
         data: DWalletDKGAndSignData,
         public_input: DKGAndSignPublicInputByProtocol,
         advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
         decryption_key_shares: HashMap<PartyID, SecretKeyShareSizedInteger>,
+    },
+
+    /// Fast Schnorr (VSS) combined DKG-and-sign fast path. Same pre-derived
+    /// shamir-cache plumbing as `SignVSS`.
+    DWalletDKGAndSignVSS {
+        data: DWalletDKGAndSignData,
+        public_input: DKGAndSignPublicInputByProtocol,
+        advance_request: DWalletDKGAndSignAdvanceRequestByProtocol,
+        vss_shamir_cache: VssShamirCachePerKey,
+        presign_private_output: Option<Vec<u8>>,
     },
     /// Backward-compatible network DKG — runs the mainnet-v1.1.8-shape Party
     /// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`).
@@ -88,7 +133,7 @@ pub(crate) enum ProtocolCryptographicData {
         advance_request: AdvanceRequest<<bwd_compat_dkg::Party as mpc::Party>::Message>,
         class_groups_decryption_key: ClassGroupsDecryptionKey,
     },
-    /// Network DKG running the version-3 main Party
+    /// Network DKG running the post-PR-#1707 main Party
     /// (`twopc_mpc::decentralized_party::dkg::Party`). Selected when
     /// `ProtocolConfig::is_network_encryption_key_version_v3()` is `true`.
     NetworkEncryptionKeyDkg {
@@ -152,6 +197,18 @@ impl ProtocolCryptographicData {
                 advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
                 advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -170,6 +227,18 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
                 advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
@@ -192,6 +261,51 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            // A VSS sign session always carries a VSS advance request (built by
+            // `SignAdvanceRequestByProtocol::try_new` for a VSS algorithm), so the
+            // AHE advance variants are structurally unreachable here.
+            ProtocolCryptographicData::SignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
             ProtocolCryptographicData::DWalletDKGAndSign {
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
@@ -217,6 +331,31 @@ impl ProtocolCryptographicData {
                     DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => advance_request.attempt_number,
+            // An AHE DKG-and-sign session always carries an AHE advance request, so the
+            // VSS advance variants are structurally unreachable here.
+            ProtocolCryptographicData::DWalletDKGAndSign { .. } => {
+                unreachable!("AHE DKG-and-sign session carries a VSS advance request")
+            }
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            // A VSS DKG-and-sign session always carries a VSS advance request, so the
+            // AHE advance variants are structurally unreachable here.
+            ProtocolCryptographicData::DWalletDKGAndSignVSS { .. } => {
+                unreachable!("VSS DKG-and-sign session carries a non-VSS advance request")
+            }
             ProtocolCryptographicData::NetworkOwnedAddressSign {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -235,6 +374,18 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkOwnedAddressSign {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => advance_request.attempt_number,
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::EncryptedShareVerification { .. } => 1,
@@ -335,6 +486,18 @@ impl ProtocolCryptographicData {
                 advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Presign {
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
                 advance_request: PresignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -353,6 +516,18 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
                 advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::InternalPresign {
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
@@ -375,6 +550,48 @@ impl ProtocolCryptographicData {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::Sign {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::SignVSS {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::SignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
+                unreachable!("VSS sign session carries a non-VSS advance request")
+            }
             ProtocolCryptographicData::DWalletDKGAndSign {
                 advance_request:
                     DWalletDKGAndSignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
@@ -400,6 +617,27 @@ impl ProtocolCryptographicData {
                     DWalletDKGAndSignAdvanceRequestByProtocol::Ristretto(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSign { .. } => {
+                unreachable!("AHE DKG-and-sign session carries a VSS advance request")
+            }
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSignVSS {
+                advance_request:
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::DWalletDKGAndSignVSS { .. } => {
+                unreachable!("VSS DKG-and-sign session carries a non-VSS advance request")
+            }
             ProtocolCryptographicData::NetworkOwnedAddressSign {
                 advance_request: SignAdvanceRequestByProtocol::Secp256k1ECDSA(advance_request),
                 ..
@@ -418,6 +656,18 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkOwnedAddressSign {
                 advance_request: SignAdvanceRequestByProtocol::Ristretto(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::TaprootVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::EdDSAVSS(advance_request),
+                ..
+            } => Some(advance_request.mpc_round_number),
+            ProtocolCryptographicData::NetworkOwnedAddressSign {
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::ImportedKeyVerification {
@@ -473,22 +723,90 @@ impl DWalletMPCManager {
             SessionComputationType::MPC {
                 messages_by_consensus_round,
                 ..
-            } => ProtocolCryptographicData::try_new_mpc(
-                protocol_data,
-                self.party_id,
-                &self.access_structure,
-                consensus_round,
-                messages_by_consensus_round.clone(),
-                public_input.clone(),
-                self.network_dkg_third_round_delay,
-                self.decryption_key_reconfiguration_third_round_delay,
-                self.schnorr_presign_second_round_delay,
-                self.network_keys
-                    .validator_private_dec_key_data
-                    .class_groups_decryption_key,
-                &self.network_keys,
-                protocol_config,
-            ),
+            } => {
+                // For a Fast Schnorr (VSS) sign — external (`Sign`) or NOA
+                // (`NetworkOwnedAddressSign`) — load this presign session's persisted
+                // private nonce output (keyed by the presign `session_id`, recovered
+                // from the public presign). `None` (missing row) is a soft-fail handled
+                // downstream — this validator drops out of the sign quorum.
+                let vss_presign = match protocol_data {
+                    ProtocolData::Sign { data, presign, .. }
+                        if data.signature_algorithm.is_vss() =>
+                    {
+                        Some((data.signature_algorithm, presign))
+                    }
+                    ProtocolData::NetworkOwnedAddressSign { data, presign, .. }
+                        if data.signature_algorithm.is_vss() =>
+                    {
+                        Some((data.signature_algorithm, presign))
+                    }
+                    // The combined DKG-and-sign request carries its presign inside `data`
+                    // (not as a sibling enum field); VSS DKG-and-sign reads the same
+                    // persisted presign private output as standalone VSS sign.
+                    ProtocolData::DWalletDKGAndSign { data, .. }
+                        if data.signature_algorithm.is_vss() =>
+                    {
+                        Some((data.signature_algorithm, &data.presign))
+                    }
+                    _ => None,
+                };
+                let presign_private_output = match vss_presign {
+                    Some((signature_algorithm, presign)) => {
+                        let (presign_session_id, presign_blending_index) =
+                            crate::dwallet_mpc::sign::vss_public_presign_identity(
+                                signature_algorithm,
+                                presign,
+                            )?;
+                        self.epoch_store
+                            .get_presign_private_output(presign_session_id, presign_blending_index)
+                            .map_err(|e| {
+                                DwalletMPCError::InvalidInput(format!(
+                                    "failed to read persisted VSS presign output: {e}"
+                                ))
+                            })?
+                    }
+                    None => None,
+                };
+
+                // Fast Schnorr (VSS) requires a uniform weight-1 access structure
+                // (the upstream VSS presign/sign parties reject anything else). ika's
+                // count-based committee satisfies this today, but it is not an asserted
+                // invariant — guard here so a future move to genuine stake-weighting
+                // fails loudly at the VSS boundary with a clear error rather than deep
+                // in the crypto layer.
+                if protocol_data
+                    .signature_algorithm()
+                    .is_some_and(|algorithm| algorithm.is_vss())
+                    && !self
+                        .access_structure
+                        .party_to_weight
+                        .values()
+                        .all(|&weight| weight == 1)
+                {
+                    return Err(DwalletMPCError::InvalidInput(
+                        "Fast Schnorr (VSS) requires a uniform weight-1 access \
+                         structure, but this committee has non-unit weights"
+                            .to_string(),
+                    ));
+                }
+                ProtocolCryptographicData::try_new_mpc(
+                    protocol_data,
+                    self.party_id,
+                    &self.access_structure,
+                    consensus_round,
+                    messages_by_consensus_round.clone(),
+                    public_input.clone(),
+                    self.network_dkg_third_round_delay,
+                    self.decryption_key_reconfiguration_third_round_delay,
+                    self.schnorr_presign_second_round_delay,
+                    self.network_keys
+                        .validator_private_dec_key_data
+                        .class_groups_decryption_key,
+                    &self.network_keys,
+                    presign_private_output,
+                    protocol_config,
+                )
+            }
         }
     }
 }
