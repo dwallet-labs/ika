@@ -20,6 +20,20 @@ Author context applied: VSS is not user-exposed yet (external VSS sign is `#[ign
 
 → *Fix:* re-apply the PR's test-side adaptations (B0.1 to the new reconfiguration API; B0.2 add the `vss_hpke` empty map). **Also worth a deliberate pass for *silent* reverts** the merge may have introduced that still compile — the take-theirs resolution already proved lossy twice.
 
+### B0 status — FIXED + silent-revert sweep done
+
+B0 is fixed (network_dkg test → the `spawn_network_encryption_key_public_data_instantiation` dispatcher; both `Committee::new` calls take the `vss_hpke` empty map; one stale doc comment refreshed). Verified: `cargo check -p ika-core --all-targets`, `ika-node` + `ika-test-cluster` all-targets, and `cargo fmt --all --check` all clean; `test_network_key_reconfiguration` passes in release. Pushed to `fast-schnorr`.
+
+The deliberate silent-revert sweep (three-way content diff of every conflicted file: branch-pre-merge `bf21544442^1` vs dev `bf21544442^2` vs head, since `git cherry` is blind here — take-theirs keeps branch commits *reachable* while discarding their *content*) found **no further correctness reverts**. Everything the merge dropped falls into:
+
+- **Superseded by dev's newer design** — the off-chain-metadata / handoff-cert / joiner-bootstrap P2P redesign (`announcement_relay`, `peer_blob_fetcher`, `blob_store`, `mpc_data_announcement_sender`, `handoff_signature_sender`, `ika-node/src/lib.rs` wiring) and the determinism-safe freeze in `mpc_session.rs` (dev's commit-boundary `is_mpc_data_frozen()` read replaced the branch's local-timing `freeze_mpc_data_if_quorum()` at the gate — dev's is the correct, consensus-pure version).
+- **Already in dev via separate PRs** — the post-v1.1.8 consensus-output stream gate (`853925ed6a`, "same fix landed on dev via #1728"), deterministic internal-presign session-ids (#1733), the notifier stale-gas/`tx-effects` gas-coin fixes (dev's `sui_executor` already carries them; the branch-only delta there was commented-out debug lines).
+- **Cleanup / observability only** — leftover debug comments, dead `#[allow(dead_code)]` fields (`sui_connector/mod.rs`), and unused metric/accessor methods (`HandoffAggregator::signer_count`/`accumulated_stake`; the `joiner_bootstrap_outcomes_total` / `mpc_data_blob_fetch_total` counters).
+
+Branch-unique *upgrade* logic (the PR's actual purpose) all survives in head: `GlobalPresignConfig` genesis parameterization, the global-presign-as-MPC-session queue, and the epoch-keyed reconfiguration-output digest lookup (`insert/get_network_reconfiguration_output_digest_for_epoch`, restored by `78e08d5483`).
+
+One **minor, optional** observability residue (not a correctness revert): `handoff_prepare_duration_seconds` lost the branch's minute-scale histogram buckets, so on dev's default prometheus buckets (top out at 10s) every legitimately-slow barrier exit (cert fetch + blob convergence run minutes) collapses into `+Inf`. Restore the custom buckets only if that metric's distribution is wanted.
+
 ---
 
 ## v3→v4 primer (frames several findings)
