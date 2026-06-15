@@ -11,12 +11,12 @@ the push/cache fast path, the committee ratchet).
 enumerated findings: 9 fixed, 3 partial, 3 open, 1 obsolete. All three
 independent design judges rated the branch sound-with-concerns.
 **Status (updated):** **15 resolved** (the 9 fixed + 10/11/12/13/14/15), **1 obsolete**
-(16) — see each finding's RESOLUTION
-and the remaining-work list. The directly-exploitable
-proof-binding and boot-liveness concerns are resolved. A separate
-earlier-confirmed **K1–K9** set (recovered below) is mostly still open; its
-standout **K1** (single-object relay-substitution gap) is now fixed
-(`e04b516490`).
+(16) — see each finding's RESOLUTION and the remaining-work list. The
+directly-exploitable proof-binding and boot-liveness concerns are resolved.
+The separate earlier-confirmed **K1–K9** set (recovered below) is now also
+fully closed: K1–K5 fixed, K6/K7 documented, K8/K9 accept-and-documented (the
+eclipse/currency residuals whose real fix is the future changeset-stream
+design). Nothing from the audit remains open.
 
 > Point-in-time record (per `reviews/` convention) — not maintained as a
 > source of current truth. Current behavior lives in
@@ -290,37 +290,48 @@ single-object substitution gap, comparable in class to finding 1).
 - **K6 [low] Stale old-style config templates** — `validator.template.yaml`,
   `fullnode.template.yaml`, `shared.sh`,
   `skills/ika-operator/references/configuration.md` still use the deprecated
-  `sui-rpc-url`-only shape.
+  `sui-rpc-url`-only shape. RESOLUTION (`f103fcc4ea`): the operator skill docs
+  (SKILL.md, configuration.md) now show new-style `sui-data-source` +
+  `sui-trusted-anchor` (grounded in the real serde keys) with `sui-rpc-url`
+  marked deprecated. The TS system-test fixtures stay on the legacy path on
+  purpose (no localnet anchor is provisioned) but carry a note pointing at the
+  new-style guidance.
 - **K7 [low — docs] `SuiTransport::batch_get_objects` same-order contract is
   undocumented** while callers zip results positionally with inputs. Anchor:
-  `ika-sui-client/src/transport.rs`.
+  `ika-sui-client/src/transport.rs`. RESOLUTION (`acc6599758`): documented the
+  contract on the trait method — same-order, same-length, **all-or-nothing**
+  (the gRPC client collects into a `Result`, so any missing id fails the whole
+  call rather than yielding a short/reordered vec; a success is always one
+  object per id in input order). An initial diagnosis suspected a length bug,
+  but the all-or-nothing collect upholds the contract, so this was docs-only.
 - **K8 [residual] Eclipse** — a peer-only node talking to a single malicious
   relay can be served a self-consistent stale world (freshness head seeded by
   the relay). The currency limitation addressed by the changeset-stream
-  design (`../plans/`); open by design.
+  design (`../plans/`); open by design. RESOLUTION (`c969b95dc5`):
+  accept-and-document — an in-code comment at `check_freshness` now states the
+  residual, points to the spec, and lists the mitigations (enabled
+  `freshness_bound` and/or multiple independent relays). The real fix remains
+  the future changeset-stream design.
 - **K9 [residual] `get_current_epoch` is a relay-claimed/unverified
   passthrough** used as the ratchet target; with the fallback flag off it only
   stalls, with it on the head can be walked one real epoch per call. Accepted
-  degradation; open by design.
+  degradation; open by design. RESOLUTION (`c969b95dc5`): accept-and-document —
+  a comment at the use site explains why it's safe: the relay-claimed epoch
+  only sets the loop target; each step BLS-verifies the checkpoint and asserts
+  `next.epoch == head+1`, so a lie causes at worst a stall, never a forged
+  advance.
 
 ## Remaining work (risk-ordered)
 
-DONE since the audit: findings 6 (S1), 9 (H3), 12 (H4), 13 (H2), 14 (S2),
-15 (S4) fixed + K1, K5; 10/11 closed by removing the push/cache gossip
-subsystem (`b9be273a74`). All 16 enumerated findings are now resolved or
-obsolete, including finding 13's transport-gate truth-table (the gate is now
-the pure `select_sui_transport`). Remaining items are the low-severity
-K-residuals only.
+DONE: all 16 enumerated audit findings are resolved or obsolete, and the
+recovered **K1–K9** are all closed — K1–K5 fixed, K6/K7 documented, K8/K9
+accept-and-documented (their real fix is the future redesign below). Nothing
+from the audit remains open.
 
-1. **K6–K9** — config / docs / defense-in-depth residuals (K8/K9 are the
-   eclipse/currency residuals the changeset-stream design addresses). K2–K4
-   are now fixed (`a6c3cda627`, `c58d8df1e6`, `932d5c3bbd`).
-2. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
-   residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
-   design addresses; K5 dead-code removal done in `31d8c71120`).
-3. **Mirrored-node currency redesign** (future feature, not a finding) —
+1. **Mirrored-node currency redesign** (future feature, not an audit finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
-   gated on a non-inclusion id-binding fix.
+   the real fix for the K8/K9 eclipse/currency residuals, gated on a fastcrypto
+   non-inclusion id-binding fix.
 
 ## Distilled pitfalls
 
