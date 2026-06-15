@@ -706,6 +706,15 @@ impl OcsVerifiedReader {
             .map_err(|e| ReaderError::InvalidProof(format!("{e:?}")))
     }
 
+    // Eclipse residual: `head` is the relay's *claimed* upstream head (folded
+    // monotonically into `observed_upstream_head`). A fresh peer-only node
+    // talking to a single malicious relay can be pinned to a self-consistent
+    // stale world — the relay simply under-reports the head so nothing looks
+    // stale. The bound below catches a relay that *later* lies low after a
+    // higher head was seen, not a from-boot eclipse. Mitigations: an enabled
+    // `freshness_bound` and/or multiple independent relays; the real fix is the
+    // changeset-stream currency design. See `dev-docs/specs/ocs-verified-sui-reads.md`
+    // (Freshness and rollback protection → Eclipse residual).
     fn check_freshness(
         &self,
         proof_seq: CheckpointSequenceNumber,

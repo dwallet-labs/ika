@@ -144,6 +144,15 @@ impl OcsVerifyingClient {
                 return Ok(());
             }
         };
+        // `get_current_epoch` is a relay-claimed, unverified passthrough, but
+        // it only sets the loop's *target* — it can't forge progress. Every
+        // step below BLS-verifies the end-of-epoch checkpoint against
+        // committee[head], derives committee[head+1] from that verified summary,
+        // and asserts `next.epoch == head + 1`. So a malicious relay claiming a
+        // far-future epoch can't walk the verified head faster than one real,
+        // committee-signed epoch per step: at worst its checkpoint fetches fail
+        // and the ratchet stalls (or takes the unverified fallback, gated by
+        // `allow_unverified_committee_fallback`) — never a forged advance.
         let target = self.transport.get_current_epoch().await?;
         self.metrics.chain_latest_epoch.set(target as i64);
         loop {
