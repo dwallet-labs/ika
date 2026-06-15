@@ -29,9 +29,15 @@ in the surrounding tasks.
 |---|---|---|---|
 | Artifact identity | `handoff.rs:33,36` — `HandoffItemKey::{NetworkDkgOutput,NetworkReconfigurationOutput}{ key_id: ObjectID }` | A network key's identity is its Sui object id | Type-only, but wire-frozen |
 | Trust root (signers) | `sui_connector/pubkey_provider_updater.rs:82` `fetch_previous_committee_consensus_pubkeys`, `:128` `fetch_previous_committee` | *Who* the signing committee is and their Ed25519 consensus keys, via `get_system_inner` + `get_validators_info_by_ids` → `StakingPool.validator_info` | Fundamental |
-| State / liveness | `sui_connector/sui_syncer.rs:716` `sync_dwallet_network_keys` (5s poll → `network_keys_receiver`) | Which keys are reconfiguration-complete; the DKG output bytes used to hydrate digests at signing | Medium |
+| State / liveness | `sui_connector/sui_syncer.rs:777` `get_dwallet_mpc_network_keys` (5s poll → `network_keys_receiver`) | Which keys are reconfiguration-complete; the DKG output bytes used to hydrate digests at signing | Medium (poll → tracker only; key `state` is structurally a chain fact) |
 | Emission trigger | EndOfPublish gate (`all_network_encryption_keys_reconfiguration_completed`, read from the coordinator object) | When the handoff is emitted | Medium |
-| v3→v4 migration | `sui_syncer.rs:818-877` | Full output blobs for keys whose DKG/last reconfiguration ran under v3 | Temporary, self-removing |
+| v3→v4 migration | `sui_syncer.rs:819`/`:852` + `mpc_manager.rs:966,973,2081` | Full output blobs for keys whose DKG/last reconfiguration ran under v3 | Temporary; becomes dead after the v4 rollout but must be deleted by hand — tracked by [dwallet-labs/ika#1751](https://github.com/dwallet-labs/ika/issues/1751) |
+
+The State/liveness and v3→v4-migration rows are the same subsystem
+(`sync_dwallet_network_keys`): the metadata/state poll is the permanent
+coupling the network-key tracker would address (minor stage below), and
+the migration blob read is the temporary, removable-by-hand part tracked
+in [#1751](https://github.com/dwallet-labs/ika/issues/1751).
 
 What is already Sui-free: the certificate fetch on joiner bootstrap is
 P2P, not a chain read (`epoch_tasks/joiner_bootstrap_verifier.rs`); and
