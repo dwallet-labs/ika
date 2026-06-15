@@ -9,6 +9,10 @@ network-key-pair:
 db-path: /opt/ika/db/authorities_db
 network-address: /ip4/0.0.0.0/tcp/8080/http
 sui-connector-config:
+  # System-test fixture: uses the deprecated legacy JSON-RPC path on purpose
+  # (no localnet trust anchor is provisioned here). Production validators should
+  # use new-style `sui-data-source` (gRPC) + `sui-trusted-anchor` — see
+  # skills/ika-operator/references/configuration.md.
   sui-rpc-url: SUI_RPC_URL
   sui-chain-identifier: SUI_CHAIN_IDENTITY
   ika-package-id: IKA_PACKAGE_ID
