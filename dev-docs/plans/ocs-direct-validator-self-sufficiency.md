@@ -124,21 +124,32 @@ retention) the degrade differs by read kind:
   failure mode remains; the operator-action signal is intact.
 - Test: `verified_read_backoff_doubles_then_caps_at_30s`.
 
-### Slice 5 — Regression test: short Sui-fullnode retention
+### Slice 5 — Regression test: pruned-history path — DONE (mock-transport)
 
 Exercise the pruned-history path so this can't regress.
 
-- The TS-integration localnet runs a **separate** `sui start --with-faucet
-  --force-regenesis` (`ts-integration-tests.yaml:148`); give that process a Sui
-  config with aggressive `authority-store-pruning-config` (low
-  `num-epochs-to-retain`). The in-process `ika-test-cluster` (`lib.rs:1182`) needs
-  the Sui node configs mutated post-`TestClusterBuilder` (Sui doesn't expose
-  pruning as a builder param) — a dedicated cluster test.
-- **Assert the right thing:** validators keep advancing (committee from captured
-  EoE, in-window reads/currency succeed) and **degrade gracefully** (no
-  hard-stall) out-of-window. Size retention *above* ika's worst-case catch-up lag,
-  or assert "degrades, no stall" rather than "every read succeeds" — otherwise the
-  test flakes on slow CI runners (the keep-up constraint is load-bearing).
+**The real-Sui-pruning cluster test was infeasible** and abandoned: the in-process
+Sui `TestClusterBuilder` does not expose `AuthorityStorePruningConfig`, and the
+fullnode's retention is fixed at build time (not mutable post-build) —
+`ika-swarm-config`'s `with_disable_pruning` only touches the *ika* fullnode, not
+the Sui chain. Forcing it would mean patching the pinned Sui fork's
+test-cluster/config (heavy, flaky — must size retention above the node's catch-up
+lag). Confirmed instead: cluster validators *do* run the OCS path (`SuiStateDirect`
++ pusher + ratchet, genesis-committee anchored), so every green cluster run already
+exercises the mechanism end-to-end.
+
+**Built instead — deterministic mock-transport unit tests** (`push_worker.rs`
+`mod tests`), driving the real `IkaCheckpointPusher::advance` through a `MockTransport`:
+- `pusher_eagerly_captures_end_of_epoch_committee` — streaming the committee-signed
+  end-of-epoch `CheckpointData` installs `committee[E+1]` (head `0 → 1`) with no
+  ratchet reach-back (Slice 1).
+- `pusher_skips_pruned_checkpoint_without_stalling` — a `NotFound` (pruned)
+  checkpoint is skipped, the cursor advances past it, head unchanged, no stall
+  (Slice 4, pusher half).
+
+These guard the finding-17 mechanism with zero flakiness; the executor-degrade
+(`verified_read_backoff…`) and restart-resume (`persisted_cache_rehydrates…`) /
+retention-prune (`retain_window_prunes…`) tests cover the rest.
 
 ## Sequencing
 

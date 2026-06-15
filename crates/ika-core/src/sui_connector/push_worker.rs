@@ -384,3 +384,252 @@ fn type_touches_ika(t: &TypeTag, ika: &HashSet<ObjectID>) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+
+    use ika_sui_client::transport::{
+        DynamicFieldPage, ExecutedTransaction, SubmittedTransaction, TransportError,
+    };
+    use sui_types::base_types::{ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+    use sui_types::committee::{Committee, ProtocolVersion};
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::digests::CheckpointDigest;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSummary, EndOfEpochData};
+    use sui_types::transaction::Transaction;
+
+    use crate::sui_connector::committee_store::CommitteeBootstrap;
+    use crate::sui_connector::verified_state_cache::VerifiedStateCache;
+
+    /// Mock transport that serves a fixed `get_latest_checkpoint` and a
+    /// configurable set of full checkpoints; a missing seq is `NotFound`
+    /// (modeling an upstream prune). Only the three reads the pusher makes are
+    /// implemented; the rest panic so an unexpected call is loud.
+    struct MockTransport {
+        latest: CertifiedCheckpointSummary,
+        checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+    }
+
+    #[async_trait]
+    impl SuiTransport for MockTransport {
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            Ok(self.latest.clone())
+        }
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            self.checkpoints
+                .get(&seq)
+                .cloned()
+                .ok_or_else(|| TransportError::NotFound(format!("checkpoint {seq} pruned")))
+        }
+
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unimplemented!()
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
+            unimplemented!()
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _digest: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object_with_version(
+            &self,
+            _id: ObjectID,
+            _version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_get_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<Vec<Object>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_owned_gas_coins(
+            &self,
+            _address: SuiAddress,
+        ) -> Result<Vec<ObjectRef>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _parent: ObjectID,
+            _page_size: Option<u32>,
+            _page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction_checkpoint(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn execute_transaction(
+            &self,
+            _tx: &Transaction,
+        ) -> Result<SubmittedTransaction, TransportError> {
+            unimplemented!()
+        }
+    }
+
+    /// An end-of-epoch `CheckpointData` for the committee's epoch at `seq`,
+    /// committee-signed and committing to the next epoch's committee (same
+    /// members, epoch E+1). `verify_with_contents` passes because the summary's
+    /// `content_digest` is set from the (empty) contents.
+    fn end_of_epoch_checkpoint(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+    ) -> CheckpointData {
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: Some(EndOfEpochData {
+                next_epoch_committee: committee.voting_rights.clone(),
+                next_epoch_protocol_version: ProtocolVersion::MIN,
+                epoch_commitments: vec![],
+            }),
+            version_specific_data: Vec::new(),
+        };
+        let checkpoint_summary =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee);
+        CheckpointData {
+            checkpoint_summary,
+            checkpoint_contents: contents,
+            transactions: vec![],
+        }
+    }
+
+    fn test_packages() -> IkaPackageConfig {
+        IkaPackageConfig {
+            ika_package_id: ObjectID::random(),
+            ika_common_package_id: ObjectID::random(),
+            ika_dwallet_2pc_mpc_package_id: ObjectID::random(),
+            ika_dwallet_2pc_mpc_package_id_v2: None,
+            ika_system_package_id: ObjectID::random(),
+        }
+    }
+
+    async fn pusher_over(
+        perpetual: Arc<AuthorityPerpetualTables>,
+        committees: Arc<CommitteeStore>,
+        transport: Arc<dyn SuiTransport>,
+    ) -> IkaCheckpointPusher {
+        let packages = test_packages();
+        IkaCheckpointPusher::new(
+            transport,
+            perpetual,
+            OcsMetrics::new_for_testing(),
+            &packages,
+            Duration::from_secs(2),
+            Arc::new(VerifiedStateCache::new()),
+            committees,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// Slice 1: the pusher installs `committee[E+1]` the moment it streams past
+    /// the end-of-epoch checkpoint — the committee head advances without the
+    /// ratchet ever reaching back for that (prune-prone) checkpoint.
+    #[tokio::test]
+    async fn pusher_eagerly_captures_end_of_epoch_committee() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        assert_eq!(committees.head_epoch(), 0);
+
+        let eoe = end_of_epoch_checkpoint(&committee, &keys, 100);
+        let latest = eoe.checkpoint_summary.clone();
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::from([(100u64, eoe)]),
+        });
+        // Resume from seq 99 so advance() streams exactly seq 100.
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let mut pusher = pusher_over(perpetual, committees.clone(), transport).await;
+        pusher.advance().await.unwrap();
+
+        assert_eq!(committees.head_epoch(), 1);
+    }
+
+    /// Slice 4 (pusher half): a pruned (NotFound) checkpoint is skipped, not
+    /// retried forever — advance returns Ok, the cursor moves past it, and the
+    /// committee head is unchanged (nothing captured, but no stall).
+    #[tokio::test]
+    async fn pusher_skips_pruned_checkpoint_without_stalling() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        // latest=100, but the mock serves NO full checkpoints → every fetch is
+        // NotFound (the prune horizon).
+        let latest = end_of_epoch_checkpoint(&committee, &keys, 100).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let mut pusher = pusher_over(perpetual.clone(), committees.clone(), transport).await;
+        pusher.advance().await.unwrap();
+
+        assert_eq!(committees.head_epoch(), 0);
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+    }
+}
