@@ -453,6 +453,17 @@ pub struct SuiConnectorConfig {
     /// The object id of ika_dwallet_coordinator on sui.
     pub ika_dwallet_coordinator_object_id: ObjectID,
 
+    /// How many checkpoints of OCS-verified state the direct-node cache retains
+    /// (the prune window for the perpetual `verified_object_cache`, and the
+    /// depth a mirrored peer can bootstrap from this node). Snapshots more than
+    /// this many checkpoints behind the head are dropped; never prunes below the
+    /// oldest committee-verifiable checkpoint. Defaults to
+    /// `DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS` (~a few epochs) when unset;
+    /// larger = deeper history served to peers and answerable after the fullnode
+    /// prunes, at more DB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_cache_retention_checkpoints: Option<u64>,
+
     /// Only for sui connector notifiers, don't set `notifier_client_key_pair` otherwise.
     /// Path of the file where sui client key (any SuiKeyPair) is stored.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,6 +478,19 @@ pub struct SuiConnectorConfig {
     /// Otherwise, it will miss one event because of fullnode Event query semantics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_ika_system_module_last_processed_event_id_override: Option<EventID>,
+}
+
+/// Checkpoints of OCS-verified state the direct-node cache retains by default
+/// (~a few epochs): wide enough that idle Ika objects — the System / Coordinator
+/// inner, modified only at epoch boundaries — stay covered, while bounding the
+/// perpetual `verified_object_cache` and the in-memory map. Tune per chain.
+pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
+
+impl SuiConnectorConfig {
+    pub fn verified_cache_retention_checkpoints(&self) -> u64 {
+        self.verified_cache_retention_checkpoints
+            .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
+    }
 }
 
 #[serde_as]

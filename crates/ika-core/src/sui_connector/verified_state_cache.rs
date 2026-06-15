@@ -15,9 +15,12 @@
 //! children index so verified bag walks resolve from the cache without
 //! a network call.
 //!
-//! Eviction on deletion is not yet implemented; the cache only grows, and
-//! live-set churn (sessions completing) keeps it bounded enough to be
-//! harmless in practice.
+//! Bounded by a retain window ([`VerifiedStateCache::with_retain_window`]):
+//! snapshots more than `window` checkpoints behind the head are pruned from
+//! both the in-memory maps and the persisted column (never below the oldest
+//! committee-verifiable checkpoint, which a mirrored peer may still bootstrap
+//! from). Tombstone eviction on on-chain deletion is not yet implemented, but
+//! the retain window bounds growth regardless.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -78,6 +81,13 @@ pub struct VerifiedStateCache {
     /// pruned) Sui fullnode. `None` is an in-memory-only cache (`new`, for
     /// tests / `Default`).
     perpetual: Option<Arc<AuthorityPerpetualTables>>,
+    /// Drop snapshots whose source checkpoint fell more than this many
+    /// checkpoints behind the head (also the mirrored-peer bootstrap depth).
+    /// `None` = unbounded. Set via [`Self::with_retain_window`].
+    retain_window: Option<u64>,
+    /// Floor (`head - window`) at the last prune sweep; the next sweep waits
+    /// until the floor rises a stride, so the sweep is amortized O(1) per absorb.
+    last_pruned_floor: AtomicU64,
 }
 
 impl VerifiedStateCache {
@@ -89,7 +99,17 @@ impl VerifiedStateCache {
             children: RwLock::new(HashMap::new()),
             head_seq: AtomicU64::new(0),
             perpetual: None,
+            retain_window: None,
+            last_pruned_floor: AtomicU64::new(0),
         }
+    }
+
+    /// Bound the cache to snapshots within `window` checkpoints of the head
+    /// (`None` = unbounded). Mirrors `ChangesetIndex::with_retain_window`; the
+    /// sweep is amortized — it only runs once the floor rises a stride.
+    pub fn with_retain_window(mut self, window: Option<u64>) -> Self {
+        self.retain_window = window;
+        self
     }
 
     /// Durable cache: rehydrate the in-memory maps from the persisted
@@ -118,6 +138,8 @@ impl VerifiedStateCache {
             children: RwLock::new(children),
             head_seq: AtomicU64::new(head),
             perpetual: Some(perpetual),
+            retain_window: None,
+            last_pruned_floor: AtomicU64::new(0),
         })
     }
 
@@ -166,6 +188,85 @@ impl VerifiedStateCache {
         }
         self.advance_head(source_seq);
         self.persist(&inserted_ids);
+        self.maybe_prune();
+    }
+
+    /// Retention floor: drop snapshots whose source checkpoint is more than
+    /// `retain_window` behind the head, but never below the oldest
+    /// committee-verifiable checkpoint (a mirrored peer bootstrapping from there
+    /// still needs those objects). `None` when pruning is disabled.
+    fn prune_floor(&self) -> Option<CheckpointSequenceNumber> {
+        let window = self.retain_window?;
+        let mut floor = self.head_seq().saturating_sub(window);
+        if let Some(perpetual) = &self.perpetual {
+            if let Ok(Some(oldest)) = perpetual.oldest_sui_committee_summary() {
+                floor = floor.min(*oldest.sequence_number());
+            }
+        }
+        Some(floor)
+    }
+
+    /// Amortized sweep: prune only once the floor has risen by a stride, so the
+    /// cache over-retains by less than a stride and the O(n) sweep runs rarely.
+    fn maybe_prune(&self) {
+        let Some(floor) = self.prune_floor() else {
+            return;
+        };
+        let stride = (self.retain_window.unwrap_or(0) / 8).max(1);
+        if floor
+            < self
+                .last_pruned_floor
+                .load(Ordering::Relaxed)
+                .saturating_add(stride)
+        {
+            return;
+        }
+        self.prune(floor);
+        self.last_pruned_floor.store(floor, Ordering::Relaxed);
+    }
+
+    /// Drop every snapshot last modified before `floor` from the in-memory maps
+    /// and the persisted column, keeping the parent→children index consistent.
+    fn prune(&self, floor: CheckpointSequenceNumber) {
+        let removed: Vec<(ObjectID, Option<ObjectID>)> = {
+            let mut objects = self.objects.write();
+            let mut removed = Vec::new();
+            objects.retain(|id, snap| {
+                if snap.source_checkpoint_seq < floor {
+                    removed.push((*id, parent_id(&snap.object)));
+                    false
+                } else {
+                    true
+                }
+            });
+            removed
+        };
+        if removed.is_empty() {
+            return;
+        }
+        {
+            let mut children = self.children.write();
+            for (id, parent) in &removed {
+                if let Some(parent) = parent {
+                    if let Some(set) = children.get_mut(parent) {
+                        set.remove(id);
+                        if set.is_empty() {
+                            children.remove(parent);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(perpetual) = &self.perpetual {
+            let keys: Vec<ObjectID> = removed.iter().map(|(id, _)| *id).collect();
+            if let Err(e) = perpetual.delete_verified_object_cache_keys(&keys) {
+                warn!(error = ?e, "failed to prune persisted verified cache");
+            }
+        }
+        info!(
+            removed = removed.len(),
+            floor, "pruned verified state cache"
+        );
     }
 
     /// Write the just-folded snapshots (and the head) through to the perpetual
@@ -382,6 +483,48 @@ mod tests {
         assert_eq!(snap.object.version(), SequenceNumber::from(3u64));
         assert_eq!(snap.source_checkpoint_seq, 42);
         assert_eq!(reopened.children_of(parent), vec![child]);
+    }
+
+    #[tokio::test]
+    async fn retain_window_prunes_old_snapshots_in_mem_and_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let owner = Owner::AddressOwner(ObjectID::from_single_byte(0x01).into());
+        let obj = |byte: u8, version: u64| {
+            Object::with_id_owner_version_for_testing(
+                ObjectID::from_single_byte(byte),
+                SequenceNumber::from(version),
+                owner.clone(),
+            )
+        };
+        let a = obj(0xA1, 1);
+        let b = obj(0xB2, 1);
+        let c = obj(0xC3, 1);
+        let (s_a, e_a) = signed_entry(&committee, &keys, 10, &a);
+        let (s_b, e_b) = signed_entry(&committee, &keys, 60, &b);
+        let (s_c, e_c) = signed_entry(&committee, &keys, 100, &c);
+
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let cache = VerifiedStateCache::open(perpetual.clone())
+            .unwrap()
+            .with_retain_window(Some(30));
+        cache.absorb_entries(&s_a, &[e_a]);
+        cache.absorb_entries(&s_b, &[e_b]);
+        cache.absorb_entries(&s_c, &[e_c]);
+
+        // head=100, window=30 → floor=70: a(10) and b(60) are pruned, c(100) kept.
+        assert_eq!(cache.head_seq(), 100);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(a.id()).is_none());
+        assert!(cache.get(b.id()).is_none());
+        assert!(cache.get(c.id()).is_some());
+
+        // The persisted column was pruned in place — a reopen sees only c.
+        drop(cache);
+        let reopened = VerifiedStateCache::open(perpetual).unwrap();
+        assert_eq!(reopened.len(), 1);
+        assert!(reopened.get(c.id()).is_some());
+        assert!(reopened.get(a.id()).is_none());
     }
 
     #[tokio::test]

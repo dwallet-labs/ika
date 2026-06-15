@@ -532,6 +532,15 @@ impl AuthorityPerpetualTables {
         wb.write()?;
         Ok(())
     }
+
+    /// Drop the given keys from the persisted verified-state cache (retention
+    /// pruning). The head is left untouched — pruning never lowers it.
+    pub fn delete_verified_object_cache_keys(&self, ids: &[ObjectID]) -> IkaResult {
+        let mut wb = self.verified_object_cache.batch();
+        wb.delete_batch(&self.verified_object_cache, ids.iter())?;
+        wb.write()?;
+        Ok(())
+    }
 }
 
 /// Adapter so the Anemo `validator_metadata` server can read certs

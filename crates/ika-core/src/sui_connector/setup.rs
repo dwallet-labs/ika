@@ -365,8 +365,10 @@ pub async fn build_sui_connector_stack(
     // column on boot and writes through every absorb, so a restart resumes
     // serving from DB instead of re-fetching from the (possibly pruned) Sui
     // fullnode.
-    let state_cache: SharedVerifiedStateCache =
-        Arc::new(VerifiedStateCache::open(perpetual.clone())?);
+    let state_cache: SharedVerifiedStateCache = Arc::new(
+        VerifiedStateCache::open(perpetual.clone())?
+            .with_retain_window(Some(cfg.verified_cache_retention_checkpoints())),
+    );
 
     // 4. Verified-read surface for consumers. Freshness defense is
     //    version-monotonicity (per-object high-water mark in the
