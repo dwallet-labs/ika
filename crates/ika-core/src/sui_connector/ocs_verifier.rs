@@ -49,6 +49,11 @@ pub enum OcsError {
          {requested} was requested; refusing to install it"
     )]
     FallbackEpochMismatch { requested: u64, returned: u64 },
+    #[error(
+        "the BLS-verified end-of-epoch checkpoint committed to a committee for epoch {returned} \
+         when epoch {requested} was expected; refusing to install it"
+    )]
+    RatchetEpochMismatch { requested: u64, returned: u64 },
     #[error("ika error: {0}")]
     Ika(String),
 }
@@ -66,8 +71,8 @@ impl OcsError {
     /// later attempt. Every other variant is a determinate condition that a
     /// retry cannot heal — a pruned/broken proof chain (`ProofChainBroken`), a
     /// checkpoint that fails BLS verification (`BadCheckpointSig`) or isn't
-    /// end-of-epoch (`NotEndOfEpoch`), an endpoint returning the wrong epoch
-    /// (`FallbackEpochMismatch`), or a missing local committee
+    /// end-of-epoch (`NotEndOfEpoch`), a committee installed at the wrong epoch
+    /// (`FallbackEpochMismatch`/`RatchetEpochMismatch`), or a missing local committee
     /// (`MissingCommittee`/`Ika`) — and needs the operator to act (typically
     /// re-anchor). A caller that loops on the ratchet (the peer-only boot
     /// ratchet) MUST stop and surface a fatal error on a non-retryable result
@@ -208,6 +213,16 @@ impl OcsVerifyingClient {
                 &data.checkpoint_summary,
             )
             .map_err(|e| OcsError::BadCheckpointSig(last_seq, e.to_string()))?;
+            // Defense-in-depth, mirroring the fallback path's check: a summary
+            // verified by committee[head] commits to committee[head + 1] by the
+            // protocol, but assert it explicitly so the endpoint/extraction
+            // can't jump the ratchet head past an uninstalled epoch.
+            if next.epoch != head + 1 {
+                return Err(OcsError::RatchetEpochMismatch {
+                    requested: head + 1,
+                    returned: next.epoch,
+                });
+            }
             // Persist the verified summary at epoch `head` alongside the
             // committee for `head + 1` it commits to.
             self.committees
