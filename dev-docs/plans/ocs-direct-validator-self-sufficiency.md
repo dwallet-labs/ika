@@ -100,18 +100,29 @@ the *direct* node's fullnode still holding the data.
 - Tests: a mirrored node advances its committee and serves reads with the direct
   node's fullnode stubbed to prune everything past the window.
 
-### Slice 4 — Graceful-degrade safety net (the accepted residual)
+### Slice 4 — Graceful-degrade safety net (the accepted residual) — DONE
 
 For the unavoidable gap (cold start, fast-forward jump, fell behind past
-retention):
+retention) the degrade differs by read kind:
 
-- Verified read on a pruned/uncaptured anchor → return per-read `Unknown` /
-  fallback (currency), **not** retry-forever (`sui_executor` `must_get_*` loops,
-  `push_worker.rs:106-114`).
-- Ratchet on a pruned **and uncaptured** EoE with no installed committee →
-  re-anchor / clamp to the servable floor rather than loop `ProofChainBroken`.
-- Tests: a NotFound anchor yields `Unknown`+liveness (no stall); the ratchet
-  recovers/re-anchors instead of wedging.
+- **Currency gate (mirrored per-read):** already returns `Unknown` → per-read
+  fallback when currency can't be established — no false `Current`, no stall.
+  (Built with the changeset-currency work; nothing to add here.)
+- **Mandatory inner reads (`sui_executor::must_get_system_inner` /
+  `must_get_dwallet_coordinator_inner`):** these are *not* optional — the MPC
+  pipeline needs the current System / Coordinator inner — so they cannot degrade
+  to a fallback. Instead of spinning at 1/s and flooding the logs (the observed
+  finding-17 symptom: 12k `verified_system_inner failed` lines), they now back
+  off (`verified_read_retry_backoff`: 1,2,4,8,16, capped 30s) and, after a few
+  attempts, escalate to a single clear "likely a Sui-fullnode retention gap;
+  raise fullnode retention or re-anchor" diagnostic. The failures themselves are
+  already metered by the reader's proof/cache failure counters.
+- **Ratchet:** a pruned-and-uncaptured EoE still returns `ProofChainBroken`
+  (re-anchor required) — but with Slice 1 the pusher captures committees eagerly,
+  so the ratchet rarely reaches back, and a wedge is already observable as the
+  `committee_head_epoch` gauge stalling below `chain_latest_epoch`. No silent
+  failure mode remains; the operator-action signal is intact.
+- Test: `verified_read_backoff_doubles_then_caps_at_30s`.
 
 ### Slice 5 — Regression test: short Sui-fullnode retention
 

@@ -111,6 +111,17 @@ impl NotifierSubmitState {
 /// outer `retry_with_max_elapsed_time!` re-attempts). 60 × 500ms = 30s.
 const MAX_GAS_REFETCH_ATTEMPTS: u32 = 60;
 
+/// Backoff for the mandatory verified inner reads: 1s, 2s, 4s, 8s, 16s, then
+/// capped at 30s. These reads are not optional (the MPC pipeline needs the
+/// current System / Coordinator inner), so they can't degrade to a fallback the
+/// way the per-read currency gate does — but a sustained failure is the
+/// finding-17 retention gap (the object's last-modifying checkpoint was pruned
+/// upstream and isn't in the verified cache), so back off and escalate the log
+/// instead of spinning at 1/s and flooding the logs while the operator acts.
+fn verified_read_retry_backoff(attempts: u32) -> Duration {
+    Duration::from_secs((1u64 << attempts.saturating_sub(1).min(5)).min(30))
+}
+
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
@@ -176,12 +187,25 @@ where
                 .ika_network_config
                 .objects
                 .ika_system_object_id;
+            let mut attempts: u32 = 0;
             loop {
                 match reader.verified_system_inner(id).await {
                     Ok(v) => return v,
                     Err(e) => {
-                        warn!(error = ?e, "verified_system_inner failed; retrying");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        attempts += 1;
+                        let backoff = verified_read_retry_backoff(attempts);
+                        if attempts <= 3 {
+                            warn!(error = ?e, attempts, "verified_system_inner failed; retrying");
+                        } else {
+                            warn!(
+                                error = ?e,
+                                attempts,
+                                backoff_secs = backoff.as_secs(),
+                                "verified_system_inner still failing — likely a pruned-and-uncached \
+                                 anchor (Sui-fullnode retention gap); raise fullnode retention or re-anchor"
+                            );
+                        }
+                        tokio::time::sleep(backoff).await;
                     }
                 }
             }
@@ -200,12 +224,26 @@ where
                 .ika_network_config
                 .objects
                 .ika_dwallet_coordinator_object_id;
+            let mut attempts: u32 = 0;
             loop {
                 match reader.verified_dwallet_coordinator_inner(id).await {
                     Ok(v) => return v,
                     Err(e) => {
-                        warn!(error = ?e, "verified_dwallet_coordinator_inner failed; retrying");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        attempts += 1;
+                        let backoff = verified_read_retry_backoff(attempts);
+                        if attempts <= 3 {
+                            warn!(error = ?e, attempts, "verified_dwallet_coordinator_inner failed; retrying");
+                        } else {
+                            warn!(
+                                error = ?e,
+                                attempts,
+                                backoff_secs = backoff.as_secs(),
+                                "verified_dwallet_coordinator_inner still failing — likely a \
+                                 pruned-and-uncached anchor (Sui-fullnode retention gap); raise \
+                                 fullnode retention or re-anchor"
+                            );
+                        }
+                        tokio::time::sleep(backoff).await;
                     }
                 }
             }
@@ -1378,5 +1416,22 @@ where
                 Err(err.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_read_backoff_doubles_then_caps_at_30s() {
+        assert_eq!(verified_read_retry_backoff(1), Duration::from_secs(1));
+        assert_eq!(verified_read_retry_backoff(2), Duration::from_secs(2));
+        assert_eq!(verified_read_retry_backoff(3), Duration::from_secs(4));
+        assert_eq!(verified_read_retry_backoff(4), Duration::from_secs(8));
+        assert_eq!(verified_read_retry_backoff(5), Duration::from_secs(16));
+        // 1<<5 == 32, capped to 30, and stays capped for all higher attempts.
+        assert_eq!(verified_read_retry_backoff(6), Duration::from_secs(30));
+        assert_eq!(verified_read_retry_backoff(1000), Duration::from_secs(30));
     }
 }
