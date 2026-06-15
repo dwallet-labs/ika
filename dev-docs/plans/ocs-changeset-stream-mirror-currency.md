@@ -30,14 +30,21 @@ Read alongside
 > bodies; the mirror client is `SuiMirrorTransport::changeset_page(from_seq,
 > limit)`, returning a contiguous prefix from `from_seq`.
 >
+> The mirror's **receiver loop** is built: `changeset_receiver::ChangesetReceiver`
+> pulls `changeset_page` from `highest_contiguous_seq + 1`, BLS-verifies each
+> entry (outside the index lock) and folds it via the contiguity-enforcing
+> `absorb`. `pump_changesets` is the testable tick; the loop drains until caught
+> up. Adversarially reviewed sound (termination, lock discipline, untrusted-source
+> gating).
+>
 > **Still not wired into the read path** — remaining *integration*, not new
-> invariants: (a) the mirror's **receiver loop** — a background task that pulls
-> `changeset_page` from `highest_contiguous_seq + 1` and feeds each entry
-> through `ChangesetIndex::absorb_verified`; (b) the **read path** calling
-> `ChangesetIndex::currency(...)` alongside the inclusion proof (and
-> `non_inclusion_binds_id` as the audit/fallback); (c) **bootstrap**
-> (range-request back to the oldest in-store committee epoch). Until (a)–(c)
-> land, no read path consumes a currency verdict.
+> invariants: (a) **spawn** the receiver on a mirrored/peer-only node (thread a
+> `SharedChangesetIndex` + `SuiMirrorTransport` + `CommitteeStore` through
+> `setup`); (b) the **read path** calling `ChangesetIndex::currency(...)`
+> alongside the inclusion proof (and `non_inclusion_binds_id` as the
+> audit/fallback); (c) **bootstrap** (choose `bootstrap_from` = oldest in-store
+> committee epoch's first checkpoint, or fall back to per-read until caught up).
+> Until (a)–(c) land, no read path consumes a currency verdict.
 
 ## Problem
 
