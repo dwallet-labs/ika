@@ -650,15 +650,17 @@ pub type VssHpkeEncryptionKeyAndProof = (curve25519::Value, VssHpkeKnowledgeOfDe
 /// three per-curve PVSS HPKE keys, and the Fast Schnorr (VSS) curve25519 HPKE
 /// key — all with their respective UC-secure proofs.
 ///
-/// **NOT** what Move stores. The Move field `MPCDataV1::mpc_data_bytes`
-/// always carries the bare `ClassGroupsEncryptionKeyAndProof`
-/// (mainnet-v1.1.8 shape). The bundle here
-/// is broadcast off-chain (consensus-signed announcement + P2P blob fetch),
-/// reaches consensus via `EpochMpcDataReadySignal`, and is then deserialized
-/// directly with `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` at
-/// the off-chain-overlay sites. No shape-tolerant fallback: chain reads use
-/// `ClassGroupsEncryptionKeyAndProof` directly, off-chain reads use this
-/// struct directly.
+/// The Move field `MPCDataV1::mpc_data_bytes` may carry EITHER shape: the
+/// `become-candidate` / `set-next-epoch-mpc-data` CLI publishes this full
+/// bundle by default and the bare `ClassGroupsEncryptionKeyAndProof`
+/// (mainnet-v1.1.8 shape) only under `--legacy-class-groups-only`. The same
+/// bundle is also broadcast off-chain (consensus-signed announcement + P2P
+/// blob fetch), reaches consensus via `EpochMpcDataReadySignal`, and is
+/// overlaid onto `Committee` at the off-chain sites. Both chain reads and
+/// off-chain reads decode shape-tolerantly via
+/// [`decode_validator_encryption_keys`], which accepts either shape — so a
+/// bundle-shape validator is never dropped from the load-bearing class-groups
+/// map by a strict decode.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ValidatorEncryptionKeysAndProofs {
     /// Existing class-groups CRT-decryption-key encryption key + proof of

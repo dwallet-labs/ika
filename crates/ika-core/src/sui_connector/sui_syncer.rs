@@ -11,7 +11,7 @@ use ika_config::node::NodeMode;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
-    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
+    Committee, CommitteeMembership, EpochId, StakeUnit, decode_validator_encryption_keys,
 };
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -662,34 +662,55 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        // Chain reads are the mainnet-v1.1.8 shape always: the Move-side
-        // `MPCDataV1::mpc_data_bytes` field stores bare
-        // `ClassGroupsEncryptionKeyAndProof`. The full bundle (PVSS + VSS HPKE)
-        // arrives via the off-chain validator-metadata pipeline (see PR #1721)
-        // and is overlaid onto Committee through a separate path. No
-        // try-then-fallback decode — one shape per path.
-        let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
+        // Chain reads are shape-tolerant: a validator's Move-side
+        // `MPCDataV1::mpc_data_bytes` is either the bare mainnet-v1.1.8
+        // `ClassGroupsEncryptionKeyAndProof` or the full version-3
+        // `ValidatorEncryptionKeysAndProofs` bundle — the `become-candidate` /
+        // `set-next-epoch-mpc-data` CLI publishes the bundle unless
+        // `--legacy-class-groups-only` is set. Decode whichever shape is present
+        // and populate every key map from it (PVSS + VSS HPKE are absent for the
+        // bare shape). When the off-chain validator-metadata pipeline (PR #1721)
+        // is available it overlays the full bundle above and we never reach
+        // here; this chain read is the fallback and must not silently drop a
+        // bundle-shape validator from the load-bearing class-groups map.
+        let decoded_per_validator: Vec<_> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id);
-
-                mpc_data.and_then(|mpc_data| {
-                    let class_groups_public_key_and_proof =
-                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
-                            &mpc_data.mpc_data_bytes(),
-                        );
-
-                    match class_groups_public_key_and_proof {
-                        Ok(key_and_proof) => Some((*name, key_and_proof)),
-                        Err(e) => {
-                            error!(
-                                "Failed to deserialize class groups public key and proof: {}",
-                                e
-                            );
-                            None
-                        }
-                    }
-                })
+                let mpc_data = committee_mpc_data.get(id)?;
+                let decoded = decode_validator_encryption_keys(&mpc_data.mpc_data_bytes());
+                if decoded.is_none() {
+                    error!(
+                        authority = ?name,
+                        "Failed to decode validator encryption keys from chain mpc_data \
+                         (neither bare class-groups nor version-3 bundle shape)"
+                    );
+                }
+                decoded.map(|decoded| (*name, decoded))
+            })
+            .collect();
+        let class_group_encryption_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .map(|(name, decoded)| (*name, decoded.class_groups.clone()))
+            .collect();
+        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .filter_map(|(name, decoded)| decoded.secp256k1_pvss.clone().map(|key| (*name, key)))
+            .collect();
+        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .filter_map(|(name, decoded)| decoded.secp256r1_pvss.clone().map(|key| (*name, key)))
+            .collect();
+        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .filter_map(|(name, decoded)| decoded.ristretto_pvss.clone().map(|key| (*name, key)))
+            .collect();
+        let vss_hpke_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
+            .iter()
+            .filter_map(|(name, decoded)| {
+                decoded
+                    .vss_hpke_public_key_and_proof
+                    .clone()
+                    .map(|key| (*name, key))
             })
             .collect();
 
@@ -700,12 +721,10 @@ where
                 .map(|(_, (name, stake))| (*name, *stake))
                 .collect(),
             class_group_encryption_keys_and_proofs,
-            // PVSS + VSS HPKE come from the off-chain pipeline (PR #1721), not
-            // from chain reads — empty here.
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
+            secp256k1_pvss_public_keys_and_proofs,
+            secp256r1_pvss_public_keys_and_proofs,
+            ristretto_pvss_public_keys_and_proofs,
+            vss_hpke_public_keys_and_proofs,
             quorum_threshold,
             validity_threshold,
         ))
