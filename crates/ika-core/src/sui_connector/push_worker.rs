@@ -34,6 +34,7 @@ use sui_types::object::Object;
 use tracing::{debug, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 
@@ -51,6 +52,11 @@ pub struct IkaCheckpointPusher {
     /// checkpoint's `(summary, entries)` is folded here so sui-state-direct
     /// consumers read it cache-first without a network round-trip.
     cache: SharedVerifiedStateCache,
+    /// Committee chain. Each end-of-epoch checkpoint this worker streams past
+    /// carries `committee[E+1]`, so we capture it here the moment we see it —
+    /// the chain is then never forced to reach back for a (possibly-pruned)
+    /// end-of-epoch checkpoint. The background ratchet remains the fallback.
+    committees: Arc<CommitteeStore>,
 }
 
 impl IkaCheckpointPusher {
@@ -61,6 +67,7 @@ impl IkaCheckpointPusher {
         packages: &IkaPackageConfig,
         poll_interval: Duration,
         cache: SharedVerifiedStateCache,
+        committees: Arc<CommitteeStore>,
     ) -> anyhow::Result<Self> {
         let mut ika_packages = HashSet::new();
         ika_packages.insert(packages.ika_package_id);
@@ -100,6 +107,7 @@ impl IkaCheckpointPusher {
             poll_interval,
             cursor,
             cache,
+            committees,
         })
     }
 
@@ -141,6 +149,11 @@ impl IkaCheckpointPusher {
         const CATCHUP_LOOKBACK: u64 = 100;
         if latest_seq.saturating_sub(self.cursor) > FAR_BEHIND_THRESHOLD {
             let new_cursor = latest_seq.saturating_sub(CATCHUP_LOOKBACK);
+            // Object state for the skipped span is sacrificed (a cache miss
+            // there falls through / degrades), but the committee chain must NOT
+            // skip an epoch boundary: capture every still-available end-of-epoch
+            // committee in the span we're about to jump over first.
+            self.capture_committees_through(new_cursor).await;
             warn!(
                 old_cursor = self.cursor,
                 new_cursor, latest_seq, "pusher cursor too far behind upstream — fast-forwarding"
@@ -162,6 +175,9 @@ impl IkaCheckpointPusher {
                     continue;
                 }
             };
+            // Capture the committee transition the moment we stream past an
+            // end-of-epoch checkpoint, so the chain never reaches back for it.
+            self.capture_committee(&data);
             if let Some((summary, entries)) = self.build_entries(&data)? {
                 // Fold this checkpoint's Ika-modified objects into the local
                 // verified state cache that sui-state-direct consumers read
@@ -178,6 +194,76 @@ impl IkaCheckpointPusher {
             }
         }
         Ok(())
+    }
+
+    /// Eagerly install the committee transition `data` commits to, if it is the
+    /// end-of-epoch checkpoint of the current head epoch. A no-op otherwise.
+    /// Best-effort: a verify failure is logged and left to the background
+    /// ratchet rather than aborting the push.
+    fn capture_committee(&self, data: &CheckpointData) {
+        match self.committees.install_next_from_checkpoint(data) {
+            Ok(CommitteeTransition::Installed(epoch)) => {
+                info!(
+                    epoch,
+                    seq = *data.checkpoint_summary.sequence_number(),
+                    "pusher captured Sui committee from streamed end-of-epoch checkpoint"
+                );
+            }
+            Ok(CommitteeTransition::NotNextTransition) => {}
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    seq = *data.checkpoint_summary.sequence_number(),
+                    "pusher committee capture failed; leaving to the background ratchet"
+                );
+            }
+        }
+    }
+
+    /// Drive the committee chain forward over a span we are about to
+    /// fast-forward the object cursor past, so no end-of-epoch committee is
+    /// skipped: walk each still-available end-of-epoch checkpoint from the
+    /// current head and install its committee, stopping at the first boundary
+    /// beyond `through_seq` or the first unavailable (pruned) checkpoint. The
+    /// latter is the accepted gap — the committee chain then falls back to the
+    /// ratchet / a re-anchor rather than silently skipping a boundary.
+    async fn capture_committees_through(&self, through_seq: CheckpointSequenceNumber) {
+        loop {
+            let head = self.committees.head_epoch();
+            let eoe_seq = match self.transport.last_checkpoint_of_epoch(head).await {
+                Ok(seq) => seq,
+                // The head epoch hasn't ended yet (or the boundary is
+                // unknowable) — nothing to capture ahead of `through_seq`.
+                Err(_) => break,
+            };
+            if eoe_seq > through_seq {
+                break;
+            }
+            let data = match self.transport.get_full_checkpoint(eoe_seq).await {
+                Ok(data) => data,
+                Err(e) => {
+                    warn!(
+                        head,
+                        eoe_seq,
+                        error = ?e,
+                        "pusher catch-up: end-of-epoch checkpoint unavailable; committee \
+                         chain falls back to the ratchet / re-anchor"
+                    );
+                    break;
+                }
+            };
+            match self.committees.install_next_from_checkpoint(&data) {
+                Ok(CommitteeTransition::Installed(epoch)) => {
+                    info!(
+                        epoch,
+                        eoe_seq, "pusher captured Sui committee during catch-up"
+                    );
+                }
+                // Not the next transition (head moved, or not end-of-epoch), or a
+                // verify failure — stop and let the ratchet handle it.
+                _ => break,
+            }
+        }
     }
 
     /// Returns `Some((summary, entries))` for Ika-relevant or end-of-epoch

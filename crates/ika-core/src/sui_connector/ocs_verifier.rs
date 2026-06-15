@@ -23,7 +23,9 @@ use tracing::{debug, error, info};
 
 use ika_sui_client::transport::{SuiTransport, TransportError};
 
-use crate::sui_connector::committee_store::CommitteeStore;
+use crate::sui_connector::committee_store::{
+    CommitteeStore, CommitteeTransition, CommitteeTransitionError,
+};
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 
 #[derive(thiserror::Error, Debug)]
@@ -206,37 +208,38 @@ impl OcsVerifyingClient {
                 }
                 Err(e) => return Err(e.into()),
             };
-            let committee = self
-                .committees
-                .committee(head)
-                .ok_or(OcsError::MissingCommittee(head))?;
-
-            data.checkpoint_summary
-                .verify_with_contents(&committee, Some(&data.checkpoint_contents))
-                .map_err(|e| OcsError::BadCheckpointSig(last_seq, e.to_string()))?;
-
-            if data.checkpoint_summary.end_of_epoch_data.is_none() {
-                return Err(OcsError::NotEndOfEpoch(last_seq));
+            // The single audited verify + derive + assert + persist step,
+            // shared with the pusher's eager capture
+            // (`CommitteeStore::install_next_from_checkpoint`). `data` is the
+            // end-of-epoch checkpoint of `head`, so this installs
+            // `committee[head + 1]`.
+            match self.committees.install_next_from_checkpoint(&data) {
+                Ok(CommitteeTransition::Installed(epoch)) => {
+                    info!(epoch, last_seq, "ratcheted Sui committee");
+                }
+                // The relay returned a checkpoint at `last_checkpoint_of_epoch(head)`
+                // that isn't the end-of-epoch checkpoint of `head` (wrong epoch
+                // or not end-of-epoch) — a broken proof chain, non-retryable.
+                Ok(CommitteeTransition::NotNextTransition) => {
+                    return Err(OcsError::NotEndOfEpoch(last_seq));
+                }
+                Err(CommitteeTransitionError::MissingCommittee(e)) => {
+                    return Err(OcsError::MissingCommittee(e));
+                }
+                Err(
+                    CommitteeTransitionError::BadSignature { error, .. }
+                    | CommitteeTransitionError::Extract { error, .. },
+                ) => {
+                    return Err(OcsError::BadCheckpointSig(last_seq, error));
+                }
+                Err(CommitteeTransitionError::EpochMismatch { expected, got }) => {
+                    return Err(OcsError::RatchetEpochMismatch {
+                        requested: expected,
+                        returned: got,
+                    });
+                }
+                Err(CommitteeTransitionError::Store(e)) => return Err(e.into()),
             }
-            let next = sui_light_client::proof::committee::extract_new_committee_info(
-                &data.checkpoint_summary,
-            )
-            .map_err(|e| OcsError::BadCheckpointSig(last_seq, e.to_string()))?;
-            // Defense-in-depth, mirroring the fallback path's check: a summary
-            // verified by committee[head] commits to committee[head + 1] by the
-            // protocol, but assert it explicitly so the endpoint/extraction
-            // can't jump the ratchet head past an uninstalled epoch.
-            if next.epoch != head + 1 {
-                return Err(OcsError::RatchetEpochMismatch {
-                    requested: head + 1,
-                    returned: next.epoch,
-                });
-            }
-            // Persist the verified summary at epoch `head` alongside the
-            // committee for `head + 1` it commits to.
-            self.committees
-                .install_next(next, Some(&data.checkpoint_summary))?;
-            info!(epoch = head + 1, last_seq, "ratcheted Sui committee");
         }
         Ok(())
     }

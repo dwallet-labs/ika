@@ -941,6 +941,15 @@ impl IkaNode {
             };
             let perpetual_for_push = perpetual_tables.clone();
             let metrics_for_push = ocs_metrics.clone();
+            // Shared committee chain: the pusher captures each end-of-epoch
+            // committee as it streams past, so the chain isn't forced to reach
+            // back for a pruned end-of-epoch checkpoint. Present on
+            // sui-state-direct (same branch that set `raw_transport_for_pushing`).
+            let committees_for_push = ratchet_opt
+                .as_ref()
+                .expect("ratchet present on sui-state-direct")
+                .committees()
+                .clone();
             tokio::spawn(async move {
                 use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
                 match IkaCheckpointPusher::new(
@@ -950,6 +959,7 @@ impl IkaNode {
                     &packages,
                     std::time::Duration::from_secs(2),
                     cache_for_push,
+                    committees_for_push,
                 )
                 .await
                 {

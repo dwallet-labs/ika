@@ -44,6 +44,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ika_types::error::{IkaError, IkaResult};
 use sui_light_client::proof::committee::extract_new_committee_info;
 use sui_types::committee::Committee as SuiCommittee;
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, VerifiedCheckpoint};
 use tracing::info;
 
@@ -64,6 +65,35 @@ pub enum SummaryVerifyError {
     MissingCommittee(u64),
     #[error("summary BLS verify (epoch {epoch}): {error}")]
     BadSignature { epoch: u64, error: String },
+}
+
+/// Result of [`CommitteeStore::install_next_from_checkpoint`].
+#[derive(Debug)]
+pub enum CommitteeTransition {
+    /// Installed `committee[E+1]`; the head advanced to the returned epoch.
+    Installed(u64),
+    /// The checkpoint is not the transition the store currently needs — it
+    /// isn't end-of-epoch, or its epoch isn't the current head (already
+    /// installed, or not yet reachable). A no-op; safe to ignore.
+    NotNextTransition,
+}
+
+/// Why [`CommitteeStore::install_next_from_checkpoint`] could not install the
+/// transition (the checkpoint *was* the next end-of-epoch boundary but failed a
+/// verification step). Mirrors the determinate, non-retryable conditions the
+/// ratchet surfaces.
+#[derive(thiserror::Error, Debug)]
+pub enum CommitteeTransitionError {
+    #[error("no Sui committee for epoch {0}")]
+    MissingCommittee(u64),
+    #[error("checkpoint summary BLS verify (epoch {epoch}): {error}")]
+    BadSignature { epoch: u64, error: String },
+    #[error("committee extraction (epoch {epoch}): {error}")]
+    Extract { epoch: u64, error: String },
+    #[error("committee epoch mismatch: expected {expected}, got {got}")]
+    EpochMismatch { expected: u64, got: u64 },
+    #[error(transparent)]
+    Store(#[from] IkaError),
 }
 
 pub enum CommitteeBootstrap {
@@ -256,5 +286,54 @@ impl CommitteeStore {
         self.head.store(epoch, Ordering::Relaxed);
         self.cache_committee(epoch, committee);
         Ok(())
+    }
+
+    /// The single audited committee-transition step, shared by the background
+    /// ratchet ([`super::ocs_verifier::OcsVerifyingClient`]) and the eager
+    /// capture in the checkpoint pusher ([`super::push_worker::IkaCheckpointPusher`]).
+    ///
+    /// Installs `committee[E+1]` *only* when `data` is the end-of-epoch
+    /// checkpoint of the current head epoch `E` (`summary.epoch() == head` and
+    /// `end_of_epoch_data.is_some()`); BLS-verifies it against `committee[E]`,
+    /// derives `committee[E+1]` from it, asserts the derived epoch is `E+1`, and
+    /// persists the verified summary. Any other checkpoint — not end-of-epoch,
+    /// or for an epoch already installed or not yet reached — is a
+    /// [`CommitteeTransition::NotNextTransition`] no-op, so this is idempotent
+    /// and safe to call on every streamed checkpoint.
+    pub fn install_next_from_checkpoint(
+        &self,
+        data: &CheckpointData,
+    ) -> Result<CommitteeTransition, CommitteeTransitionError> {
+        let head = self.head_epoch();
+        let epoch = data.checkpoint_summary.epoch();
+        if epoch != head || data.checkpoint_summary.end_of_epoch_data.is_none() {
+            return Ok(CommitteeTransition::NotNextTransition);
+        }
+        let committee = self
+            .committee(head)
+            .ok_or(CommitteeTransitionError::MissingCommittee(head))?;
+        data.checkpoint_summary
+            .verify_with_contents(&committee, Some(&data.checkpoint_contents))
+            .map_err(|e| CommitteeTransitionError::BadSignature {
+                epoch,
+                error: e.to_string(),
+            })?;
+        let next = extract_new_committee_info(&data.checkpoint_summary).map_err(|e| {
+            CommitteeTransitionError::Extract {
+                epoch,
+                error: e.to_string(),
+            }
+        })?;
+        // A summary verified by `committee[head]` commits to `committee[head+1]`
+        // by the protocol, but assert it explicitly so a faulty extraction can't
+        // jump the head past an uninstalled epoch.
+        if next.epoch != head + 1 {
+            return Err(CommitteeTransitionError::EpochMismatch {
+                expected: head + 1,
+                got: next.epoch,
+            });
+        }
+        self.install_next(next, Some(&data.checkpoint_summary))?;
+        Ok(CommitteeTransition::Installed(head + 1))
     }
 }
