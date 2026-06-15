@@ -61,16 +61,25 @@ Read alongside
 > after the membership binding) — each via the same `check_currency`, metered
 > under `proof_verify_failures_total{kind, not_current}` and tested.
 >
+> The index is **bounded by a retain window**: `ChangesetIndex::with_retain_window`
+> drops entries last modified more than `window` checkpoints behind the head and
+> raises the `Unknown` floor with them (sound — an aged-out object's valid
+> anchor is below the floor → per-read fallback; an amortized O(n) sweep runs
+> once the floor rises by a stride). Idle Ika objects stay covered while the
+> window exceeds the epoch length (production default `432_000` checkpoints,
+> tune per chain).
+>
 > **Remaining (refinements, not blockers):** (a) the bootstrap **retention
 > gap** — if the serving peer's fullnode has pruned below `bootstrap_from`, the
 > backfill stalls and currency stays dormant (safe `Unknown` fallback) for those
 > objects; a future bootstrap negotiation should clamp to the servable floor.
-> (b) The `ChangesetIndex` never prunes entries, so on a busy chain it grows
-> with every object ever modified in the folded range (a deleted id lingers with
-> `Deleted` status) — bound it (drop `Deleted`/`Wrapped` ids once below the
-> oldest possibly-served anchor, or Ika-filter the folded set). (c) The
-> `non_inclusion_binds_id` audit/fallback path (for an object whose `M` is
-> outside the folded range) can be wired opportunistically.
+> (b) On a busy chain the window still admits the full per-checkpoint modified
+> set, so the index (and the `changeset_page` bandwidth) scales with chain
+> activity — the complementary bound is **Ika-filtering the folded set**
+> (server-side, ship only Ika-relevant `object_states`); the window pruning
+> above composes with it. (c) The `non_inclusion_binds_id` audit/fallback path
+> (for an object whose `M` is outside the folded range) can be wired
+> opportunistically.
 
 ## Problem
 

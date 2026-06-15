@@ -159,6 +159,15 @@ pub struct ChangesetIndex {
     highest_seen: Option<CheckpointSequenceNumber>,
     /// Out-of-order changesets awaiting their predecessor.
     pending: BTreeMap<CheckpointSequenceNumber, PendingChangeset>,
+    /// Bound on memory: keep currency for objects last modified within this many
+    /// checkpoints of the contiguous head; drop older entries (raising the
+    /// `Unknown` floor with them, so reads anchored below it fall back to the
+    /// per-read defenses). `None` retains forever. Idle objects modified only at
+    /// epoch boundaries stay covered as long as the window exceeds the epoch
+    /// length. On a busy chain this still grows with the per-checkpoint modified
+    /// set; the complementary bound is Ika-filtering the folded set (see the
+    /// design doc).
+    retain_window: Option<u64>,
 }
 
 impl Default for ChangesetIndex {
@@ -175,7 +184,15 @@ impl ChangesetIndex {
             oldest_folded: None,
             highest_seen: None,
             pending: BTreeMap::new(),
+            retain_window: None,
         }
+    }
+
+    /// Bound the index to objects modified within `window` checkpoints of the
+    /// head (`None` = unbounded). See [`Self::retain_window`].
+    pub fn with_retain_window(mut self, window: Option<u64>) -> Self {
+        self.retain_window = window;
+        self
     }
 
     /// Highest checkpoint the contiguous frontier covers, if any.
@@ -323,7 +340,8 @@ impl ChangesetIndex {
         }
     }
 
-    /// After advancing the head, pull in any queued successors that now chain.
+    /// After advancing the head, pull in any queued successors that now chain,
+    /// then prune entries that have aged out of the retain window.
     fn drain_pending(&mut self) {
         while let Some((head_seq, head_digest)) = self.contiguous_head {
             let next = head_seq + 1;
@@ -342,6 +360,30 @@ impl ChangesetIndex {
                 None => break,
             }
         }
+        self.prune();
+    }
+
+    /// Drop entries whose last modification fell below `head - retain_window`,
+    /// raising `oldest_folded` (the `Unknown` floor) to match. Sound: an object
+    /// whose last modification is below the new floor has no modification at or
+    /// above it, so a valid inclusion proof for it anchors below the floor →
+    /// `Unknown` → per-read fallback; a forged anchor at/above the floor can't
+    /// produce a valid inclusion proof. Amortized: the O(n) sweep runs only once
+    /// the floor has risen by a stride, so the index over-retains by < a stride.
+    fn prune(&mut self) {
+        let (Some(window), Some((head, _))) = (self.retain_window, self.contiguous_head) else {
+            return;
+        };
+        let floor = head.saturating_sub(window);
+        let stride = (window / 8).max(1);
+        if self
+            .oldest_folded
+            .is_some_and(|oldest| floor < oldest.saturating_add(stride))
+        {
+            return;
+        }
+        self.index.retain(|_id, record| record.last_seq >= floor);
+        self.oldest_folded = Some(floor);
     }
 }
 
@@ -661,6 +703,32 @@ mod tests {
         // An id the folded range never modified, anchored inside it → the
         // inclusion proof contradicts the committee-signed changeset.
         assert_eq!(idx.currency(id(0xFE), 10), CurrencyVerdict::Inconsistent);
+    }
+
+    /// A retain window ages out old entries: once the head moves a window past
+    /// an object's last modification, its currency falls back to `Unknown` and
+    /// the index drops it; recent objects stay `Current`.
+    #[test]
+    fn the_retain_window_prunes_aged_out_entries() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let mut idx = ChangesetIndex::new().with_retain_window(Some(2));
+
+        // Chain 10..=15, each checkpoint modifying a distinct id (its seq byte).
+        let mut previous = None;
+        for seq in 10u64..=15 {
+            let object_states = states([modified(seq as u8, 1)]);
+            let (cert, digest) = signed_changeset(&committee, &keys, seq, previous, &object_states);
+            idx.absorb(&cert, object_states).unwrap();
+            previous = Some(digest);
+        }
+
+        // Head 15, window 2 → floor 13: ids modified at 10..12 have aged out.
+        assert_eq!(idx.currency(id(10), 10), CurrencyVerdict::Unknown);
+        assert_eq!(idx.currency(id(12), 12), CurrencyVerdict::Unknown);
+        // Within the window the index is still authoritative.
+        assert_eq!(idx.currency(id(13), 13), CurrencyVerdict::Current);
+        assert_eq!(idx.currency(id(15), 15), CurrencyVerdict::Current);
+        // Without a window, nothing is pruned (the default the other tests use).
     }
 
     // ---- verified absorb (integration bridge to the trust anchor) ----

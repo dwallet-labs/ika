@@ -329,9 +329,19 @@ pub async fn build_sui_connector_stack(
     // currency stays dormant on those objects, a safe `Unknown` fallback.
     const CHANGESET_PAGE_LIMIT: u32 = 64;
     const CHANGESET_POLL_INTERVAL: Duration = Duration::from_secs(2);
-    let changeset_index: Option<SharedChangesetIndex> = changeset_source
-        .is_some()
-        .then(|| Arc::new(RwLock::new(ChangesetIndex::new())));
+    // Keep currency for objects modified within this many checkpoints of the
+    // head; older entries are dropped (reads anchored below the floor fall back
+    // to the per-read defenses). Must exceed a few epochs so idle Ika objects
+    // (the System / Coordinator inner, modified at epoch boundaries) stay
+    // covered — heuristic, tune per chain. On a busy chain the per-checkpoint
+    // modified set still dominates; Ika-filtering the folded set is the
+    // complementary bound (see the design doc).
+    const CHANGESET_RETAIN_WINDOW: u64 = 432_000;
+    let changeset_index: Option<SharedChangesetIndex> = changeset_source.is_some().then(|| {
+        Arc::new(RwLock::new(
+            ChangesetIndex::new().with_retain_window(Some(CHANGESET_RETAIN_WINDOW)),
+        ))
+    });
     let changeset_receiver = match (changeset_source, &changeset_index) {
         (Some(source), Some(index)) => {
             let bootstrap_from = perpetual
