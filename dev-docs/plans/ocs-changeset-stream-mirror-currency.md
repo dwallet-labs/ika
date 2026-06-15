@@ -56,14 +56,21 @@ Read alongside
 > `seq + 1` (new `AuthorityPerpetualTables::oldest_sui_committee_summary`).
 > Direct nodes leave the receiver `None`.
 >
+> Currency now gates **all three read paths** — single-object (`verify_response`),
+> batch (`verified_objects`, per entry), and bag (`verified_bag_page`, per entry
+> after the membership binding) — each via the same `check_currency`, metered
+> under `proof_verify_failures_total{kind, not_current}` and tested.
+>
 > **Remaining (refinements, not blockers):** (a) the bootstrap **retention
 > gap** — if the serving peer's fullnode has pruned below `bootstrap_from`, the
 > backfill stalls and currency stays dormant (safe `Unknown` fallback) for those
 > objects; a future bootstrap negotiation should clamp to the servable floor.
-> (b) Currency currently gates the **single-object** read (`verify_response`);
-> extend it to the batch and bag paths. (c) The `non_inclusion_binds_id`
-> audit/fallback path (for an object whose `M` is outside the folded range) can
-> be wired opportunistically.
+> (b) The `ChangesetIndex` never prunes entries, so on a busy chain it grows
+> with every object ever modified in the folded range (a deleted id lingers with
+> `Deleted` status) — bound it (drop `Deleted`/`Wrapped` ids once below the
+> oldest possibly-served anchor, or Ika-filter the folded set). (c) The
+> `non_inclusion_binds_id` audit/fallback path (for an object whose `M` is
+> outside the folded range) can be wired opportunistically.
 
 ## Problem
 

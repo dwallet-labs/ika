@@ -271,6 +271,8 @@ impl OcsVerifiedReader {
                 self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
             self.record_verify_outcome_unit("batch_objects", &entry_result);
             entry_result?;
+            self.check_currency(entry.object.id(), seq)
+                .map_err(|e| self.record_fail("batch_objects", e))?;
             self.record_high_water(entry.object.id(), entry.object.version())
                 .map_err(|e| self.record_fail("batch_objects", e))?;
             if let Some(proof) = cache_proof {
@@ -475,6 +477,11 @@ impl OcsVerifiedReader {
                     },
                 ));
             }
+            // Currency: reject a relay serving a stale or already-deleted bag
+            // child (its id modified after this checkpoint). Out-of-range or
+            // unindexed anchors fall back (`Unknown`), as for direct reads.
+            self.check_currency(entry.object.id(), seq)
+                .map_err(|e| self.record_fail("bag_entry", e))?;
             if let Some(proof) = cache_proof {
                 let cache_entry = VerifiedObjectEntry {
                     object: cache_object,
@@ -1035,6 +1042,7 @@ mod tests {
     /// A provider that hands back one pre-staged response, then is empty.
     struct StagedProvider {
         object: Mutex<Option<VerifiedObjectResponse>>,
+        batch: Mutex<Option<BatchVerifiedObjectsResponse>>,
         bag: Mutex<Option<VerifiedBagPageResponse>>,
     }
 
@@ -1042,12 +1050,21 @@ mod tests {
         fn object(resp: VerifiedObjectResponse) -> Arc<Self> {
             Arc::new(Self {
                 object: Mutex::new(Some(resp)),
+                batch: Mutex::new(None),
+                bag: Mutex::new(None),
+            })
+        }
+        fn batch(resp: BatchVerifiedObjectsResponse) -> Arc<Self> {
+            Arc::new(Self {
+                object: Mutex::new(None),
+                batch: Mutex::new(Some(resp)),
                 bag: Mutex::new(None),
             })
         }
         fn bag(resp: VerifiedBagPageResponse) -> Arc<Self> {
             Arc::new(Self {
                 object: Mutex::new(None),
+                batch: Mutex::new(None),
                 bag: Mutex::new(Some(resp)),
             })
         }
@@ -1069,7 +1086,11 @@ mod tests {
             &self,
             _ids: &[ObjectID],
         ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
-            unreachable!("batch path not exercised by these fixtures")
+            Ok(self
+                .batch
+                .lock()
+                .take()
+                .expect("no staged batch_verified_objects response"))
         }
         async fn verified_bag_page(
             &self,
@@ -1485,5 +1506,97 @@ mod tests {
         let err = reader.verified_object(id).await.unwrap_err();
         assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
         assert_eq!(failure_count(&metrics, "object", "not_current"), 1);
+    }
+
+    // ---- currency on the batch and bag read paths ----
+
+    fn batch_response(
+        summary: CertifiedCheckpointSummary,
+        entry: VerifiedObjectEntry,
+        seq: CheckpointSequenceNumber,
+    ) -> BatchVerifiedObjectsResponse {
+        BatchVerifiedObjectsResponse {
+            summaries: BTreeMap::from([(seq, summary)]),
+            results: vec![Some(entry)],
+            claimed_latest_checkpoint_seq: seq,
+        }
+    }
+
+    /// Fold the index so an object's latest modification is checkpoint 101, then
+    /// have the relay serve the rolled-back v7 anchored at 100. Returns the
+    /// fixture for whichever read path the test drives.
+    fn rolled_back_fixture(
+        committee: &SuiCommittee,
+        keys: &[AuthorityKeyPair],
+        index: &SharedChangesetIndex,
+        id: ObjectID,
+        owner: Owner,
+    ) -> (Object, CertifiedCheckpointSummary, OCSInclusionProof) {
+        let stale = test_object(id, 7, owner.clone());
+        let (summary100, proof100) = sign_inclusion(committee, keys, 100, &[&stale], &stale);
+        let digest100 = summary100.data().digest();
+        index
+            .write()
+            .absorb(&summary100, object_states_of(&[&stale]))
+            .unwrap();
+        let current = test_object(id, 8, owner);
+        let states101 = object_states_of(&[&current]);
+        let summary101 = chained_summary(committee, keys, 101, Some(digest100), &states101);
+        index.write().absorb(&summary101, states101).unwrap();
+        (stale, summary100, proof100)
+    }
+
+    /// The currency gate also covers the batch path: a rolled-back entry in a
+    /// `verified_objects` batch is rejected.
+    #[tokio::test]
+    async fn currency_rejects_a_rolled_back_object_in_a_batch() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        let (stale, summary100, proof100) =
+            rolled_back_fixture(&committee, &keys, &index, id, address_owner(0xAA));
+
+        let entry = bag_entry(stale, proof100, 100, "", vec![]);
+        let provider = StagedProvider::batch(batch_response(summary100, entry, 100));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+        let reader = reader.with_changeset_index(Some(index));
+
+        let err = reader.verified_objects(&[id]).await.unwrap_err();
+        assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "batch_objects", "not_current"), 1);
+    }
+
+    /// And the bag path: a relay serving a stale (since-modified) bag child is
+    /// rejected, even though its membership binding to the bag is valid.
+    #[tokio::test]
+    async fn currency_rejects_a_stale_bag_entry() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        // The child is owned by the bag (membership binds); currency is the
+        // independent check that the served version is still current.
+        let (stale, summary100, proof100) = rolled_back_fixture(
+            &committee,
+            &keys,
+            &index,
+            entry_id,
+            Owner::ObjectOwner(bag_id.into()),
+        );
+
+        let provider = StagedProvider::bag(bag_response(
+            summary100,
+            bag_entry(stale, proof100, 100, "", vec![]),
+            100,
+        ));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+        let reader = reader.with_changeset_index(Some(index));
+
+        let err = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "bag_entry", "not_current"), 1);
     }
 }
