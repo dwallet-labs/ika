@@ -295,13 +295,13 @@ pub enum SuiTransportPlan {
 ///   consulted on an old-style config; ignored (but loggable) once
 ///   `data_source` is present.
 /// - `has_anchor`: whether a Sui trust anchor is configured (enables OCS).
-/// - `is_validator`: whether this node runs MPC and so needs a Sui event
-///   source; notifiers and fullnodes do not.
+/// - `mode`: the node's role. A validator runs MPC and needs a Sui event
+///   source; a notifier submits transactions; a fullnode does neither.
 pub fn select_sui_transport(
     data_source: Option<&SuiDataSource>,
     sui_rpc_url_present: bool,
     has_anchor: bool,
-    is_validator: bool,
+    mode: NodeMode,
 ) -> Result<SuiTransportPlan, String> {
     match data_source {
         // Old-style config (no `sui-data-source` section).
@@ -325,7 +325,7 @@ pub fn select_sui_transport(
             // A validator reads MPC events over JSON-RPC `query_events` (gRPC
             // cannot serve them); notifiers/fullnodes run no event ingestion and
             // read gRPC at the same fullnode endpoint.
-            Ok(if is_validator {
+            Ok(if mode.is_validator() {
                 SuiTransportPlan::LegacyJsonRpc
             } else {
                 SuiTransportPlan::Grpc
@@ -333,12 +333,33 @@ pub fn select_sui_transport(
         }
         // New-style config (`sui-data-source` present): all Sui I/O over gRPC.
         Some(source) => {
-            if is_validator && !has_anchor {
+            if mode.is_validator() && !has_anchor {
                 return Err(
                     "`sui-data-source` is set but no Sui trust anchor is configured: a \
                      validator on the gRPC path has no MPC event source without one (no JSON-RPC \
                      `query_events`, and the verified BagEventPump requires the anchor); set \
                      sui_trusted_anchor (or sui_unsafe_genesis_committee on private nets)"
+                        .to_string(),
+                );
+            }
+            // A notifier is the only role that submits transactions. Peer-only
+            // (`sui-state-mirrored` with no fallback) has no direct Sui uplink:
+            // its relayed submission path returns *unverified* effects bytes, so
+            // the design assumes notifiers never run peer-only. Enforce it here
+            // rather than let a misconfigured notifier submit through that path.
+            if mode.is_notifier()
+                && matches!(
+                    source,
+                    SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: None
+                    }
+                )
+            {
+                return Err(
+                    "a notifier is configured peer-only (`sui-state-mirrored` with no \
+                     `fallback-grpc-url`), but a notifier submits transactions and a peer-only \
+                     node has no direct Sui uplink — its relayed submission returns unverified \
+                     effects; set `fallback-grpc-url`, or use `sui-state-direct`"
                         .to_string(),
                 );
             }
@@ -1006,6 +1027,8 @@ mod tests {
         }
     }
 
+    const ALL_MODES: [NodeMode; 3] = [NodeMode::Validator, NodeMode::Fullnode, NodeMode::Notifier];
+
     // ---- old-style config (no `sui-data-source`) ----
 
     /// No endpoint at all is rejected before anything else — independent of
@@ -1013,11 +1036,11 @@ mod tests {
     #[test]
     fn no_endpoint_is_rejected() {
         for has_anchor in [false, true] {
-            for is_validator in [false, true] {
-                let err = select_sui_transport(None, false, has_anchor, is_validator).unwrap_err();
+            for mode in ALL_MODES {
+                let err = select_sui_transport(None, false, has_anchor, mode).unwrap_err();
                 assert!(
                     err.contains("no Sui endpoint configured"),
-                    "anchor={has_anchor} validator={is_validator}: {err}"
+                    "anchor={has_anchor} mode={mode}: {err}"
                 );
             }
         }
@@ -1029,11 +1052,15 @@ mod tests {
     #[test]
     fn old_style_routes_by_role() {
         assert_eq!(
-            select_sui_transport(None, true, false, true),
+            select_sui_transport(None, true, false, NodeMode::Validator),
             Ok(SuiTransportPlan::LegacyJsonRpc)
         );
         assert_eq!(
-            select_sui_transport(None, true, false, false),
+            select_sui_transport(None, true, false, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(None, true, false, NodeMode::Notifier),
             Ok(SuiTransportPlan::Grpc)
         );
     }
@@ -1042,11 +1069,11 @@ mod tests {
     /// anchor-verified OCS path runs over gRPC) — for every role.
     #[test]
     fn anchor_without_data_source_is_rejected() {
-        for is_validator in [false, true] {
-            let err = select_sui_transport(None, true, true, is_validator).unwrap_err();
+        for mode in ALL_MODES {
+            let err = select_sui_transport(None, true, true, mode).unwrap_err();
             assert!(
                 err.contains("trust anchor is configured but `sui-data-source` is not"),
-                "validator={is_validator}: {err}"
+                "mode={mode}: {err}"
             );
         }
     }
@@ -1058,7 +1085,8 @@ mod tests {
     #[test]
     fn new_style_validator_without_anchor_is_rejected() {
         for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
-            let err = select_sui_transport(Some(&source), false, false, true).unwrap_err();
+            let err =
+                select_sui_transport(Some(&source), false, false, NodeMode::Validator).unwrap_err();
             assert!(
                 err.contains("no Sui trust anchor is configured"),
                 "{source:?}: {err}"
@@ -1070,50 +1098,86 @@ mod tests {
     #[test]
     fn direct_and_mirrored_with_fallback_use_grpc() {
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, true, true),
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(Some(&mirrored_with_fallback()), false, true, true),
+            select_sui_transport(
+                Some(&mirrored_with_fallback()),
+                false,
+                true,
+                NodeMode::Validator
+            ),
             Ok(SuiTransportPlan::Grpc)
         );
     }
 
-    /// `sui-state-mirrored` with no fallback is the peer-only relay path.
+    /// `sui-state-mirrored` with no fallback is the peer-only relay path for a
+    /// validator or a fullnode (neither submits transactions).
     #[test]
     fn peer_only_uses_the_relay() {
         assert_eq!(
-            select_sui_transport(Some(&peer_only_source()), false, true, true),
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Validator),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
     }
 
-    /// A non-validator (notifier/fullnode) is exempt from the anchor
-    /// requirement and routes purely on the data-source variant. (A peer-only
-    /// non-validator stays peer-only — a separate config-validation gap, not
-    /// re-decided here.)
+    /// A notifier submits transactions, which a peer-only node can't do safely
+    /// (its relayed submission returns unverified effects) — so a notifier
+    /// configured peer-only is rejected, while a notifier with a fallback (or
+    /// direct) uplink is fine.
     #[test]
-    fn non_validator_is_exempt_from_the_anchor_requirement() {
+    fn a_notifier_configured_peer_only_is_rejected() {
+        let err = select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Notifier)
+            .unwrap_err();
+        assert!(
+            err.contains("notifier") && err.contains("peer-only"),
+            "{err}"
+        );
         assert_eq!(
-            select_sui_transport(Some(&direct()), false, false, false),
+            select_sui_transport(
+                Some(&mirrored_with_fallback()),
+                false,
+                true,
+                NodeMode::Notifier
+            ),
             Ok(SuiTransportPlan::Grpc)
         );
         assert_eq!(
-            select_sui_transport(Some(&peer_only_source()), false, false, false),
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Notifier),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// A fullnode is exempt from the anchor requirement and routes purely on the
+    /// data-source variant — including peer-only, which it may use (it never
+    /// submits).
+    #[test]
+    fn a_fullnode_is_exempt_from_the_anchor_requirement() {
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, false, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, false, NodeMode::Fullnode),
             Ok(SuiTransportPlan::PeerOnlyRelay)
         );
     }
 
     /// Once `sui-data-source` is present, the legacy `sui-rpc-url` field never
-    /// changes the decision — the new-style section always wins.
+    /// changes the decision — the new-style section always wins, for every role.
     #[test]
     fn data_source_presence_ignores_the_legacy_rpc_url() {
         for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
-            for is_validator in [false, true] {
+            for mode in ALL_MODES {
                 assert_eq!(
-                    select_sui_transport(Some(&source), true, true, is_validator),
-                    select_sui_transport(Some(&source), false, true, is_validator),
-                    "{source:?} validator={is_validator}: rpc-url presence must not matter"
+                    select_sui_transport(Some(&source), true, true, mode),
+                    select_sui_transport(Some(&source), false, true, mode),
+                    "{source:?} mode={mode}: rpc-url presence must not matter"
                 );
             }
         }

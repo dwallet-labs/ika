@@ -485,7 +485,7 @@ impl IkaNode {
             config.sui_connector_config.sui_data_source.as_ref(),
             config.sui_connector_config.sui_rpc_url.is_some(),
             has_anchor,
-            mode.is_validator(),
+            mode,
         )
         .map_err(|e| anyhow!(e))?;
         let legacy_json_rpc = matches!(plan, SuiTransportPlan::LegacyJsonRpc);
