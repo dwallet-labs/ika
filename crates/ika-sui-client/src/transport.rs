@@ -141,6 +141,15 @@ pub trait SuiTransport: Send + Sync {
         id: ObjectID,
         version: SequenceNumber,
     ) -> Result<Object, TransportError>;
+    /// Fetch all of `ids` in one round-trip. **Same-order, same-length,
+    /// all-or-nothing:** on success the returned vec has exactly one object per
+    /// id, positionally aligned with `ids` (callers correlate by `.zip(ids)`).
+    /// If *any* id is missing or deleted the whole call fails with a
+    /// [`TransportError`] rather than returning a short or reordered vec — so a
+    /// successful result is always `len() == ids.len()` in input order, and
+    /// callers never silently mis-correlate. (The gRPC backend gets this from
+    /// the underlying client's all-or-nothing collect; the mirror surface
+    /// doesn't serve it — use `ProofProvider::batch_verified_objects`.)
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError>;
     /// Owned SUI gas-coin object refs for `address`. Mirrors the JSON-RPC
     /// `get_gas_objects` selection: filters owned objects to the SUI
