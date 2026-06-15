@@ -1,6 +1,10 @@
 # OCS direct-validator self-sufficiency (finding 17 durable fix)
 
-Status: plan, not yet implemented. Resolves review finding 17
+Status: **Slices 1, 2, 4, 5 done and cluster-validated** — finding 17 is resolved
+for direct nodes (the topology where it was observed). **Slice 3** (serve the
+ratchet/read primitives to *mirrored* peers from the retained store) is
+**deferred** as forward-looking — mirrored peers weren't part of the finding-17
+topology. Resolves review finding 17
 ([`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
 
 ## Problem

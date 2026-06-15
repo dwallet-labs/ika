@@ -286,9 +286,21 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     (`verified_system_inner`), `…/proof_provider.rs`, `…/verified_state_cache.rs`
     (in-memory only — `RwLock<HashMap>`, no DB), `…/push_worker.rs`.
 
-    RESOLUTION: open; durable fix chosen (make the direct validator self-sufficient
-    so the Sui fullnode is dispensable in steady state) — implementation plan in
-    [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md).
+    RESOLUTION: **resolved for direct nodes** (the all-`SuiStateDirect` topology
+    where finding 17 was observed) via the direct-validator self-sufficiency plan
+    [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md),
+    Slices 1/2/4/5 — cluster-validated green. (a) Eager end-of-epoch committee
+    capture from the pusher stream, (b) the verified state cache persisted to DB
+    with a config-driven retention pruner (restart resumes from DB, not a pruned
+    fullnode), (c) graceful degrade — the per-read currency gate already returns
+    `Unknown`/fallback, and the mandatory inner reads back off + escalate one clear
+    retention-gap diagnostic (they can't degrade — the MPC pipeline needs them),
+    and (d) a deterministic mock-transport regression guard (eager-capture + skip;
+    the real-Sui-pruning cluster test was infeasible — the in-process harness
+    doesn't expose Sui-fullnode retention). **Deferred (forward-looking, not
+    needed for direct nodes):** serving the ratchet/read primitives to *mirrored*
+    peers from the retained store (plan Slice 3) — mirrored peers weren't part of
+    the finding-17 topology. Below is the original plan summary.
     The end-of-epoch checkpoint
     *carries the next committee* (`EndOfEpochData::next_epoch_committee`,
     `messages_checkpoint.rs:304-314`) and ika already extracts and **DB-persists**
@@ -409,15 +421,19 @@ single-object substitution gap, comparable in class to finding 1).
 
 DONE: all 16 enumerated audit findings are resolved or obsolete, and the
 recovered **K1–K9** are all closed — K1–K5 fixed, K6/K7 documented, K8/K9
-accept-and-documented (their real fix is the future redesign below). One
-post-audit runtime finding (**17**, discovered 2026-06-15) remains open.
+accept-and-documented (their real fix is the future redesign below). The one
+post-audit runtime finding (**17**, discovered 2026-06-15) is **resolved for
+direct nodes**.
 
-1. **[high] Sui-retention hard-fail (finding 17)** — the verified-read path
-   hard-fails (ratchet `ProofChainBroken` + `verified_system_inner` `NotFound`)
-   once a long-running localnet prunes the history it needs, hanging the TS
-   integration suite. Unblock CI with `allow_unverified_committee_fallback` /
-   fullnode retention / epoch length; durable fix is per-read fallback +
-   retention-floor-clamped bootstrap.
+1. **[resolved — direct nodes] Sui-retention hard-fail (finding 17)** — the
+   verified-read path hard-failed (ratchet `ProofChainBroken` +
+   `verified_system_inner` `NotFound`) once a long-running localnet pruned the
+   history it needs. Fixed for the all-`SuiStateDirect` topology by Slices 1/2/4/5
+   of [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md)
+   (eager EoE committee capture, DB-persisted cache + retention pruner, executor
+   backoff/diagnose, mock-transport regression guard) — cluster-validated. The
+   forward-looking remainder (serve mirrored peers from the retained store, Slice
+   3) is deferred — mirrored peers weren't part of the finding-17 topology.
 2. **Mirrored-node currency redesign** (future feature, not an audit finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
    and its bandwidth-bounding successor
