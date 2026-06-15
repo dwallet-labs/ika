@@ -119,9 +119,15 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
     // run stays tractable. (The notifier stale-gas wedge that once forced
     // 10-minute epochs is fixed on this branch; the 3-minute workload test
     // is the floor evidence.)
+    // Override via `EPOCH_DURATION_MS` to give a loaded CI runner more slack.
+    let epoch_duration_ms = std::env::var("EPOCH_DURATION_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300_000);
+
     Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
-        .with_epoch_duration_ms(300_000)
+        .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
         // The committee dips to 3 after the first removal; the protocol
         // default min_validator_count = 4 would reject it at genesis.
