@@ -717,11 +717,6 @@ impl OcsVerifiedReader {
                 anchored_seq,
                 verdict: "deleted/wrapped at this checkpoint",
             }),
-            CurrencyVerdict::Inconsistent => Err(ReaderError::NotCurrent {
-                id,
-                anchored_seq,
-                verdict: "inconsistent with the committee-signed changeset",
-            }),
         }
     }
 

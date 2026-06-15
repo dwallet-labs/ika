@@ -74,10 +74,30 @@ Read alongside
 > backfill stalls and currency stays dormant (safe `Unknown` fallback) for those
 > objects; a future bootstrap negotiation should clamp to the servable floor.
 > (b) On a busy chain the window still admits the full per-checkpoint modified
-> set, so the index (and the `changeset_page` bandwidth) scales with chain
-> activity — the complementary bound is **Ika-filtering the folded set**
-> (server-side, ship only Ika-relevant `object_states`); the window pruning
-> above composes with it. (c) The `non_inclusion_binds_id` audit/fallback path
+> set, so the index memory scales with chain activity. The complementary bound
+> is **Ika-filtering the folded set**, built here as `ChangesetIndex::with_fold_filter`:
+> the server still ships the *full* `object_states` (the artifacts-digest binding
+> — and thus omission-detection — is preserved), but the node declines to *index*
+> ids outside a stable filter set, bounding memory to the filter. Soundness rests
+> on the filter being **stable**: every checkpoint that modifies a filtered-in id
+> folds it, so its record always reflects its latest modification; a filtered-out
+> id is simply never indexed and `currency` returns `Unknown` (per-read fallback,
+> never a false rejection) — which is why the `Inconsistent` verdict was removed
+> (a not-indexed id is `Unknown`, not a contradiction).
+>
+> **Production keeps `filter = None` deliberately.** A *static* boot-time filter
+> can cover only statically-known ids (the System / Coordinator roots and a
+> bounded prefix of their derived versioned-inner children). But the currency gate
+> was extended to the **bag path** (`verified_bag_page`), whose entries are
+> dwallet objects — a fully dynamic, unbounded id set. A static filter would
+> silently downgrade every bag-entry currency check to `Unknown`, gutting the
+> coverage the gate was added for. So a static filter trades correctness-of-coverage
+> for a memory bound. The mechanism stays available for constrained, fixed-id-set
+> deployments; the real bound for the *dynamic* read set is the **subscription-based
+> changeset stream** (the node subscribes to a known id-set and the server ships,
+> per checkpoint and per subscribed id, an inclusion *or* a `non_inclusion_binds_id`
+> non-inclusion proof — bounding bandwidth *and* memory without losing omission
+> detection). (c) The `non_inclusion_binds_id` audit/fallback path
 > (for an object whose `M` is outside the folded range) can be wired
 > opportunistically.
 

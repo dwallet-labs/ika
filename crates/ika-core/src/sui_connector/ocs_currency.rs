@@ -17,7 +17,7 @@
 //! an **id-binding** check on non-inclusion proofs (the design's "Blocker 1").
 //! Until it exists, no read path may consume a non-inclusion proof.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::sui_connector::committee_store::CommitteeStore;
 use sui_light_client::proof::ocs::OCSNonInclusionProof;
@@ -115,12 +115,10 @@ pub enum CurrencyVerdict {
     Stale,
     /// The id was deleted/wrapped at `M` — not a live object to serve.
     NotLive,
-    /// The frontier doesn't cover `M` yet — caller must fall back to per-read
-    /// verification (no currency claim either way).
+    /// The frontier doesn't cover `M`, or the id isn't tracked (outside the
+    /// fold filter) — no currency claim either way; the caller falls back to
+    /// per-read verification.
     Unknown,
-    /// The proof anchors a modification of the id at `M` that the folded,
-    /// committee-signed changeset for that range doesn't corroborate.
-    Inconsistent,
 }
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
@@ -168,6 +166,14 @@ pub struct ChangesetIndex {
     /// set; the complementary bound is Ika-filtering the folded set (see the
     /// design doc).
     retain_window: Option<u64>,
+    /// Restrict folding to this id set (`None` = fold every id). The full
+    /// changeset is still verified against the summary's artifacts digest
+    /// (no omission), but only filtered-in ids enter the index — bounding
+    /// memory to the objects this node reads (the mutable Ika roots + their
+    /// versioned inners). Reads of filtered-out ids get `Unknown` (fallback),
+    /// which is sound because the filter is *stable*: every checkpoint that
+    /// modifies a filtered-in id folds it, so its record is always its latest.
+    fold_filter: Option<HashSet<ObjectID>>,
 }
 
 impl Default for ChangesetIndex {
@@ -185,6 +191,7 @@ impl ChangesetIndex {
             highest_seen: None,
             pending: BTreeMap::new(),
             retain_window: None,
+            fold_filter: None,
         }
     }
 
@@ -192,6 +199,14 @@ impl ChangesetIndex {
     /// head (`None` = unbounded). See [`Self::retain_window`].
     pub fn with_retain_window(mut self, window: Option<u64>) -> Self {
         self.retain_window = window;
+        self
+    }
+
+    /// Fold only ids in `filter` (`None` = fold all). The filter must be a
+    /// *stable* superset of the ids this node reads currency on (filtered-out
+    /// ids fall back to `Unknown`). See [`Self::fold_filter`].
+    pub fn with_fold_filter(mut self, filter: Option<HashSet<ObjectID>>) -> Self {
+        self.fold_filter = filter;
         self
     }
 
@@ -311,10 +326,11 @@ impl ChangesetIndex {
                 IdStatus::Deleted | IdStatus::Wrapped => CurrencyVerdict::NotLive,
             },
             Some(record) if record.last_seq > anchored_seq => CurrencyVerdict::Stale,
-            // last_seq < anchored_seq, or the id never appears in the folded
-            // range: the inclusion proof claims `anchored_seq` modified the id,
-            // but the committee-signed changeset for that range disagrees.
-            _ => CurrencyVerdict::Inconsistent,
+            // The id isn't tracked (outside the fold filter) or its record
+            // predates the anchor (can't happen for a filtered-in id with a
+            // valid inclusion proof — its record always reflects its latest
+            // modification). Either way the index can't speak to it: fall back.
+            _ => CurrencyVerdict::Unknown,
         }
     }
 
@@ -330,6 +346,13 @@ impl ChangesetIndex {
         // Folded strictly in increasing contiguous order, so `seq` only grows;
         // the last write for an id (its highest modifying checkpoint) wins.
         for (id, (_version, digest)) in object_states {
+            if self
+                .fold_filter
+                .as_ref()
+                .is_some_and(|set| !set.contains(id))
+            {
+                continue;
+            }
             self.index.insert(
                 *id,
                 IdRecord {
@@ -680,10 +703,11 @@ mod tests {
         assert_eq!(idx.currency(id(0xB2), 11), CurrencyVerdict::NotLive);
     }
 
-    /// Currency is `Unknown` outside the folded range and `Inconsistent` when
-    /// the anchor claims a modification the folded chain doesn't corroborate.
+    /// Currency is `Unknown` outside the folded range, and for an id the index
+    /// doesn't track (anchored in-range but never folded — the inclusion proof
+    /// already validated the read, so currency simply falls back).
     #[test]
-    fn currency_unknown_and_inconsistent() {
+    fn currency_unknown_outside_range_or_untracked() {
         let (committee, keys) = Committee::new_simple_test_committee();
         let mut idx = ChangesetIndex::new();
 
@@ -700,9 +724,36 @@ mod tests {
         // Outside the folded [10, 11] range → fall back to per-read.
         assert_eq!(idx.currency(id(0xA1), 9), CurrencyVerdict::Unknown);
         assert_eq!(idx.currency(id(0xA1), 12), CurrencyVerdict::Unknown);
-        // An id the folded range never modified, anchored inside it → the
-        // inclusion proof contradicts the committee-signed changeset.
-        assert_eq!(idx.currency(id(0xFE), 10), CurrencyVerdict::Inconsistent);
+        // An id the index never tracked, anchored inside the range → fall back.
+        assert_eq!(idx.currency(id(0xFE), 10), CurrencyVerdict::Unknown);
+    }
+
+    /// The fold filter bounds the index to a chosen id set: a filtered-in id is
+    /// folded and answers currency authoritatively; a filtered-out id is never
+    /// folded and falls back to `Unknown` — while the full changeset is still
+    /// verified each checkpoint (the filter doesn't weaken the artifacts binding).
+    #[test]
+    fn the_fold_filter_restricts_what_is_indexed() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let tracked = id(0xA1);
+        let untracked = id(0xB2);
+        let mut idx = ChangesetIndex::new().with_fold_filter(Some(HashSet::from([tracked])));
+
+        // Both ids are in every changeset; only the tracked one is folded.
+        let s10 = states([modified(0xA1, 1), modified(0xB2, 1)]);
+        let s11 = states([modified(0xA1, 2), modified(0xB2, 2)]);
+        let (c10, d10) = signed_changeset(&committee, &keys, 10, None, &s10);
+        let (c11, _d11) = signed_changeset(&committee, &keys, 11, Some(d10), &s11);
+        idx.absorb(&c10, s10).unwrap();
+        idx.absorb(&c11, s11).unwrap();
+
+        // Tracked: authoritative. It was modified again at 11, so a read
+        // anchored at 10 is stale; the latest (11) is current.
+        assert_eq!(idx.currency(tracked, 11), CurrencyVerdict::Current);
+        assert_eq!(idx.currency(tracked, 10), CurrencyVerdict::Stale);
+        // Untracked: never folded → fall back, never a false rejection.
+        assert_eq!(idx.currency(untracked, 10), CurrencyVerdict::Unknown);
+        assert_eq!(idx.currency(untracked, 11), CurrencyVerdict::Unknown);
     }
 
     /// A retain window ages out old entries: once the head moves a window past
