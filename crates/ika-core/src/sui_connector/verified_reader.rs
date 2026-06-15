@@ -38,7 +38,9 @@ use ika_network::proof_provider::{ProofProvider, VerifiedBagPageRequest, Verifie
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
 use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner};
 
+use crate::sui_connector::changeset_receiver::SharedChangesetIndex;
 use crate::sui_connector::committee_store::{CommitteeStore, SummaryVerifyError};
+use crate::sui_connector::ocs_currency::CurrencyVerdict;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use ika_network::proof_provider::VerifiedObjectEntry;
@@ -79,6 +81,15 @@ pub enum ReaderError {
         bag_id: ObjectID,
         entry: ObjectID,
         owner: String,
+    },
+    #[error(
+        "not current: object {id} authenticated at checkpoint {anchored_seq} is {verdict} per the \
+         committee-signed changeset stream"
+    )]
+    NotCurrent {
+        id: ObjectID,
+        anchored_seq: CheckpointSequenceNumber,
+        verdict: &'static str,
     },
 }
 
@@ -128,6 +139,14 @@ pub struct OcsVerifiedReader {
     /// is too stale (e.g. a stalled pusher), so `try_cache_hit` falls through
     /// to the network instead of serving frozen state. `None` disables it.
     staleness_bound: Option<u64>,
+    /// Committee-signed changeset index, on a mirrored / peer-only node. When
+    /// present, a verified read additionally proves *currency* against it: the
+    /// inclusion proof authenticates `X@V` at its last-modifying checkpoint `M`,
+    /// and this index says whether `M` is still `X`'s latest version. `None` on
+    /// sui-state-direct (its cache is already a complete, contiguous fold) and
+    /// before the changeset receiver is wired — currency then falls back to the
+    /// per-read high-water + freshness defenses.
+    changeset_index: Option<SharedChangesetIndex>,
 }
 
 impl OcsVerifiedReader {
@@ -150,7 +169,16 @@ impl OcsVerifiedReader {
             cache_first,
             observed_upstream_head: AtomicU64::new(0),
             staleness_bound,
+            changeset_index: None,
         }
+    }
+
+    /// Attach a changeset index (a mirrored / peer-only node) so verified reads
+    /// also enforce currency. Builder: `None` leaves the reader on the per-read
+    /// defenses, which is the direct-node default.
+    pub fn with_changeset_index(mut self, changeset_index: Option<SharedChangesetIndex>) -> Self {
+        self.changeset_index = changeset_index;
+        self
     }
 
     /// Fold a provider-reported upstream head into `observed_upstream_head`
@@ -630,6 +658,12 @@ impl OcsVerifiedReader {
         let cache_summary = resp.summary.clone();
         let cache_object = resp.object.clone();
         self.verify_proof_inner(&resp.object, resp.proof, resp.summary)?;
+        // The proof authenticates `X@V` at its last-modifying checkpoint
+        // `proof_seq` — existence, not currency. If a changeset index is wired,
+        // prove `proof_seq` is still `X`'s latest version (catches a relay
+        // serving a validly-signed-but-rolled-back version that high-water
+        // alone can't, since the version never decreased on this node).
+        self.check_currency(resp.object.id(), proof_seq)?;
         self.record_high_water(resp.object.id(), resp.object.version())?;
         // Shadow-populate the cache with the just-verified entry. Step 2
         // only writes; readers still hit the network.
@@ -647,6 +681,41 @@ impl OcsVerifiedReader {
             object: resp.object,
             source_checkpoint_seq: proof_seq,
         })
+    }
+
+    /// Currency gate: with a changeset index wired, reject an object whose
+    /// authenticating checkpoint `anchored_seq` is no longer its latest. With
+    /// no index — direct nodes, or before the receiver has caught up — this is
+    /// a no-op and currency rests on the per-read high-water + freshness
+    /// defenses. `Unknown` (the anchor is outside the folded range) also falls
+    /// back, never rejecting: the index simply can't speak to it yet.
+    fn check_currency(
+        &self,
+        id: ObjectID,
+        anchored_seq: CheckpointSequenceNumber,
+    ) -> Result<(), ReaderError> {
+        let Some(index) = &self.changeset_index else {
+            return Ok(());
+        };
+        let verdict = index.read().currency(id, anchored_seq);
+        match verdict {
+            CurrencyVerdict::Current | CurrencyVerdict::Unknown => Ok(()),
+            CurrencyVerdict::Stale => Err(ReaderError::NotCurrent {
+                id,
+                anchored_seq,
+                verdict: "stale (modified after this checkpoint)",
+            }),
+            CurrencyVerdict::NotLive => Err(ReaderError::NotCurrent {
+                id,
+                anchored_seq,
+                verdict: "deleted/wrapped at this checkpoint",
+            }),
+            CurrencyVerdict::Inconsistent => Err(ReaderError::NotCurrent {
+                id,
+                anchored_seq,
+                verdict: "inconsistent with the committee-signed changeset",
+            }),
+        }
     }
 
     fn verify_proof_inner(
@@ -761,6 +830,7 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
         ReaderError::Decode(_) => "decode",
         ReaderError::UnsupportedVersion { .. } => "unsupported_version",
         ReaderError::BagMembership { .. } => "bag_membership",
+        ReaderError::NotCurrent { .. } => "not_current",
     }
 }
 
@@ -797,6 +867,7 @@ mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::sui_connector::committee_store::CommitteeBootstrap;
+    use crate::sui_connector::ocs_currency::ChangesetIndex;
     use crate::sui_connector::verified_state_cache::VerifiedStateCache;
     use async_trait::async_trait;
     use ika_network::proof_provider::{BatchVerifiedObjectsResponse, VerifiedBagPageResponse};
@@ -806,8 +877,9 @@ mod tests {
     use sui_types::base_types::ObjectDigest;
     use sui_types::committee::Committee as SuiCommittee;
     use sui_types::crypto::AuthorityKeyPair;
-    use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::digests::{CheckpointContentsDigest, CheckpointDigest};
     use sui_types::gas::GasCostSummary;
+    use sui_types::message_envelope::Message;
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
@@ -1315,5 +1387,103 @@ mod tests {
             "got {err:?}"
         );
         assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+    }
+
+    // ---- read-path currency gate (changeset-stream wiring) ----
+
+    fn object_states_of(leaves: &[&Object]) -> BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)> {
+        leaves
+            .iter()
+            .map(|o| {
+                let (id, version, digest) = o.compute_object_reference();
+                (id, (version, digest))
+            })
+            .collect()
+    }
+
+    /// A committee-signed changeset summary chained onto `previous` (for folding
+    /// a second checkpoint into the index; the inclusion-proof fixture uses
+    /// `sign_inclusion`).
+    fn chained_summary(
+        committee: &SuiCommittee,
+        keypairs: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        previous: Option<CheckpointDigest>,
+        object_states: &BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
+    ) -> CertifiedCheckpointSummary {
+        let artifacts = CheckpointArtifacts::from_object_states(object_states.clone());
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: previous,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts.digest().unwrap())],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keypairs, committee)
+    }
+
+    /// With a changeset index wired, a read whose authenticating checkpoint is
+    /// the id's latest modification is accepted — currency holds.
+    #[tokio::test]
+    async fn currency_accepts_a_current_object() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let object = test_object(id, 7, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&object], &object);
+
+        // Index: the id was last modified at checkpoint 100.
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        index
+            .write()
+            .absorb(&summary, object_states_of(&[&object]))
+            .unwrap();
+
+        let provider = StagedProvider::object(object_response(object, summary, proof, 100));
+        let (_dir, reader, _metrics) = reader_with(provider, committee, None);
+        let reader = reader.with_changeset_index(Some(index));
+
+        let verified = reader
+            .verified_object(id)
+            .await
+            .expect("a current object must verify");
+        assert_eq!(verified.object.id(), id);
+    }
+
+    /// The currency payoff: a relay serving a validly-signed but *rolled-back*
+    /// version is rejected because the index shows the id was modified again at
+    /// a later checkpoint — even though the version never decreased on this
+    /// node, so the high-water gate alone would not catch it.
+    #[tokio::test]
+    async fn currency_rejects_a_rolled_back_object() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let stale = test_object(id, 7, address_owner(0xAA));
+        let (summary100, proof100) = sign_inclusion(&committee, &keys, 100, &[&stale], &stale);
+
+        // Fold: the id at v7 at checkpoint 100, then modified to v8 at 101.
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        let digest100 = summary100.data().digest();
+        index
+            .write()
+            .absorb(&summary100, object_states_of(&[&stale]))
+            .unwrap();
+        let current = test_object(id, 8, address_owner(0xAA));
+        let states101 = object_states_of(&[&current]);
+        let summary101 = chained_summary(&committee, &keys, 101, Some(digest100), &states101);
+        index.write().absorb(&summary101, states101).unwrap();
+
+        // The relay serves the stale v7, validly anchored at 100.
+        let provider = StagedProvider::object(object_response(stale, summary100, proof100, 100));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+        let reader = reader.with_changeset_index(Some(index));
+
+        let err = reader.verified_object(id).await.unwrap_err();
+        assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "object", "not_current"), 1);
     }
 }

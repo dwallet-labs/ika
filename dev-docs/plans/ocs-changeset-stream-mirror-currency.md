@@ -37,14 +37,24 @@ Read alongside
 > up. Adversarially reviewed sound (termination, lock discipline, untrusted-source
 > gating).
 >
-> **Still not wired into the read path** — remaining *integration*, not new
-> invariants: (a) **spawn** the receiver on a mirrored/peer-only node (thread a
-> `SharedChangesetIndex` + `SuiMirrorTransport` + `CommitteeStore` through
-> `setup`); (b) the **read path** calling `ChangesetIndex::currency(...)`
-> alongside the inclusion proof (and `non_inclusion_binds_id` as the
-> audit/fallback); (c) **bootstrap** (choose `bootstrap_from` = oldest in-store
-> committee epoch's first checkpoint, or fall back to per-read until caught up).
-> Until (a)–(c) land, no read path consumes a currency verdict.
+> The **read path consumes currency**: `OcsVerifiedReader::with_changeset_index`
+> attaches the index, and `verify_response` calls `check_currency(id, M)` right
+> after the inclusion proof authenticates `X@V` at `M` — rejecting `Stale`
+> (modified since) / `NotLive` (deleted) / `Inconsistent` with a
+> `ReaderError::NotCurrent`, while `Current`/`Unknown` pass (Unknown falls back
+> to the per-read defenses). The payoff is tested: a validly-signed but
+> rolled-back version is rejected *even though its version never decreased on
+> this node*, which the high-water gate alone can't catch. Direct nodes pass
+> `None` and are unaffected.
+>
+> **Remaining to go fully live** — boot glue only: (a) **spawn** the receiver +
+> attach the index on a mirrored/peer-only node (thread `SharedChangesetIndex` +
+> `SuiMirrorTransport` + `CommitteeStore` through `setup`/`lib`); (b)
+> **bootstrap** (choose `bootstrap_from` = oldest in-store committee epoch's
+> first checkpoint). The non-inclusion `non_inclusion_binds_id` audit/fallback
+> path (for an object whose `M` is outside the folded range) can be wired
+> opportunistically. Until (a) lands, the index is `None` everywhere and reads
+> stay on the per-read defenses.
 
 ## Problem
 
