@@ -7,6 +7,7 @@ use std::path::Path;
 use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::sui_connector::verified_state_cache::VerifiedSnapshot;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
@@ -113,6 +114,19 @@ pub struct AuthorityPerpetualTables {
     /// Persisted so that a restart resumes pushing where it left off rather than
     /// jumping to `latest` and silently leaving a gap during downtime.
     pub(crate) sui_pusher_last_seq: DBMap<(), SuiCheckpointSequenceNumber>,
+
+    /// Durable copy of the OCS-verified state cache (`VerifiedStateCache`):
+    /// `ObjectID → VerifiedSnapshot { object, proof, summary, source seq }`.
+    /// Written through on every checkpoint the pusher folds, so a restart
+    /// rehydrates the cache from here instead of re-fetching from the (possibly
+    /// pruned) Sui fullnode. The parent→children index is rebuilt from the
+    /// objects' owners on load, not persisted.
+    pub(crate) verified_object_cache: DBMap<ObjectID, VerifiedSnapshot>,
+
+    /// Highest checkpoint sequence the `verified_object_cache` reflects — the
+    /// cache head, restored on load so the staleness tripwire isn't tricked
+    /// into treating a freshly-rehydrated cache as stale.
+    pub(crate) verified_object_cache_head: DBMap<(), SuiCheckpointSequenceNumber>,
 }
 
 impl AuthorityPerpetualTables {
@@ -487,6 +501,34 @@ impl AuthorityPerpetualTables {
     pub fn put_sui_pusher_last_seq(&self, seq: SuiCheckpointSequenceNumber) -> IkaResult {
         let mut wb = self.sui_pusher_last_seq.batch();
         wb.insert_batch(&self.sui_pusher_last_seq, [((), seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// All persisted verified-state-cache snapshots, for rehydrating
+    /// `VerifiedStateCache` on boot.
+    pub fn load_verified_object_cache(&self) -> IkaResult<Vec<(ObjectID, VerifiedSnapshot)>> {
+        let mut out = Vec::new();
+        for item in self.verified_object_cache.safe_iter() {
+            out.push(item?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_verified_object_cache_head(&self) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.verified_object_cache_head.get(&())?)
+    }
+
+    /// Write a checkpoint's folded snapshots and the new cache head through in
+    /// one batch.
+    pub fn write_verified_object_cache(
+        &self,
+        snapshots: Vec<(ObjectID, VerifiedSnapshot)>,
+        head: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.verified_object_cache.batch();
+        wb.insert_batch(&self.verified_object_cache, snapshots)?;
+        wb.insert_batch(&self.verified_object_cache_head, [((), head)])?;
         wb.write()?;
         Ok(())
     }

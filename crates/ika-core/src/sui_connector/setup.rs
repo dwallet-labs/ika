@@ -361,7 +361,12 @@ pub async fn build_sui_connector_stack(
         _ => None,
     };
 
-    let state_cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+    // Durable cache: rehydrates from the perpetual `verified_object_cache`
+    // column on boot and writes through every absorb, so a restart resumes
+    // serving from DB instead of re-fetching from the (possibly pruned) Sui
+    // fullnode.
+    let state_cache: SharedVerifiedStateCache =
+        Arc::new(VerifiedStateCache::open(perpetual.clone())?);
 
     // 4. Verified-read surface for consumers. Freshness defense is
     //    version-monotonicity (per-object high-water mark in the
