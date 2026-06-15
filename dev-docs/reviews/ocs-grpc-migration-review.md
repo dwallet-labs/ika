@@ -287,7 +287,9 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     (in-memory only — `RwLock<HashMap>`, no DB), `…/push_worker.rs`.
 
     RESOLUTION: open; durable fix chosen (make the direct validator self-sufficient
-    so the Sui fullnode is dispensable in steady state). The end-of-epoch checkpoint
+    so the Sui fullnode is dispensable in steady state) — implementation plan in
+    [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md).
+    The end-of-epoch checkpoint
     *carries the next committee* (`EndOfEpochData::next_epoch_committee`,
     `messages_checkpoint.rs:304-314`) and ika already extracts and **DB-persists**
     the committee chain (`committee_store` → `sui_committee_summaries`), so the
