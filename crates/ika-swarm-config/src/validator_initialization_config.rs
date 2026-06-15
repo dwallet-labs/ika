@@ -49,7 +49,7 @@ pub struct ValidatorInitializationConfig {
 }
 
 impl ValidatorInitializationConfig {
-    pub fn to_validator_info(&self) -> ValidatorInfo {
+    pub fn to_validator_info(&self, legacy_class_groups_only: bool) -> ValidatorInfo {
         let name = self.name.clone().unwrap_or("".to_string());
         let protocol_public_key: AuthorityPublicKeyBytes = self.key_pair.public().into();
         let account_key: PublicKey = self.account_key_pair.public();
@@ -61,19 +61,23 @@ impl ValidatorInitializationConfig {
 
         // It is okay to unwrap here because we are using ValidatorInitializationConfig only on swarm.
         //
-        // Publish the BARE mainnet-v1.1.8 `ClassGroupsEncryptionKeyAndProof` shape
-        // on-chain (matching the off-chain-metadata PR's `legacy_class_groups_only`
-        // publication path), so a mainnet-v1.1.8 binary can decode this record. The
-        // richer `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
-        // PVSS) travels off-chain via validator P2P. Reading is shape-tolerant on the
-        // dev side via `decode_validator_encryption_keys`.
+        // The genesis publish shape follows the genesis protocol version's
+        // network-encryption-key version. At v4 (`network_encryption_key_version == 3`)
+        // the network-key DKG requires every member's full
+        // `ValidatorEncryptionKeysAndProofs` bundle (class-groups + per-curve PVSS), so
+        // publish it — otherwise the genesis DKG wedges with 0 PVSS decoded. Pre-v4
+        // (mainnet-v1.1.8, version 2) publishes only the bare
+        // `ClassGroupsEncryptionKeyAndProof` so a mainnet-v1.1.8 binary can decode the
+        // genesis record in the cross-binary upgrade rehearsal. Reads are shape-tolerant
+        // either way via `decode_validator_encryption_keys`.
+        let keypair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&self.root_seed);
+        let class_groups_public_key_and_proof = if legacy_class_groups_only {
+            bcs::to_bytes(&keypair.class_groups.encryption_key_and_proof()).unwrap()
+        } else {
+            bcs::to_bytes(&keypair.validator_encryption_keys_and_proofs()).unwrap()
+        };
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-            class_groups_public_key_and_proof: bcs::to_bytes(
-                &ClassGroupsAndPvssKeyPairAndProof::from_seed(&self.root_seed)
-                    .class_groups
-                    .encryption_key_and_proof(),
-            )
-            .unwrap(),
+            class_groups_public_key_and_proof,
         });
 
         ValidatorInfo {
