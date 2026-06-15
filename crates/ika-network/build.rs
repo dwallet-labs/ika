@@ -206,6 +206,17 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
+        // Changeset stream for mirrored-node currency: per checkpoint, the
+        // committee-signed summary + its modified object-set (ids, not bodies).
+        .method(
+            anemo_build::manual::Method::builder()
+                .name("changeset_page")
+                .route_name("ChangesetPage")
+                .request_type("crate::sui_state_mirror::ChangesetPageRequest")
+                .response_type("crate::sui_state_mirror::ChangesetPageResponse")
+                .codec_path(codec_path)
+                .build(),
+        )
         .method(
             anemo_build::manual::Method::builder()
                 .name("last_checkpoint_of_epoch")

@@ -24,6 +24,7 @@ mod generated {
 }
 pub mod client;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anemo::codegen::InboundRequestLayer;
@@ -31,10 +32,12 @@ use anemo::{PeerId, Request, Response, rpc::Status, types::response::StatusCode}
 use anemo_tower::inflight_limit;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use serde::{Deserialize, Serialize};
-use sui_types::base_types::{ObjectID, TransactionDigest};
+use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
-use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
+use sui_types::messages_checkpoint::{
+    CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
+};
 use sui_types::transaction::Transaction;
 
 use crate::proof_provider::{
@@ -97,6 +100,35 @@ pub struct SubmitTransactionResponse {
     /// inner `TransactionEffects` round-trips fine. The submitter re-verifies
     /// the tx is committed (via `get_transaction_checkpoint`) before trusting.
     pub effects_bcs: Vec<u8>,
+}
+
+// -- Changeset stream (mirrored-node currency) ------------------------------------------------
+
+/// One checkpoint's changeset: the committee-signed summary plus its modified
+/// object-set (`id → (version, digest)`). The receiver binds the object-set to
+/// the summary's `checkpoint_artifacts_digest` (so a relay can't add/drop ids)
+/// and folds it for currency — see `ika_core::sui_connector::ocs_currency`.
+/// Only ids + versions + the summary cross the wire, never object bodies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangesetEntry {
+    pub summary: CertifiedCheckpointSummary,
+    pub object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangesetPageRequest {
+    /// First checkpoint sequence to return.
+    pub from_seq: CheckpointSequenceNumber,
+    /// Maximum checkpoints to return; the server clamps to `MAX_CHANGESET_PAGE`.
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangesetPageResponse {
+    /// Changesets for `from_seq, from_seq+1, …`, contiguous from `from_seq`.
+    /// Short (possibly empty) when the server's head is reached — exactly what
+    /// the receiver's contiguous fold expects.
+    pub entries: Vec<ChangesetEntry>,
 }
 
 // -- Server -----------------------------------------------------------------------------------
@@ -213,6 +245,34 @@ impl SuiStateMirror for Server {
             .map_err(map_err)?;
         Ok(Response::new(v))
     }
+    async fn changeset_page(
+        &self,
+        request: Request<ChangesetPageRequest>,
+    ) -> Result<Response<ChangesetPageResponse>, Status> {
+        let ChangesetPageRequest { from_seq, limit } = request.into_inner();
+        let limit = (limit as usize).min(MAX_CHANGESET_PAGE);
+        let mut entries = Vec::with_capacity(limit);
+        for seq in from_seq..from_seq.saturating_add(limit as u64) {
+            // Stop at the first unavailable checkpoint (head reached / pruned):
+            // a short, contiguous prefix is exactly what the receiver folds.
+            let checkpoint = match self.transport.get_full_checkpoint(seq).await {
+                Ok(checkpoint) => checkpoint,
+                Err(_) => break,
+            };
+            // Ship only the modified object-set, not the bodies. The receiver
+            // re-derives the artifacts digest and checks it against the
+            // summary's commitment, so this is committee-bound on arrival.
+            let object_states = CheckpointArtifacts::from(&checkpoint)
+                .object_states()
+                .map_err(|e| Status::internal(e.to_string()))?
+                .clone();
+            entries.push(ChangesetEntry {
+                summary: checkpoint.checkpoint_summary,
+                object_states,
+            });
+        }
+        Ok(Response::new(ChangesetPageResponse { entries }))
+    }
     async fn last_checkpoint_of_epoch(
         &self,
         request: Request<LastCheckpointOfEpochRequest>,
@@ -309,6 +369,11 @@ const INFLIGHT_VERIFIED_OBJECT: usize = 256;
 const INFLIGHT_BATCH_VERIFIED_OBJECTS: usize = 64;
 const INFLIGHT_VERIFIED_BAG_PAGE: usize = 64;
 const INFLIGHT_GET_FULL_CHECKPOINT: usize = 32;
+const INFLIGHT_CHANGESET_PAGE: usize = 16;
+/// Max checkpoints served per `changeset_page` call. Each fetches a full
+/// checkpoint server-side to extract its object-set, so keep the page modest;
+/// the receiver simply requests the next page to continue.
+const MAX_CHANGESET_PAGE: usize = 64;
 
 /// Build the anemo router service serving the verified-read and
 /// committee-ratchet RPCs, with per-method inflight caps on the heavy ones.
@@ -339,6 +404,12 @@ pub fn make_server(
         .add_layer_for_get_full_checkpoint(InboundRequestLayer::new(
             inflight_limit::InflightLimitLayer::new(
                 INFLIGHT_GET_FULL_CHECKPOINT,
+                inflight_limit::WaitMode::ReturnError,
+            ),
+        ))
+        .add_layer_for_changeset_page(InboundRequestLayer::new(
+            inflight_limit::InflightLimitLayer::new(
+                INFLIGHT_CHANGESET_PAGE,
                 inflight_limit::WaitMode::ReturnError,
             ),
         ))

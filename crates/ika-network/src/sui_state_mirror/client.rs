@@ -48,9 +48,10 @@ use crate::proof_provider::{
 };
 
 use super::{
-    BatchVerifiedObjectsRequest, GetCheckpointSummaryByDigestRequest, GetFullCheckpointRequest,
-    GetTransactionCheckpointRequest, LastCheckpointOfEpochRequest, SubmitTransactionRequest,
-    SuiStateMirrorClient, VerifiedObjectRequest,
+    BatchVerifiedObjectsRequest, ChangesetPageRequest, ChangesetPageResponse,
+    GetCheckpointSummaryByDigestRequest, GetFullCheckpointRequest, GetTransactionCheckpointRequest,
+    LastCheckpointOfEpochRequest, SubmitTransactionRequest, SuiStateMirrorClient,
+    VerifiedObjectRequest,
 };
 
 /// Per-peer, per-request deadline for relay reads. anemo configures no
@@ -294,6 +295,24 @@ pub struct SuiMirrorTransport {
 impl SuiMirrorTransport {
     pub fn new(peers: SuiMirrorPeers) -> Self {
         Self { peers }
+    }
+
+    /// Pull a page of changesets (committee-signed summary + modified
+    /// object-set per checkpoint) starting at `from_seq`, for a mirrored node
+    /// to fold for currency. Not part of [`SuiTransport`] — a separate
+    /// capability the changeset-stream receiver calls; each entry is still
+    /// committee-bound (the receiver checks it against the summary).
+    pub async fn changeset_page(
+        &self,
+        from_seq: CheckpointSequenceNumber,
+        limit: u32,
+    ) -> Result<ChangesetPageResponse, TransportError> {
+        self.peers
+            .try_peers("changeset_page", move |c| {
+                let req = Request::new(ChangesetPageRequest { from_seq, limit });
+                Box::pin(async move { c.changeset_page(req).await })
+            })
+            .await
     }
 }
 

@@ -23,15 +23,21 @@ Read alongside
 > BLS-verifies each summary via `CommitteeStore::verify_summary` before folding,
 > so an unsigned or foreign-signed changeset is rejected and never folded.
 >
-> **Still not wired into the read path** — the remaining work is *integration*,
-> not new invariants: (a) the direct-validator side that gossips
-> `(CertifiedCheckpointSummary, object_states)` per checkpoint (the producer is
-> a thin extraction: `object_states` is `CheckpointArtifacts::from(&checkpoint).
-> object_states()`); (b) the mirror read path calling
+> The transport is built: a **`ChangesetPage` anemo RPC** on `SuiStateMirror`
+> (pull-based — reuses the existing relay-peer selection, no new gossip mesh).
+> The direct-side server extracts `(summary, object_states)` per checkpoint
+> (`CheckpointArtifacts::from(&checkpoint).object_states()`) and ships ids, not
+> bodies; the mirror client is `SuiMirrorTransport::changeset_page(from_seq,
+> limit)`, returning a contiguous prefix from `from_seq`.
+>
+> **Still not wired into the read path** — remaining *integration*, not new
+> invariants: (a) the mirror's **receiver loop** — a background task that pulls
+> `changeset_page` from `highest_contiguous_seq + 1` and feeds each entry
+> through `ChangesetIndex::absorb_verified`; (b) the **read path** calling
 > `ChangesetIndex::currency(...)` alongside the inclusion proof (and
-> `non_inclusion_binds_id` as the audit/fallback); (c) bootstrap
-> (committee-verified range-request back to the oldest in-store committee
-> epoch). Until (a)–(c) land, no read path consumes a currency verdict.
+> `non_inclusion_binds_id` as the audit/fallback); (c) **bootstrap**
+> (range-request back to the oldest in-store committee epoch). Until (a)–(c)
+> land, no read path consumes a currency verdict.
 
 ## Problem
 
