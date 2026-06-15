@@ -2009,6 +2009,7 @@ mod tests {
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
             q,
             v,
         ));
@@ -2106,6 +2107,7 @@ mod tests {
         let committee = Arc::new(Committee::new(
             5,
             voting_rights,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),

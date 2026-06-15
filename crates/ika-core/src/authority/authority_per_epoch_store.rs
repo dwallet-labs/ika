@@ -2630,7 +2630,7 @@ impl AuthorityPerEpochStore {
             // reconfig. Without this, off_chain mode's overlay
             // returns `None` for any key whose output was produced in
             // a prior epoch, which propagates as `BcsError(Eof)` in
-            // `instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output`.
+            // `spawn_network_encryption_key_public_data_instantiation`.
             let perpetual_insert = match kind {
                 ProtocolOutputKind::Dkg => perpetual
                     .insert_network_dkg_output_digest(dwallet_network_encryption_key_id, digest),
