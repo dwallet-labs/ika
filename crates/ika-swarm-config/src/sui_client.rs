@@ -113,6 +113,38 @@ pub struct InitializedIkaSystem {
     pub validator_cap_ids: Vec<ObjectID>,
 }
 
+/// Everything [`init_ika_on_sui`] set up. The full package/system state and the
+/// live wallet (publisher + all validator account keys imported, all addresses
+/// funded) are kept so post-bootstrap flows — validator join/leave, extra
+/// staking, protocol-cap operations — can compose new transactions without
+/// re-deriving any of it.
+pub struct IkaSuiBootstrap {
+    pub packages: PublishedIkaPackages,
+    pub system: InitializedIkaSystem,
+    pub publisher_address: SuiAddress,
+    pub publisher_keypair: SuiKeyPair,
+    pub wallet_context: WalletContext,
+}
+
+/// Fund `address` with SUI gas from the localnet faucet, tolerating the known
+/// faucet-API quirk where a successful drip surfaces as a "200 OK" error (the
+/// same workaround `init_ika_on_sui` applies to its bulk funding).
+pub async fn fund_address_from_faucet(
+    address: SuiAddress,
+    sui_faucet_url: String,
+) -> Result<(), anyhow::Error> {
+    request_tokens_from_faucet(address, sui_faucet_url)
+        .await
+        .map(|_| ())
+        .or_else(|e| {
+            if e.to_string().contains("200 OK") {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+}
+
 pub fn setup_contract_paths(chain: Chain) -> Result<ContractPaths, anyhow::Error> {
     let current_working_dir = std::env::current_dir()?;
 
@@ -165,20 +197,13 @@ pub async fn init_ika_on_sui(
     sui_fullnode_rpc_url: String,
     sui_faucet_url: String,
     initiation_parameters: InitiationParameters,
-) -> Result<
-    (
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        ObjectID,
-        SuiKeyPair,
-    ),
-    anyhow::Error,
-> {
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
+) -> Result<IkaSuiBootstrap, anyhow::Error> {
+    //let config_dir = ika_config_dir()?;
     let config_dir = tempfile::tempdir()?.keep();
     let config_path = config_dir.join(SUI_CLIENT_CONFIG);
+    //let keystore_path = config_dir.join(SUI_KEYSTORE_FILENAME);
+    //let mut keystore = Keystore::from(FileBasedKeystore::new(&keystore_path)?);
     let mut keystore = Keystore::InMem(InMemKeystore::default());
     let alias = "publisher";
     let (publisher_address, keypair, scheme, phrase) =
@@ -272,6 +297,7 @@ pub async fn init_ika_on_sui(
         validator_initialization_configs,
         &validator_addresses,
         &initiation_parameters,
+        genesis_global_presign_config,
     )
     .await?;
 
@@ -283,15 +309,13 @@ pub async fn init_ika_on_sui(
     // library callers (tests) don't emit stray files.
     std::env::set_current_dir(contract_paths.current_working_dir)?;
 
-    Ok((
-        packages.ika_package_id,
-        packages.ika_common_package_id,
-        packages.ika_dwallet_2pc_mpc_package_id,
-        packages.ika_system_package_id,
-        system.ika_system_object_id,
-        system.ika_dwallet_coordinator_object_id,
+    Ok(IkaSuiBootstrap {
+        packages,
+        system,
+        publisher_address,
         publisher_keypair,
-    ))
+        wallet_context: context,
+    })
 }
 
 /// Publish the four Ika Move packages and mint the initial IKA supply.
@@ -376,6 +400,7 @@ pub async fn initialize_ika_system(
     validator_initialization_configs: &[ValidatorInitializationConfig],
     validator_addresses: &[SuiAddress],
     initiation_parameters: &InitiationParameters,
+    genesis_global_presign_config: GenesisGlobalPresignConfig,
 ) -> Result<InitializedIkaSystem, anyhow::Error> {
     let (ika_system_object_id, protocol_cap_id, init_system_shared_version) = init_initialize(
         publisher_address,
@@ -493,6 +518,8 @@ pub async fn initialize_ika_system(
         )
         .await?;
     println!("Running `system::initialize` done.");
+    let (curve_to_signature_algorithms_for_dkg, curve_to_signature_algorithms_for_imported_key) =
+        genesis_global_presign_config.curve_to_signature_algorithm_maps();
     set_global_presign_config(
         publisher_address,
         context,
@@ -504,9 +531,13 @@ pub async fn initialize_ika_system(
         protocol_cap_id,
         packages.ika_dwallet_2pc_mpc_package_id,
         ika_dwallet_coordinator_object_id,
+        curve_to_signature_algorithms_for_dkg,
+        curve_to_signature_algorithms_for_imported_key,
     )
     .await?;
-    println!("Running `system::set_global_presign_config` done.");
+    println!(
+        "Running `system::set_global_presign_config` done. config={genesis_global_presign_config:?}"
+    );
 
     ika_system_request_dwallet_network_encryption_key_dkg_by_cap(
         publisher_address,
@@ -614,6 +645,52 @@ fn new_curve_to_signature_algorithm_vecmap(
     ))
 }
 
+/// What the chain bootstrap writes into the coordinator's on-chain
+/// `GlobalPresignConfig` at genesis.
+///
+/// The config must exist from genesis either way — the coordinator reads it
+/// with a bare dynamic-field `borrow` on every presign request, so a missing
+/// config aborts the request (`migrate()` backfills an empty one only on
+/// upgraded deployments).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GenesisGlobalPresignConfig {
+    /// Route the production curve/algorithm set to global presign — the
+    /// actual mainnet on-chain state (verified: mainnet's
+    /// `GlobalPresignConfig` holds exactly these maps). Servable at every
+    /// protocol version: at v4+ from the validators' internal presign pool
+    /// (`internal_presign_sessions`), below that as a user-requested MPC
+    /// session — the 1.1.8 behavior, which this branch retains as the
+    /// pre-activation fallback in `handle_mpc_request` (the `v118_upgrade`
+    /// rehearsal exercises both serving modes across its swap).
+    Full,
+    /// Empty config: every curve/algorithm allows per-dWallet presign —
+    /// what `migrate()` creates, *not* the mainnet state (mainnet's config
+    /// is the populated [`Self::Full`] shape). A harness arrangement that
+    /// routes workload presigns through the per-dWallet (targeted) path —
+    /// the only coverage of that path, since a populated config makes it
+    /// unreachable. The cross-binary churn test genesises with this and
+    /// applies the full config after its upgrade via
+    /// [`set_global_presign_config`].
+    Empty,
+}
+
+impl GenesisGlobalPresignConfig {
+    /// The `(for_dkg, for_imported_key)` curve→signature-algorithm maps this
+    /// config writes on chain — the two arguments
+    /// [`set_global_presign_config`] takes.
+    pub fn curve_to_signature_algorithm_maps(
+        self,
+    ) -> (HashMap<u32, Vec<u32>>, HashMap<u32, Vec<u32>>) {
+        match self {
+            GenesisGlobalPresignConfig::Full => (
+                GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
+                GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
+            ),
+            GenesisGlobalPresignConfig::Empty => (HashMap::new(), HashMap::new()),
+        }
+    }
+}
+
 pub async fn set_global_presign_config(
     publisher_address: SuiAddress,
     context: &mut WalletContext,
@@ -625,6 +702,8 @@ pub async fn set_global_presign_config(
     protocol_cap_id: ObjectID,
     ika_dwallet_2pc_mpc_package_id: ObjectID,
     ika_dwallet_coordinator_object_id: ObjectID,
+    curve_to_signature_algorithms_for_dkg: HashMap<u32, Vec<u32>>,
+    curve_to_signature_algorithms_for_imported_key: HashMap<u32, Vec<u32>>,
 ) -> Result<(), anyhow::Error> {
     let mut ptb = ProgrammableTransactionBuilder::new();
     let system_arg = ptb.input(CallArg::Object(ObjectArg::SharedObject {
@@ -653,13 +732,11 @@ pub async fn set_global_presign_config(
         vec![system_arg, protocol_cap_arg],
     );
 
-    let curve_to_signature_algorithms_for_dkg = new_curve_to_signature_algorithm_vecmap(
-        &mut ptb,
-        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_DKG.clone(),
-    )?;
+    let curve_to_signature_algorithms_for_dkg =
+        new_curve_to_signature_algorithm_vecmap(&mut ptb, curve_to_signature_algorithms_for_dkg)?;
     let curve_to_signature_algorithms_for_imported_key = new_curve_to_signature_algorithm_vecmap(
         &mut ptb,
-        GLOBAL_PRESIGN_SUPPORTED_CURVE_TO_SIGNATURE_ALGORITHMS_FOR_IMPORTED_KEY.clone(),
+        curve_to_signature_algorithms_for_imported_key,
     )?;
 
     ptb.programmable_move_call(
@@ -1303,8 +1380,8 @@ pub async fn request_add_validator(
 }
 
 /// Sign and submit `system::request_remove_validator` as `validator_address`.
-/// Mirrors [`request_add_validator`] — explicit sender + explicit shared-version
-/// + explicit cap so callers can drive removal without touching the active
+/// Mirrors [`request_add_validator`] — explicit sender, explicit shared-version,
+/// and explicit cap so callers can drive removal without touching the active
 /// wallet address. The validator stays in the active set until the next epoch
 /// boundary; the on-chain logic moves it out at the next reconfiguration.
 pub async fn request_remove_validator(
@@ -1809,6 +1886,10 @@ pub(crate) async fn create_sui_transaction(
     gas_payment: Vec<ObjectRef>,
 ) -> Result<Transaction, anyhow::Error> {
     let gas_price = context.get_reference_gas_price().await?;
+
+    //let gas_budget = max_gas_budget(&client).await?;
+    // let gas_budget =
+    //     estimate_gas_budget(context, signer, tx_kind.clone(), gas_price, gas_payment.clone(), None).await?;
 
     let tx_data = TransactionData::new_with_gas_coins(
         tx_kind,
