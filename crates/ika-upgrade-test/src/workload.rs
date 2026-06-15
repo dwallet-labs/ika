@@ -55,6 +55,10 @@ pub struct LifecycleOutcome {
     pub dwallet_id: String,
     pub verified_presign_cap_id: String,
     pub sign_digest: String,
+    /// Digest of the Schnorr (Taproot) sign on the same secp256k1 dWallet —
+    /// exercises the Schnorr signing path (presign + sign), distinct from the
+    /// ECDSA `sign_digest` above, so the rehearsals cover both algorithms.
+    pub taproot_sign_digest: String,
 }
 
 /// Drives dWallet traffic by orchestrating the `ika` CLI against the cluster,
@@ -328,12 +332,71 @@ impl WorkloadDriver {
             }
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
-        tracing::info!(%dwallet_id, %sign_digest, "workload: sign completed on-chain");
+        tracing::info!(%dwallet_id, %sign_digest, "workload: ECDSA sign completed on-chain");
+
+        // Also exercise a Schnorr signature on the SAME secp256k1 dWallet:
+        // `taproot` is the externally-requestable Schnorr algorithm on
+        // secp256k1 (BIP340), so this covers the Schnorr presign + sign path
+        // alongside ECDSA. A separate presign cap (single-use) is requested;
+        // Taproot's only hash scheme is sha256.
+        tracing::info!(%dwallet_id, "workload: requesting Taproot (Schnorr) presign");
+        let taproot_presign = self
+            .run_dwallet_with_retry(
+                &[
+                    "presign",
+                    "--dwallet-id",
+                    &dwallet_id,
+                    "--signature-algorithm",
+                    "taproot",
+                    "--wait",
+                ],
+                4,
+            )
+            .await?;
+        let taproot_presign_cap_id = json_str(&taproot_presign, "verified_presign_cap_id")?;
+        tracing::info!(%taproot_presign_cap_id, "workload: Taproot presign verified; signing");
+
+        let completed_before_taproot = self.user_completed_count().await?;
+        let taproot_sign = self
+            .run_dwallet(&[
+                "sign",
+                "--dwallet-cap-id",
+                &dwallet_cap_id,
+                "--dwallet-id",
+                &dwallet_id,
+                "--message",
+                &message_hex,
+                "--signature-algorithm",
+                "taproot",
+                "--hash-scheme",
+                "sha256",
+                "--presign-cap-id",
+                &taproot_presign_cap_id,
+                "--secret-share",
+                &secret_path_str,
+            ])
+            .await?;
+        let taproot_sign_digest = json_str(&taproot_sign, "digest")?;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+        loop {
+            if self.user_completed_count().await? > completed_before_taproot {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!(
+                    "Taproot sign session did not complete on-chain (completed count did not rise)"
+                );
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+        tracing::info!(%dwallet_id, %taproot_sign_digest, "workload: Taproot (Schnorr) sign completed on-chain");
 
         Ok(LifecycleOutcome {
             dwallet_id,
             verified_presign_cap_id,
             sign_digest,
+            taproot_sign_digest,
         })
     }
 }
