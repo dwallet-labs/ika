@@ -7,17 +7,25 @@ push-objects gossip removed in `53c1858abf` (audit review finding 10 in
 Read alongside
 [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
 
-> **✅ Blocker 1 (the make-or-break primitive) is closed at the ika layer —
-> no upstream `fastcrypto` change was needed** (the proof carries the neighbor
-> leaves, so the id can be bound on already-public data; see below). The
-> read-time currency check still must not ship until the remaining blockers
-> are built: enforced stream **contiguity** (2/3) and a **lifecycle-aware fold**
-> (4). The deletion linchpin (does `object_states` tombstone deletes?) is
-> **confirmed sound** at the Sui layer.
+> **✅ Blockers 1–4 are built and unit-tested** in
+> `ika_core::sui_connector::ocs_currency` (the deletion linchpin — does
+> `object_states` tombstone deletes? — is **confirmed sound** at the Sui layer).
+> Blocker 1 is closed at the ika layer with no upstream `fastcrypto` change (the
+> proof carries the neighbor leaves, so the id is bound on already-public data;
+> see below). Blockers 2/3/4 are the `ChangesetIndex` fold: it binds each
+> shipped object-set to the verified summary's artifacts digest, enforces a
+> forward-chained contiguous frontier (`highest_contiguous_seq`, +1 advance,
+> `previous_digest` chaining, out-of-order queue + drain), folds a
+> lifecycle-aware per-id `(seq, status)` index, and answers read-time currency
+> (current / stale / not-live / unknown / inconsistent).
 >
-> Done: `ocs_currency::non_inclusion_binds_id` + the critical regression test.
-> Next: the changeset-stream fold with `highest_contiguous_seq` + per-id
-> `(seq, status)` index (Blockers 2/3/4).
+> **Still not wired into the read path** — the remaining work is *integration*,
+> not new invariants: (a) the direct-validator side that gossips
+> `(CertifiedCheckpointSummary, object_states)` per checkpoint; (b) the mirror
+> read path calling `ChangesetIndex::currency(...)` alongside the inclusion
+> proof (and `non_inclusion_binds_id` as the audit/fallback); (c) bootstrap
+> (committee-verified range-request back to the oldest in-store committee
+> epoch). Until (a)–(c) land, no read path consumes a currency verdict.
 
 ## Problem
 
