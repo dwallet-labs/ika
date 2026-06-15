@@ -36,6 +36,7 @@ pub mod bag_event_pump;
 pub mod committee_store;
 pub mod fallback_transport;
 pub mod metrics;
+pub mod ocs_currency;
 pub mod ocs_metrics;
 pub mod ocs_verifier;
 pub mod pubkey_provider_updater;

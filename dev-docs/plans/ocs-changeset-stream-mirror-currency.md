@@ -1,20 +1,23 @@
 # OCS changeset-stream currency for mirrored validators
 
-**Status:** active — design proposal, not yet implemented (as of
-2026-06-14). Successor to the push-objects gossip removed in
-`53c1858abf` (audit review finding 10 in
+**Status:** active — implementation started 2026-06-15 (Blocker 1, the
+id-binding non-inclusion primitive, is built + tested). Successor to the
+push-objects gossip removed in `53c1858abf` (audit review finding 10 in
 [`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
 Read alongside
 [`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md).
 
-> **⚠️ Not sound as first specified — do not implement the read-time
-> currency check yet.** An adversarial review (2026-06-14) found the core
-> equivalence is unsound on the *current* non-inclusion primitive: it proves
-> a specific `ObjectRef` is absent, not that an `ObjectID` is. The primitive
-> must be fixed to bind the id (below) *before* any read path relies on it.
-> The deletion linchpin (does `object_states` tombstone deletes?) is
-> **confirmed sound** at the Sui layer; the gaps are in the proof primitive,
-> stream contiguity, and lifecycle handling.
+> **✅ Blocker 1 (the make-or-break primitive) is closed at the ika layer —
+> no upstream `fastcrypto` change was needed** (the proof carries the neighbor
+> leaves, so the id can be bound on already-public data; see below). The
+> read-time currency check still must not ship until the remaining blockers
+> are built: enforced stream **contiguity** (2/3) and a **lifecycle-aware fold**
+> (4). The deletion linchpin (does `object_states` tombstone deletes?) is
+> **confirmed sound** at the Sui layer.
+>
+> Done: `ocs_currency::non_inclusion_binds_id` + the critical regression test.
+> Next: the changeset-stream fold with `highest_contiguous_seq` + per-id
+> `(seq, status)` index (Blockers 2/3/4).
 
 ## Problem
 
@@ -65,11 +68,20 @@ non-inclusion proof for the dummy — proving "X not modified in K" while X
 *was* modified to `v`. The prover-side `is_object_in_checkpoint` guard
 (ocs.rs:161) does not help: a byzantine relay crafts the proof directly.
 
-**Required fix (fastcrypto / sui-light-client, not just ika):** the
-non-inclusion verifier must *bind the id* — assert both neighbor leaves have
-`id != target.id` (equivalently: require the id's actual leaf and compare its
-`ObjectRef` to the served ref). Until this lands, the equivalence is
-unsound and no read path may rely on it.
+**Fix — RESOLVED at the ika layer (no fastcrypto change needed; implemented
+2026-06-15).** The original worry was that this required an upstream
+`fastcrypto` change. It does not: `MerkleNonInclusionProof` already *carries*
+the neighbor leaves — `pub left_leaf` / `pub right_leaf`, each a full
+`ObjectRef` — so the id can be bound at the ika layer by re-checking the
+(already-public) neighbors. A genuine absence has neighbors with ids *different*
+from the target; if either neighbor's id equals `target.id`, the id is in fact
+present and the proof is rejected. In the attack above the forged right neighbor
+*is* `(id, v, d)`, so the check rejects it. This is
+`ika_core::sui_connector::ocs_currency::non_inclusion_binds_id`, run **in
+addition to** the existing Merkle + artifacts-digest verify. The "single most
+important test" (forged non-inclusion for a present id is rejected; the raw
+Merkle verifier is shown to accept it) passes. The long pole is gone — the
+remaining blockers (2/3/4) are all ika-side stream/fold logic.
 
 ## Architecture (target, once the primitive is fixed)
 
