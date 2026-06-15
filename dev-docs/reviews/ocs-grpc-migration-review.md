@@ -231,20 +231,38 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     serving them to peers ratcheting from an old anchor is a separate future
     feature.
 
-17. **[high] Verified-read path hard-fails when the Sui fullnode prunes the
-    history it needs (surfaced as a TS-integration localnet hang).** The OCS
-    verified-read path needs the Sui fullnode to retain (a) every end-of-epoch
-    checkpoint the committee ratchet walks to advance epochs and (b) the
-    defining transaction/checkpoint of every object it reads with a proof. A
-    long-running localnet prunes that history, and two things then break at the
-    next epoch boundary: the committee ratchet returns
-    `OcsError::ProofChainBroken` (because `allow_unverified_committee_fallback`
-    defaults to `false`, so it hard-errors instead of degrading), and
-    `sui_executor` reads (`verified_system_inner` / `verified_dwallet_coordinator_inner`)
-    return `Transport(NotFound("Transaction … not found"))` and retry forever.
-    The ika MPC pipeline cannot read the system/coordinator inner state nor
-    advance its committee, so it stalls — no new dwallet objects are created,
-    which the SDK observes as `Object … does not exist`. Evidence (run
+17. **[high] OCS verified-read path depends on live Sui-fullnode history and
+    hard-fails when it is pruned (surfaced as a TS-integration localnet hang).**
+    The pruner here is the **separate Sui fullnode** the ika node talks to
+    (`127.0.0.1:9000`, launched independently as `sui start --force-regenesis`),
+    not ika — ika's own `DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS=2` prunes ika's
+    RocksDB, a red herring. "The direct validator caches everything" is true only
+    for Ika object *state* (`IkaCheckpointPusher` folds Ika-modified objects into
+    an in-memory `state_cache`, served cache-first), and that does **not** make
+    the node self-sufficient against fullnode pruning, for three reasons — both
+    observed errors fall through exactly these gaps:
+    - **The committee ratchet is never cached.** To advance epoch E→E+1 it
+      fetches the end-of-epoch checkpoint *live* from the fullnode
+      (`ocs_verifier.rs:163-164`, routed to the primary transport, never the
+      state cache — `fallback_transport.rs:71-88`). It tracks *new* epochs ahead
+      of any cache, so the object cache is structurally irrelevant. With
+      `allow_unverified_committee_fallback=false` (default), a pruned checkpoint
+      is a hard `OcsError::ProofChainBroken` (`ocs_verifier.rs:166-176`).
+    - **The cache is keyed by `ObjectID`, and the inner child's id changes at the
+      epoch boundary.** The System/Coordinator inner is a versioned child,
+      `derive_versioned_child_id(parent, version)` (`verified_reader.rs:592,622`).
+      At the boundary a *new* child id appears, created in the same end-of-epoch
+      checkpoint the fullnode just pruned — so the pusher can't fold it (building
+      its proof needs that checkpoint) and the executor's cache-first read misses
+      and falls through to `verified_object` → `tx_checkpoint(previous_transaction)`
+      → `get_transaction` on a pruned tx → `Transport(NotFound("Transaction …"))`.
+      The cache can only contain what the node could *build a proof for*, and
+      proof-building has the same live fullnode dependency.
+    - **No degrade path.** On a pruned anchor the executor retries forever
+      (`push_worker.rs:106-114`, executor `must_get_*` loops) — no serve-stale /
+      skip / return-`Unknown`. A transient or permanent gap becomes a hard stall.
+
+    Evidence (run
     [`27552227493`](https://github.com/dwallet-labs/ika/actions/runs/27552227493),
     commit `6b5900ef90`, all validators `SuiStateDirect`): healthy through
     ~15:16 (8 test files pass, dwallet checkpoints climbing to seq 209), then at
@@ -253,29 +271,47 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     failed … NotFound("Transaction 2mGWRd9… not found")` (12k+ retries, never
     recovers), no dwallet checkpoint after seq 209, and every subsequent
     `all-combinations-future-sign` test times out on its 1200s wait, hanging the
-    run for ~1h until cancelled. This is **not** the changeset-stream / currency
-    work: that runs only on `SuiStateMirrored`/peer-only nodes, and this localnet
-    is all-`SuiStateDirect` (`changeset_index = None`, the `ChangesetReceiver` is
-    never spawned, `check_currency` is an inert `Unknown`→fallback no-op — zero
-    changeset-receiver activity in the logs); a Sui-side `NotFound` is not
-    something the currency gate can produce. The cluster suite (`test-cluster.yaml`)
-    passes 18/18 on sibling commits because its topology/retention doesn't hit
-    the prune. Anchors: `crates/ika-core/src/sui_connector/ocs_verifier.rs`
-    (ratchet, `allow_unverified_committee_fallback`), `…/sui_executor.rs`
-    (`verified_system_inner`), `…/proof_provider.rs`. RESOLUTION: open. Options,
-    least-invasive first — (1) localnet/test sets
-    `allow_unverified_committee_fallback = true` (localnet is not a trust
-    environment) so the ratchet degrades instead of hard-failing; (2) configure
-    the Sui localnet fullnode to retain checkpoints/txs across the test's epoch
-    span (raise/disable pruning); (3) lengthen localnet epochs or shorten the
-    test so it finishes within the fullnode's retention window; (4) the durable
-    fix — verified reads should fall back to per-read/`Unknown` rather than retry
-    a pruned transaction forever, and the ratchet should clamp its bootstrap to
-    the fullnode's servable retention floor (the bootstrap/retention-gap
-    refinement already noted in the currency plan). The first three unblock CI;
-    (4) is the production hardening, since a production fullnode with adequate
-    retention would not trip this but the hard-fail-instead-of-degrade behavior
-    remains latent.
+    run for ~1h until cancelled. The TS-integration localnet also runs ~60s
+    epochs (epoch ~60 in ~58 min) vs production's 24h, so the boundary checkpoint
+    is pruned within a minute while the 30s-poll ratchet is still reaching for
+    it. This is **not** the changeset-stream / currency work: that runs only on
+    `SuiStateMirrored`/peer-only nodes, and this localnet is all-`SuiStateDirect`
+    (`changeset_index = None`, the `ChangesetReceiver` is never spawned,
+    `check_currency` is an inert `Unknown`→fallback no-op — zero changeset-receiver
+    activity in the logs); a Sui-side `NotFound` is not something the currency
+    gate can produce. The cluster suite (`test-cluster.yaml`) passes 18/18 on
+    sibling commits because its topology/retention doesn't hit the prune. Anchors:
+    `crates/ika-core/src/sui_connector/ocs_verifier.rs` (ratchet,
+    `allow_unverified_committee_fallback`), `…/sui_executor.rs`
+    (`verified_system_inner`), `…/proof_provider.rs`, `…/verified_state_cache.rs`
+    (in-memory only — `RwLock<HashMap>`, no DB), `…/push_worker.rs`.
+
+    RESOLUTION: open; durable fix chosen (make the direct validator self-sufficient
+    so the Sui fullnode is dispensable in steady state). The end-of-epoch checkpoint
+    *carries the next committee* (`EndOfEpochData::next_epoch_committee`,
+    `messages_checkpoint.rs:304-314`) and ika already extracts and **DB-persists**
+    the committee chain (`committee_store` → `sui_committee_summaries`), so the
+    committee is durable *once captured* — the only failure is capturing it late.
+    Plan: (a) **capture each end-of-epoch checkpoint eagerly from the pusher's
+    checkpoint stream** (the pusher already fetches every full checkpoint as it
+    passes) and install the next committee then, instead of a separate 30s
+    reach-back loop that can race the prune; (b) **persist the verified state cache
+    (objects + proofs) to DB**, not just memory, so a restart resumes from the DB
+    instead of re-syncing from a possibly-pruned fullnode, and so mirrored peers
+    get everything from the direct validator's retained store; (c) **graceful
+    degrade safety net** for the unavoidable residual (a fresh node, or one that
+    fell behind past the fullnode's retention, cannot capture already-pruned
+    history): on a pruned/uncaptured anchor return per-read `Unknown`/fallback and
+    re-anchor the ratchet to the servable floor rather than hard-stall — *you
+    cannot cache what is already pruned*, so degrade keeps those reads non-fatal;
+    (d) **regression-test it by shortening the localnet Sui-fullnode retention** so
+    CI exercises the pruned-history path — asserting the validators keep advancing
+    (committee from captured EoE, in-window reads/currency) and degrade gracefully
+    (no hard-stall) out-of-window; size retention above ika's worst-case
+    catch-up lag (or assert degrade, not always-success) to avoid runner-speed
+    flake. Quick CI unblock while (a)–(d) land: set
+    `allow_unverified_committee_fallback=true` on localnet, and/or lengthen
+    localnet epochs / raise the fullnode retention.
 
 ### Obsolete
 
