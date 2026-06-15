@@ -49,10 +49,14 @@ So there is a one-epoch-per-key window after v4 activation ("protocol v4, key pr
 
 ## Correctness
 
-### C1 — Strict bare-class-groups chain decode silently drops bundle-shape validators · MEDIUM (stands)
-`crates/ika-types/src/sui/epoch_start_system.rs:198`, `crates/ika-core/src/sui_connector/sui_syncer.rs:678`
-Replaces the shape-tolerant `decode_validator_encryption_keys` on chain reads with a strict `bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>` (no fallback); on failure the validator is silently omitted from `class_groups_public_keys_and_proofs` (load-bearing). The production CLI (`become-candidate` / `set-next-epoch-mpc-data`) writes the **5-field bundle by default** (bare only with `--legacy-class-groups-only`). An operator on the default path is silently dropped from the committee. This is the off-chain-metadata path (live under plain v4), independent of VSS or the upgrade window.
-→ *Fix:* keep shape-tolerant decode on chain reads, or make bare the only writable on-chain shape (guard/flip the CLI default).
+### C1 — Strict bare-class-groups chain decode silently drops bundle-shape validators · MEDIUM → **FIXED (was a silent revert)**
+`crates/ika-types/src/sui/epoch_start_system.rs` (two sites), `crates/ika-core/src/sui_connector/sui_syncer.rs::new_committee`
+Replaced the shape-tolerant `decode_validator_encryption_keys` on chain reads with a strict `bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>` (no fallback) and empty PVSS/VSS maps; on failure the validator is silently omitted from `class_groups_public_keys_and_proofs` (load-bearing). The production CLI (`become-candidate` / `set-next-epoch-mpc-data`) writes the **full bundle by default** (`validator_commands.rs:480,1013`; bare only with `--legacy-class-groups-only`), so a default-path operator's on-chain record fails the strict decode (BCS rejects the trailing PVSS/VSS bytes) and they vanish from the committee.
+
+**This was a true revert, not a PR design choice.** The forensic three-way diff (branch `bf21544442^1` vs dev `bf21544442^2` vs head) shows *both* parents used the shape-tolerant decode and populated the per-curve PVSS maps from the chain payload; the VSS re-integration (`248ed10350`) rewrote these three sites strict and added comments ("chain reads are the bare shape always") that contradict the CLI's own default. The decoder still exists and already handles the VSS bundle (`committee.rs:741`, used by the off-chain assembly and the boot check) — the integration just missed these committee-construction sites.
+
+→ *Fixed:* routed all three sites through `decode_validator_encryption_keys` and populate class-groups (always) + the three PVSS maps + `vss_hpke` (when present); bare-shape validators still contribute their class-groups key, never dropped. Corrected the false "bare shape always / no fallback" comments (here + `committee.rs:653`). Verified: `cargo check -p ika-core -p ika-types --all-targets` clean; `test_network_key_reconfiguration` passes in release. (The decode+populate pattern itself is covered by the existing `decodes_new_shape` decoder test and `assemble_committee_mpc_data_off_chain_round_trip`; the bundle-on-chain path has no end-to-end test because the swarm config publishes bare — `validator_initialization_config.rs:71`.)
+*Separately worth deciding (not done here):* whether the CLI default should stay bundle-on-chain or flip to bare, given the off-chain pipeline now carries the bundle on v4+.
 
 ### C2 — AHE sign path unconditionally requires the VSS shamir cache · LOW (transition-only, free fix)
 `crates/ika-core/src/dwallet_mpc/mpc_session/input.rs` (Sign ~356, NetworkOwnedAddressSign ~401, DWalletDKGAndSign ~141)
