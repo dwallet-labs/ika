@@ -19,11 +19,17 @@ Read alongside
 > lifecycle-aware per-id `(seq, status)` index, and answers read-time currency
 > (current / stale / not-live / unknown / inconsistent).
 >
+> The trust-anchor bridge is also built: `ChangesetIndex::absorb_verified`
+> BLS-verifies each summary via `CommitteeStore::verify_summary` before folding,
+> so an unsigned or foreign-signed changeset is rejected and never folded.
+>
 > **Still not wired into the read path** — the remaining work is *integration*,
 > not new invariants: (a) the direct-validator side that gossips
-> `(CertifiedCheckpointSummary, object_states)` per checkpoint; (b) the mirror
-> read path calling `ChangesetIndex::currency(...)` alongside the inclusion
-> proof (and `non_inclusion_binds_id` as the audit/fallback); (c) bootstrap
+> `(CertifiedCheckpointSummary, object_states)` per checkpoint (the producer is
+> a thin extraction: `object_states` is `CheckpointArtifacts::from(&checkpoint).
+> object_states()`); (b) the mirror read path calling
+> `ChangesetIndex::currency(...)` alongside the inclusion proof (and
+> `non_inclusion_binds_id` as the audit/fallback); (c) bootstrap
 > (committee-verified range-request back to the oldest in-store committee
 > epoch). Until (a)–(c) land, no read path consumes a currency verdict.
 

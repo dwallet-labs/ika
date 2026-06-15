@@ -18,6 +18,8 @@
 //! Until it exists, no read path may consume a non-inclusion proof.
 
 use std::collections::{BTreeMap, HashMap};
+
+use crate::sui_connector::committee_store::CommitteeStore;
 use sui_light_client::proof::ocs::OCSNonInclusionProof;
 use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber};
 use sui_types::digests::CheckpointDigest;
@@ -129,6 +131,8 @@ pub enum ChangesetError {
     ArtifactsMismatch(CheckpointSequenceNumber),
     #[error("changeset at seq {seq} does not forward-chain onto the contiguous head")]
     BrokenChain { seq: CheckpointSequenceNumber },
+    #[error("changeset summary failed committee verification: {0}")]
+    Unverified(String),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -251,6 +255,24 @@ impl ChangesetIndex {
         }
     }
 
+    /// Verified entry point: BLS-verify `summary` against its epoch committee
+    /// via `committees`, then [`Self::absorb`]. This is how the mirror node
+    /// folds the gossiped stream — it discharges `absorb`'s precondition that
+    /// the summary is committee-verified, so an unsigned or foreign-signed
+    /// changeset is rejected and never folded. (BLS is the committee store's
+    /// job; the binding + contiguity + fold are this module's.)
+    pub fn absorb_verified(
+        &mut self,
+        committees: &CommitteeStore,
+        summary: &CertifiedCheckpointSummary,
+        object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
+    ) -> Result<AbsorbOutcome, ChangesetError> {
+        committees
+            .verify_summary(summary.clone())
+            .map_err(|e| ChangesetError::Unverified(e.to_string()))?;
+        self.absorb(summary, object_states)
+    }
+
     /// Is `id`, served version-anchored at its last-modifying checkpoint
     /// `anchored_seq`, the current version at the contiguous frontier?
     pub fn currency(
@@ -326,7 +348,10 @@ impl ChangesetIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::sui_connector::committee_store::CommitteeBootstrap;
     use fastcrypto::merkle::{MerkleNonInclusionProof, Node};
+    use std::sync::Arc;
     use sui_light_client::proof::ocs::ModifiedObjectTree;
     use sui_types::base_types::ObjectRef;
     use sui_types::committee::Committee;
@@ -636,5 +661,58 @@ mod tests {
         // An id the folded range never modified, anchored inside it → the
         // inclusion proof contradicts the committee-signed changeset.
         assert_eq!(idx.currency(id(0xFE), 10), CurrencyVerdict::Inconsistent);
+    }
+
+    // ---- verified absorb (integration bridge to the trust anchor) ----
+
+    fn committee_store(committee: Committee) -> (tempfile::TempDir, CommitteeStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let store =
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap();
+        (dir, store)
+    }
+
+    /// A changeset signed by the store's committee is BLS-verified and folded.
+    /// (`#[tokio::test]` because opening the perpetual tables spawns a
+    /// DB-metrics task that needs a runtime.)
+    #[tokio::test]
+    async fn absorb_verified_folds_a_committee_signed_changeset() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+        let mut idx = ChangesetIndex::new();
+
+        let s10 = states([modified(0xA1, 1)]);
+        let (c10, _d10) = signed_changeset(&committee, &keys, 10, None, &s10);
+        assert_eq!(
+            idx.absorb_verified(&store, &c10, s10).unwrap(),
+            AbsorbOutcome::Advanced { new_head: 10 }
+        );
+        assert_eq!(idx.currency(id(0xA1), 10), CurrencyVerdict::Current);
+    }
+
+    /// A changeset signed by a committee the node doesn't trust is rejected at
+    /// the BLS gate and never folded — the index is untouched.
+    #[tokio::test]
+    async fn absorb_verified_rejects_a_foreign_committee_signature() {
+        // Deterministically-seeded test committees diverge only by size.
+        let (store_committee, _) = Committee::new_simple_test_committee_of_size(4);
+        let (foreign, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+        let (_dir, store) = committee_store(store_committee);
+        let mut idx = ChangesetIndex::new();
+
+        let s10 = states([modified(0xA1, 1)]);
+        let (c10, _d10) = signed_changeset(&foreign, &foreign_keys, 10, None, &s10);
+        assert!(matches!(
+            idx.absorb_verified(&store, &c10, s10),
+            Err(ChangesetError::Unverified(_))
+        ));
+        assert_eq!(
+            idx.highest_contiguous_seq(),
+            None,
+            "must not fold an unverified changeset"
+        );
+        assert_eq!(idx.currency(id(0xA1), 10), CurrencyVerdict::Unknown);
     }
 }
