@@ -41,8 +41,8 @@ use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
     Curve25519EdDSAVSSProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage,
     DWalletMPCOutputKind, DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData,
-    GlobalPresignRequest, IdleStatusUpdate, RistrettoSchnorrkelSubstrateProtocol,
-    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
+    GlobalPresignRequest, IdleStatusUpdate, RistrettoSchnorrkelProtocol,
+    RistrettoSchnorrkelVSSProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
     Secp256k1TaprootVSSProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
     SuiChainObservationUpdate,
 };
@@ -2460,8 +2460,8 @@ impl DWalletMPCManager {
                             output,
                         );
                     }
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateProtocol>(
+                    DWalletSignatureAlgorithm::Schnorrkel => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelProtocol>(
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                             session_sequence_number,
@@ -2496,8 +2496,8 @@ impl DWalletMPCManager {
                             output,
                         );
                     }
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
-                        self.record_internal_presign_output::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                    DWalletSignatureAlgorithm::SchnorrkelVSS => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelVSSProtocol>(
                             signature_algorithm,
                             dwallet_network_encryption_key_id,
                             session_sequence_number,

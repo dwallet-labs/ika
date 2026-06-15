@@ -194,8 +194,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
@@ -207,8 +206,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
@@ -228,8 +226,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
@@ -241,8 +238,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
@@ -274,8 +270,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::Sign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::SignVSS {
@@ -287,8 +282,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::SignVSS {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             // A VSS sign session always carries a VSS advance request (built by
@@ -306,8 +300,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
@@ -355,7 +348,7 @@ impl ProtocolCryptographicData {
             } => advance_request.attempt_number,
             ProtocolCryptographicData::DWalletDKGAndSignVSS {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             // A VSS DKG-and-sign session always carries a VSS advance request, so the
@@ -392,8 +385,7 @@ impl ProtocolCryptographicData {
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::NetworkOwnedAddressSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => advance_request.attempt_number,
             ProtocolCryptographicData::EncryptedShareVerification { .. } => 1,
@@ -491,8 +483,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
@@ -504,8 +495,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Presign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
@@ -525,8 +515,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
@@ -538,8 +527,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::InternalPresign {
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
@@ -571,8 +559,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::Sign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::SignVSS {
@@ -584,8 +571,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::SignVSS {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::SignVSS { .. } => {
@@ -600,8 +586,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS { .. } => {
@@ -647,7 +632,7 @@ impl ProtocolCryptographicData {
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DWalletDKGAndSignVSS {
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::DWalletDKGAndSignVSS { .. } => {
@@ -682,8 +667,7 @@ impl ProtocolCryptographicData {
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::NetworkOwnedAddressSign {
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
             } => Some(advance_request.mpc_round_number),
             ProtocolCryptographicData::ImportedKeyVerification {

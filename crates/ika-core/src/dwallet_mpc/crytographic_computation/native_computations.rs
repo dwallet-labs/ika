@@ -19,7 +19,7 @@ use group::OsCsRng;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, RistrettoAsyncDKGProtocol,
-    RistrettoSchnorrkelSubstrateProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    RistrettoSchnorrkelProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
     Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol, SessionIdentifier,
 };
 use mpc::GuaranteedOutputDeliveryRoundResult;
@@ -133,6 +133,7 @@ impl ProtocolCryptographicData {
                     <Secp256k1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
                         message,
                         hash_scheme,
+                        &data.signature_algorithm.hash_context(),
                         decentralized_dkg_output,
                         presign.into(),
                         partial,
@@ -159,6 +160,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
+                                &data.signature_algorithm.hash_context(),
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -172,6 +174,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
+                                &data.signature_algorithm.hash_context(),
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -205,6 +208,7 @@ impl ProtocolCryptographicData {
                     verify_partial_signature::<Secp256r1ECDSAProtocol, Secp256r1AsyncDKGProtocol>(
                         &data.message,
                         &data.hash_scheme,
+                        &data.signature_algorithm.hash_context(),
                         &data.dwallet_decentralized_output,
                         &data.presign,
                         &data.partially_signed_message,
@@ -231,6 +235,7 @@ impl ProtocolCryptographicData {
                 >(
                     &data.message,
                     &data.hash_scheme,
+                    &data.signature_algorithm.hash_context(),
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
@@ -244,7 +249,7 @@ impl ProtocolCryptographicData {
                     ProtocolPublicParametersByCurve::Ristretto(protocol_public_parameters),
                 ..
             } => {
-                if data.signature_algorithm != DWalletSignatureAlgorithm::SchnorrkelSubstrate {
+                if data.signature_algorithm != DWalletSignatureAlgorithm::Schnorrkel {
                     return Err(DwalletMPCError::CurveToProtocolMismatch {
                         curve: data.curve,
                         protocol: data.signature_algorithm,
@@ -252,11 +257,12 @@ impl ProtocolCryptographicData {
                 }
 
                 let _verified_sign_data = verify_partial_signature::<
-                    RistrettoSchnorrkelSubstrateProtocol,
+                    RistrettoSchnorrkelProtocol,
                     RistrettoAsyncDKGProtocol,
                 >(
                     &data.message,
                     &data.hash_scheme,
+                    &data.signature_algorithm.hash_context(),
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,

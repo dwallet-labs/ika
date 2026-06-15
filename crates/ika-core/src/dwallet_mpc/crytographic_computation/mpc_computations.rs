@@ -41,9 +41,9 @@ use ika_protocol_config::ProtocolConfig;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol,
-    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelSubstrateProtocol,
-    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol,
-    Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
+    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelProtocol, RistrettoSchnorrkelVSSProtocol,
+    Secp256k1AsyncDKGProtocol, Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol,
+    Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
 };
 use ika_types::messages_dwallet_mpc::{Secp256k1ECDSAProtocol, SessionIdentifier};
 use mpc::guaranteed_output_delivery::{AdvanceRequest, Party, ReadyToAdvanceResult};
@@ -54,7 +54,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 use twopc_mpc::ecdsa::{ECDSASecp256k1Signature, ECDSASecp256r1Signature};
-use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSubstrateSignature, TaprootSignature};
+use twopc_mpc::schnorr::{EdDSASignature, SchnorrkelSignature, TaprootSignature};
 use twopc_mpc::sign::EncodableSignature;
 
 pub(crate) mod dwallet_dkg;
@@ -681,11 +681,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                public_input: PresignPublicInputByProtocol::Schnorrkel(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -752,11 +751,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::InternalPresign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrate(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrate(advance_request),
+                public_input: PresignPublicInputByProtocol::Schnorrkel(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::Schnorrkel(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -799,11 +797,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::Presign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                public_input: PresignPublicInputByProtocol::SchnorrkelVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelVSSProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -842,11 +839,10 @@ impl ProtocolCryptographicData {
                 &mut rng,
             )?),
             ProtocolCryptographicData::InternalPresign {
-                public_input: PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
-                advance_request:
-                    PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                public_input: PresignPublicInputByProtocol::SchnorrkelVSS(public_input),
+                advance_request: PresignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 ..
-            } => Ok(compute_presign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+            } => Ok(compute_presign::<RistrettoSchnorrkelVSSProtocol>(
                 party_id,
                 access_structure,
                 session_id,
@@ -985,7 +981,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_sign::<RistrettoSchnorrkelProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -1059,9 +1055,8 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::SignVSS {
-                public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                public_input: SignPublicInputByProtocol::SchnorrkelVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 vss_shamir_cache,
                 presign_private_output,
                 data,
@@ -1073,7 +1068,7 @@ impl ProtocolCryptographicData {
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
                 )?;
-                compute_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                compute_sign::<RistrettoSchnorrkelVSSProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -1146,9 +1141,8 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::NetworkOwnedAddressSignVSS {
-                public_input: SignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
-                advance_request:
-                    SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                public_input: SignPublicInputByProtocol::SchnorrkelVSS(public_input),
+                advance_request: SignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 vss_shamir_cache,
                 presign_private_output,
                 data,
@@ -1160,7 +1154,7 @@ impl ProtocolCryptographicData {
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
                 )?;
-                compute_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                compute_sign::<RistrettoSchnorrkelVSSProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -1317,7 +1311,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelProtocol>(
                     data.curve,
                     party_id,
                     access_structure,
@@ -1398,9 +1392,9 @@ impl ProtocolCryptographicData {
                 )
             }
             ProtocolCryptographicData::DWalletDKGAndSignVSS {
-                public_input: DKGAndSignPublicInputByProtocol::SchnorrkelSubstrateVSS(public_input),
+                public_input: DKGAndSignPublicInputByProtocol::SchnorrkelVSS(public_input),
                 advance_request:
-                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS(advance_request),
+                    DWalletDKGAndSignAdvanceRequestByProtocol::SchnorrkelVSS(advance_request),
                 vss_shamir_cache,
                 presign_private_output,
                 data,
@@ -1412,7 +1406,7 @@ impl ProtocolCryptographicData {
                     public_input.presign.session_id,
                     public_input.presign.presign_blending_index,
                 )?;
-                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelSubstrateVSSProtocol>(
+                compute_dwallet_dkg_and_sign::<RistrettoSchnorrkelVSSProtocol>(
                     data.curve,
                     party_id,
                     access_structure,
@@ -1561,7 +1555,7 @@ impl ProtocolCryptographicData {
                     );
                 }
 
-                compute_sign::<RistrettoSchnorrkelSubstrateProtocol>(
+                compute_sign::<RistrettoSchnorrkelProtocol>(
                     party_id,
                     access_structure,
                     session_id,
@@ -1703,8 +1697,8 @@ fn parse_signature_from_sign_output(
 
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
-            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
+        DWalletSignatureAlgorithm::Schnorrkel => {
+            let signature: SchnorrkelSignature = bcs::from_bytes(&public_output_value)?;
 
             Ok(signature.to_bytes().to_vec())
         }
@@ -1724,8 +1718,8 @@ fn parse_signature_from_sign_output(
 
             Ok(signature.to_bytes().to_vec())
         }
-        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
-            let signature: SchnorrkelSubstrateSignature = bcs::from_bytes(&public_output_value)?;
+        DWalletSignatureAlgorithm::SchnorrkelVSS => {
+            let signature: SchnorrkelSignature = bcs::from_bytes(&public_output_value)?;
 
             Ok(signature.to_bytes().to_vec())
         }

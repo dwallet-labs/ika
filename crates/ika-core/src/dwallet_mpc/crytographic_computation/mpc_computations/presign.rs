@@ -20,8 +20,8 @@ use group::{CsRng, PartyID};
 use ika_types::dwallet_mpc_error::DwalletMPCError;
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
-    Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol, RistrettoSchnorrkelSubstrateProtocol,
-    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
+    Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol, RistrettoSchnorrkelProtocol,
+    RistrettoSchnorrkelVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
     Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol,
     Secp256r1ECDSAProtocol,
 };
@@ -48,22 +48,14 @@ pub(crate) enum PresignPublicInputByProtocol {
     Secp256r1ECDSA(<PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSA")]
     EdDSA(<PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(
-        to_string = "Presign Public Input - curve: Ristretto, protocol: Schnorrkel (Substrate)"
-    )]
-    SchnorrkelSubstrate(
-        <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput,
-    ),
+    #[strum(to_string = "Presign Public Input - curve: Ristretto, protocol: Schnorrkel")]
+    Schnorrkel(<PresignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Secp256k1, protocol: TaprootVSS")]
     TaprootVSS(<PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Presign Public Input - curve: Curve25519, protocol: EdDSAVSS")]
     EdDSAVSS(<PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput),
-    #[strum(
-        to_string = "Presign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
-    )]
-    SchnorrkelSubstrateVSS(
-        <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput,
-    ),
+    #[strum(to_string = "Presign Public Input - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(<PresignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::PublicInput),
 }
 
 #[derive(strum_macros::Display)]
@@ -76,23 +68,15 @@ pub(crate) enum PresignAdvanceRequestByProtocol {
     Secp256r1ECDSA(AdvanceRequest<<PresignParty<Secp256r1ECDSAProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSA")]
     EdDSA(AdvanceRequest<<PresignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message>),
-    #[strum(
-        to_string = "Presign Advance Request - curve: Ristretto, protocol: Schnorrkel (Substrate)"
-    )]
-    SchnorrkelSubstrate(
-        AdvanceRequest<<PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message>,
-    ),
+    #[strum(to_string = "Presign Advance Request - curve: Ristretto, protocol: Schnorrkel")]
+    Schnorrkel(AdvanceRequest<<PresignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Secp256k1, protocol: TaprootVSS")]
     TaprootVSS(AdvanceRequest<<PresignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::Message>),
     #[strum(to_string = "Presign Advance Request - curve: Curve25519, protocol: EdDSAVSS")]
     EdDSAVSS(AdvanceRequest<<PresignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::Message>),
-    #[strum(
-        to_string = "Presign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
-    )]
-    SchnorrkelSubstrateVSS(
-        AdvanceRequest<
-            <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::Message,
-        >,
+    #[strum(to_string = "Presign Advance Request - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(
+        AdvanceRequest<<PresignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::Message>,
     ),
 }
 
@@ -134,9 +118,9 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::Taproot)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    PresignParty<RistrettoSchnorrkelSubstrateProtocol>,
+                    PresignParty<RistrettoSchnorrkelProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -145,7 +129,7 @@ impl PresignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelSubstrate)
+                advance_request.map(PresignAdvanceRequestByProtocol::Schnorrkel)
             }
             DWalletSignatureAlgorithm::EdDSA => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
@@ -207,9 +191,9 @@ impl PresignAdvanceRequestByProtocol {
 
                 advance_request.map(PresignAdvanceRequestByProtocol::EdDSAVSS)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol>,
+                    PresignParty<RistrettoSchnorrkelVSSProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -221,7 +205,7 @@ impl PresignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS)
+                advance_request.map(PresignAdvanceRequestByProtocol::SchnorrkelVSS)
             }
         };
 
@@ -305,7 +289,7 @@ impl PresignPublicInputByProtocol {
                     };
                 PresignPublicInputByProtocol::Secp256k1ECDSA(public_input)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 // Schnorr AHE presign PublicInput has no dkg_output field; ignore the optional
                 // dwallet_dkg_output (the field is targeted-DKG-only and AHE-mode Schnorr
                 // doesn't use it). Upstream's Schnorr AHE presign carries only
@@ -313,12 +297,12 @@ impl PresignPublicInputByProtocol {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.ristretto_protocol_public_parameters();
-                let pub_input: <PresignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput =
+                let pub_input: <PresignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::PublicInput =
                     twopc_mpc::schnorr::ahe::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
                     };
 
-                PresignPublicInputByProtocol::SchnorrkelSubstrate(pub_input)
+                PresignPublicInputByProtocol::Schnorrkel(pub_input)
             }
             DWalletSignatureAlgorithm::EdDSA => {
                 let _ = dwallet_dkg_output;
@@ -406,7 +390,7 @@ impl PresignPublicInputByProtocol {
                     };
                 PresignPublicInputByProtocol::EdDSAVSS(pub_input)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =
                     network_encryption_key_public_data.ristretto_protocol_public_parameters();
@@ -415,13 +399,13 @@ impl PresignPublicInputByProtocol {
                         &validator_mpc_keys_by_party_id
                             .vss_hpke_verified_party_encryption_key_values,
                     );
-                let pub_input: <PresignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput =
+                let pub_input: <PresignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::PublicInput =
                     twopc_mpc::schnorr::vss::presign::decentralized_party::PublicInput {
                         protocol_public_parameters,
                         party_encryption_keys,
                         parties_with_uc_verified_public_keys,
                     };
-                PresignPublicInputByProtocol::SchnorrkelSubstrateVSS(pub_input)
+                PresignPublicInputByProtocol::SchnorrkelVSS(pub_input)
             }
         };
 

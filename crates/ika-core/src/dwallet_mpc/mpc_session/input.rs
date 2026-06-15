@@ -149,6 +149,7 @@ pub(crate) fn session_input_from_request(
                     &data.presign,
                     &data.message_centralized_signature,
                     data.hash_scheme,
+                    data.signature_algorithm.hash_context(),
                     access_structure,
                     encryption_key_public_data,
                     &vss_shamir_cache,
@@ -364,6 +365,7 @@ pub(crate) fn session_input_from_request(
                     presign,
                     message_centralized_signature,
                     data.hash_scheme,
+                    data.signature_algorithm.hash_context(),
                     access_structure,
                     network_keys.get_network_encryption_key_public_data(
                         dwallet_network_encryption_key_id,
@@ -409,6 +411,7 @@ pub(crate) fn session_input_from_request(
                     presign,
                     &Vec::<u8>::new(),
                     data.hash_scheme,
+                    data.signature_algorithm.hash_context(),
                     access_structure,
                     encryption_key_public_data,
                     &vss_shamir_cache,

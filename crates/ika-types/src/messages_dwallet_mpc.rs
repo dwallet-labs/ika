@@ -557,15 +557,13 @@ pub type Secp256k1ECDSAProtocol = twopc_mpc::secp256k1::class_groups::ECDSAProto
 pub type Secp256k1TaprootProtocol = twopc_mpc::secp256k1::class_groups::TaprootProtocol;
 pub type Secp256r1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
-pub type RistrettoSchnorrkelSubstrateProtocol =
-    twopc_mpc::ristretto::class_groups::SchnorrkelSubstrateProtocol;
+pub type RistrettoSchnorrkelProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelProtocol;
 
 // Fast Schnorr (VSS) protocol aliases. Note the module path is `<curve>::vss`,
 // a sibling of `class_groups` (not `class_groups::vss`).
 pub type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::vss::TaprootVSSProtocol;
 pub type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::vss::EdDSAVSSProtocol;
-pub type RistrettoSchnorrkelSubstrateVSSProtocol =
-    twopc_mpc::ristretto::vss::SchnorrkelSubstrateVSSProtocol;
+pub type RistrettoSchnorrkelVSSProtocol = twopc_mpc::ristretto::vss::SchnorrkelVSSProtocol;
 
 pub type Secp256k1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
 pub type Secp256r1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;

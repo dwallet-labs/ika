@@ -243,12 +243,12 @@ impl ProtocolData {
                     DWalletSignatureAlgorithm::ECDSASecp256r1 => dwallet_public_output.is_none(),
                     DWalletSignatureAlgorithm::EdDSA => true,
                     DWalletSignatureAlgorithm::Taproot => true,
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => true,
+                    DWalletSignatureAlgorithm::Schnorrkel => true,
                     // VSS (Fast Schnorr) variants are global-presign Schnorr,
                     // DKG-created keys only (never imported).
                     DWalletSignatureAlgorithm::TaprootVSS => true,
                     DWalletSignatureAlgorithm::EdDSAVSS => true,
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => true,
+                    DWalletSignatureAlgorithm::SchnorrkelVSS => true,
                 };
 
                 if is_global_presign {
