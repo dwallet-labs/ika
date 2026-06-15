@@ -264,14 +264,23 @@ single-object substitution gap, comparable in class to finding 1).
 - **K2 [low] `compiled_in_trusted_anchor` ORs into `has_anchor` regardless of
   `sui_data_source`.** When release tooling fills it, old-style configs on
   that chain gain an anchor and trip the anchor-without-data-source boot
-  guard. (Also a spec residual.) Anchor: `ika-node/src/lib.rs`.
+  guard. Anchor: `ika-node/src/lib.rs`. RESOLUTION (`a6c3cda627`): gate the
+  compiled-in term on `sui_data_source.is_some()` so the binary default only
+  applies to migrated (gRPC) nodes; explicit anchors still force OCS.
 - **K3 [low] No guard rejects a notifier/fullnode configured peer-only**
   (`SuiStateMirrored{fallback:None}`) — fails late with an unclear error.
-  Anchor: `ika-node/src/lib.rs`.
+  Anchor: `ika-node/src/lib.rs`. RESOLUTION (`c58d8df1e6`): `select_sui_transport`
+  now rejects a *notifier* + peer-only (its relayed submission returns
+  unverified effects — the design assumed notifiers never run peer-only).
+  Narrowed from the finding: fullnodes/validators never submit, so their
+  peer-only path stays valid. Gate now takes `NodeMode` (distinguishes
+  Notifier from Fullnode); truth-table covers all three roles.
 - **K4 [low — defense-in-depth] The BLS-verified ratchet path lacks the
   `next.epoch == head+1` assert** the unverified fallback has;
   `ocs_verifier.rs` installs `extract_new_committee_info` output without the
-  explicit check. (Also a spec residual.)
+  explicit check. RESOLUTION (`932d5c3bbd`): added the assert (new
+  `RatchetEpochMismatch`, distinct from the fallback's `FallbackEpochMismatch`),
+  making the two ratchet paths symmetric.
 - **K5 [low — dead code] The `sui_checkpoint_cache` table + pruner are dead.**
   `get_sui_checkpoint`/`put_sui_checkpoint` (+ inline pruning) had zero
   callers; `CheckpointCache` was never even a real type (referenced only in a
@@ -303,8 +312,9 @@ obsolete, including finding 13's transport-gate truth-table (the gate is now
 the pure `select_sui_transport`). Remaining items are the low-severity
 K-residuals only.
 
-1. **K2–K4, K6–K9** — config / docs / defense-in-depth residuals (K8/K9 are
-   the eclipse/currency residuals the changeset-stream design addresses).
+1. **K6–K9** — config / docs / defense-in-depth residuals (K8/K9 are the
+   eclipse/currency residuals the changeset-stream design addresses). K2–K4
+   are now fixed (`a6c3cda627`, `c58d8df1e6`, `932d5c3bbd`).
 2. **K2–K4, K6–K9** — lower-severity config / docs / defense-in-depth
    residuals (K8/K9 are the eclipse/currency residuals the changeset-stream
    design addresses; K5 dead-code removal done in `31d8c71120`).
