@@ -231,6 +231,52 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     serving them to peers ratcheting from an old anchor is a separate future
     feature.
 
+17. **[high] Verified-read path hard-fails when the Sui fullnode prunes the
+    history it needs (surfaced as a TS-integration localnet hang).** The OCS
+    verified-read path needs the Sui fullnode to retain (a) every end-of-epoch
+    checkpoint the committee ratchet walks to advance epochs and (b) the
+    defining transaction/checkpoint of every object it reads with a proof. A
+    long-running localnet prunes that history, and two things then break at the
+    next epoch boundary: the committee ratchet returns
+    `OcsError::ProofChainBroken` (because `allow_unverified_committee_fallback`
+    defaults to `false`, so it hard-errors instead of degrading), and
+    `sui_executor` reads (`verified_system_inner` / `verified_dwallet_coordinator_inner`)
+    return `Transport(NotFound("Transaction … not found"))` and retry forever.
+    The ika MPC pipeline cannot read the system/coordinator inner state nor
+    advance its committee, so it stalls — no new dwallet objects are created,
+    which the SDK observes as `Object … does not exist`. Evidence (run
+    [`27552227493`](https://github.com/dwallet-labs/ika/actions/runs/27552227493),
+    commit `6b5900ef90`, all validators `SuiStateDirect`): healthy through
+    ~15:16 (8 test files pass, dwallet checkpoints climbing to seq 209), then at
+    15:16:58 `ocs_verifier: ratchet … head=59 target=60 last_seq=17561
+    reason="Checkpoint 17561 not found"`, at 15:17:09 `verified_system_inner
+    failed … NotFound("Transaction 2mGWRd9… not found")` (12k+ retries, never
+    recovers), no dwallet checkpoint after seq 209, and every subsequent
+    `all-combinations-future-sign` test times out on its 1200s wait, hanging the
+    run for ~1h until cancelled. This is **not** the changeset-stream / currency
+    work: that runs only on `SuiStateMirrored`/peer-only nodes, and this localnet
+    is all-`SuiStateDirect` (`changeset_index = None`, the `ChangesetReceiver` is
+    never spawned, `check_currency` is an inert `Unknown`→fallback no-op — zero
+    changeset-receiver activity in the logs); a Sui-side `NotFound` is not
+    something the currency gate can produce. The cluster suite (`test-cluster.yaml`)
+    passes 18/18 on sibling commits because its topology/retention doesn't hit
+    the prune. Anchors: `crates/ika-core/src/sui_connector/ocs_verifier.rs`
+    (ratchet, `allow_unverified_committee_fallback`), `…/sui_executor.rs`
+    (`verified_system_inner`), `…/proof_provider.rs`. RESOLUTION: open. Options,
+    least-invasive first — (1) localnet/test sets
+    `allow_unverified_committee_fallback = true` (localnet is not a trust
+    environment) so the ratchet degrades instead of hard-failing; (2) configure
+    the Sui localnet fullnode to retain checkpoints/txs across the test's epoch
+    span (raise/disable pruning); (3) lengthen localnet epochs or shorten the
+    test so it finishes within the fullnode's retention window; (4) the durable
+    fix — verified reads should fall back to per-read/`Unknown` rather than retry
+    a pruned transaction forever, and the ratchet should clamp its bootstrap to
+    the fullnode's servable retention floor (the bootstrap/retention-gap
+    refinement already noted in the currency plan). The first three unblock CI;
+    (4) is the production hardening, since a production fullnode with adequate
+    retention would not trip this but the hard-fail-instead-of-degrade behavior
+    remains latent.
+
 ### Obsolete
 
 16. **[was: scoring inert] `reputation_score` returns `None`.** This made
@@ -325,11 +371,19 @@ single-object substitution gap, comparable in class to finding 1).
 
 DONE: all 16 enumerated audit findings are resolved or obsolete, and the
 recovered **K1–K9** are all closed — K1–K5 fixed, K6/K7 documented, K8/K9
-accept-and-documented (their real fix is the future redesign below). Nothing
-from the audit remains open.
+accept-and-documented (their real fix is the future redesign below). One
+post-audit runtime finding (**17**, discovered 2026-06-15) remains open.
 
-1. **Mirrored-node currency redesign** (future feature, not an audit finding) —
-   [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md);
+1. **[high] Sui-retention hard-fail (finding 17)** — the verified-read path
+   hard-fails (ratchet `ProofChainBroken` + `verified_system_inner` `NotFound`)
+   once a long-running localnet prunes the history it needs, hanging the TS
+   integration suite. Unblock CI with `allow_unverified_committee_fallback` /
+   fullnode retention / epoch length; durable fix is per-read fallback +
+   retention-floor-clamped bootstrap.
+2. **Mirrored-node currency redesign** (future feature, not an audit finding) —
+   [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
+   and its bandwidth-bounding successor
+   [`../plans/ocs-subscription-changeset-stream.md`](../plans/ocs-subscription-changeset-stream.md);
    the real fix for the K8/K9 eclipse/currency residuals, gated on a fastcrypto
    non-inclusion id-binding fix.
 
