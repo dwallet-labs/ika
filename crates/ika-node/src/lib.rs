@@ -379,8 +379,16 @@ impl IkaNode {
                 .sui_connector_config
                 .sui_unsafe_genesis_committee
                 .is_some()
-            || compiled_in_trusted_anchor(config.sui_connector_config.sui_chain_identifier)
-                .is_some();
+            // The compiled-in anchor is a binary default, not operator intent.
+            // Gate it on a new-style config: otherwise, once release tooling
+            // bakes a digest for this chain, every old-style (JSON-RPC) node
+            // would silently gain an anchor and trip the no-data-source boot
+            // guard. The explicit anchors above still force OCS regardless — an
+            // operator who sets one on an old-style config *should* be told to
+            // add a sui-data-source.
+            || (config.sui_connector_config.sui_data_source.is_some()
+                && compiled_in_trusted_anchor(config.sui_connector_config.sui_chain_identifier)
+                    .is_some());
 
         // --- Read-independent boot infrastructure, hoisted above the Sui
         // bootstrap reads below. A peer-only validator (sui-state-mirrored with
