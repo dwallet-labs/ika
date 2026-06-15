@@ -392,6 +392,16 @@ impl AuthorityPerpetualTables {
         Ok(self.sui_committee_head.get(&())?)
     }
 
+    /// The lowest-epoch retained end-of-epoch summary (the bootstrap anchor's),
+    /// if any. Its checkpoint is the deepest the node can committee-verify, so a
+    /// changeset backfill can fold no earlier than `seq + 1`.
+    pub fn oldest_sui_committee_summary(&self) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
+        match self.sui_committee_summaries.safe_iter().next() {
+            Some(res) => Ok(Some(res.map_err(IkaError::from)?.1)),
+            None => Ok(None),
+        }
+    }
+
     /// Install a Sui committee directly, bumping `sui_committee_head` to
     /// `committee.epoch`. Used only for committees with no backing
     /// end-of-epoch summary — the bootstrap genesis committee and

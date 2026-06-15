@@ -50,12 +50,16 @@ use ika_sui_client::transport::SuiTransport;
 use tracing::{info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+use crate::sui_connector::changeset_receiver::{ChangesetReceiver, SharedChangesetIndex};
 use crate::sui_connector::committee_store::{CommitteeBootstrap, CommitteeStore};
 use crate::sui_connector::fallback_transport::FallbackTransport;
+use crate::sui_connector::ocs_currency::ChangesetIndex;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
 use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, VerifiedStateCache};
+use parking_lot::RwLock;
+use std::time::Duration;
 use sui_types::digests::CheckpointDigest;
 
 pub struct SuiConnectorStack {
@@ -78,6 +82,11 @@ pub struct SuiConnectorStack {
     /// read-through memo of per-read-verified relay reads.
     pub state_cache: SharedVerifiedStateCache,
     pub metrics: Arc<OcsMetrics>,
+    /// `Some` on a sui-state-mirrored / peer-only node: the changeset-stream
+    /// receiver that keeps the reader's currency index caught up. The caller
+    /// spawns `.run()` once the anemo network is up (like the pusher). `None`
+    /// on sui-state-direct.
+    pub changeset_receiver: Option<ChangesetReceiver>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -178,6 +187,19 @@ pub fn resolve_bootstrap_plan(
     Ok(BootstrapPlan::Hydrated)
 }
 
+/// The role-dependent transports + provider resolved from the data source: the
+/// raw ratchet transport, the read `ProofProvider`, whether this node can serve
+/// the mirror (sui-state-direct), the optional raw transport for the pusher
+/// (direct only), and the optional concrete mirror client for the changeset
+/// receiver (mirrored / peer-only only).
+type RawTransportSetup = (
+    Arc<dyn SuiTransport>,
+    Arc<dyn ProofProvider>,
+    bool,
+    Option<Arc<dyn SuiTransport>>,
+    Option<Arc<SuiMirrorTransport>>,
+);
+
 pub async fn build_sui_connector_stack(
     cfg: &SuiConnectorConfig,
     perpetual: Arc<AuthorityPerpetualTables>,
@@ -190,12 +212,7 @@ pub async fn build_sui_connector_stack(
     //    on sui-state-direct nodes, by the LocalProofProvider
     //    underneath). Direct-gRPC for sui-state-direct;
     //    relay-or-fallback for sui-state-mirrored.
-    let (raw_for_ratchet, proof_provider, mirror_capable, raw_for_pushing): (
-        Arc<dyn SuiTransport>,
-        Arc<dyn ProofProvider>,
-        bool,
-        Option<Arc<dyn SuiTransport>>,
-    ) = match cfg
+    let (raw_for_ratchet, proof_provider, mirror_capable, raw_for_pushing, changeset_source): RawTransportSetup = match cfg
         .sui_data_source
         .as_ref()
         .ok_or(SetupError::MissingDataSource)?
@@ -217,7 +234,7 @@ pub async fn build_sui_connector_stack(
                 .role_info
                 .with_label_values(&["sui_state_direct"])
                 .set(1);
-            (grpc.clone(), provider, true, Some(grpc))
+            (grpc.clone(), provider, true, Some(grpc), None)
         }
         SuiDataSource::SuiStateMirrored { fallback_grpc_url } => {
             let net = network.clone().ok_or(SetupError::MirroredWithoutNetwork)?;
@@ -236,7 +253,10 @@ pub async fn build_sui_connector_stack(
                 .with_label_values(&["sui_state_mirrored"])
                 .set(1);
 
-            let relay: Arc<dyn SuiTransport> = Arc::new(SuiMirrorTransport::new(peers));
+            // Keep the concrete mirror client: the changeset receiver pulls
+            // `changeset_page` from it (not part of the `SuiTransport` trait).
+            let mirror = Arc::new(SuiMirrorTransport::new(peers));
+            let relay: Arc<dyn SuiTransport> = mirror.clone();
             let raw: Arc<dyn SuiTransport> = match fallback_grpc_url {
                 Some(url) => {
                     let fallback: Arc<dyn SuiTransport> =
@@ -247,7 +267,7 @@ pub async fn build_sui_connector_stack(
                 }
                 None => relay,
             };
-            (raw, provider, false, None)
+            (raw, provider, false, None, Some(mirror))
         }
     };
 
@@ -300,6 +320,37 @@ pub async fn build_sui_connector_stack(
         cfg.allow_unverified_committee_fallback,
     ));
 
+    // Mirrored / peer-only currency: a changeset index the reader consults,
+    // folded by a background `ChangesetReceiver` that pulls committee-signed
+    // changesets from the relay. Direct nodes leave it `None` (their pusher-fed
+    // cache is already a complete, contiguous fold). The receiver backfills from
+    // the oldest committee-verifiable checkpoint — the anchor summary's seq + 1
+    // (it can't verify earlier); if the serving peer has pruned below that,
+    // currency stays dormant on those objects, a safe `Unknown` fallback.
+    const CHANGESET_PAGE_LIMIT: u32 = 64;
+    const CHANGESET_POLL_INTERVAL: Duration = Duration::from_secs(2);
+    let changeset_index: Option<SharedChangesetIndex> = changeset_source
+        .is_some()
+        .then(|| Arc::new(RwLock::new(ChangesetIndex::new())));
+    let changeset_receiver = match (changeset_source, &changeset_index) {
+        (Some(source), Some(index)) => {
+            let bootstrap_from = perpetual
+                .oldest_sui_committee_summary()
+                .map_err(|e| SetupError::Transport(format!("oldest committee summary: {e}")))?
+                .map(|summary| (*summary.sequence_number()).saturating_add(1))
+                .unwrap_or(0);
+            Some(ChangesetReceiver::new(
+                index.clone(),
+                source,
+                committees.clone(),
+                CHANGESET_PAGE_LIMIT,
+                bootstrap_from,
+                CHANGESET_POLL_INTERVAL,
+            ))
+        }
+        _ => None,
+    };
+
     let state_cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
 
     // 4. Verified-read surface for consumers. Freshness defense is
@@ -323,15 +374,18 @@ pub async fn build_sui_connector_stack(
     // checkpoints) yet catches an unboundedly-falling-behind pusher.
     const CACHE_STALENESS_BOUND_CHECKPOINTS: u64 = 100;
     let staleness_bound = cache_first_reads.then_some(CACHE_STALENESS_BOUND_CHECKPOINTS);
-    let reader = Arc::new(OcsVerifiedReader::new(
-        proof_provider.clone(),
-        committees.clone(),
-        metrics.clone(),
-        None,
-        state_cache.clone(),
-        cache_first_reads,
-        staleness_bound,
-    ));
+    let reader = Arc::new(
+        OcsVerifiedReader::new(
+            proof_provider.clone(),
+            committees.clone(),
+            metrics.clone(),
+            None,
+            state_cache.clone(),
+            cache_first_reads,
+            staleness_bound,
+        )
+        .with_changeset_index(changeset_index),
+    );
 
     // Publish the head epoch we booted at so dashboards can correlate
     // when this node started ratcheting.
@@ -373,6 +427,7 @@ pub async fn build_sui_connector_stack(
         raw_transport_for_pushing: raw_for_pushing,
         state_cache,
         metrics,
+        changeset_receiver,
     })
 }
 

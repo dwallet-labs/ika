@@ -553,7 +553,7 @@ impl IkaNode {
                 peer_count = p2p.p2p_network.peers().len(),
                 "Building OCS verifier stack (peer-only, p2p relay; no direct uplink)"
             );
-            let stack = sui_connector_setup::build_sui_connector_stack(
+            let mut stack = sui_connector_setup::build_sui_connector_stack(
                 &config.sui_connector_config,
                 perpetual_tables.clone(),
                 Some(p2p.p2p_network.clone()),
@@ -563,6 +563,11 @@ impl IkaNode {
             )
             .await
             .map_err(|e| anyhow!("build OCS connector stack (peer-only): {e}"))?;
+            // Keep the reader's currency index caught up to the relay (the
+            // index gates verified reads; the loop is the only writer).
+            if let Some(receiver) = stack.changeset_receiver.take() {
+                tokio::spawn(async move { receiver.run().await });
+            }
             // A peer-only node cannot read any Sui state until its committee
             // head is current: the bootstrap reads below verify every object
             // against the committee store, and the periodic ratchet task is
@@ -865,7 +870,7 @@ impl IkaNode {
                 peer_count = p2p_network.peers().len(),
                 "Building OCS verifier stack (sui-state-mirrored, p2p relay)"
             );
-            let stack = sui_connector_setup::build_sui_connector_stack(
+            let mut stack = sui_connector_setup::build_sui_connector_stack(
                 &config.sui_connector_config,
                 perpetual_tables.clone(),
                 Some(p2p_network.clone()),
@@ -875,6 +880,11 @@ impl IkaNode {
             )
             .await
             .map_err(|e| anyhow!("build OCS connector stack (sui-state-mirrored): {e}"))?;
+            // Keep the reader's currency index caught up to the relay (the
+            // index gates verified reads; the loop is the only writer).
+            if let Some(receiver) = stack.changeset_receiver.take() {
+                tokio::spawn(async move { receiver.run().await });
+            }
             if let Err(e) = stack.ratchet.ratchet_to_current_epoch().await {
                 warn!(
                     error = ?e,

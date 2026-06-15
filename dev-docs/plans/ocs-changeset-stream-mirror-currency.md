@@ -47,14 +47,23 @@ Read alongside
 > this node*, which the high-water gate alone can't catch. Direct nodes pass
 > `None` and are unaffected.
 >
-> **Remaining to go fully live** — boot glue only: (a) **spawn** the receiver +
-> attach the index on a mirrored/peer-only node (thread `SharedChangesetIndex` +
-> `SuiMirrorTransport` + `CommitteeStore` through `setup`/`lib`); (b)
-> **bootstrap** (choose `bootstrap_from` = oldest in-store committee epoch's
-> first checkpoint). The non-inclusion `non_inclusion_binds_id` audit/fallback
-> path (for an object whose `M` is outside the folded range) can be wired
-> opportunistically. Until (a) lands, the index is `None` everywhere and reads
-> stay on the per-read defenses.
+> **Live on mirrored / peer-only nodes.** `build_sui_connector_stack` builds a
+> `SharedChangesetIndex`, attaches it to the reader (`with_changeset_index`),
+> and constructs a `ChangesetReceiver` over the concrete `SuiMirrorTransport` +
+> `CommitteeStore`; `ika-node` spawns `receiver.run()` once the p2p network is
+> up (at the peer-only and mirrored boot sites). `bootstrap_from` is the oldest
+> committee-verifiable checkpoint — the oldest retained end-of-epoch summary's
+> `seq + 1` (new `AuthorityPerpetualTables::oldest_sui_committee_summary`).
+> Direct nodes leave the receiver `None`.
+>
+> **Remaining (refinements, not blockers):** (a) the bootstrap **retention
+> gap** — if the serving peer's fullnode has pruned below `bootstrap_from`, the
+> backfill stalls and currency stays dormant (safe `Unknown` fallback) for those
+> objects; a future bootstrap negotiation should clamp to the servable floor.
+> (b) Currency currently gates the **single-object** read (`verify_response`);
+> extend it to the batch and bag paths. (c) The `non_inclusion_binds_id`
+> audit/fallback path (for an object whose `M` is outside the folded range) can
+> be wired opportunistically.
 
 ## Problem
 
