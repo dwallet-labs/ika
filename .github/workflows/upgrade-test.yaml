@@ -147,6 +147,12 @@ jobs:
             cargo build --release --no-default-features -p ika-node --bin ika-validator
             cp target/release/ika-validator "$RUNNER_TEMP/ika-validator-max3"
             git checkout -- crates/ika-protocol-config/src/lib.rs
+            # The OLD build above overwrote target/release/ika-validator with the
+            # MAX=3 binary, but NEW_BIN (the run step) points at that same path.
+            # Rebuild it from the restored (MAX=4) source so NEW_BIN is genuinely
+            # the v4 binary — otherwise no validator ever votes for v4 and the
+            # v3->v4 upgrade never triggers.
+            cargo build --release --no-default-features -p ika-node --bin ika-validator
             echo "OLD_BIN=$RUNNER_TEMP/ika-validator-max3" >> "$GITHUB_ENV"
           fi
           echo "Built OLD binary: $(grep OLD_BIN "$GITHUB_ENV")"
