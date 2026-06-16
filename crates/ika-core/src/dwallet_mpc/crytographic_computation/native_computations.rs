@@ -133,7 +133,7 @@ impl ProtocolCryptographicData {
                     <Secp256k1ECDSAProtocol as sign::Protocol>::verify_centralized_party_partial_signature(
                         message,
                         hash_scheme,
-                        &data.signature_algorithm.hash_context(),
+                        &data.hash_context,
                         decentralized_dkg_output,
                         presign.into(),
                         partial,
@@ -160,7 +160,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
-                                &data.signature_algorithm.hash_context(),
+                                &data.hash_context,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -174,7 +174,7 @@ impl ProtocolCryptographicData {
                             >(
                                 &data.message,
                                 &data.hash_scheme,
-                                &data.signature_algorithm.hash_context(),
+                                &data.hash_context,
                                 &data.dwallet_decentralized_output,
                                 &data.presign,
                                 &data.partially_signed_message,
@@ -208,7 +208,7 @@ impl ProtocolCryptographicData {
                     verify_partial_signature::<Secp256r1ECDSAProtocol, Secp256r1AsyncDKGProtocol>(
                         &data.message,
                         &data.hash_scheme,
-                        &data.signature_algorithm.hash_context(),
+                        &data.hash_context,
                         &data.dwallet_decentralized_output,
                         &data.presign,
                         &data.partially_signed_message,
@@ -235,7 +235,7 @@ impl ProtocolCryptographicData {
                 >(
                     &data.message,
                     &data.hash_scheme,
-                    &data.signature_algorithm.hash_context(),
+                    &data.hash_context,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
@@ -262,7 +262,7 @@ impl ProtocolCryptographicData {
                 >(
                     &data.message,
                     &data.hash_scheme,
-                    &data.signature_algorithm.hash_context(),
+                    &data.hash_context,
                     &data.dwallet_decentralized_output,
                     &data.presign,
                     &data.partially_signed_message,
