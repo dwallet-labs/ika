@@ -589,8 +589,8 @@ pub fn verify_peer_blob_for_relay(bytes: &[u8], expected_digest: &[u8; 32]) -> P
 
 /// Tells whether a candidate mpc_data blob is structurally
 /// usable: it BCS-decodes into `VersionedMPCData`, and the inner
-/// class-groups encoding decodes into a valid
-/// `ValidatorEncryptionKeysAndProof`. Pure function — no I/O,
+/// bytes decode strictly into the full `ValidatorEncryptionKeysAndProofs`
+/// bundle. Pure function — no I/O,
 /// no allocation beyond the decode itself. Used by:
 ///
 /// - The peer-blob fetcher / receive-and-relay path: bytes that
@@ -615,7 +615,12 @@ pub fn blob_decodes_to_valid_mpc_data(blob: &[u8]) -> bool {
         return false;
     };
     let inner = versioned.mpc_data_bytes();
-    ika_types::committee::decode_validator_encryption_keys(&inner).is_some()
+    // Off-chain blobs are always the full v1 `ValidatorEncryptionKeysAndProofs`
+    // bundle; the bare class-groups-only shape lives on chain, never here. Decode
+    // strictly as the bundle so a bare or wrong-shape off-chain payload fails the
+    // gate (and is dropped) rather than passing here but then being treated as
+    // missing by `assemble_committee_mpc_data_off_chain`, which requires the bundle.
+    bcs::from_bytes::<ika_types::committee::ValidatorEncryptionKeysAndProofs>(&inner).is_ok()
 }
 
 /// Returns the current wall-clock time as milliseconds since the
