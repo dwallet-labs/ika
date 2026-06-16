@@ -687,3 +687,80 @@ pub struct ValidatorEncryptionKeysAndProofs {
     /// presign / sign sessions.
     pub vss_hpke_public_key_and_proof: VssHpkeEncryptionKeyAndProof,
 }
+
+/// Result of shape-tolerant decoding of the Move-side validator encryption-key
+/// bytes. The class-groups CRT key is always present (both shapes carry it);
+/// the three PVSS halves are present only when the validator published the
+/// version-3 bundle shape ([`ValidatorEncryptionKeysAndProofs`]).
+///
+/// Validators that published under the mainnet-v1.1.8 shape (bare
+/// `ClassGroupsEncryptionKeyAndProof`) come back here with PVSS halves as
+/// `None`; downstream DKG / Reconfiguration dispatch picks the
+/// `decentralized_party_backward_compatible` Party (which needs no PVSS keys).
+///
+/// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+/// bare-class-groups key shape to the version-3 bundle (#1707).
+/// Once every validator has republished under the new shape and the network has
+/// settled at `network_encryption_key_version == 3`, delete this struct and have
+/// the decode sites read [`ValidatorEncryptionKeysAndProofs`] directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedValidatorEncryptionKeys {
+    pub class_groups: ClassGroupsEncryptionKeyAndProof,
+    pub secp256k1_pvss: Option<Secp256k1PvssEncryptionKeyAndProof>,
+    pub secp256r1_pvss: Option<Secp256r1PvssEncryptionKeyAndProof>,
+    pub ristretto_pvss: Option<RistrettoPvssEncryptionKeyAndProof>,
+    /// Fast Schnorr (VSS) curve25519 HPKE key + proof. `Some` only when the
+    /// validator published the full version-3 bundle; `None` for the bare
+    /// mainnet-v1.1.8 shape (which carries no VSS key).
+    pub vss_hpke_public_key_and_proof: Option<VssHpkeEncryptionKeyAndProof>,
+}
+
+/// Decode the bytes from `MPCDataV1::class_groups_public_key_and_proof()`
+/// accepting either publication shape:
+///
+/// - [`ValidatorEncryptionKeysAndProofs`] — version-3 bundle (class-groups
+///   CRT key + 3 per-curve PVSS HPKE keys). Validators publish this at
+///   `ProtocolConfig::network_encryption_key_version() == 3` (protocol_version
+///   `>= 5`).
+/// - [`ClassGroupsEncryptionKeyAndProof`] — mainnet-v1.1.8 shape (class-groups
+///   CRT key only). Validators publish this at
+///   `ProtocolConfig::network_encryption_key_version() == 2` (protocol_version
+///   `<= 4`, including mainnet-v1.1.8 itself).
+///
+/// Returns `None` only when the bytes are neither shape. BCS rejects trailing
+/// bytes by default, so a new-shape payload will NOT silently parse as the old
+/// shape: the old-shape parse path consumes the leading class-groups array and
+/// errors on the trailing PVSS section, then the new-shape arm succeeds.
+///
+/// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
+/// bare-class-groups key shape to the version-3 bundle (#1707).
+/// Delete this function (and the old-shape fallback) once the network has settled
+/// at `network_encryption_key_version == 3` and every validator publishes
+/// [`ValidatorEncryptionKeysAndProofs`]; decode sites can then call
+/// `bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(_)` directly.
+pub fn decode_validator_encryption_keys(bytes: &[u8]) -> Option<DecodedValidatorEncryptionKeys> {
+    if let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(bytes) {
+        return Some(DecodedValidatorEncryptionKeys {
+            class_groups: bundle.class_groups,
+            secp256k1_pvss: Some(bundle.secp256k1_pvss),
+            secp256r1_pvss: Some(bundle.secp256r1_pvss),
+            ristretto_pvss: Some(bundle.ristretto_pvss),
+            vss_hpke_public_key_and_proof: Some(bundle.vss_hpke_public_key_and_proof),
+        });
+    }
+    bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(bytes)
+        .ok()
+        .map(|class_groups| DecodedValidatorEncryptionKeys {
+            class_groups,
+            secp256k1_pvss: None,
+            secp256r1_pvss: None,
+            ristretto_pvss: None,
+            vss_hpke_public_key_and_proof: None,
+        })
+}
+
+// Tests for `decode_validator_encryption_keys` live in
+// `crates/dwallet-classgroups-types/src/lib.rs`'s `mod tests`, alongside the
+// existing `ClassGroupsAndPvssKeyPairAndProof::from_seed` round-trip test
+// — placing them here would create a circular `ika-types` ↔
+// `dwallet-classgroups-types` dev-dependency.
