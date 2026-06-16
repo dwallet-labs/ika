@@ -186,3 +186,12 @@ jobs:
           name: upgrade-test-${{ inputs.test }}-${{ github.run_attempt }}
           path: upgrade-test.log
           retention-days: 7
+
+      - name: Upload per-validator logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validator-logs-${{ inputs.test }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ika-upgrade-test/**/*.log
+          retention-days: 7
+          if-no-files-found: warn
