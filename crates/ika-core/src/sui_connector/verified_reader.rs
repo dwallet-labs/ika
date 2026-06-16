@@ -310,13 +310,22 @@ impl OcsVerifiedReader {
     /// fired (the cached copy is older than one we've already served, so
     /// we re-fetch a fresh one).
     fn try_cache_hit(&self, id: ObjectID) -> Option<VerifiedObject> {
-        // Staleness tripwire: if the cache head has fallen too far behind the
-        // observed upstream head (e.g. a stalled pusher), don't serve frozen
-        // state — fall through to the per-read-verified network path. This
-        // strictly *adds* verification, so there's no stale-read regression.
+        // Staleness tripwire: if the populating worker has fallen too far behind
+        // the observed upstream head (a genuinely stalled pusher), don't serve
+        // frozen state — fall through to the per-read-verified network path.
+        // This strictly *adds* verification, so there's no stale-read regression.
+        //
+        // Keyed off the worker's *processed* head, NOT the fold head: the fold
+        // head only advances on Ika-relevant checkpoints, so a quiet stretch
+        // with no Ika modifications would otherwise look like a stall and force
+        // every read — including a still-current singleton anchor like the
+        // system inner — onto the network path, where the anchor's defining
+        // transaction may already be pruned (a permanent wedge). The processed
+        // head keeps tracking the tip through quiet stretches, so the tripwire
+        // fires only when the worker is actually behind.
         if let Some(bound) = self.staleness_bound {
             let upstream = self.observed_upstream_head.load(Ordering::Relaxed);
-            let cache_head = self.cache.head_seq();
+            let cache_head = self.cache.processed_head_seq();
             if upstream.saturating_sub(cache_head) > bound {
                 self.metrics.cache_first_stale_total.inc();
                 self.metrics
@@ -935,6 +944,70 @@ mod tests {
             None,
         );
         (dir, reader)
+    }
+
+    /// A cache-first reader (sui-state-direct) with a staleness `bound`, an
+    /// empty cache, and a never-called provider — for exercising the tripwire
+    /// gate, which is a pure local check.
+    fn test_reader_cache_first(bound: u64) -> (tempfile::TempDir, OcsVerifiedReader) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap(),
+        );
+        let reader = OcsVerifiedReader::new(
+            Arc::new(UnusedProvider),
+            committees,
+            OcsMetrics::new_for_testing(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true,
+            Some(bound),
+        );
+        (dir, reader)
+    }
+
+    /// The cache-staleness tripwire keys off the worker's *processed* head, not
+    /// the fold head. During a quiet stretch the fold head stalls while the
+    /// processed head keeps tracking the tip, so the tripwire stays closed and a
+    /// still-current cached anchor is served — instead of forcing a reach-back
+    /// that would hit the anchor's pruned defining transaction and wedge.
+    /// (Here the cache is empty, so the read still misses — but the point is
+    /// *why*: an absent-object miss, not a staleness trip.)
+    #[tokio::test]
+    async fn tripwire_keys_off_processed_head_not_fold_head() {
+        let id = ObjectID::from_single_byte(0x07);
+
+        // Worker has processed up to 950 (only 50 behind the tip at 1000) with no
+        // recent Ika fold (fold head still 0). The tripwire must NOT fire — it
+        // would if it were keyed off the stalled fold head.
+        let (_dir, reader) = test_reader_cache_first(100);
+        reader.note_upstream_head(1000);
+        reader.cache.note_processed(950);
+        let before = reader.metrics.cache_first_stale_total.get();
+        assert!(
+            reader.try_cache_hit(id).is_none(),
+            "empty cache → plain miss"
+        );
+        assert_eq!(
+            reader.metrics.cache_first_stale_total.get(),
+            before,
+            "processed head current → tripwire must stay closed"
+        );
+
+        // Worker genuinely behind (processed head 200 back): the tripwire fires.
+        let (_dir2, reader2) = test_reader_cache_first(100);
+        reader2.note_upstream_head(1000);
+        reader2.cache.note_processed(800);
+        let before2 = reader2.metrics.cache_first_stale_total.get();
+        assert!(reader2.try_cache_hit(id).is_none());
+        assert_eq!(
+            reader2.metrics.cache_first_stale_total.get(),
+            before2 + 1,
+            "processed head far behind → tripwire fires"
+        );
     }
 
     /// Per-object version monotonicity: once we've accepted version N for an

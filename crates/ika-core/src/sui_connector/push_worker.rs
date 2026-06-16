@@ -98,6 +98,9 @@ impl IkaCheckpointPusher {
             }
         };
         metrics.pusher_cursor_seq.set(cursor as i64);
+        // Seed the cache's processed head so the reader's staleness tripwire
+        // doesn't spuriously fire before the first poll tick advances it.
+        cache.note_processed(cursor);
 
         Ok(Self {
             transport,
@@ -196,6 +199,11 @@ impl IkaCheckpointPusher {
                 warn!(seq, error = ?e, "failed to persist pusher cursor");
             }
         }
+        // The cache reflects every checkpoint up to the cursor now — including
+        // the ones with no Ika objects, which don't advance the fold head. The
+        // reader's tripwire keys off this so a quiet stretch doesn't force a
+        // (prune-prone) reach-back for a still-current cached object.
+        self.cache.note_processed(self.cursor);
         Ok(())
     }
 

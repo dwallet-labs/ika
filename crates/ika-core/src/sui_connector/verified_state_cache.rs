@@ -74,6 +74,14 @@ pub struct VerifiedStateCache {
     children: RwLock<HashMap<ObjectID, BTreeSet<ObjectID>>>,
     /// Highest checkpoint seq whose state we've folded in.
     head_seq: AtomicU64,
+    /// Highest checkpoint the populating worker has *processed* (folded, or
+    /// streamed past as non-Ika), as opposed to [`Self::head_seq`] which only
+    /// advances on a fold. During a quiet stretch with no Ika modifications the
+    /// fold head stalls while this keeps tracking the tip — letting the reader's
+    /// staleness tripwire tell "pusher is current, just nothing Ika-relevant
+    /// lately" apart from "pusher is actually behind". Liveness-only, not
+    /// persisted (the worker re-establishes it from its cursor on restart).
+    processed_head_seq: AtomicU64,
     /// When `Some`, the cache is durable: every `absorb_entries` writes the
     /// folded snapshots (and the head) through to the perpetual
     /// `verified_object_cache` column, and `open` rehydrates from it on boot —
@@ -98,6 +106,7 @@ impl VerifiedStateCache {
             objects: RwLock::new(HashMap::new()),
             children: RwLock::new(HashMap::new()),
             head_seq: AtomicU64::new(0),
+            processed_head_seq: AtomicU64::new(0),
             perpetual: None,
             retain_window: None,
             last_pruned_floor: AtomicU64::new(0),
@@ -137,6 +146,9 @@ impl VerifiedStateCache {
             objects: RwLock::new(objects),
             children: RwLock::new(children),
             head_seq: AtomicU64::new(head),
+            // Floor only; the worker bumps it to its real cursor on the first
+            // tick. Starting at the fold head avoids a spurious early tripwire.
+            processed_head_seq: AtomicU64::new(head),
             perpetual: Some(perpetual),
             retain_window: None,
             last_pruned_floor: AtomicU64::new(0),
@@ -159,6 +171,16 @@ impl VerifiedStateCache {
 
     pub fn head_seq(&self) -> CheckpointSequenceNumber {
         self.head_seq.load(Ordering::Relaxed)
+    }
+
+    /// Record that the populating worker has processed up to `seq` (whether or
+    /// not anything was folded there). Monotonic. See [`Self::processed_head_seq`].
+    pub fn note_processed(&self, seq: CheckpointSequenceNumber) {
+        self.processed_head_seq.fetch_max(seq, Ordering::Relaxed);
+    }
+
+    pub fn processed_head_seq(&self) -> CheckpointSequenceNumber {
+        self.processed_head_seq.load(Ordering::Relaxed)
     }
 
     pub fn len(&self) -> usize {
@@ -187,6 +209,10 @@ impl VerifiedStateCache {
             }
         }
         self.advance_head(source_seq);
+        // Folding `source_seq` means it was processed; keep the invariant
+        // processed_head >= fold head even without a separate worker callback
+        // (e.g. the reader's own network-read folds, and direct-cache tests).
+        self.note_processed(source_seq);
         self.persist(&inserted_ids);
         self.maybe_prune();
     }
@@ -453,6 +479,39 @@ mod tests {
             dynamic_field_name_bcs: Vec::new(),
         };
         (cert, entry)
+    }
+
+    /// The processed head tracks the populating worker through quiet stretches
+    /// (no Ika fold), independently of the fold head — and a fold never leaves
+    /// the processed head trailing the fold head. This is what lets the reader's
+    /// staleness tripwire distinguish "current, just nothing Ika lately" from
+    /// "actually behind".
+    #[tokio::test]
+    async fn processed_head_tracks_worker_independently_of_fold_head() {
+        let cache = VerifiedStateCache::new();
+        assert_eq!(cache.head_seq(), 0);
+        assert_eq!(cache.processed_head_seq(), 0);
+
+        // Quiet stretch: the worker streams past up to 500 with nothing to fold.
+        cache.note_processed(500);
+        assert_eq!(cache.processed_head_seq(), 500);
+        assert_eq!(cache.head_seq(), 0, "fold head only moves on a fold");
+
+        // Monotonic: a stale note never lowers it.
+        cache.note_processed(400);
+        assert_eq!(cache.processed_head_seq(), 500);
+
+        // A fold at 600 advances the fold head and keeps processed head >= it.
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let object = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x01),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (summary, entry) = signed_entry(&committee, &keys, 600, &object);
+        cache.absorb_entries(&summary, &[entry]);
+        assert_eq!(cache.head_seq(), 600);
+        assert_eq!(cache.processed_head_seq(), 600);
     }
 
     #[tokio::test]
