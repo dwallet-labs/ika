@@ -7,7 +7,7 @@
 //! and forward them to the [`DWalletMPCManager`].
 
 use crate::SuiDataSenders;
-use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output;
+use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg::spawn_network_encryption_key_public_data_instantiation;
 use crate::dwallet_mpc::integration_tests::utils;
 use crate::dwallet_mpc::integration_tests::utils::{
     IntegrationTestState, send_start_network_dkg_event_to_all_parties,
@@ -529,6 +529,7 @@ pub(crate) async fn reconfigure_network_key(
     for service in test_state.dwallet_mpc_services.iter_mut() {
         let manager = service.dwallet_mpc_manager_mut();
         let access_structure = manager.access_structure.clone();
+        let metrics = manager.dwallet_mpc_metrics.clone();
         let reconfigured_key_data = DWalletNetworkEncryptionKeyData {
             id: key_id,
             current_epoch: epoch_id,
@@ -537,14 +538,15 @@ pub(crate) async fn reconfigure_network_key(
             network_dkg_public_output: network_key_bytes.clone(),
             state: DWalletNetworkEncryptionKeyState::NetworkReconfigurationCompleted,
         };
-        let reconfigured_key =
-            instantiate_dwallet_mpc_network_encryption_key_public_data_from_public_output(
-                epoch_id,
-                access_structure.clone(),
-                reconfigured_key_data,
-            )
-            .await
-            .expect("instantiate reconfigured network key public data");
+        let reconfigured_key = spawn_network_encryption_key_public_data_instantiation(
+            epoch_id,
+            access_structure.clone(),
+            reconfigured_key_data,
+            metrics,
+        )
+        .await
+        .expect("recv reconfigured network key public data")
+        .expect("instantiate reconfigured network key public data");
         manager
             .network_keys
             .update_network_key(key_id, &reconfigured_key, &access_structure)
