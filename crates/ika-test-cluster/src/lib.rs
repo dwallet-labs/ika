@@ -16,7 +16,7 @@ use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
 use ika_config::local_ip_utils;
 use ika_node::IkaNodeHandle;
-use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
+use ika_protocol_config::{Chain, ProtocolVersion};
 use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::ika_dwallet_transactions::{
     PaymentCoinArgs, register_encryption_key, request_dwallet_dkg,
@@ -253,13 +253,10 @@ impl IkaTestCluster {
             .sign_and_execute_transaction(&tx_data)
             .await;
 
-        // Joiner publishes the shape matching the cluster's current protocol version:
-        // bare pre-v4, full `ValidatorEncryptionKeysAndProofs` bundle at v4+ (see
-        // `ValidatorInitializationConfig::to_validator_info`).
-        let legacy_class_groups_only =
-            !ProtocolConfig::get_for_version(self.current_protocol_version(), Chain::Unknown)
-                .is_network_encryption_key_version_v3();
-        let metadata = joiner_init.to_validator_info(legacy_class_groups_only);
+        // On this branch the on-chain `mpc_data` is always the bare class-groups
+        // shape (the bundle travels off-chain), so the joiner publish shape is
+        // fixed regardless of protocol version.
+        let metadata = joiner_init.to_validator_info();
         let (validator_id, validator_cap_id) = retry_on_object_contention!(
             "request_add_validator_candidate",
             request_add_validator_candidate(
