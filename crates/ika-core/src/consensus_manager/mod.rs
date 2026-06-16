@@ -35,6 +35,18 @@ enum Running {
     False,
 }
 
+/// Build the consensus-core [`ConsensusProtocolConfig`] from ika's
+/// [`ProtocolConfig`].
+///
+/// **Keep this in lockstep with Sui's `to_consensus_protocol_config`**
+/// (`sui-core/src/consensus_manager/mod.rs`). Every value consensus reads is
+/// sourced from the protocol config (so it is version-gated and changes only via
+/// a protocol upgrade, never an ad-hoc constant), in the same order and from the
+/// same getters as upstream. On every Sui version bump, diff this against
+/// upstream and wire through any field consensus newly reads — see
+/// `dev-docs/conventions/sui-version-bump.md`. The lone exception is the inline
+/// constant noted below, which mirrors what upstream itself hardcodes at the
+/// pinned version.
 fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> ConsensusProtocolConfig {
     let chain_type = match chain {
         Chain::Mainnet => ChainType::Mainnet,
@@ -51,9 +63,15 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_fastpath(),
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
-        // `enable_v3` is new in mainnet-v1.72.3. Default to disabled,
-        // matching Sui's `ConsensusProtocolConfig::default()` and the
-        // pre-v3 behavior this code was written against.
+        // `enable_v3`: hardcoded `false` to match upstream exactly. At the
+        // pinned mainnet-v1.72.3, Sui's own `to_consensus_protocol_config` also
+        // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
+        // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
+        // getter to source it from. When Sui gates it behind the protocol config
+        // (watch for it on the next version bump), or if we want to enable v3 via
+        // an ika protocol upgrade first, add a version-gated getter to ika's
+        // protocol config and source it here — do NOT just flip this constant,
+        // since an un-gated change would fork consensus mid-epoch.
         false,
     )
 }

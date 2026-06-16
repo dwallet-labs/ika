@@ -42,6 +42,13 @@ the locations below and runs in CI; it fails the build on drift.
 
 - `cargo build --release` + the integration suite (the crypto and
   consensus layers are the usual breakage points across Sui versions).
+- **Diff `to_consensus_protocol_config`** (`ika-core/src/consensus_manager/mod.rs`)
+  against Sui's upstream (`sui-core/src/consensus_manager/mod.rs`). Consensus
+  config is decoupled from the protocol config on purpose, so new toggles (e.g.
+  `enable_v3`) show up here, not in a snapshot. Source each value from the
+  protocol config the way upstream does — version-gated, never an ad-hoc constant.
+  If upstream starts gating a field that ika hardcodes, add the matching
+  version-gated getter to `ika-protocol-config` and wire it through.
 - Check for new `#[cfg(msim)]` rot in Sui-fork code paths
   (`unresolved import` under `--cfg msim` — see
   [`simtest.md`](simtest.md)).
