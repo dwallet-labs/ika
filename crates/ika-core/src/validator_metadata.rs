@@ -284,11 +284,10 @@ pub fn reevaluate_buffered_joiner_announcements(
 /// At `network_encryption_key_version == 3` (the v4 protocol shape)
 /// the inner bytes are the `ValidatorEncryptionKeysAndProofs`
 /// bundle — class-groups + per-curve PVSS HPKE keys + proofs.
-/// `decode_validator_encryption_keys` accepts either shape (new or
-/// mainnet-v1.1.8 class-groups-only); using the new shape here is
-/// what lets the off-chain validator-mpc_data assembler resolve all four
-/// committee key sets on a v4 cluster and avoid the "0/N PVSS
-/// keys decoded" rejection during network DKG and reconfig.
+/// Publishing the full bundle off-chain is what lets the
+/// validator-mpc_data assembler resolve all four committee key sets on a
+/// v4 cluster and avoid the "0/N PVSS keys decoded" rejection during
+/// network DKG and reconfig.
 pub fn derive_mpc_data_blob(seed: &RootSeed) -> IkaResult<Vec<u8>> {
     // Off-chain validators always publish the full v1
     // `ValidatorEncryptionKeysAndProofs` bundle (class-groups + 3 PVSS + the
@@ -563,7 +562,8 @@ pub enum PeerBlobVerdict {
     /// substitution or transport corruption — drop.
     HashMismatch,
     /// Bytes hash correctly but don't decode to valid mpc_data
-    /// (BCS error, or `decode_validator_encryption_keys` failed).
+    /// (BCS error, or the inner bytes aren't a valid
+    /// `ValidatorEncryptionKeysAndProofs` bundle).
     /// Drop without inserting — accepting would poison the local
     /// relay cache (the in-memory store backs the local Anemo
     /// serve endpoint, so every honest receiver of these bytes
@@ -959,7 +959,7 @@ where
     F: Fn(&[u8; 32]) -> Option<Vec<u8>>,
 {
     use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-    use ika_types::committee::decode_validator_encryption_keys;
+    use ika_types::committee::ValidatorEncryptionKeysAndProofs;
 
     let mut class_groups = std::collections::HashMap::new();
     let mut secp256k1_pvss = std::collections::HashMap::new();
@@ -979,38 +979,21 @@ where
             continue;
         };
         let inner_bytes = versioned.mpc_data_bytes();
-        let Some(decoded) = decode_validator_encryption_keys(&inner_bytes) else {
+        // Off-chain blobs are always the full v1 `ValidatorEncryptionKeysAndProofs`
+        // bundle (class-groups + 3 PVSS + the Fast Schnorr VSS HPKE key); the bare
+        // class-groups-only shape lives on chain, never here. Decode strictly — a
+        // wrong-shape blob leaves the validator missing so assembly stays
+        // `Incomplete` and retries rather than building a `Committee` without a
+        // complete PVSS / VSS key set.
+        let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(&inner_bytes) else {
             missing.push(authority);
             continue;
         };
-        // Off-chain bundles are always the full v1
-        // `ValidatorEncryptionKeysAndProofs` (class-groups + 3 PVSS + the Fast
-        // Schnorr VSS HPKE key, all together). A blob missing any of the four
-        // non-class-groups keys is a malformed / wrong-shape off-chain payload —
-        // treat the validator as missing so assembly stays `Incomplete` and
-        // retries, rather than building a `Committee` without a complete VSS /
-        // PVSS key set. (The bare class-groups-only shape lives on chain, never
-        // here.)
-        let (
-            Some(secp256k1_pvss_key),
-            Some(secp256r1_pvss_key),
-            Some(ristretto_pvss_key),
-            Some(vss_hpke_key),
-        ) = (
-            decoded.secp256k1_pvss,
-            decoded.secp256r1_pvss,
-            decoded.ristretto_pvss,
-            decoded.vss_hpke_public_key_and_proof,
-        )
-        else {
-            missing.push(authority);
-            continue;
-        };
-        class_groups.insert(authority, decoded.class_groups);
-        secp256k1_pvss.insert(authority, secp256k1_pvss_key);
-        secp256r1_pvss.insert(authority, secp256r1_pvss_key);
-        ristretto_pvss.insert(authority, ristretto_pvss_key);
-        vss_hpke.insert(authority, vss_hpke_key);
+        class_groups.insert(authority, bundle.class_groups);
+        secp256k1_pvss.insert(authority, bundle.secp256k1_pvss);
+        secp256r1_pvss.insert(authority, bundle.secp256r1_pvss);
+        ristretto_pvss.insert(authority, bundle.ristretto_pvss);
+        vss_hpke.insert(authority, bundle.vss_hpke_public_key_and_proof);
     }
     // Empty input -> never `Complete`. `Complete` with empty maps
     // would silently build a `Committee` whose
