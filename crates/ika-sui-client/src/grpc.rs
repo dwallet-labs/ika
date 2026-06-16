@@ -10,6 +10,7 @@
 //! serialize every Sui read/write on the node behind one in-flight RPC.
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use sui_rpc_api::Client as SuiRpcClient;
 use sui_rpc_api::client::ExecutedTransaction;
 use sui_rpc_api::proto::sui::rpc::v2 as proto;
@@ -21,7 +22,8 @@ use sui_types::object::Object;
 use sui_types::transaction::Transaction;
 
 use crate::transport::{
-    DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction, SuiTransport, TransportError,
+    CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
+    SuiTransport, TransportError,
 };
 
 pub struct SuiGrpcClient {
@@ -59,6 +61,34 @@ impl SuiGrpcClient {
         } else {
             TransportError::Network(status.to_string())
         }
+    }
+
+    /// Decode a proto checkpoint carrying the narrow `summary.bcs` + `signature`
+    /// field mask into a `CertifiedCheckpointSummary`. Shared by the digest
+    /// lookup and the live subscription stream — both request exactly these two
+    /// fields, and `summary.bcs` is the full BCS-encoded `CheckpointSummary`, so
+    /// `end_of_epoch_data.next_epoch_committee` rides along inside it.
+    fn decode_certified_summary(
+        proto_checkpoint: &proto::Checkpoint,
+    ) -> Result<CertifiedCheckpointSummary, TransportError> {
+        let summary_data: sui_types::messages_checkpoint::CheckpointSummary = proto_checkpoint
+            .summary
+            .as_ref()
+            .and_then(|s| s.bcs.as_ref())
+            .ok_or_else(|| TransportError::Encoding("missing summary.bcs".into()))?
+            .deserialize()
+            .map_err(|e| TransportError::Encoding(format!("decode CheckpointSummary: {e}")))?;
+        let proto_sig = proto_checkpoint.signature.as_ref().ok_or_else(|| {
+            TransportError::Encoding("signature missing on checkpoint response".into())
+        })?;
+        let signature = sui_types::crypto::AuthorityStrongQuorumSignInfo::from(
+            sui_sdk_types::ValidatorAggregatedSignature::try_from(proto_sig)
+                .map_err(|e| TransportError::Encoding(format!("decode signature: {e}")))?,
+        );
+        Ok(CertifiedCheckpointSummary::new_from_data_and_sig(
+            summary_data,
+            signature,
+        ))
     }
 }
 
@@ -169,24 +199,40 @@ impl SuiTransport for SuiGrpcClient {
         let proto_checkpoint = response
             .checkpoint
             .ok_or_else(|| TransportError::NotFound(format!("checkpoint {digest:?} not found")))?;
-        let summary_data: sui_types::messages_checkpoint::CheckpointSummary = proto_checkpoint
-            .summary
-            .as_ref()
-            .and_then(|s| s.bcs.as_ref())
-            .ok_or_else(|| TransportError::Encoding("missing summary.bcs".into()))?
-            .deserialize()
-            .map_err(|e| TransportError::Encoding(format!("decode CheckpointSummary: {e}")))?;
-        let proto_sig = proto_checkpoint.signature.as_ref().ok_or_else(|| {
-            TransportError::Encoding("signature missing on get_checkpoint response".into())
-        })?;
-        let signature = sui_types::crypto::AuthorityStrongQuorumSignInfo::from(
-            sui_sdk_types::ValidatorAggregatedSignature::try_from(proto_sig)
-                .map_err(|e| TransportError::Encoding(format!("decode signature: {e}")))?,
-        );
-        Ok(CertifiedCheckpointSummary::new_from_data_and_sig(
-            summary_data,
-            signature,
-        ))
+        Self::decode_certified_summary(&proto_checkpoint)
+    }
+
+    async fn subscribe_checkpoint_summaries(
+        &self,
+    ) -> Result<CheckpointSummaryStream, TransportError> {
+        use sui_rpc_api::proto::sui::rpc::v2::SubscribeCheckpointsRequest;
+        // Summary + signature only: served from the fullnode's live checkpoint
+        // broadcast, so this never touches the object-pruning watermark that
+        // gates `get_full_checkpoint`. `summary.bcs` carries
+        // `end_of_epoch_data.next_epoch_committee` for boundary checkpoints.
+        let mut request = SubscribeCheckpointsRequest::default();
+        request.read_mask = Some(prost_types::FieldMask {
+            paths: vec!["summary.bcs".into(), "signature".into()],
+        });
+        let mut rpc = self.rpc.clone();
+        let mut inner = rpc.inner_mut().clone();
+        let streaming = inner
+            .subscription_client()
+            .subscribe_checkpoints(request)
+            .await
+            .map_err(Self::rpc_status_err)?
+            .into_inner();
+        // Map each streamed response to a decoded summary; a per-item decode or
+        // transport error becomes a stream item error (the follower resubscribes
+        // on the first error rather than tearing the node down).
+        let summaries = streaming.map(|item| {
+            let response = item.map_err(Self::rpc_status_err)?;
+            let proto_checkpoint = response.checkpoint.ok_or_else(|| {
+                TransportError::Encoding("subscription response missing checkpoint".into())
+            })?;
+            Self::decode_certified_summary(&proto_checkpoint)
+        });
+        Ok(Box::pin(summaries))
     }
 
     async fn last_checkpoint_of_epoch(

@@ -925,6 +925,24 @@ impl IkaNode {
         // network is up. It fans out Ika-relevant CheckpointData + all
         // end-of-epoch checkpoints to peers via SuiStateMirror.
         if let Some(raw_transport) = raw_transport_for_pushing {
+            // Committee follower: a decoupled, summary-only subscription to the
+            // Sui checkpoint stream that captures each committee[E+1] the moment
+            // its end-of-epoch summary streams by — keeping the committee head
+            // current without ever reaching back for a (possibly object-pruned)
+            // full checkpoint. The background ratchet stays the catch-up
+            // backstop. Present on sui-state-direct (the branch that set
+            // `raw_transport_for_pushing`).
+            {
+                use ika_core::sui_connector::committee_follower::CommitteeFollower;
+                let follower_transport = raw_transport.clone();
+                let follower_committees = ratchet_opt
+                    .as_ref()
+                    .expect("ratchet present on sui-state-direct")
+                    .committees()
+                    .clone();
+                tokio::spawn(CommitteeFollower::new(follower_transport, follower_committees).run());
+            }
+
             let cache_for_push = state_cache_opt
                 .clone()
                 .expect("state_cache present on sui-state-direct (set in the same branch)");

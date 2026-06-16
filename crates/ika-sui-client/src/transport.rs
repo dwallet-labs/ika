@@ -8,6 +8,7 @@
 //! - `SuiMirrorTransport` (in `ika-network`): peer-relayed reads via Ika p2p.
 
 use async_trait::async_trait;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 pub use sui_rpc_api::client::ExecutedTransaction;
@@ -105,6 +106,12 @@ pub struct DynamicFieldPage {
     pub next_page_token: Option<Vec<u8>>,
 }
 
+/// A live stream of certified checkpoint summaries (summary + BLS signature
+/// only — no contents/objects). `'static` and `Send` so it can be driven from
+/// a spawned task.
+pub type CheckpointSummaryStream =
+    BoxStream<'static, Result<CertifiedCheckpointSummary, TransportError>>;
+
 #[async_trait]
 pub trait SuiTransport: Send + Sync {
     // -- chain metadata ---------------------------------------------------------------------
@@ -133,6 +140,29 @@ pub trait SuiTransport: Send + Sync {
         &self,
         epoch: u64,
     ) -> Result<CheckpointSequenceNumber, TransportError>;
+    /// Subscribe to the live tail of certified checkpoint summaries (summary +
+    /// signature only, carrying `end_of_epoch_data.next_epoch_committee` on
+    /// boundary checkpoints). Served from the fullnode's in-memory checkpoint
+    /// broadcast, so — unlike a reach-back [`Self::get_full_checkpoint`] — it is
+    /// **independent of object pruning**: the OCS committee chain can capture
+    /// `committee[E+1]` live as the end-of-epoch summary streams by, before the
+    /// fullnode prunes that checkpoint's objects.
+    ///
+    /// Live-tail only: yields checkpoints from subscribe-time forward, with no
+    /// historical backfill. Catching up across a gap (cold start / restart) is
+    /// the committee ratchet's job, not this stream's.
+    ///
+    /// Only the direct gRPC transport implements this; every other transport
+    /// (peer-relay mirror, decorators, mocks) returns the default unsupported
+    /// error, since only sui-state-direct nodes follow the Sui stream.
+    async fn subscribe_checkpoint_summaries(
+        &self,
+    ) -> Result<CheckpointSummaryStream, TransportError> {
+        Err(TransportError::Network(
+            "checkpoint summary subscription is only supported by the direct gRPC transport"
+                .to_string(),
+        ))
+    }
 
     // -- objects ----------------------------------------------------------------------------
     async fn get_object(&self, id: ObjectID) -> Result<Object, TransportError>;

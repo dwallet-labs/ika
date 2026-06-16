@@ -45,7 +45,9 @@ use ika_types::error::{IkaError, IkaResult};
 use sui_light_client::proof::committee::extract_new_committee_info;
 use sui_types::committee::Committee as SuiCommittee;
 use sui_types::full_checkpoint_content::CheckpointData;
-use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, VerifiedCheckpoint};
+use sui_types::messages_checkpoint::{
+    CertifiedCheckpointSummary, CheckpointContents, VerifiedCheckpoint,
+};
 use tracing::info;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
@@ -304,26 +306,59 @@ impl CommitteeStore {
         &self,
         data: &CheckpointData,
     ) -> Result<CommitteeTransition, CommitteeTransitionError> {
+        self.install_next_from_verified_summary(
+            &data.checkpoint_summary,
+            Some(&data.checkpoint_contents),
+        )
+    }
+
+    /// Summary-only sibling of [`Self::install_next_from_checkpoint`], for the
+    /// live committee follower ([`super::committee_follower::CommitteeFollower`])
+    /// which subscribes to the Sui checkpoint *summary* stream — no contents,
+    /// no objects, so it is independent of the fullnode's object pruning.
+    /// Verification is BLS-only (the contents-digest bind is skipped), which is
+    /// exactly the committee-transition guarantee: `committee[E]`'s quorum signs
+    /// the end-of-epoch summary that commits to `committee[E+1]`. Head-guarded
+    /// and idempotent like the full variant, so the follower and the background
+    /// ratchet may both call it.
+    pub fn install_next_from_summary(
+        &self,
+        summary: &CertifiedCheckpointSummary,
+    ) -> Result<CommitteeTransition, CommitteeTransitionError> {
+        self.install_next_from_verified_summary(summary, None)
+    }
+
+    /// Shared core. Installs `committee[E+1]` *only* when `summary` is the
+    /// end-of-epoch summary of the current head epoch `E`; BLS-verifies it
+    /// against `committee[E]`, derives and asserts `committee[E+1]`, and
+    /// persists the verified summary. `contents`, when `Some`, additionally
+    /// binds the summary to its checkpoint-contents digest; `None` checks the
+    /// quorum signature alone. Any other checkpoint is a
+    /// [`CommitteeTransition::NotNextTransition`] no-op (idempotent).
+    fn install_next_from_verified_summary(
+        &self,
+        summary: &CertifiedCheckpointSummary,
+        contents: Option<&CheckpointContents>,
+    ) -> Result<CommitteeTransition, CommitteeTransitionError> {
         let head = self.head_epoch();
-        let epoch = data.checkpoint_summary.epoch();
-        if epoch != head || data.checkpoint_summary.end_of_epoch_data.is_none() {
+        let epoch = summary.epoch();
+        if epoch != head || summary.end_of_epoch_data.is_none() {
             return Ok(CommitteeTransition::NotNextTransition);
         }
         let committee = self
             .committee(head)
             .ok_or(CommitteeTransitionError::MissingCommittee(head))?;
-        data.checkpoint_summary
-            .verify_with_contents(&committee, Some(&data.checkpoint_contents))
+        summary
+            .verify_with_contents(&committee, contents)
             .map_err(|e| CommitteeTransitionError::BadSignature {
                 epoch,
                 error: e.to_string(),
             })?;
-        let next = extract_new_committee_info(&data.checkpoint_summary).map_err(|e| {
-            CommitteeTransitionError::Extract {
+        let next =
+            extract_new_committee_info(summary).map_err(|e| CommitteeTransitionError::Extract {
                 epoch,
                 error: e.to_string(),
-            }
-        })?;
+            })?;
         // A summary verified by `committee[head]` commits to `committee[head+1]`
         // by the protocol, but assert it explicitly so a faulty extraction can't
         // jump the head past an uninstalled epoch.
@@ -333,7 +368,7 @@ impl CommitteeStore {
                 got: next.epoch,
             });
         }
-        self.install_next(next, Some(&data.checkpoint_summary))?;
+        self.install_next(next, Some(summary))?;
         Ok(CommitteeTransition::Installed(head + 1))
     }
 }

@@ -34,6 +34,7 @@ use tracing::info;
 
 pub mod bag_event_pump;
 pub mod changeset_receiver;
+pub mod committee_follower;
 pub mod committee_store;
 pub mod fallback_transport;
 pub mod metrics;

@@ -6878,6 +6878,7 @@ dependencies = [
  "bytes",
  "dwallet-mpc-types",
  "fastcrypto",
+ "futures",
  "ika-config",
  "ika-types",
  "itertools 0.14.0",
