@@ -56,6 +56,7 @@ use crate::sui_connector::fallback_transport::FallbackTransport;
 use crate::sui_connector::ocs_currency::ChangesetIndex;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::ocs_verifier::{OcsError, OcsVerifyingClient};
+use crate::sui_connector::retained_transport::RetainedFullnodeTransport;
 use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, VerifiedStateCache};
 use parking_lot::RwLock;
@@ -423,8 +424,17 @@ pub async fn build_sui_connector_stack(
                 ..
             })
         ) {
-        Some(sui_state_mirror::make_server(
+        // Front the relay server's transport with the retained-checkpoint
+        // decorator: it serves the committee-ratchet primitives from this node's
+        // persisted end-of-epoch checkpoints before reaching the (prune-prone)
+        // fullnode, so a mirrored peer's ratchet advances without depending on
+        // the fullnode still holding the end-of-epoch checkpoint.
+        let mirror_transport: Arc<dyn SuiTransport> = Arc::new(RetainedFullnodeTransport::new(
             ratchet.transport().clone(),
+            perpetual.clone(),
+        ));
+        Some(sui_state_mirror::make_server(
+            mirror_transport,
             proof_provider,
             provider_metrics.clone(),
         ))

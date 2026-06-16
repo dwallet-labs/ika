@@ -1,10 +1,13 @@
 # OCS direct-validator self-sufficiency (finding 17 durable fix)
 
-Status: **Slices 1, 2, 4, 5 done and cluster-validated** — finding 17 is resolved
-for direct nodes (the topology where it was observed). **Slice 3** (serve the
-ratchet/read primitives to *mirrored* peers from the retained store) is
-**deferred** as forward-looking — mirrored peers weren't part of the finding-17
-topology. Resolves review finding 17
+Status: **all slices done.** Slices 1, 2, 4, 5 resolve finding 17 for direct nodes
+(cluster-validated). **Slice 3** (serve a mirrored peer's committee ratchet from
+the direct node's retained store) is now done too, via **Option A** — a
+`RetainedFullnodeTransport` decorator that serves the end-of-epoch
+`get_full_checkpoint` / `last_checkpoint_of_epoch` from persisted state before the
+fullnode, with no new cross-crate trait, anemo RPC, or ratchet change (Option B
+was abandoned because `ika-network` can't depend on `ika-core`). Resolves review
+finding 17
 ([`../reviews/ocs-grpc-migration-review.md`](../reviews/ocs-grpc-migration-review.md)).
 
 ## Problem
@@ -89,20 +92,35 @@ bcs-encodable (its manual `Clone` already round-trips the proof through
   from DB after the fullnode "forgets" it (mock transport NotFound) still succeeds;
   pruner bounds the column.
 
-### Slice 3 — Serve ratchet & read primitives to mirrored peers from the retained store
+### Slice 3 — Serve a mirrored peer's ratchet from the retained store — DONE (Option A)
 
-Today the mirror server proxies the **live fullnode** for the ratchet/stream
-primitives (`sui_state_mirror/mod.rs`): `last_checkpoint_of_epoch` (:276),
-`get_full_checkpoint` (:237), `changeset_page` (:248) all call `self.transport.*`
-directly; only `verified_object`/batch/bag go through the in-memory `ProofCache`
-(32 trees, `proof_provider.rs:367`). So a mirrored node's ratchet still depends on
-the *direct* node's fullnode still holding the data.
+The mirror server proxied the **live fullnode** for the ratchet primitives
+(`sui_state_mirror/mod.rs`: `last_checkpoint_of_epoch`, `get_full_checkpoint`,
+`changeset_page` all call `self.transport.*`), so a mirrored node's ratchet still
+depended on the *direct* node's fullnode still holding the end-of-epoch checkpoint.
 
-- Source these from the direct node's retained DB store (Slice 2 + the persisted
-  committee summaries already in `sui_committee_summaries`) so a mirrored node
-  never reaches a live fullnode. Serving depth = the retain window.
-- Tests: a mirrored node advances its committee and serves reads with the direct
-  node's fullnode stubbed to prune everything past the window.
+**Option B (committee-summary RPC + ratchet `try_into_verified`) was abandoned:**
+it needed the mirror `Server` to hold the `CommitteeStore`, but `ika-network` does
+**not** depend on `ika-core` (the reverse), so that would require a new cross-crate
+`CommitteeSummarySource` trait, a new anemo RPC, and a change to the shared,
+security-critical ratchet — large and invasive.
+
+**Built Option A instead** — fully contained in `ika-core`, no trait/RPC/ratchet
+change:
+- A new perpetual column `sui_end_of_epoch_checkpoints` retains the full
+  end-of-epoch `CheckpointData`; the pusher persists each one (with its epoch→seq
+  mapping in `sui_end_of_epoch_seqs`) as it streams past (`persist_end_of_epoch`),
+  pruned with the verified-cache retention floor.
+- `RetainedFullnodeTransport` decorates the direct node's mirror-server transport
+  (`setup.rs`): `last_checkpoint_of_epoch` and `get_full_checkpoint` serve from the
+  retained columns first, then the fullnode; everything else delegates. The
+  mirrored peer's *existing* ratchet flow works unchanged and re-verifies the
+  committee-signed summary, so this is a serving optimization, not a trust change.
+- Tests: the pusher persists the end-of-epoch checkpoint + seq on capture
+  (`pusher_eagerly_captures…`); the wrapper serves both primitives from the
+  retained store without delegating to the fullnode (`serves_committee_primitives_
+  from_the_retained_store`, a panicking inner proves no delegation), and the
+  retention prune drops them below the floor.
 
 ### Slice 4 — Graceful-degrade safety net (the accepted residual) — DONE
 

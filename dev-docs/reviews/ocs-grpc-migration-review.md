@@ -297,10 +297,13 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     retention-gap diagnostic (they can't degrade — the MPC pipeline needs them),
     and (d) a deterministic mock-transport regression guard (eager-capture + skip;
     the real-Sui-pruning cluster test was infeasible — the in-process harness
-    doesn't expose Sui-fullnode retention). **Deferred (forward-looking, not
-    needed for direct nodes):** serving the ratchet/read primitives to *mirrored*
-    peers from the retained store (plan Slice 3) — mirrored peers weren't part of
-    the finding-17 topology. Below is the original plan summary.
+    doesn't expose Sui-fullnode retention). Slice 3 (serving a *mirrored* peer's
+    committee ratchet from the direct node's retained store) is now also done via
+    Option A — a `RetainedFullnodeTransport` decorator that serves the end-of-epoch
+    `get_full_checkpoint` / `last_checkpoint_of_epoch` from persisted
+    `sui_end_of_epoch_checkpoints` before the fullnode (no cross-crate trait /
+    anemo RPC / ratchet change; Option B was abandoned because `ika-network` can't
+    depend on `ika-core`). Below is the original plan summary.
     The end-of-epoch checkpoint
     *carries the next committee* (`EndOfEpochData::next_epoch_committee`,
     `messages_checkpoint.rs:304-314`) and ika already extracts and **DB-persists**
@@ -431,9 +434,9 @@ direct nodes**.
    history it needs. Fixed for the all-`SuiStateDirect` topology by Slices 1/2/4/5
    of [`../plans/ocs-direct-validator-self-sufficiency.md`](../plans/ocs-direct-validator-self-sufficiency.md)
    (eager EoE committee capture, DB-persisted cache + retention pruner, executor
-   backoff/diagnose, mock-transport regression guard) — cluster-validated. The
-   forward-looking remainder (serve mirrored peers from the retained store, Slice
-   3) is deferred — mirrored peers weren't part of the finding-17 topology.
+   backoff/diagnose, mock-transport regression guard) — cluster-validated. Slice 3
+   (serve a mirrored peer's ratchet from the retained store, via a
+   `RetainedFullnodeTransport` decorator — Option A) is also done.
 2. **Mirrored-node currency redesign** (future feature, not an audit finding) —
    [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md)
    and its bandwidth-bounding successor

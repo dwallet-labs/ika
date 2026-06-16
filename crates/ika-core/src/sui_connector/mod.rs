@@ -42,6 +42,7 @@ pub mod ocs_metrics;
 pub mod ocs_verifier;
 pub mod pubkey_provider_updater;
 pub mod push_worker;
+pub mod retained_transport;
 pub mod setup;
 mod sui_event_into_request;
 pub mod sui_executor;

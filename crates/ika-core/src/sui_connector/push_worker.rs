@@ -176,8 +176,11 @@ impl IkaCheckpointPusher {
                 }
             };
             // Capture the committee transition the moment we stream past an
-            // end-of-epoch checkpoint, so the chain never reaches back for it.
+            // end-of-epoch checkpoint, so the chain never reaches back for it,
+            // and retain the checkpoint so we can serve it to mirrored peers
+            // after our own fullnode prunes it.
             self.capture_committee(&data);
+            self.persist_end_of_epoch(&data, seq);
             if let Some((summary, entries)) = self.build_entries(&data)? {
                 // Fold this checkpoint's Ika-modified objects into the local
                 // verified state cache that sui-state-direct consumers read
@@ -258,11 +261,29 @@ impl IkaCheckpointPusher {
                         epoch,
                         eoe_seq, "pusher captured Sui committee during catch-up"
                     );
+                    self.persist_end_of_epoch(&data, eoe_seq);
                 }
                 // Not the next transition (head moved, or not end-of-epoch), or a
                 // verify failure — stop and let the ratchet handle it.
                 _ => break,
             }
+        }
+    }
+
+    /// Retain a streamed end-of-epoch checkpoint (its epoch→seq mapping and the
+    /// full checkpoint) so this node can serve a mirrored peer's ratchet the
+    /// committee transition after its own fullnode prunes it
+    /// (`RetainedFullnodeTransport`). A no-op for non-end-of-epoch checkpoints.
+    fn persist_end_of_epoch(&self, data: &CheckpointData, seq: CheckpointSequenceNumber) {
+        if data.checkpoint_summary.end_of_epoch_data.is_none() {
+            return;
+        }
+        let epoch = data.checkpoint_summary.epoch();
+        if let Err(e) = self.perpetual.put_sui_end_of_epoch_seq(epoch, seq) {
+            warn!(epoch, seq, error = ?e, "failed to persist end-of-epoch seq");
+        }
+        if let Err(e) = self.perpetual.put_sui_end_of_epoch_checkpoint(seq, data) {
+            warn!(seq, error = ?e, "failed to persist end-of-epoch checkpoint for mirrored peers");
         }
     }
 
@@ -595,10 +616,19 @@ mod tests {
         // Resume from seq 99 so advance() streams exactly seq 100.
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
-        let mut pusher = pusher_over(perpetual, committees.clone(), transport).await;
+        let mut pusher = pusher_over(perpetual.clone(), committees.clone(), transport).await;
         pusher.advance().await.unwrap();
 
         assert_eq!(committees.head_epoch(), 1);
+        // The end-of-epoch checkpoint is retained so this node can serve it to a
+        // mirrored peer's ratchet after its own fullnode prunes it.
+        assert!(
+            perpetual
+                .get_sui_end_of_epoch_checkpoint(100)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(perpetual.get_sui_end_of_epoch_seq(0).unwrap(), Some(100));
     }
 
     /// Slice 4 (pusher half): a pruned (NotFound) checkpoint is skipped, not

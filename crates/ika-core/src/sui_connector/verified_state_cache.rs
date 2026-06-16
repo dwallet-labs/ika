@@ -228,6 +228,14 @@ impl VerifiedStateCache {
     /// Drop every snapshot last modified before `floor` from the in-memory maps
     /// and the persisted column, keeping the parent→children index consistent.
     fn prune(&self, floor: CheckpointSequenceNumber) {
+        // Retained end-of-epoch checkpoints (served to mirrored peers) share the
+        // cache's retention floor; prune them on the same amortized schedule,
+        // independently of whether any object snapshot aged out this sweep.
+        if let Some(perpetual) = &self.perpetual {
+            if let Err(e) = perpetual.retain_sui_end_of_epoch_checkpoints(floor) {
+                warn!(error = ?e, "failed to prune retained end-of-epoch checkpoints");
+            }
+        }
         let removed: Vec<(ObjectID, Option<ObjectID>)> = {
             let mut objects = self.objects.write();
             let mut removed = Vec::new();

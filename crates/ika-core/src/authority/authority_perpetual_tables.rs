@@ -13,6 +13,7 @@ use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
 use sui_types::base_types::TransactionDigest as SuiTransactionDigest;
 use sui_types::committee::Committee as SuiCommittee;
+use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary as SuiCertifiedCheckpointSummary,
     CheckpointSequenceNumber as SuiCheckpointSequenceNumber,
@@ -105,6 +106,14 @@ pub struct AuthorityPerpetualTables {
     /// to fetch the right end-of-epoch CheckpointData without re-querying the
     /// `LedgerService::GetEpoch` RPC.
     pub(crate) sui_end_of_epoch_seqs: DBMap<u64, SuiCheckpointSequenceNumber>,
+
+    /// Retained full end-of-epoch `CheckpointData`, keyed by its sequence
+    /// number. A sui-state-direct node persists each one as the pusher streams
+    /// past it (`RetainedFullnodeTransport`), so it can serve a mirrored peer's
+    /// committee ratchet the end-of-epoch checkpoint *after* its own Sui fullnode
+    /// has pruned it. Heavier than the summary alone but sparse (one per epoch);
+    /// pruned with the verified-cache retention floor.
+    pub(crate) sui_end_of_epoch_checkpoints: DBMap<SuiCheckpointSequenceNumber, CheckpointData>,
 
     /// TX digest → checkpoint sequence index. Avoids a `get_transaction` round-trip
     /// when verifying repeat reads of objects whose `previous_transaction` we've seen before.
@@ -472,6 +481,47 @@ impl AuthorityPerpetualTables {
     ) -> IkaResult {
         let mut wb = self.sui_end_of_epoch_seqs.batch();
         wb.insert_batch(&self.sui_end_of_epoch_seqs, [(sui_epoch, seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_end_of_epoch_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult<Option<CheckpointData>> {
+        Ok(self.sui_end_of_epoch_checkpoints.get(&seq)?)
+    }
+
+    pub fn put_sui_end_of_epoch_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+        checkpoint: &CheckpointData,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_checkpoints.batch();
+        wb.insert_batch(
+            &self.sui_end_of_epoch_checkpoints,
+            [(seq, checkpoint.clone())],
+        )?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Drop retained end-of-epoch checkpoints below `floor` (the verified-cache
+    /// retention floor) — a mirrored peer cannot bootstrap below it anyway.
+    pub fn retain_sui_end_of_epoch_checkpoints(
+        &self,
+        floor: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let stale: Vec<SuiCheckpointSequenceNumber> = self
+            .sui_end_of_epoch_checkpoints
+            .safe_iter()
+            .filter_map(|item| item.ok().map(|(seq, _)| seq).filter(|seq| *seq < floor))
+            .collect();
+        if stale.is_empty() {
+            return Ok(());
+        }
+        let mut wb = self.sui_end_of_epoch_checkpoints.batch();
+        wb.delete_batch(&self.sui_end_of_epoch_checkpoints, stale)?;
         wb.write()?;
         Ok(())
     }
