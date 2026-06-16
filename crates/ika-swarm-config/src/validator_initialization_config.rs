@@ -66,8 +66,7 @@ impl ValidatorInitializationConfig {
         // bundle — so a mainnet-v1.1.8 binary can decode this record and the
         // v118 upgrade rehearsal boots. The richer `ValidatorEncryptionKeysAndProofs`
         // bundle (class groups + per-curve PVSS + the Fast Schnorr VSS HPKE key)
-        // travels off-chain via validator P2P; chain reads decode the bare shape,
-        // and shape-tolerant `decode_validator_encryption_keys` accepts either.
+        // travels off-chain via validator P2P; chain reads decode the bare shape.
         let mpc_data = VersionedMPCData::V1(MPCDataV1 {
             mpc_data_bytes: bcs::to_bytes(
                 &ValidatorMPCSecrets::from_seed(&self.root_seed)
