@@ -276,10 +276,13 @@ pub fn reevaluate_buffered_joiner_announcements(
     to_apply
 }
 
-/// Derives the canonical MPC data blob (BCS-encoded
-/// `VersionedMPCData::V1`) from a `RootSeed` — the same encoding the
-/// CLI submits on chain via `set_next_epoch_mpc_data_bytes`. Both
-/// paths hashing this output produce the same digest.
+/// Derives the canonical off-chain MPC data blob (BCS-encoded
+/// `VersionedMPCData::V1` wrapping the full `ValidatorEncryptionKeysAndProofs`
+/// bundle) from a `RootSeed`. Deterministic in the seed, so every honest
+/// re-derivation yields byte-identical output and the same announcement
+/// digest. This is the off-chain shape — distinct from the bare
+/// `ClassGroupsEncryptionKeyAndProof` the CLI submits on chain via
+/// `set_next_epoch_mpc_data_bytes`.
 ///
 /// At `network_encryption_key_version == 3` (the v4 protocol shape)
 /// the inner bytes are the `ValidatorEncryptionKeysAndProofs`
