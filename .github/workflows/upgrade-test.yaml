@@ -1,0 +1,188 @@
+name: Upgrade Test
+
+# Manually triggered. Runs the cross-binary upgrade rehearsals from
+# `crates/ika-upgrade-test/` on the `ika-k8s-large` self-hosted runner.
+#
+# Two scenarios, selected by the `test` input:
+#
+#   - v118_upgrade (default): boots a 4-validator committee on the LITERAL
+#     `mainnet-v1.1.8` `ika-node` (built from the tag), runs the mainnet user
+#     flow at protocol v3, atomically swaps every validator to the local
+#     build, and asserts the network upgrades to v4 and keeps serving. The
+#     OLD binary is built from the `old_ref` input (default the
+#     `mainnet-v1.1.8` tag).
+#   - cross_binary: the per-epoch committee-churn rehearsal. Its OLD binary is
+#     a build of THIS branch with `MAX_PROTOCOL_VERSION` pinned to 3 (a
+#     `ika-validator-max3`), produced in the "Build OLD binary" step.
+#
+# Both are `#[tokio::test]` (real parallel crypto, no msim). They are opt-in
+# behind `RUN_V118_UPGRADE` / `RUN_CROSS_BINARY` env gates, so they never run
+# in the normal test sweep — this workflow is the on-demand entry point.
+#
+# Binaries built `--no-default-features`: the default `enforce-minimum-cpu`
+# feature panics below 16 cores, and the `mainnet-v1.1.8` tag needs the same.
+
+on:
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Which upgrade rehearsal to run"
+        type: choice
+        options:
+          - v118_upgrade
+          - cross_binary
+        default: v118_upgrade
+      old_ref:
+        description: "Git ref/tag to build the OLD ika-node binary from (v118_upgrade only)"
+        type: string
+        required: false
+        default: "mainnet-v1.1.8"
+      rust_log:
+        description: "RUST_LOG for the test run (default info; full-debug replays are multi-GB)"
+        type: string
+        required: false
+        default: "info"
+      epoch_duration_ms:
+        description: "Epoch duration in ms passed to the harness (longer = more slack on a loaded runner)"
+        type: string
+        required: false
+        default: "300000"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  RUST_BACKTRACE: 1
+  RUST_LOG: ${{ inputs.rust_log || 'info' }}
+  rust_stable: "1.94"
+  sui_version: "mainnet-v1.70.2"
+
+jobs:
+  upgrade-test:
+    name: ${{ inputs.test }} (cargo test --release)
+    runs-on: ika-k8s-large
+    # Each rehearsal advances several real epochs (300s default) plus a cold
+    # build of both the local AND the OLD binary; the ceiling covers that.
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Runner resources
+        run: |
+          echo "nproc: $(nproc)"
+          echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo n/a)"
+          free -g 2>/dev/null || true
+
+      - name: Setup SSH
+        uses: ./.github/actions/setup-ssh
+        with:
+          deploy-key: ${{ secrets.GH_DEPLOY_KEY }}
+
+      - name: Install Rust ${{ env.rust_stable }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.rust_stable }}
+
+      - name: Install build dependencies
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+          APT="-o Acquire::ForceIPv4=true"
+          for attempt in 1 2 3; do
+            $SUDO apt-get $APT update && \
+              $SUDO apt-get $APT install -y cmake clang pkg-config libssl-dev curl && break
+            echo "apt attempt $attempt failed; retrying in 15s" && sleep 15
+          done
+          command -v cmake >/dev/null || { echo "build dependencies missing after retries"; exit 1; }
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "upgrade-test"
+
+      - name: Install sui CLI ${{ env.sui_version }}
+        run: |
+          # The harness shells out to a real `sui` for the localnet + Move
+          # publish. Pin to the workspace's Sui version (CLAUDE.md).
+          curl -L "https://github.com/MystenLabs/sui/releases/download/${sui_version}/sui-${sui_version}-ubuntu-x86_64.tgz" > sui.tgz
+          mkdir -p "$HOME/.local/bin"
+          # Extract the whole archive then copy `sui` out — the release tar stores
+          # members as `./sui`, which a selective `tar … sui` extract fails to match
+          # (matches how ts-integration-tests.yaml installs sui).
+          tar -xzf sui.tgz
+          cp ./sui "$HOME/.local/bin/sui"
+          chmod +x "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/sui" --version
+
+      - name: Build local binaries
+        run: |
+          cargo build --release --no-default-features \
+            -p ika-node --bin ika-validator --bin ika-notifier \
+            -p ika --bin ika
+
+      - name: Build OLD binary
+        env:
+          TEST: ${{ inputs.test }}
+          OLD_REF: ${{ inputs.old_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$TEST" = "v118_upgrade" ]; then
+            # Build the literal OLD ika-node from `old_ref` (default the
+            # mainnet-v1.1.8 tag) in a separate worktree with its own target
+            # dir, so it can't clobber the local build's artifacts.
+            git worktree add --force ../ika-old "$OLD_REF"
+            ( cd ../ika-old && cargo build --release --no-default-features -p ika-node --bin ika-node )
+            echo "OLD_BIN=$(cd ../ika-old && pwd)/target/release/ika-node" >> "$GITHUB_ENV"
+          else
+            # cross_binary: OLD is THIS branch with MAX_PROTOCOL_VERSION pinned
+            # to 3. Patch, build ika-validator, restore the source.
+            sed -i 's/const MAX_PROTOCOL_VERSION: u64 = [0-9]\+;/const MAX_PROTOCOL_VERSION: u64 = 3;/' \
+              crates/ika-protocol-config/src/lib.rs
+            cargo build --release --no-default-features -p ika-node --bin ika-validator
+            cp target/release/ika-validator "$RUNNER_TEMP/ika-validator-max3"
+            git checkout -- crates/ika-protocol-config/src/lib.rs
+            echo "OLD_BIN=$RUNNER_TEMP/ika-validator-max3" >> "$GITHUB_ENV"
+          fi
+          echo "Built OLD binary: $(grep OLD_BIN "$GITHUB_ENV")"
+
+      - name: Run upgrade test
+        env:
+          TEST: ${{ inputs.test }}
+          EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+        run: |
+          set -o pipefail
+          export NEW_BIN="$(pwd)/target/release/ika-validator"
+          export NOTIFIER_BIN="$(pwd)/target/release/ika-notifier"
+          export IKA_BIN="$(pwd)/target/release/ika"
+          export SUI_BIN="$(command -v sui)"
+          export UPGRADE_TEST_DIR="$RUNNER_TEMP/ika-upgrade-test"
+          rm -rf "$UPGRADE_TEST_DIR"
+          if [ "$TEST" = "v118_upgrade" ]; then
+            export RUN_V118_UPGRADE=1
+          else
+            export RUN_CROSS_BINARY=1
+          fi
+          # `grep "test result:"` is the source of truth — the harness can
+          # leave child processes that make the cargo exit code unreliable.
+          cargo test --release --no-default-features -p ika-upgrade-test \
+            --test "$TEST" -- --nocapture 2>&1 | tee upgrade-test.log
+          grep -q "test result: ok. 1 passed" upgrade-test.log
+
+      - name: Summarize results
+        if: always()
+        run: |
+          grep -E "test result:|PASSED|FAILED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upgrade-test-${{ inputs.test }}-${{ github.run_attempt }}
+          path: upgrade-test.log
+          retention-days: 7
