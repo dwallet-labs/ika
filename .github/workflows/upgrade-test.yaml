@@ -111,7 +111,11 @@ jobs:
           # publish. Pin to the workspace's Sui version (CLAUDE.md).
           curl -L "https://github.com/MystenLabs/sui/releases/download/${sui_version}/sui-${sui_version}-ubuntu-x86_64.tgz" > sui.tgz
           mkdir -p "$HOME/.local/bin"
-          tar -xzf sui.tgz -C "$HOME/.local/bin" sui
+          # Extract the whole archive then copy `sui` out — the release tar stores
+          # members as `./sui`, which a selective `tar … sui` extract fails to match
+          # (matches how ts-integration-tests.yaml installs sui).
+          tar -xzf sui.tgz
+          cp ./sui "$HOME/.local/bin/sui"
           chmod +x "$HOME/.local/bin/sui"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/sui" --version
