@@ -153,13 +153,7 @@ jobs:
           # SubscribeCheckpoints follower, and object reads fall back to the
           # committee-verified local cache when an anchor's defining tx is
           # pruned upstream — so no Sui-side slowdown is needed.
-          # Diagnostic: capture Sui-side info (execution / storage / rpc /
-          # pruning), muting only the consensus firehose, so we can see whether
-          # the single-process localnet degrades ~1h in under sustained load —
-          # the open question behind the heavy-file dwallet-state timeouts (the
-          # SDK polls Sui directly and sees "Object does not exist", while the
-          # ika node's OCS reads stay healthy). RUST_LOG=error left it empty.
-          RUST_LOG=info,consensus_core=warn sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
+          RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
           echo $! > sui-localnet.pid
           for i in $(seq 1 60); do
             if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
