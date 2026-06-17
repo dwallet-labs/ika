@@ -44,6 +44,7 @@ use crate::sui_connector::ocs_currency::CurrencyVerdict;
 use crate::sui_connector::ocs_metrics::OcsMetrics;
 use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use ika_network::proof_provider::VerifiedObjectEntry;
+use tracing::warn;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ReaderError {
@@ -197,7 +198,37 @@ impl OcsVerifiedReader {
             self.observe_verify_latency("object_cache_hit", started);
             return Ok(hit);
         }
-        let resp = self.provider.verified_object(id).await?;
+        let resp = match self.provider.verified_object(id).await {
+            Ok(resp) => resp,
+            // The network reach-back failed because the object's defining
+            // transaction was pruned upstream. Serve the committee-verified
+            // snapshot the pusher last folded instead of wedging: it is
+            // post-verification state, and high-water still rejects a rollback.
+            // This is the object-read analogue of the committee follower — a
+            // locally populated cache that doesn't depend on prune-prone
+            // reach-backs. Direct nodes only (the cache is our own verified
+            // state, not an untrusted relay memo). Accepts a slightly-stale (but
+            // verified, monotonic) anchor when the pusher is behind — strictly
+            // better than the alternative, which is the executor wedging forever.
+            Err(TransportError::NotFound(reason)) if self.cache_first => {
+                if let Some(hit) = self.cache_fallback(id) {
+                    self.metrics
+                        .cache_read_total
+                        .with_label_values(&["fallback"])
+                        .inc();
+                    warn!(
+                        ?id,
+                        reason,
+                        "verified read: upstream pruned the object's defining tx; \
+                         served the committee-verified cached snapshot (pusher behind)"
+                    );
+                    self.observe_verify_latency("object_cache_fallback", started);
+                    return Ok(hit);
+                }
+                return Err(ReaderError::Transport(TransportError::NotFound(reason)));
+            }
+            Err(e) => return Err(e.into()),
+        };
         let result = self.verify_response(id, resp);
         self.record_verify_outcome("object", &result);
         self.observe_verify_latency("object", started);
@@ -364,6 +395,25 @@ impl OcsVerifiedReader {
                 None
             }
         }
+    }
+
+    /// Last-resort cache read for when the network reach-back failed because the
+    /// object's defining transaction was pruned upstream. Unlike
+    /// [`Self::try_cache_hit`] it does NOT consult the staleness tripwire — the
+    /// pusher being behind is exactly the situation here — but it still enforces
+    /// version-monotonicity, so it can only ever serve forward, never roll back.
+    /// The snapshot is committee-verified (folded post-verification), so serving
+    /// it adds no trust; it can be stale, which is the accepted trade for not
+    /// wedging the executor when upstream has pruned the anchor's history.
+    fn cache_fallback(&self, id: ObjectID) -> Option<VerifiedObject> {
+        let snapshot = self.cache.get(id)?;
+        let object_id = snapshot.object.id();
+        let version = snapshot.object.version();
+        self.record_high_water(object_id, version).ok()?;
+        Some(VerifiedObject {
+            object: snapshot.object,
+            source_checkpoint_seq: snapshot.source_checkpoint_seq,
+        })
     }
 
     pub async fn verified_bag_page(
@@ -1257,6 +1307,100 @@ mod tests {
             proof,
             claimed_latest_checkpoint_seq: seq,
         }
+    }
+
+    /// A provider whose object read always fails `NotFound` — models the
+    /// upstream fullnode having pruned the object's defining transaction.
+    struct PrunedProvider;
+
+    #[async_trait]
+    impl ProofProvider for PrunedProvider {
+        async fn verified_object(
+            &self,
+            id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            Err(TransportError::NotFound(format!("tx for {id} pruned")))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            unreachable!("batch not exercised by the fallback test")
+        }
+        async fn verified_bag_page(
+            &self,
+            _request: VerifiedBagPageRequest,
+        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            unreachable!("bag not exercised by the fallback test")
+        }
+    }
+
+    /// When the network reach-back fails because upstream pruned the object's
+    /// defining transaction, a cache-first reader serves the committee-verified
+    /// cached snapshot instead of wedging — even with the staleness tripwire
+    /// tripped (a behind pusher is exactly when this matters). With nothing
+    /// cached, the prune is surfaced as the original `NotFound`.
+    #[tokio::test]
+    async fn pruned_reach_back_falls_back_to_the_cached_snapshot() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            Arc::new(PrunedProvider),
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true,      // cache_first (sui-state-direct)
+            Some(100), // staleness bound
+        );
+
+        // Fold a committee-verified snapshot of `id` (version 5) at seq 42.
+        let id = ObjectID::from_single_byte(0x55);
+        let obj = test_object(id, 5, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&obj], &obj);
+        let entry = VerifiedObjectEntry {
+            object: obj.clone(),
+            checkpoint_seq: 42,
+            proof,
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        reader.cache.absorb_entries(&summary, &[entry]);
+
+        // The pusher (processed head 42) is far behind the tip (1000), so the
+        // tripwire trips and the read falls through to the network — pruned.
+        reader.note_upstream_head(1000);
+
+        let got = reader
+            .verified_object(id)
+            .await
+            .expect("fallback serves the cached snapshot rather than wedging");
+        assert_eq!(got.object.id(), id);
+        assert_eq!(got.object.version(), SequenceNumber::from(5u64));
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["fallback"])
+                .get(),
+            1
+        );
+
+        // An id that was never cached: no fallback, the prune is surfaced.
+        let absent = ObjectID::from_single_byte(0x66);
+        let err = reader.verified_object(absent).await.unwrap_err();
+        assert!(matches!(
+            err,
+            ReaderError::Transport(TransportError::NotFound(_))
+        ));
     }
 
     fn bag_entry(
