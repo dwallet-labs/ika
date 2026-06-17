@@ -147,20 +147,13 @@ jobs:
 
       - name: Start Sui localnet
         run: |
-          # The OCS committee chain consumes one end-of-epoch checkpoint per Sui
-          # epoch from this standalone localnet, whose object retention is
-          # aggressive (num_epochs_to_retain=0 — prior-epoch objects drop right
-          # after each boundary, and the gRPC GetCheckpoint the ratchet reads is
-          # gated on object availability). At the 200ms default checkpoint rate a
-          # CPU-starved runner falls behind and the ratchet hard-fails on a
-          # pruned end-of-epoch checkpoint (ProofChainBroken). Slow the checkpoint
-          # cadence (2s) and lengthen the epoch (10m) so committee capture keeps
-          # up. Interim guard until the gRPC-native committee subscription
-          # follower lands and removes the dependency on object retention.
-          SUI_PROTOCOL_CONFIG_OVERRIDE_ENABLE=1 \
-          SUI_PROTOCOL_CONFIG_OVERRIDE_min_checkpoint_interval_ms=2000 \
-          RUST_LOG=error sui start --with-faucet --force-regenesis \
-            --epoch-duration-ms 600000 > sui-localnet.log 2>&1 &
+          # Native checkpoint cadence + epoch length. The OCS path is
+          # self-sufficient against this localnet's aggressive pruning
+          # (num_epochs_to_retain=0): committees come from the live
+          # SubscribeCheckpoints follower, and object reads fall back to the
+          # committee-verified local cache when an anchor's defining tx is
+          # pruned upstream — so no Sui-side slowdown is needed.
+          RUST_LOG=error sui start --with-faucet --force-regenesis > sui-localnet.log 2>&1 &
           echo $! > sui-localnet.pid
           for i in $(seq 1 60); do
             if ! kill -0 "$(cat sui-localnet.pid)" 2>/dev/null; then
