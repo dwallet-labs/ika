@@ -68,7 +68,7 @@
 		"js-yaml": "^4.1.1",
 		"typedoc": "^0.28.9",
 		"typescript": "^5.8.3",
-		"vitest": "3.2.4"
+		"vitest": "3.2.6"
 	},
 	"dependencies": {
 		"@ika.xyz/ika-wasm": "workspace:*",
