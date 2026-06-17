@@ -1,0 +1,82 @@
+---
+title: Curve / signature algorithm / hash matrix
+description: Every supported tuple, with the chain each one targets and the on-chain enum numbers.
+---
+
+The MPC accepts a fixed set of `(curve, signatureAlgorithm, hash)`
+tuples. Anything outside this set is rejected at validation time.
+
+## Supported tuples
+
+| Curve | SignatureAlgorithm | Hash | Used for |
+|-------|--------------------|------|----------|
+| SECP256K1 | ECDSASecp256k1 | KECCAK256 | Ethereum and EVM chains |
+| SECP256K1 | ECDSASecp256k1 | SHA256 | Sui (secp256k1 keypairs) |
+| SECP256K1 | ECDSASecp256k1 | DoubleSHA256 | Bitcoin legacy / segwit |
+| SECP256K1 | Taproot | SHA256 | Bitcoin Taproot script-path |
+| SECP256R1 | ECDSASecp256r1 | SHA256 | WebAuthn, Sui (secp256r1 keypairs) |
+| ED25519 | EdDSA | SHA512 | Solana, Sui (default), Cosmos and similar |
+| RISTRETTO | SchnorrkelSubstrate | Merlin | Substrate-based chains |
+
+The on-chain encoding uses numeric tags. Two numbering schemes are in
+play:
+
+- **Curve-relative**: indices within a curve. Used inside the MPC's
+  protocol public input.
+- **Absolute**: global indices across all curves. Used in some Move
+  fields that need to compare algorithm identity across curves.
+
+## Curve numbers
+
+| Curve | `curveNumber` |
+|-------|---------------|
+| SECP256K1 | 0 |
+| SECP256R1 | 1 |
+| ED25519 | 2 |
+| RISTRETTO | 3 |
+
+## SignatureAlgorithm numbers
+
+Curve-relative (within the curve):
+
+| Curve | Algorithm | Relative number |
+|-------|-----------|-----------------|
+| SECP256K1 | ECDSASecp256k1 | 0 |
+| SECP256K1 | Taproot | 1 |
+| SECP256R1 | ECDSASecp256r1 | 0 |
+| ED25519 | EdDSA | 0 |
+| RISTRETTO | SchnorrkelSubstrate | 0 |
+
+Absolute (across curves):
+
+| Algorithm | Absolute number |
+|-----------|-----------------|
+| ECDSASecp256k1 | 0 |
+| Taproot | 1 |
+| ECDSASecp256r1 | 2 |
+| EdDSA | 3 |
+| SchnorrkelSubstrate | 4 |
+
+## Hash numbers
+
+Absolute:
+
+| Hash | Number |
+|------|--------|
+| KECCAK256 | 0 |
+| SHA256 | 1 |
+| DoubleSHA256 | 2 |
+| SHA512 | 3 |
+| Merlin | 4 |
+
+The curve-relative number depends on the algorithm. The SDK helper
+`fromCurveAndSignatureAlgorithmAndHashToNumbers` returns the right
+relative numbers for a given tuple.
+
+## Source
+
+The lookup tables live in
+`sdk/typescript/src/client/hash-signature-validation.ts`. The runtime
+validator `validateHashSignatureCombination` is the same code path the
+WASM helpers go through, so any tuple that passes validation here will
+work end to end.

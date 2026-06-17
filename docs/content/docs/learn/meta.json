@@ -1,0 +1,18 @@
+{
+	"title": "Learn",
+	"pages": [
+		"index",
+		"quickstart",
+		"---Concepts---",
+		"what-is-ika",
+		"dwallets",
+		"trust-model",
+		"multi-chain-vs-cross-chain",
+		"---Cryptography---",
+		"2pc-mpc",
+		"cryptography",
+		"whitepaper"
+	],
+	"icon": "BookOpen",
+	"root": true
+}

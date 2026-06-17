@@ -3,6 +3,7 @@
 	"compilerOptions": {
 		"target": "ES2022",
 		"lib": ["dom", "esnext"],
+		"types": ["node"],
 		// output .d.ts declaration files for consumers
 		"declaration": true,
 		"emitDeclarationOnly": true,

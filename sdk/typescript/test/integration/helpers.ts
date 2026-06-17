@@ -4,15 +4,14 @@ import { Transaction } from '@mysten/sui/transactions';
 import { expect } from 'vitest';
 
 import {
-	CoordinatorInnerModule,
 	createRandomSessionIdentifier,
 	Curve,
 	DWallet,
 	Hash,
 	IkaClient,
+	ikaDwallet2pcMpc,
 	prepareDKGAsync,
 	Presign,
-	SessionsManagerModule,
 	SignatureAlgorithm,
 	ZeroTrustDWallet,
 } from '../../src';
@@ -28,6 +27,8 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+
+const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 
 const PublicKeyBCS = bcs.vector(bcs.u8());
 

@@ -1,0 +1,129 @@
+---
+title: Bitcoin destination
+description: Sign Bitcoin transactions and raw preimages from a dWallet. P2PKH, P2WPKH, P2SH-P2WPKH, P2TR script-path.
+---
+
+The Bitcoin destination plugin signs four spending modes:
+
+| Mode | Sighash construction | Signature algorithm | Hash |
+|------|----------------------|---------------------|------|
+| `p2pkh` | Legacy | ECDSA secp256k1 | DoubleSHA256 |
+| `p2wpkh` | BIP-143 | ECDSA secp256k1 | DoubleSHA256 |
+| `p2sh-p2wpkh` | BIP-143 (inner P2WPKH) | ECDSA secp256k1 | DoubleSHA256 |
+| `p2tr-script` | BIP-341 | Schnorr (BIP-340) | SHA256 |
+
+## Install
+
+```bash
+pnpm add @ika.xyz/plugins bitcoinjs-lib @bitcoinerlab/secp256k1
+```
+
+## Use
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { btc } from '@ika.xyz/plugins/bitcoin/destination';
+import { bitcoinPublisher } from '@ika.xyz/plugins/bitcoin/publisher';
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer }))
+	.use(btc())
+	.use(bitcoinPublisher({ network: 'testnet' }));
+
+const dWallet = await ika.bitcoin.createDWallet({ kind: 'shared' });
+
+const address = await dWallet.bitcoin.getAddress({
+	mode: 'p2tr-script',
+	network: 'testnet',
+});
+```
+
+## Two input kinds
+
+The destination accepts either a PSBT or a raw preimage. PSBT mode is
+the typical case: you build a `bitcoinjs-lib` PSBT and the destination
+fills in the signature.
+
+```ts
+const signed = await dWallet.bitcoin.sign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2tr-script',
+});
+```
+
+Raw preimage mode is for callers that already have a sighash they want
+signed (uncommon, but useful when you compute the preimage yourself or
+when you need the raw signature for off-chain use):
+
+```ts
+const signed = await dWallet.bitcoin.sign({
+	kind: 'preimage',
+	preimage,
+	mode: 'p2wpkh',
+});
+```
+
+## Taproot is script-path only
+
+P2TR support is intentionally script-path only. The MPC key cannot be
+tweaked, so the standard BIP-86 key-path is structurally unsupported.
+The plugin derives addresses with a NUMS internal pubkey, which makes
+key-path spending provably impossible by construction. Spending always
+reveals the `OP_PUSHBYTES_32 <xOnly> OP_CHECKSIG` leaf and signs with
+the Schnorr key.
+
+This is a permanent constraint of the protocol, not a temporary
+limitation.
+
+## Low-S normalization
+
+The plugin re-normalizes every ECDSA signature into low-S form before
+DER-encoding for PSBT. Bitcoin standard relay (BIP-146) and many
+default-policy mempools reject high-S signatures even though they are
+consensus-valid. The renormalization is defensive: the live MPC may
+emit canonical signatures, but the plugin does not depend on that.
+
+## Address derivation
+
+```ts
+import { deriveBitcoinAddress } from '@ika.xyz/plugins/bitcoin/destination';
+
+const address = await deriveBitcoinAddress(
+	Curve.SECP256K1,
+	dWalletPublicOutput,
+	{ mode: 'p2wpkh', network: 'mainnet' },
+);
+```
+
+`getAddress` on the decorated dWallet handle is the right call from
+application code. `deriveBitcoinAddress` is the pure-function form
+when you do not have a dWallet handle (for example, when fetching a
+historical dWallet's address without instantiating the SDK).
+
+## Publisher
+
+The Bitcoin publisher uses Esplora-style HTTP endpoints by default
+(`POST /tx`). Override with `apiBaseUrl` for a custom Esplora instance.
+For Bitcoin Core RPC, supply a custom `broadcast` function.
+
+```ts
+import { bitcoinPublisher, defaultEsploraUrl } from '@ika.xyz/plugins/bitcoin/publisher';
+
+const pub = bitcoinPublisher({
+	apiBaseUrl: defaultEsploraUrl('testnet'),
+});
+```
+
+## Reference: NUMS, leaf version, preimage construction
+
+- NUMS internal pubkey (x-only): the canonical BIP-341
+  `50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0`.
+- Tapscript leaf version: `0xc0` per BIP-342.
+- BIP-143, BIP-341, and legacy preimage builders are exported as
+  `buildBip143Preimage`, `buildBip341Preimage`, `buildLegacyPreimage`
+  for callers that need to recompute sighashes.
+
+These constants and helpers are stable and covered by parity tests
+against `bitcoinjs-lib`'s reference implementations.

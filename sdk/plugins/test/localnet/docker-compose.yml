@@ -1,0 +1,154 @@
+# Localnet services for plugin tests. One container per destination chain
+# plus Sui + Ika for the source side, so the whole pipeline (source → sign
+# → destination → broadcast) can be exercised end-to-end without mocks.
+#
+# Start everything:
+#   docker compose -f sdk/plugins/test/localnet/docker-compose.yml up -d
+#
+# Stop:
+#   docker compose -f sdk/plugins/test/localnet/docker-compose.yml down -v
+#
+# Ports (host-side):
+#   18443  Bitcoin Core regtest JSON-RPC
+#   8545   Anvil Ethereum JSON-RPC
+#   8899   Solana test validator JSON-RPC
+#   9000   Sui localnet JSON-RPC
+#   9123   Sui faucet HTTP
+#   9100   Ika validator gRPC (only relevant for diagnostics)
+#
+# First-time bring-up of `ika` builds the Rust workspace inside the
+# container — expect 15–25 minutes. Subsequent runs are cached. Building
+# the crypto deps requires a GitHub token with access to
+# `dwallet-labs/inkrypto`; export it before `docker compose build ika`:
+#   export GITHUB_TOKEN=...
+
+services:
+  bitcoin:
+    # Bitcoin Core regtest. We use the JSON-RPC interface directly from
+    # tests — Electrs is not needed because the publisher accepts a custom
+    # `broadcast` override that calls `sendrawtransaction` directly.
+    image: bitcoin/bitcoin:27
+    command: >
+      -regtest -server -rpcuser=test -rpcpassword=test -rpcbind=0.0.0.0 -rpcallowip=0.0.0.0/0
+      -fallbackfee=0.0001 -txindex -dnsseed=0 -upnp=0
+    ports:
+      - '18443:18443'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'bitcoin-cli',
+          '-regtest',
+          '-rpcuser=test',
+          '-rpcpassword=test',
+          'getblockchaininfo',
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  ethereum:
+    # Anvil — Foundry's reproducible Ethereum dev node. Pinning the chain
+    # id keeps signed transactions deterministic across runs.
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: anvil
+    command: >
+      --host 0.0.0.0 --port 8545 --chain-id 31337 --block-time 1 --accounts 0
+    ports:
+      - '8545:8545'
+    healthcheck:
+      # foundry image is slim — no wget. cast (bundled with anvil) is the
+      # natural probe and exits non-zero if the RPC isn't reachable.
+      test: ['CMD', 'cast', 'chain-id', '--rpc-url', 'http://localhost:8545']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  solana:
+    # solana-test-validator. The `--reset` flag wipes ledger state on
+    # restart so each compose-up gets a clean chain.
+    image: solanalabs/solana:stable
+    entrypoint: solana-test-validator
+    command: >
+      --rpc-port 8899 --bind-address 0.0.0.0 --reset --quiet
+    ports:
+      - '8899:8899'
+    healthcheck:
+      # solana CLI is in the image; `solana cluster-version` queries the
+      # local validator's RPC and returns non-zero before it's ready.
+      test:
+        - 'CMD-SHELL'
+        - 'solana cluster-version --url http://localhost:8899 >/dev/null 2>&1'
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  sui:
+    # Sui local network with a built-in faucet. The image bundles the
+    # `sui` CLI; `sui start` brings up a single-validator network + faucet.
+    image: mysten/sui-tools:mainnet
+    entrypoint: sui
+    command: >
+      start --with-faucet --force-regenesis
+    ports:
+      - '9000:9000'
+      - '9123:9123'
+    healthcheck:
+      # The mysten/sui-tools image has neither curl nor wget. Use bash's
+      # /dev/tcp built-in to check the RPC port is listening — once `sui
+      # start` opens 9000 the network has finished genesis and is serving.
+      test:
+        - 'CMD-SHELL'
+        - 'bash -c "exec 3<>/dev/tcp/localhost/9000" 2>/dev/null'
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 60s
+
+  ika:
+    # In-memory Ika MPC swarm running inside a single container. The CLI
+    # publishes the Move packages to the local Sui chain, generates a
+    # fresh genesis, and runs the validator processes in the same OS
+    # process (see crates/ika-swarm). State is wiped on container
+    # restart because of `--force-reinitiation`.
+    #
+    # The first build compiles the Rust workspace — expect 15–25 min on
+    # cold cache. After that, docker layer caching keeps rebuilds quick
+    # unless `crates/` changes.
+    build:
+      context: ../../../..
+      dockerfile: sdk/plugins/test/localnet/Dockerfile.ika
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    # The sui dependency is intentionally absent — on arm64 hosts the
+    # mysten/sui-tools:mainnet image is amd64-only and runs under
+    # Rosetta, where genesis can take 30+ minutes. The localnet README
+    # documents running `sui start --with-faucet` on the host (native
+    # arm64) and pointing this container at `host.docker.internal` —
+    # the env defaults below match that pattern, and can be overridden.
+    environment:
+      # `ika start` reads the Sui URLs from env vars (the CLI flags of
+      # the same name are wired in but unused — see ika_commands::start).
+      SUI_FULLNODE_RPC_URL: ${IKA_SUI_RPC_URL:-http://host.docker.internal:9000}
+      SUI_FAUCET_URL: ${IKA_SUI_FAUCET_URL:-http://host.docker.internal:9123/gas}
+      RUST_LOG: 'info,ika_core=info,ika_node=warn,sui_node=warn'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '9100:9100'
+    volumes:
+      # Bind-mount instead of a named volume so tests on the host can
+      # read `ika_config.json` directly. The directory is gitignored.
+      - ./ika-state:/var/lib/ika
+    healthcheck:
+      # `ika_config.json` lands in the config dir once contract publishing
+      # + initial DKG completes. That file existing is a stronger
+      # readiness signal than a TCP probe — by then the network is
+      # actually usable for dWallet operations.
+      test:
+        - 'CMD-SHELL'
+        - 'test -f /var/lib/ika/ika_config.json'
+      interval: 5s
+      timeout: 3s
+      retries: 90
+      start_period: 30s

@@ -1,0 +1,7 @@
+{
+	"private": true,
+	"types": "../../dist/esm/ethereum/destination/index.d.ts",
+	"import": "../../dist/esm/ethereum/destination/index.js",
+	"main": "../../dist/cjs/ethereum/destination/index.js",
+	"sideEffects": false
+}

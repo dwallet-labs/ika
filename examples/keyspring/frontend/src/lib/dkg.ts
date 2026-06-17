@@ -1,3 +1,10 @@
+// Frontend crypto helpers. Despite the backend rewrite onto
+// `@ika.xyz/plugins`, this module stays a direct `@ika.xyz/sdk` consumer:
+// the plugin layer is for orchestration (fee allocation, transaction
+// composition, publisher routing), and the frontend doesn't orchestrate —
+// it computes user-side primitives (USEK, prepareDKG, userSignMessage) and
+// ships them to the backend over HTTP. The USEK never leaves this side.
+
 import {
 	createUserSignMessageWithPublicOutput,
 	Curve,

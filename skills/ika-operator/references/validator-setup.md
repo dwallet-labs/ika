@@ -21,25 +21,25 @@ All validator operations (registration, node management) are coordinated on Sui.
 
 ## Hardware Requirements
 
-| Resource | Minimum |
-|---|---|
-| CPU | 16 physical cores / 16 vCPUs (node won't run with fewer) |
-| Memory | 128 GB |
-| Storage | 4 TB NVMe |
-| Network | 1 Gbps |
-| OS | Linux Ubuntu/Debian x64, or Docker on x64 Linux |
+| Resource | Minimum                                                  |
+| -------- | -------------------------------------------------------- |
+| CPU      | 16 physical cores / 16 vCPUs (node won't run with fewer) |
+| Memory   | 128 GB                                                   |
+| Storage  | 4 TB NVMe                                                |
+| Network  | 1 Gbps                                                   |
+| OS       | Linux Ubuntu/Debian x64, or Docker on x64 Linux          |
 
 **Warning**: Hetzner has strict crypto ToS - may close validators without notice.
 
 ## Required Ports
 
-| Protocol/Port | Direction | Purpose |
-|---|---|---|
-| TCP/8080 | Inbound | Protocol / Transaction Interface |
-| UDP/8081 | Inbound/Outbound | Consensus Interface |
-| UDP/8084 | Inbound/Outbound | Peer-to-Peer State Sync |
-| TCP/8443 | Outbound | Metrics Pushing |
-| TCP/9184 | Inbound/Outbound | Metrics Scraping |
+| Protocol/Port | Direction        | Purpose                          |
+| ------------- | ---------------- | -------------------------------- |
+| TCP/8080      | Inbound          | Protocol / Transaction Interface |
+| UDP/8081      | Inbound/Outbound | Consensus Interface              |
+| UDP/8084      | Inbound/Outbound | Peer-to-Peer State Sync          |
+| TCP/8443      | Outbound         | Metrics Pushing                  |
+| TCP/9184      | Inbound/Outbound | Metrics Scraping                 |
 
 **All ports 8080-8084 and 9184 must be open with correct protocols (TCP/UDP).**
 
@@ -48,6 +48,7 @@ All validator operations (registration, node management) are coordinated on Sui.
 ## Step 1: Configure Ika Environment
 
 Generate the Ika Sui config file locally. Get the latest IDs from:
+
 - **Mainnet**: `deployed_contracts/mainnet/address.yaml` ([GitHub](https://github.com/dwallet-labs/ika/blob/main/deployed_contracts/mainnet/address.yaml))
 - **Testnet**: `deployed_contracts/testnet/address.yaml` ([GitHub](https://github.com/dwallet-labs/ika/blob/main/deployed_contracts/testnet/address.yaml))
 
@@ -86,6 +87,7 @@ cat ~/.ika/ika_config/ika_sui_config.yaml
 ```
 
 **Arguments**:
+
 - `NAME`: Validator display name
 - `DESCRIPTION`: Validator description
 - `IMAGE_URL`: URL to validator logo/image
@@ -108,6 +110,7 @@ cat ~/.ika/ika_config/ika_sui_config.yaml
 ```
 
 **Output files**:
+
 - `protocol.key` - Protocol signing key
 - `network.key` - P2P network key
 - `consensus.key` - Consensus key
@@ -146,6 +149,7 @@ Register as a candidate using the generated `validator.info`:
 ```
 
 **Options**:
+
 - `--gas-budget <gas-budget>` - Override gas budget
 - `--ika-sui-config <path>` - Path to ika_sui_config.yaml (default: `~/.ika/ika_config/ika_sui_config.yaml`)
 - `--json` - JSON output
@@ -197,6 +201,7 @@ Once staked with sufficient IKA:
 ```
 
 **Options**:
+
 - `--gas-budget <gas-budget>`
 - `--ika-sui-config <path>`
 - `--json`
@@ -239,13 +244,14 @@ Edit `validator.yaml` before starting:
 1. **Set all package/object IDs** from `deployed_contracts/mainnet/address.yaml`
 
 2. **Ensure mainnet chain identifier**:
+
    ```yaml
    sui-chain-identifier: mainnet
    ```
 
 3. **Set metrics push URL**:
    ```yaml
-   push-url: "https://mainnet.metrics.ika-network.net:8443/publish/metrics"
+   push-url: 'https://mainnet.metrics.ika-network.net:8443/publish/metrics'
    ```
 
 ### Start
@@ -255,6 +261,7 @@ ika-node --config-path /opt/ika/config/validator.yaml
 ```
 
 **Logging**:
+
 - `RUST_LOG` env var controls log levels
 - `RUST_LOG_JSON=1` for JSON-formatted logs
 

@@ -7,10 +7,17 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"resolveJsonModule": true,
-		"declaration": true,
-		"outDir": "./dist",
-		"rootDir": "./src",
-		"types": ["bun-types"]
+		"noEmit": true,
+		"types": ["bun-types"],
+		"paths": {
+			"@ika.xyz/plugins/sui/source": ["../../../sdk/plugins/src/sui/source/index.ts"],
+			"@ika.xyz/plugins/ethereum/destination": [
+				"../../../sdk/plugins/src/ethereum/destination/index.ts"
+			],
+			"@ika.xyz/plugins/ethereum/publisher": [
+				"../../../sdk/plugins/src/ethereum/publisher/index.ts"
+			]
+		}
 	},
 	"include": ["src/**/*"],
 	"exclude": ["node_modules", "dist"]

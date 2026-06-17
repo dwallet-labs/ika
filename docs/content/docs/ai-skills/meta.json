@@ -1,0 +1,12 @@
+{
+	"title": "AI Skills",
+	"pages": [
+		"index",
+		"ika-sdk",
+		"ika-cli",
+		"ika-move",
+		"ika-operator"
+	],
+	"icon": "Bot",
+	"root": true
+}

@@ -1,0 +1,6 @@
+dist/
+build/
+bitcoin/
+ethereum/
+solana/
+sui/

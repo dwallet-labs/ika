@@ -1,0 +1,15 @@
+{
+	"title": "Build",
+	"pages": [
+		"index",
+		"architecture",
+		"---Layers---",
+		"plugins",
+		"sdk",
+		"move-integration",
+		"---Patterns---",
+		"recipes"
+	],
+	"icon": "Code2",
+	"root": true
+}

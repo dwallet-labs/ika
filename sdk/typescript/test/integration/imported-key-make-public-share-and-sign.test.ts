@@ -7,15 +7,14 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { describe, expect, it } from 'vitest';
 
 import {
-	CoordinatorInnerModule,
 	createRandomSessionIdentifier,
 	Curve,
 	Hash,
 	IkaClient,
+	ikaDwallet2pcMpc,
 	prepareImportedKeyDWalletVerification,
 	Presign,
 	publicKeyFromDWalletOutput,
-	SessionsManagerModule,
 	SignatureAlgorithm,
 } from '../../src';
 import { fromNumberToCurve } from '../../src/client/hash-signature-validation';
@@ -33,6 +32,8 @@ import {
 	requestTestFaucetFunds,
 	retryUntil,
 } from '../helpers/test-utils';
+
+const { CoordinatorInnerModule, SessionsManagerModule } = ikaDwallet2pcMpc;
 
 /**
  * Generate a private key for the given curve

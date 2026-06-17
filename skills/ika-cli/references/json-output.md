@@ -6,34 +6,36 @@ All commands support `--json` for structured JSON output. This document describe
 
 ```json
 {
-  "type": "create",
-  "dwallet_id": "0x...",
-  "dwallet_cap_id": "0x...",
-  "public_key": "hex...",
-  "secret_share_path": "/path/to/dwallet_secret_share.bin"
+	"type": "create",
+	"dwallet_id": "0x...",
+	"dwallet_cap_id": "0x...",
+	"public_key": "hex...",
+	"secret_share_path": "/path/to/dwallet_secret_share.bin"
 }
 ```
 
 ## `ika dwallet sign --json` / `ika dwallet future-sign --json`
 
 Without `--wait`:
+
 ```json
 {
-  "type": "sign",
-  "digest": "base58...",
-  "status": "Success",
-  "sign_session_id": "0x..."
+	"type": "sign",
+	"digest": "base58...",
+	"status": "Success",
+	"sign_session_id": "0x..."
 }
 ```
 
 With `--wait` (polls until sign session completes):
+
 ```json
 {
-  "type": "sign",
-  "digest": "base58...",
-  "status": "Success",
-  "sign_session_id": "0x...",
-  "signature": "hex..."
+	"type": "sign",
+	"digest": "base58...",
+	"status": "Success",
+	"sign_session_id": "0x...",
+	"signature": "hex..."
 }
 ```
 
@@ -41,9 +43,9 @@ With `--wait` (polls until sign session completes):
 
 ```json
 {
-  "type": "presign",
-  "digest": "base58...",
-  "status": "Success"
+	"type": "presign",
+	"digest": "base58...",
+	"status": "Success"
 }
 ```
 
@@ -51,10 +53,10 @@ With `--wait` (polls until sign session completes):
 
 ```json
 {
-  "type": "register_encryption_key",
-  "encryption_key_id": "0x...",
-  "digest": "base58...",
-  "status": "Success"
+	"type": "register_encryption_key",
+	"encryption_key_id": "0x...",
+	"digest": "base58...",
+	"status": "Success"
 }
 ```
 
@@ -98,11 +100,11 @@ With `--wait` (polls until sign session completes):
 
 ```json
 {
-  "type": "keypair",
-  "encryption_key": "hex...",
-  "decryption_key": "hex...",
-  "signer_public_key": "hex...",
-  "seed": "hex..."
+	"type": "keypair",
+	"encryption_key": "hex...",
+	"decryption_key": "hex...",
+	"signer_public_key": "hex...",
+	"seed": "hex..."
 }
 ```
 
@@ -110,12 +112,12 @@ With `--wait` (polls until sign session completes):
 
 ```json
 {
-  "type": "pricing",
-  "pricing": {
-    "dkg_price_ika": 1000000,
-    "presign_price_ika": 500000,
-    "sign_price_ika": 500000
-  }
+	"type": "pricing",
+	"pricing": {
+		"dkg_price_ika": 1000000,
+		"presign_price_ika": 500000,
+		"sign_price_ika": 500000
+	}
 }
 ```
 
@@ -125,9 +127,9 @@ Commands that produce Sui transactions (verify-presign, share operations, import
 
 ```json
 {
-  "type": "transaction",
-  "digest": "base58...",
-  "status": "Success"
+	"type": "transaction",
+	"digest": "base58...",
+	"status": "Success"
 }
 ```
 
@@ -152,7 +154,7 @@ When any command fails with `--json`, errors are returned as structured JSON ins
 
 ```json
 {
-  "error": "description of the error"
+	"error": "description of the error"
 }
 ```
 

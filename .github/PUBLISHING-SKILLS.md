@@ -25,6 +25,7 @@ skills/{skill_name}-{version}
 ```
 
 Examples:
+
 - `skills/ika-sdk-1.1.0`
 - `skills/ika-cli-2.0.0`
 - `skills/ika-move-1.0.1`
@@ -48,9 +49,9 @@ Bare versions like `1.1.0` are rejected on manual dispatch — they are reserved
 
 ## Available skills
 
-| Skill | Directory |
-|-------|-----------|
-| ika-cli | `skills/ika-cli/` |
-| ika-sdk | `skills/ika-sdk/` |
-| ika-move | `skills/ika-move/` |
+| Skill        | Directory              |
+| ------------ | ---------------------- |
+| ika-cli      | `skills/ika-cli/`      |
+| ika-sdk      | `skills/ika-sdk/`      |
+| ika-move     | `skills/ika-move/`     |
 | ika-operator | `skills/ika-operator/` |

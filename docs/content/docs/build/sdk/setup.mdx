@@ -1,0 +1,60 @@
+---
+title: Setup
+description: Install the SDK, configure a client, and verify the install.
+---
+
+## Install
+
+```bash
+pnpm add @ika.xyz/sdk @mysten/sui
+```
+
+Runtime requirements: Node 18 or later. The SDK targets ESM and CJS.
+
+## Build a client
+
+```ts
+import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
+
+const ikaClient = new IkaClient({
+	suiClient,
+	config: getNetworkConfig('testnet'),
+	cache: true,
+});
+
+await ikaClient.initialize();
+```
+
+`getNetworkConfig('testnet' | 'mainnet')` returns the package IDs and
+object IDs for the requested network. For localnet, build your own
+`IkaConfig` from the `ika_config.json` your local stack produces (see
+[Networks](../../operate/networks)).
+
+`initialize()` warms the SDK's caches by reading on-chain coordinator
+state. It is idempotent, so calling it more than once is safe.
+
+## Verify
+
+The simplest readiness check is fetching the latest network encryption
+key.
+
+```ts
+const key = await ikaClient.getLatestNetworkEncryptionKey();
+console.log({ id: key.id, epoch: key.epoch });
+```
+
+If this returns without throwing, the SDK can talk to chain and the
+on-chain coordinator is in a usable state.
+
+## Where to go next
+
+- For dWallet creation and signing through the convenience layer, jump
+  to [Plugins](../plugins).
+- For direct PTB composition, continue with
+  [IkaTransaction](./ika-transaction).

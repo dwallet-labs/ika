@@ -106,6 +106,7 @@ WantedBy=multi-user.target
 Default endpoint: `http://0.0.0.0:9184/metrics`
 
 Scrape with Prometheus/Grafana. Key metric categories:
+
 - **Consensus**: Round progress, latency, pending transactions
 - **MPC**: DKG sessions, presign sessions, sign sessions
 - **P2P**: Connection count, message rates, peer states
@@ -177,7 +178,7 @@ If the network forks or stalls, pin known-good checkpoints:
 p2p-config:
   state-sync:
     pinned-dwallet-checkpoints:
-      - [123, '0xabcdef...']    # [sequence_number, digest]
+      - [123, '0xabcdef...'] # [sequence_number, digest]
     pinned-system-checkpoints:
       - [456, '0x123456...']
 ```
@@ -238,16 +239,16 @@ remote-write:
 
 # Dynamic peer discovery from Sui chain
 dynamic-peers:
-  url: 'http://127.0.0.1:9000'         # Sui RPC
+  url: 'http://127.0.0.1:9000' # Sui RPC
   interval: 30s
-  hostname: 'localhost'                  # optional; default 'localhost'
-  certificate-file: /path/to/cert.pem   # optional
-  private-key: /path/to/key.pem         # optional
+  hostname: 'localhost' # optional; default 'localhost'
+  certificate-file: /path/to/cert.pem # optional
+  private-key: /path/to/key.pem # optional
   # Contract addresses — copy from deployed_contracts/{mainnet,testnet}/address.yaml
   ika-package-id: '0x...'
   ika-common-package-id: '0x...'
   ika-dwallet-2pc-mpc-package-id: '0x...'
-  ika-dwallet-2pc-mpc-package-id-v2: '0x...'   # optional; omit if not yet deployed
+  ika-dwallet-2pc-mpc-package-id-v2: '0x...' # optional; omit if not yet deployed
   ika-system-package-id: '0x...'
   ika-system-object-id: '0x...'
   ika-dwallet-coordinator-object-id: '0x...'
@@ -261,30 +262,30 @@ static-peers:
 
 ### Proxy Environment Variables
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `IKA_PROXY_VERBOSE_HTTP` | Verbose HTTP logging | false |
-| `NODE_CLIENT_TIMEOUT` | Node client timeout | 20s |
-| `MIMIR_CLIENT_TIMEOUT` | Mimir client timeout | 30s |
-| `MAX_BODY_SIZE` | Max request body size | 5 MB |
-| `INVENTORY_HOSTNAME` | Hostname label for metrics | "unknown" |
+| Variable                 | Purpose                    | Default   |
+| ------------------------ | -------------------------- | --------- |
+| `IKA_PROXY_VERBOSE_HTTP` | Verbose HTTP logging       | false     |
+| `NODE_CLIENT_TIMEOUT`    | Node client timeout        | 20s       |
+| `MIMIR_CLIENT_TIMEOUT`   | Mimir client timeout       | 30s       |
+| `MAX_BODY_SIZE`          | Max request body size      | 5 MB      |
+| `INVENTORY_HOSTNAME`     | Hostname label for metrics | "unknown" |
 
 ---
 
 ## Common Issues & Solutions
 
-| Issue | Cause | Fix |
-|---|---|---|
-| Extremely slow startup | Debug build | Build with `--release` |
-| Port conflict on 8080 | P2P port taken | Change `p2p-config.listen-address` |
-| Sui chain mismatch error | Wrong chain identifier | Verify `sui-rpc-url` matches `sui-chain-identifier` |
-| Missing package ID error | Wrong contract IDs | Update package/object IDs to match deployed contracts |
-| Consensus DB disk full | No pruning | Set `db-retention-epochs: 0`, lower `db-pruner-period-secs` |
-| State sync stalled | No peers | Add seed peers, check network connectivity |
-| Event processing stuck | Bad cursor | Use event cursor override (carefully) |
-| Node won't start | Missing keypairs | Ensure all required keypair files exist and are valid Base64 |
-| Validator mode rejected | Missing consensus-config | Add `consensus-config` section for validators |
-| Notifier mode rejected | Missing notifier key | Add `notifier-client-key-pair` to `sui-connector-config` |
+| Issue                    | Cause                    | Fix                                                          |
+| ------------------------ | ------------------------ | ------------------------------------------------------------ |
+| Extremely slow startup   | Debug build              | Build with `--release`                                       |
+| Port conflict on 8080    | P2P port taken           | Change `p2p-config.listen-address`                           |
+| Sui chain mismatch error | Wrong chain identifier   | Verify `sui-rpc-url` matches `sui-chain-identifier`          |
+| Missing package ID error | Wrong contract IDs       | Update package/object IDs to match deployed contracts        |
+| Consensus DB disk full   | No pruning               | Set `db-retention-epochs: 0`, lower `db-pruner-period-secs`  |
+| State sync stalled       | No peers                 | Add seed peers, check network connectivity                   |
+| Event processing stuck   | Bad cursor               | Use event cursor override (carefully)                        |
+| Node won't start         | Missing keypairs         | Ensure all required keypair files exist and are valid Base64 |
+| Validator mode rejected  | Missing consensus-config | Add `consensus-config` section for validators                |
+| Notifier mode rejected   | Missing notifier key     | Add `notifier-client-key-pair` to `sui-connector-config`     |
 
 ---
 
@@ -333,6 +334,7 @@ SwarmBuilder::new()
 ```
 
 The swarm builder:
+
 1. Generates all validator/fullnode configs with keypairs
 2. Publishes Move contracts to local Sui
 3. Initializes system state (genesis)

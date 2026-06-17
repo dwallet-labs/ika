@@ -1,9 +1,10 @@
-name: Publish SDKs (ika-wasm + typescript via pnpm Trusted Publishing)
+name: Publish SDKs (ika-wasm + typescript + plugins via pnpm Trusted Publishing)
 
 on:
   push:
     tags:
       - 'sdk/typescript-*'
+      - 'sdk/plugins-*'
   workflow_dispatch:
     inputs:
       version:
@@ -44,11 +45,25 @@ jobs:
       - name: Validate tag version matches package.json
         if: github.event_name == 'push'
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/sdk/typescript-}"
-          PKG_VERSION=$(node -p "require('./sdk/typescript/package.json').version")
+          TAG="${GITHUB_REF#refs/tags/}"
+          case "$TAG" in
+            sdk/typescript-*)
+              PKG_PATH="./sdk/typescript/package.json"
+              TAG_VERSION="${TAG#sdk/typescript-}"
+              ;;
+            sdk/plugins-*)
+              PKG_PATH="./sdk/plugins/package.json"
+              TAG_VERSION="${TAG#sdk/plugins-}"
+              ;;
+            *)
+              echo "::error::Unknown tag pattern: $TAG"
+              exit 1
+              ;;
+          esac
+          PKG_VERSION=$(node -p "require('$PKG_PATH').version")
 
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match sdk/typescript/package.json version ($PKG_VERSION). Update package.json first."
+            echo "::error::Tag version ($TAG_VERSION) does not match $PKG_PATH version ($PKG_VERSION). Update package.json first."
             exit 1
           fi
           echo "Tag version matches package.json: $PKG_VERSION"
@@ -104,7 +119,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
         run: |
           VERSION="${{ inputs.version }}"
-          for pkg in sdk/ika-wasm/package.json sdk/typescript/package.json; do
+          for pkg in sdk/ika-wasm/package.json sdk/typescript/package.json sdk/plugins/package.json; do
             node -e "
               const fs = require('fs');
               const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
@@ -216,6 +231,52 @@ jobs:
           pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
           echo "Published ${{ steps.ts_pkg.outputs.name }}@$VERSION with tag $TAG"
 
+      # ---------- sdk/plugins ----------
+
+      - name: Get sdk/plugins package info
+        id: plugins_pkg
+        working-directory: ./sdk/plugins
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package: $NAME"
+          echo "Version: $VERSION"
+
+      - name: Check if sdk/plugins version is already published
+        id: plugins_check
+        env:
+          PKG_NAME: ${{ steps.plugins_pkg.outputs.name }}
+          PKG_VERSION: ${{ steps.plugins_pkg.outputs.version }}
+        run: |
+          echo "Checking if $PKG_NAME@$PKG_VERSION is already on npm..."
+          if npm view "$PKG_NAME@$PKG_VERSION" version > /dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is already published. Skipping."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "$PKG_NAME@$PKG_VERSION is NOT published yet. Will publish."
+          fi
+
+      - name: Build (sdk/plugins)
+        if: steps.plugins_check.outputs.published == 'false'
+        working-directory: ./sdk/plugins
+        run: pnpm build
+
+      - name: Publish sdk/plugins via pnpm (Trusted Publishing)
+        if: steps.plugins_check.outputs.published == 'false'
+        working-directory: ./sdk/plugins
+        run: |
+          # Pre-release versions get their own dist-tag, not "latest"
+          TAG="latest"
+          VERSION="${{ steps.plugins_pkg.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG=$(echo "$VERSION" | sed 's/.*-//' | sed 's/\..*//')
+          fi
+          pnpm publish --provenance --access public --tag "$TAG" --no-git-checks
+          echo "Published ${{ steps.plugins_pkg.outputs.name }}@$VERSION with tag $TAG"
+
       - name: Summary
         if: always()
         run: |
@@ -234,4 +295,10 @@ jobs:
             echo "| ${{ steps.ts_pkg.outputs.name }} | ${{ steps.ts_pkg.outputs.version }} | Skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "| ${{ steps.ts_pkg.outputs.name }} | ${{ steps.ts_pkg.outputs.version }} | Published |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "${{ steps.plugins_check.outputs.published }}" = "true" ]; then
+            echo "| ${{ steps.plugins_pkg.outputs.name }} | ${{ steps.plugins_pkg.outputs.version }} | Skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| ${{ steps.plugins_pkg.outputs.name }} | ${{ steps.plugins_pkg.outputs.version }} | Published |" >> "$GITHUB_STEP_SUMMARY"
           fi

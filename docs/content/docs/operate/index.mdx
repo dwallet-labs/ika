@@ -1,0 +1,46 @@
+---
+title: Operate
+description: Run the CLI, operate a validator, and configure for testnet, mainnet, or localnet.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Terminal, ServerCog, Activity, Network } from 'lucide-react';
+
+For operators of Ika rather than applications that consume it. If you
+are an application developer, only [Networks](./networks) is likely
+relevant: it covers localnet for hands-on development and which
+mainnet/testnet endpoints to trust.
+
+## Tools
+
+<Cards>
+	<Card
+		icon={<Terminal />}
+		title="CLI"
+		description="The ika command-line tool. dWallet commands, validator commands, config commands."
+		href="./cli"
+	/>
+	<Card
+		icon={<Network />}
+		title="Networks"
+		description="Testnet, mainnet, and localnet endpoints. How to spin up a local Ika stack with docker-compose for development."
+		href="./networks"
+	/>
+</Cards>
+
+## Validators
+
+<Cards>
+	<Card
+		icon={<ServerCog />}
+		title="Validator setup"
+		description="Hardware requirements, key material, network configuration, and the steps to join the validator set."
+		href="./validator-setup"
+	/>
+	<Card
+		icon={<Activity />}
+		title="Validator operations"
+		description="Monitoring, upgrades, key rotation, and incident response for a running node."
+		href="./validator-operations"
+	/>
+</Cards>

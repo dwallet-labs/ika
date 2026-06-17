@@ -52,7 +52,7 @@ blockchain systems. Changes that were made to Ika include disabling smart contra
 communication in [Sui's consensus Mysticeti](https://github.com/MystenLabs/mysticeti) for the MPC protocol between the
 nodes.
 
-Ika is natively coordinated on Sui, and dWallets on Ika are controlled by DWalletCap objects on Sui. Soon Ika will be 
+Ika is natively coordinated on Sui, and dWallets on Ika are controlled by DWalletCap objects on Sui. Soon Ika will be
 natively coordinated on Solana, and dWallets will be controlled by Solana accounts.
 
 Ika has a native token on Sui called IKA that is used to pay for gas, and is also used as delegated stake

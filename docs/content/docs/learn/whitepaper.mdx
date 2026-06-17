@@ -1,0 +1,69 @@
+---
+title: Whitepaper and academic references
+description: Where to read the protocol papers and the Ika whitepaper.
+---
+
+The protocol Ika implements is described in two peer-reviewed
+preprints. The Ika whitepaper covers the network architecture and
+economics on top of the protocol.
+
+## The protocol papers
+
+[Practical Zero-Trust Threshold Signatures in Large-Scale Dynamic
+Asynchronous Networks](https://eprint.iacr.org/2025/297). This is the
+paper Ika's live implementation follows. It introduces the
+asynchronous broadcast model, supports Schnorr and EdDSA alongside
+ECDSA, allows the validator set to change between rounds, and proves
+security under static corruption of less than one third of the
+network.
+
+[2PC-MPC: Emulating Two Party ECDSA in Large-Scale MPC](https://eprint.iacr.org/2024/253).
+The earlier paper that introduced the two-party-with-MPC-emulated-second-party
+abstraction. The 2025 paper supersedes it for purposes of the
+deployed protocol, but the abstraction is unchanged.
+
+[Tiresias: Large Scale, Maliciously Secure Threshold Paillier](https://eprint.iacr.org/2023/998).
+Provides the Paillier-based threshold encryption alternative referenced
+in the 2PC-MPC paper. Ika's live implementation does not use Paillier;
+it uses class groups exclusively. The Tiresias paper is included here
+for completeness.
+
+## The Ika whitepaper
+
+The Ika whitepaper covers the network design, the validator economics,
+and the integration story above the protocol layer.
+
+<a
+	href="/whitepaper.pdf"
+	target="_blank"
+	rel="noopener noreferrer"
+	style={{
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '0.5rem',
+		padding: '0.75rem 1.5rem',
+		borderRadius: '0.75rem',
+		fontWeight: 600,
+		background: '#1a1a2e',
+		color: '#f0f0f0',
+		textDecoration: 'none',
+		border: '1px solid #333',
+	}}
+>
+	Download whitepaper (PDF)
+</a>
+
+## How to read these alongside the docs
+
+The docs are the authoritative reference for what the implementation
+does. If the docs and a paper disagree, the docs describe what is
+deployed and the paper describes the conceptual design. The two
+diverge in a few well-known places:
+
+- The 2PC-MPC paper presents Paillier and class-groups as alternatives.
+  Ika ships with class groups only.
+- The papers prove security for static corruption. Adaptive corruption
+  is not in scope for either paper or the implementation.
+- The 2PC-MPC paper benchmarks at 1,024 parties. Production validator
+  counts are smaller; the asymptotic claims hold but day-to-day
+  numbers should be measured locally.

@@ -1,0 +1,14 @@
+{
+	"title": "Operate",
+	"pages": [
+		"index",
+		"---Tools---",
+		"cli",
+		"networks",
+		"---Validators---",
+		"validator-setup",
+		"validator-operations"
+	],
+	"icon": "Server",
+	"root": true
+}

@@ -1,0 +1,100 @@
+---
+title: Future-sign
+description: Commit to a signature now, release it later under a different signer or gating contract.
+---
+
+Future-sign is a two-phase flow for the case where the user wants to
+authorize a specific signature now but does not want it produced yet.
+
+Phase one captures the user's intent into an on-chain
+`PartialUserSignatureCap` that anchors the dWallet id, the message,
+the signature algorithm, and the hash scheme. Phase two redeems the
+cap by pairing it with a fresh message approval whose fields must
+match the captured ones exactly. If they do not match, the on-chain
+coordinator rejects the redemption.
+
+## Why this is safe
+
+The on-chain `match_partial_user_signature_with_message_approval`
+helper in the coordinator Move module compares four fields between
+the stored partial signature and the supplied approval:
+
+- `dwallet_id`
+- `message`
+- `signature_algorithm`
+- `hash_scheme`
+
+A holder of the partial cap cannot redeem it against a different
+message, a different signature algorithm, a different hash scheme, or
+a different dWallet. The on-chain check is mandatory; the SDK does not
+bypass it.
+
+## Phase one: issue the cap
+
+```ts
+const { partialSignatureId, capId } = await ika.sui.requestFutureSign({
+	dWallet,
+	message,
+	signatureAlgorithm: SignatureAlgorithm.Taproot,
+	hash: Hash.SHA256,
+	presign,
+	capRecipient: contractOrUserAddress,
+});
+```
+
+- `capRecipient`: where the validated cap object lands. Default is the
+  signer's own address. Set this to a Move contract address to gate
+  the redemption behind contract logic, or to a different user.
+- `presign`: the presign you want this future-sign tied to. Once
+  bound, the cap can only be redeemed against that specific presign.
+
+## Phase two: complete the signature
+
+```ts
+const { signId } = await ika.sui.completeFutureSign({
+	dWallet,
+	partialUserSignatureCap: capId,
+	message,
+	signatureAlgorithm: SignatureAlgorithm.Taproot,
+	hash: Hash.SHA256,
+	presign,
+});
+```
+
+The same four fields must match. If the cap is held by a Move contract,
+phase two happens from inside that contract, not from the SDK directly;
+the contract calls `request_sign_with_partial_user_signature` after
+its gating logic passes.
+
+## Pairing with destinations
+
+A typical end-to-end flow:
+
+1. Build the chain-specific preimage with the destination's
+   `prepareSign`. Keep the prep object around.
+2. Run `ika.sui.requestFutureSign` with the preimage as `message`.
+   Transfer the cap to your contract or signer.
+3. Wait for whatever gating the cap holder needs.
+4. Run `ika.sui.completeFutureSign` against the same preimage.
+5. Fetch the signature, run `destination.assembleSign(prep,
+   signature)`, and publish.
+
+## Compose mode
+
+For multi-operation PTBs, the Sui source exposes
+`composeRequestFutureSign` and `composeCompleteFutureSign` that emit
+the Move calls into an in-flight `IkaTransaction` rather than
+submitting their own transactions. Use these when you want to compose
+future-sign with other coordinator operations atomically.
+
+## What this is not
+
+- Future-sign does not give a third party the ability to sign messages
+  they choose. The captured fields pin the message, so the holder can
+  only produce the one signature you authorized.
+- Future-sign does not bypass the validator threshold. The signature
+  is still produced by the MPC at phase two; the validator set must
+  be live for completion to succeed.
+- Future-sign does not survive a presign being consumed by something
+  else. If the bound presign is used elsewhere first, the cap becomes
+  unredeemable.

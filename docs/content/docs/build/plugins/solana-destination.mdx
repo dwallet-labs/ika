@@ -1,0 +1,108 @@
+---
+title: Solana destination
+description: Sign Solana versioned transactions and off-chain messages from a dWallet.
+---
+
+The Solana destination plugin signs Ed25519 messages on behalf of a
+dWallet with curve `ED25519`. Always with `EdDSA` + `SHA512`.
+
+This page is about signing **for** Solana from a dWallet whose
+coordinator runs on Sui. The separate
+[Solana Integration](../../solana-integration) section covers using
+Solana as the coordination chain itself (pre-alpha, devnet).
+
+## Install
+
+```bash
+pnpm add @ika.xyz/plugins @solana/web3.js
+```
+
+## Use
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { solana } from '@ika.xyz/plugins/solana/destination';
+import { solanaDevnet } from '@ika.xyz/plugins/solana/publisher';
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer }))
+	.use(solana())
+	.use(solanaDevnet({ confirm: true }));
+
+const dWallet = await ika.solana.createDWallet({ kind: 'shared' });
+
+const address = await dWallet.solana.getAddress();
+```
+
+## Transactions
+
+```ts
+import { Connection, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+
+const conn = new Connection('https://api.devnet.solana.com');
+const { blockhash } = await conn.getLatestBlockhash('confirmed');
+
+const tx = new VersionedTransaction(
+	new TransactionMessage({
+		payerKey: new PublicKey(await dWallet.solana.getAddress()),
+		recentBlockhash: blockhash,
+		instructions: [
+			SystemProgram.transfer({
+				fromPubkey: new PublicKey(await dWallet.solana.getAddress()),
+				toPubkey: new PublicKey('...'),
+				lamports: 1_000_000,
+			}),
+		],
+	}).compileToV0Message(),
+);
+
+const signed = await dWallet.solana.sign({ kind: 'transaction', tx });
+```
+
+The plugin sends `tx.message.serialize()` as the preimage. Ed25519
+internally consumes the message via SHA-512 to derive `r` and the
+challenge, so the plugin does not pre-hash.
+
+## Off-chain messages
+
+```ts
+const signed = await dWallet.solana.sign({
+	kind: 'message',
+	message: new TextEncoder().encode('hello'),
+});
+```
+
+Use this for off-chain authentication (sign-in with Solana, wallet
+attestation, and similar). The returned `payload.signature` is the raw
+64-byte Ed25519 signature.
+
+## Address derivation
+
+A Solana address is the raw 32-byte Ed25519 public key, base58
+encoded. The plugin asserts the public key is exactly 32 bytes and
+returns the base58 form.
+
+## Publisher
+
+```ts
+import { solanaDevnet, solanaMainnet, solanaPublisher } from '@ika.xyz/plugins/solana/publisher';
+
+const pub = solanaDevnet({ confirm: true, confirmTimeoutMs: 60_000 });
+```
+
+`solanaDevnet` and `solanaMainnet` are convenience factories. For
+custom RPCs use `solanaPublisher({ connection })` with a pre-built
+`@solana/web3.js` `Connection`.
+
+The publisher confirms by polling `getSignatureStatuses` and
+`isBlockhashValid` on the transaction's own blockhash. This is more
+robust against an older test-validator than `confirmTransaction`'s
+websocket-based path.
+
+## Limitations
+
+- No support for legacy transactions (only `VersionedTransaction`).
+- No support for partial signing of a transaction that requires
+  multiple signatures from different signers. The dWallet signs as
+  one signer; co-signers must be supplied to
+  `VersionedTransaction.addSignature` separately.

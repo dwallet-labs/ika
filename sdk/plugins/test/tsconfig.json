@@ -1,0 +1,29 @@
+{
+	"extends": "../tsconfig.esm.json",
+	"include": ["../src", "."],
+	"compilerOptions": {
+		"rootDir": "..",
+		"noEmit": true,
+		"emitDeclarationOnly": false,
+		"moduleResolution": "Bundler",
+		"resolveJsonModule": true,
+		"types": ["node", "vitest/globals"],
+		"composite": false,
+		"paths": {
+			"@ika.xyz/plugins": ["../src/index.ts"],
+			"@ika.xyz/plugins/bitcoin": ["../src/bitcoin/index.ts"],
+			"@ika.xyz/plugins/bitcoin/destination": ["../src/bitcoin/destination/index.ts"],
+			"@ika.xyz/plugins/bitcoin/publisher": ["../src/bitcoin/publisher/index.ts"],
+			"@ika.xyz/plugins/ethereum": ["../src/ethereum/index.ts"],
+			"@ika.xyz/plugins/ethereum/destination": ["../src/ethereum/destination/index.ts"],
+			"@ika.xyz/plugins/ethereum/publisher": ["../src/ethereum/publisher/index.ts"],
+			"@ika.xyz/plugins/solana": ["../src/solana/index.ts"],
+			"@ika.xyz/plugins/solana/destination": ["../src/solana/destination/index.ts"],
+			"@ika.xyz/plugins/solana/publisher": ["../src/solana/publisher/index.ts"],
+			"@ika.xyz/plugins/sui": ["../src/sui/index.ts"],
+			"@ika.xyz/plugins/sui/source": ["../src/sui/source/index.ts"],
+			"@ika.xyz/plugins/sui/destination": ["../src/sui/destination/index.ts"],
+			"@ika.xyz/plugins/sui/publisher": ["../src/sui/publisher/index.ts"]
+		}
+	}
+}

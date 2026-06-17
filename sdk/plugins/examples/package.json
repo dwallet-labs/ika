@@ -1,0 +1,35 @@
+{
+	"name": "@ika.xyz/plugins-examples",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Runnable examples for @ika.xyz/plugins.",
+	"type": "module",
+	"scripts": {
+		"shared-dwallet": "tsx src/01-create-shared-dwallet.ts",
+		"zero-trust-dwallet": "tsx src/02-create-zero-trust-dwallet.ts",
+		"import-key": "tsx src/03-import-key.ts",
+		"sign-sui": "tsx src/04-sign-sui-tx.ts",
+		"sign-solana": "tsx src/05-sign-solana-tx.ts",
+		"sign-bitcoin": "tsx src/06-sign-bitcoin-taproot.ts",
+		"sign-ethereum": "tsx src/07-sign-ethereum.ts",
+		"compose": "tsx src/08-compose-multi-op.ts",
+		"multisig-approval": "tsx src/09-multisig-approval.ts",
+		"recovery": "tsx src/10-recover-partial-dkg.ts"
+	},
+	"dependencies": {
+		"@ika.xyz/sdk": "workspace:*",
+		"@ika.xyz/plugins": "workspace:*",
+		"@mysten/sui": "^2.16.3",
+		"@solana/web3.js": "^1.95.0",
+		"@bitcoinerlab/secp256k1": "^1.2.0",
+		"@noble/curves": "^2.0.0",
+		"@noble/hashes": "^2.0.1",
+		"bitcoinjs-lib": "^7.0.0",
+		"viem": "^2.23.0"
+	},
+	"devDependencies": {
+		"@types/node": "^25.0.0",
+		"tsx": "^4.19.0",
+		"typescript": "^6.0.0"
+	}
+}

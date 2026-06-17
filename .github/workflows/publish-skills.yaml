@@ -3,7 +3,7 @@ name: Publish Skills to ClawHub
 on:
   push:
     tags:
-      - "skills/*-*"
+      - 'skills/*-*'
   workflow_dispatch:
     inputs:
       skill:
@@ -12,7 +12,7 @@ on:
         type: string
         default: all
       version:
-        description: "Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed."
+        description: 'Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed.'
         required: true
         type: string
 
@@ -74,7 +74,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
 
       - name: Install ClawHub CLI
         run: npm install -g clawhub

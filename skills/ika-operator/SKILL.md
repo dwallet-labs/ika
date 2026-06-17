@@ -8,8 +8,8 @@ metadata:
       bins:
         - ika
         - sui
-    emoji: "🖥️"
-    homepage: "https://ika.xyz"
+    emoji: '🖥️'
+    homepage: 'https://ika.xyz'
     tags:
       - infrastructure
       - validator
@@ -31,36 +31,36 @@ Deploy and operate Ika network nodes (validators, fullnodes, notifiers).
 
 ## Node Types
 
-| Binary | Mode | Purpose | Key Config |
-|---|---|---|---|
-| `ika-node` | Auto-detect | Selects mode from config | Detects automatically |
-| `ika-validator` | Validator | Consensus + MPC signing | Requires `consensus-config` |
-| `ika-fullnode` | Fullnode | State sync via P2P, no consensus | No `consensus-config`, no `notifier-client-key-pair` |
-| `ika-notifier` | Notifier | Submits checkpoints to Sui | Requires `notifier-client-key-pair` |
+| Binary          | Mode        | Purpose                          | Key Config                                           |
+| --------------- | ----------- | -------------------------------- | ---------------------------------------------------- |
+| `ika-node`      | Auto-detect | Selects mode from config         | Detects automatically                                |
+| `ika-validator` | Validator   | Consensus + MPC signing          | Requires `consensus-config`                          |
+| `ika-fullnode`  | Fullnode    | State sync via P2P, no consensus | No `consensus-config`, no `notifier-client-key-pair` |
+| `ika-notifier`  | Notifier    | Submits checkpoints to Sui       | Requires `notifier-client-key-pair`                  |
 
 **Auto-detection order**: `consensus-config` present → Validator; else `notifier-client-key-pair` present → Notifier; else → Fullnode.
 
 ## Hardware Requirements (Validator)
 
-| Resource | Minimum |
-|---|---|
-| CPU | 16 physical cores / 16 vCPUs |
-| Memory | 128 GB |
-| Storage | 4 TB NVMe |
-| Network | 1 Gbps |
-| OS | Linux Ubuntu/Debian x64 (or Docker on x64 Linux) |
+| Resource | Minimum                                          |
+| -------- | ------------------------------------------------ |
+| CPU      | 16 physical cores / 16 vCPUs                     |
+| Memory   | 128 GB                                           |
+| Storage  | 4 TB NVMe                                        |
+| Network  | 1 Gbps                                           |
+| OS       | Linux Ubuntu/Debian x64 (or Docker on x64 Linux) |
 
 **Warning**: Hetzner has strict crypto ToS and may close validators without notice.
 
 ## Connectivity (Validator Ports)
 
-| Protocol/Port | Direction | Purpose |
-|---|---|---|
-| TCP/8080 | Inbound | Protocol / Transaction Interface |
-| UDP/8081 | Inbound/Outbound | Consensus Interface |
-| UDP/8084 | Inbound/Outbound | Peer-to-Peer State Sync |
-| TCP/8443 | Outbound | Metrics Pushing |
-| TCP/9184 | Inbound/Outbound | Metrics Scraping (both Sui fullnode and Ika node) |
+| Protocol/Port | Direction        | Purpose                                           |
+| ------------- | ---------------- | ------------------------------------------------- |
+| TCP/8080      | Inbound          | Protocol / Transaction Interface                  |
+| UDP/8081      | Inbound/Outbound | Consensus Interface                               |
+| UDP/8084      | Inbound/Outbound | Peer-to-Peer State Sync                           |
+| TCP/8443      | Outbound         | Metrics Pushing                                   |
+| TCP/9184      | Inbound/Outbound | Metrics Scraping (both Sui fullnode and Ika node) |
 
 **Critical**: Ports 8080-8084 and 9184 must be open with correct protocols (TCP/UDP).
 
@@ -78,6 +78,7 @@ Download binaries from: https://github.com/dwallet-labs/ika/releases
 ### Step 1: Configure Ika Environment
 
 Get the latest package/object IDs from the canonical source:
+
 - **Mainnet**: `deployed_contracts/mainnet/address.yaml` ([GitHub](https://github.com/dwallet-labs/ika/blob/main/deployed_contracts/mainnet/address.yaml))
 - **Testnet**: `deployed_contracts/testnet/address.yaml` ([GitHub](https://github.com/dwallet-labs/ika/blob/main/deployed_contracts/testnet/address.yaml))
 
@@ -147,6 +148,7 @@ Directory structure:
 ```
 
 Before running, edit `validator.yaml`:
+
 - Set `ika-dwallet-coordinator-object-id` to the value from `deployed_contracts/mainnet/address.yaml`
 - Ensure: `sui-chain-identifier: mainnet`
 - Set metrics: `push-url: "https://mainnet.metrics.ika-network.net:8443/publish/metrics"`
@@ -176,14 +178,14 @@ Always get the latest IDs from the canonical source files in the repo:
 
 ## Keypairs
 
-| Key | Type | Purpose | Required By | Recoverable? |
-|---|---|---|---|---|
-| `protocol-key-pair` | AuthorityKeyPair | Protocol signatures | All | Yes (rotate on-chain) |
-| `consensus-key-pair` | Ed25519 | Consensus communication | All | Yes (rotate on-chain) |
-| `network-key-pair` | Ed25519 | P2P networking | All | Yes (rotate on-chain) |
-| `account-key-pair` | SuiKeyPair | Sui interactions | All | Yes |
-| `root-seed-key-pair` | RootSeed | MPC cryptographic operations | Validators | **NO - IRREPLACEABLE** |
-| `notifier-client-key-pair` | SuiKeyPair | Submit checkpoints to Sui | Notifiers | Yes |
+| Key                        | Type             | Purpose                      | Required By | Recoverable?           |
+| -------------------------- | ---------------- | ---------------------------- | ----------- | ---------------------- |
+| `protocol-key-pair`        | AuthorityKeyPair | Protocol signatures          | All         | Yes (rotate on-chain)  |
+| `consensus-key-pair`       | Ed25519          | Consensus communication      | All         | Yes (rotate on-chain)  |
+| `network-key-pair`         | Ed25519          | P2P networking               | All         | Yes (rotate on-chain)  |
+| `account-key-pair`         | SuiKeyPair       | Sui interactions             | All         | Yes                    |
+| `root-seed-key-pair`       | RootSeed         | MPC cryptographic operations | Validators  | **NO - IRREPLACEABLE** |
+| `notifier-client-key-pair` | SuiKeyPair       | Submit checkpoints to Sui    | Notifiers   | Yes                    |
 
 ## Validator Config Essentials
 
@@ -197,7 +199,7 @@ sui-connector-config:
   ika-dwallet-coordinator-object-id: '<from address.yaml>'
   # ... other package/object IDs
 
-consensus-config:                         # Presence triggers validator mode
+consensus-config: # Presence triggers validator mode
   db-path: '/opt/ika/consensus_db'
   db-retention-epochs: 0
   db-pruner-period-secs: 3600
@@ -207,7 +209,7 @@ root-seed-key-pair:
   path: /opt/ika/key-pairs/root-seed.key
 
 metrics:
-  push-url: "https://mainnet.metrics.ika-network.net:8443/publish/metrics"
+  push-url: 'https://mainnet.metrics.ika-network.net:8443/publish/metrics'
 ```
 
 ## Admin API (localhost only)
@@ -222,24 +224,24 @@ curl http://127.0.0.1:1337/capabilities                # View capabilities
 
 ## Environment Variables
 
-| Variable | Purpose | Default |
-|---|---|---|
-| `IKA_CONFIG_DIR` | Override config directory | `~/.ika/ika_config/` |
-| `RUST_LOG` | Log level filter | — |
-| `RUST_LOG_JSON` | JSON log output (`1` to enable) | — |
-| `TRACE_FILTER` | Tracing log filter | — |
+| Variable         | Purpose                         | Default              |
+| ---------------- | ------------------------------- | -------------------- |
+| `IKA_CONFIG_DIR` | Override config directory       | `~/.ika/ika_config/` |
+| `RUST_LOG`       | Log level filter                | —                    |
+| `RUST_LOG_JSON`  | JSON log output (`1` to enable) | —                    |
+| `TRACE_FILTER`   | Tracing log filter              | —                    |
 
 ## Services by Node Type
 
-| Service | Validator | Fullnode | Notifier |
-|---|---|---|---|
-| AuthorityState | Y | Y | Y |
-| ConsensusManager | Y | — | — |
-| DWalletMPCService | Y | — | — |
-| SuiConnectorService | Y | Y | Y |
-| CheckpointServices | Y | Y | Y |
-| P2P + StateSync | Y | Y | Y |
-| Discovery | Y | Y | Y |
+| Service             | Validator | Fullnode | Notifier |
+| ------------------- | --------- | -------- | -------- |
+| AuthorityState      | Y         | Y        | Y        |
+| ConsensusManager    | Y         | —        | —        |
+| DWalletMPCService   | Y         | —        | —        |
+| SuiConnectorService | Y         | Y        | Y        |
+| CheckpointServices  | Y         | Y        | Y        |
+| P2P + StateSync     | Y         | Y        | Y        |
+| Discovery           | Y         | Y        | Y        |
 
 ## Key Operational Notes
 

@@ -1,0 +1,133 @@
+---
+title: 2PC-MPC
+description: How the protocol splits signing between a user and a validator network.
+---
+
+The signing protocol Ika implements is described in two academic papers
+by dWallet Labs:
+
+- ["2PC-MPC: Emulating Two Party ECDSA in Large-Scale MPC"](https://eprint.iacr.org/2024/253)
+  introduced the abstraction. Threshold ECDSA viewed as a two-party
+  protocol in which the second party is emulated by an n-party MPC.
+- ["Practical Zero-Trust Threshold Signatures in Large-Scale Dynamic Asynchronous Networks"](https://eprint.iacr.org/2025/297)
+  is the version Ika deploys. It removes the synchronous broadcast
+  assumption, supports Schnorr and EdDSA in addition to ECDSA, and
+  handles validator-set changes between protocol rounds.
+
+This page explains the protocol at a level a developer can follow. The
+papers are linked from [Whitepaper](./whitepaper) if you want the
+formal treatment.
+
+## The two parties
+
+Every signing operation has exactly two participants from the user's
+point of view:
+
+- **The user**. Holds a secret share of the signing key. On a phone, in
+  a server, behind a hardware wallet, or wherever the application
+  chooses to keep it. Runs the "centralized party" math locally.
+- **The network**. A validator set running on Sui. From the user's
+  point of view this is a single counterparty. Internally, every
+  validator holds a piece of the network's share, and the validators
+  cooperate via MPC to produce their half of the signature.
+
+The user never talks to validators directly. The interaction is always
+mediated by the on-chain coordinator: the user submits a Sui
+transaction that emits a request event, the validators do their work,
+and the result appears on chain.
+
+## Why "two-party" when there are many validators
+
+The protocol is structured so that the user's view does not depend on
+how many validators are in the network. The user always produces and
+consumes the same number of messages regardless of whether the network
+has 4 validators or 4,000. The 2025 paper extends this so that even
+the validators participating in a particular round can change between
+rounds.
+
+## The protocol phases
+
+### Distributed key generation (DKG)
+
+DKG produces a public key on chain and split shares between the user
+and the network. It runs once per dWallet at creation time.
+
+For zero-trust and imported-key dWallets, the user computes a
+commitment locally, encrypts their secret share under the network's
+class-groups encryption key, and submits the encrypted-share-and-proof
+plus the user public output through a Sui transaction. The network
+verifies the proof, runs its half of the DKG, and writes the public
+output. The user then signs the resulting public output with their
+Ed25519 acceptance key, binding their share to a specific DKG output.
+
+For shared and imported-key-shared dWallets, the user's secret share
+is published on chain in plaintext, so anyone with the dWallet
+capability can drive future signatures.
+
+### Presign
+
+Most of the cryptographic work happens here, before the message is
+even known. The validators run a multi-round MPC that produces a
+presign object on chain. Presigns are consumed at sign time and cannot
+be reused.
+
+For ECDSA and Schnorr there is a global presign pool keyed by curve
+and signature algorithm. Any dWallet of matching curve can consume a
+presign from the pool. Imported-key ECDSA dWallets are the exception
+and require per-dWallet presigns.
+
+### Sign
+
+The sign phase is exactly two MPC rounds in the implementation. The
+user produces a centralized sign message that depends on the raw
+message bytes, the chosen hash scheme, and the consumed presign. The
+network runs its two rounds and writes the signature on chain.
+
+The signature comes out as a 64-byte raw form (r || s for ECDSA, R ||
+s for Ed25519, BIP-340 r_x || s for Taproot). Higher-layer encoding
+(DER for Bitcoin PSBT, EIP-155 v for Ethereum, intent prefix for Sui)
+is the destination plugin's job.
+
+### Future sign
+
+A user can produce the centralized sign material for a specific
+(dWallet, message, signature algorithm, hash scheme) tuple now and
+pass a partial-signature capability to another party. The other party
+can complete the signature later by pairing the capability with a
+fresh message approval that must match all four of those fields.
+Holding the capability does not let you sign a different message.
+
+## What the implementation reuses, and what it does not
+
+The protocol papers describe the threshold encryption layer
+abstractly. Two concrete instantiations are possible: Paillier
+(through the [Tiresias](https://eprint.iacr.org/2023/998) construction)
+and class groups. Ika's live implementation uses **class groups
+exclusively**. The Tiresias paper is academically relevant but its
+constructions are not on any current Ika code path.
+
+The user's secret-share storage uses a separate class-groups keypair
+(the User Share Encryption Key, or USEK). The same class-groups
+primitive serves three purposes in the system:
+
+1. The threshold encryption that wraps validator shares of the
+   network's signing-key piece.
+2. The user-side encryption that wraps the user's share for on-chain
+   backup (zero-trust and imported-key dWallets).
+3. The verifiable encryption that lets the user upload their share at
+   DKG time so the network can prove it has consistent material
+   without ever seeing the plaintext.
+
+## What is identifiably abortable
+
+When a validator misbehaves at any phase, the protocol identifies it
+and the surrounding consensus can slash. This is a UC-security
+property with identifiable abort: signing does not silently fail, it
+fails with a named cheater.
+
+## Sources
+
+- Practical Zero-Trust Threshold Signatures (live protocol):
+  [eprint 2025/297](https://eprint.iacr.org/2025/297)
+- 2PC-MPC: Emulating Two Party ECDSA in Large-Scale MPC (original
+  abstraction): [eprint 2024/253](https://eprint.iacr.org/2024/253)

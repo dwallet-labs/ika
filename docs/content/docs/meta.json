@@ -1,4 +1,11 @@
 {
 	"title": "Documentation",
-	"pages": ["sdk", "cli", "move-integration", "solana-integration", "core-concepts", "skills"]
+	"pages": [
+		"learn",
+		"build",
+		"solana-integration",
+		"operate",
+		"reference",
+		"ai-skills"
+	]
 }

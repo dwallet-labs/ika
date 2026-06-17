@@ -1,0 +1,68 @@
+---
+title: Low-level
+description: Raw coordinator and system Move call builders.
+---
+
+`IkaTransaction` covers every coordinator operation Ika supports.
+There is one path that the high-level builder cannot express: composing
+operations that the coordinator exposes as separate Move calls but that
+you want to compose into a single PTB with custom argument flow.
+
+For that case, the SDK exposes raw call builders.
+
+## Coordinator calls
+
+```ts
+import { coordinatorTransactions } from '@ika.xyz/sdk';
+
+coordinatorTransactions.requestDWalletDKGWithPublicUserSecretKeyShare(
+	config,
+	coordRef,
+	...params,
+	tx,
+);
+
+coordinatorTransactions.requestGlobalPresign(config, coordRef, ...params, tx);
+coordinatorTransactions.requestSignAndReturnId(config, coordRef, ...params, tx);
+coordinatorTransactions.approveMessage(config, coordRef, ...params, tx);
+```
+
+Every builder follows the same shape:
+`(ikaConfig, coordinatorObjectRef, ...callSpecificParams, tx)`. The
+return type is whatever the underlying Move call returns; for
+operations that produce an object, it is a
+`TransactionObjectArgument`.
+
+## System calls
+
+```ts
+import { systemTransactions } from '@ika.xyz/sdk';
+
+systemTransactions.requestAddValidatorCandidate(config, systemRef, ...params, tx);
+```
+
+Used by validator-side tooling. Application developers rarely need
+these.
+
+## When to use these
+
+- You need to call into the coordinator at a level the high-level
+  builder does not expose.
+- You are composing more than one coordinator operation in a single
+  PTB and need explicit control over which arguments thread between
+  them.
+- You are building a higher-level abstraction on top of the SDK (a
+  plugin, a service, a CLI) and need a deterministic API to call
+  against.
+
+## When not to use these
+
+- You are writing application code that uses one coordinator
+  operation at a time. `IkaTransaction` is shorter and harder to
+  misuse.
+- You want the destination-chain ergonomics (preimage construction,
+  address derivation, signature assembly, broadcasting). The
+  [Plugins](../plugins) layer wraps that.
+
+The raw builders are stable but not the safest entry point. Reach for
+them deliberately, not by default.

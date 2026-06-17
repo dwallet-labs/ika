@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "release/*-*"
+      - 'release/*-*'
   workflow_dispatch:
     inputs:
       network:
-        description: "The network to build for (mainnet, testnet, devnet)"
+        description: 'The network to build for (mainnet, testnet, devnet)'
         required: true
         type: choice
         options:
@@ -16,7 +16,7 @@ on:
           - devnet
         default: devnet
       version:
-        description: "Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed."
+        description: 'Version override — MUST include a pre-release tag (e.g., 1.1.9-test, 1.2.0-rc1). Bare versions like 1.2.0 are not allowed.'
         required: true
         type: string
 
@@ -134,10 +134,10 @@ jobs:
         include:
           - arch: x64
             target: x86_64-unknown-linux-gnu
-            bins: "ika ika-validator ika-fullnode ika-notifier ika-proxy"
+            bins: 'ika ika-validator ika-fullnode ika-notifier ika-proxy'
           - arch: arm64
             target: aarch64-unknown-linux-gnu
-            bins: "ika ika-validator ika-fullnode ika-notifier"
+            bins: 'ika ika-validator ika-fullnode ika-notifier'
     steps:
       - name: Node cleanup
         run: |
@@ -222,7 +222,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.94"
+          toolchain: '1.94'
           targets: ${{ matrix.target }}
 
       - name: Install dependencies (macOS)
@@ -293,7 +293,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          credentials_json: "${{ secrets.GAR_KEY }}"
+          credentials_json: '${{ secrets.GAR_KEY }}'
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
@@ -348,7 +348,7 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
-          credentials_json: "${{ secrets.GAR_KEY }}"
+          credentials_json: '${{ secrets.GAR_KEY }}'
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v3

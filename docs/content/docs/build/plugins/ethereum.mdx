@@ -1,0 +1,136 @@
+---
+title: Ethereum destination
+description: Sign Ethereum transactions, EIP-191 personal messages, and EIP-712 typed data.
+---
+
+The Ethereum destination plugin signs three input kinds:
+
+- `transaction`: EIP-1559, EIP-2930, EIP-4844, EIP-7702, or legacy.
+- `message`: EIP-191 personal_sign.
+- `typedData`: EIP-712.
+
+Always with `ECDSASecp256k1` + `KECCAK256`.
+
+## Install
+
+```bash
+pnpm add @ika.xyz/plugins viem
+```
+
+## Use
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+import { eth } from '@ika.xyz/plugins/ethereum/destination';
+import { ethPublisher } from '@ika.xyz/plugins/ethereum/publisher';
+import { foundry, sepolia } from 'viem/chains';
+
+const ika = await new IkaClient()
+	.use(suiSource({ network: 'testnet', signer }))
+	.use(eth())
+	.use(ethPublisher({ chain: sepolia, url: 'https://...' }));
+
+const dWallet = await ika.ethereum.createDWallet({ kind: 'shared' });
+
+const address = await dWallet.ethereum.getAddress();
+```
+
+## Transactions
+
+The plugin uses viem's `serializeTransaction` to build the unsigned
+RLP. Pass any viem-compatible transaction object:
+
+```ts
+const signed = await dWallet.ethereum.sign({
+	kind: 'transaction',
+	tx: {
+		type: 'eip1559',
+		chainId: 11155111,
+		nonce,
+		to: '0x...',
+		value: 0n,
+		maxFeePerGas: 1_000_000_000n,
+		maxPriorityFeePerGas: 1_000_000_000n,
+		gas: 21_000n,
+	},
+});
+```
+
+Legacy transactions (without an explicit `type`) are detected via
+viem's `getTransactionType` and assembled with the legacy
+`{ r, s, v }` triple so EIP-155 v-rewriting works.
+
+## Personal messages
+
+```ts
+const signed = await dWallet.ethereum.sign({
+	kind: 'message',
+	message: new TextEncoder().encode('hello'),
+});
+```
+
+The plugin builds the EIP-191 preimage
+(`\x19Ethereum Signed Message:\n<len><bytes>`) and passes it through
+with `hash: KECCAK256`. The returned signature is the 65-byte
+`(r, s, v)` viem expects.
+
+## Typed data
+
+```ts
+const signed = await dWallet.ethereum.sign({
+	kind: 'typedData',
+	typedData: {
+		domain: { name: 'Mail', version: '1', chainId: 1, verifyingContract: '0x...' },
+		types: {
+			Mail: [{ name: 'contents', type: 'string' }],
+		},
+		primaryType: 'Mail',
+		message: { contents: 'hi' },
+	},
+});
+```
+
+When the caller omits `types.EIP712Domain`, the plugin derives it from
+the domain fields via viem's `getTypesForEIP712Domain` so the
+resulting digest matches what `hashTypedData` would produce.
+
+## yParity recovery
+
+ECDSA signatures recover under two `yParity` candidates. The plugin
+tries both and accepts the one that recovers to the dWallet's address.
+If neither matches, the plugin throws: this means the network produced
+a signature that does not verify against the dWallet, which is a
+protocol-level failure rather than a parity ambiguity.
+
+## Low-S normalization
+
+The plugin normalizes ECDSA signatures into low-S form before parity
+recovery. Post-Homestead Ethereum nodes (and OpenZeppelin's ECDSA
+verifier widely used in contracts) reject high-S. The renormalization
+is defensive: the live MPC may emit canonical signatures, but the
+plugin does not depend on that.
+
+## Address derivation
+
+The standard Ethereum address: last 20 bytes of
+`keccak256(uncompressed_pubkey_without_prefix_byte)`. The plugin
+returns it as a `0x`-prefixed checksummed hex string.
+
+## Publisher
+
+```ts
+const pub = ethPublisher({
+	chain: sepolia,
+	url: 'https://...',
+	confirm: true,
+	confirmations: 1,
+	confirmTimeoutMs: 30_000,
+});
+
+const txHash = await ika.publish({ chain: 'ethereum', payload: signed.payload });
+```
+
+The publisher uses viem's `sendRawTransaction` and optionally polls
+`waitForTransactionReceipt`. For custom client configurations (HTTPS
+transport options, batched RPC), supply a pre-built viem `client`
+instead of `url + chain`.

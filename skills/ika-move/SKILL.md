@@ -7,8 +7,8 @@ metadata:
     requires:
       bins:
         - sui
-    emoji: "📜"
-    homepage: "https://ika.xyz"
+    emoji: '📜'
+    homepage: 'https://ika.xyz'
     tags:
       - move
       - sui
@@ -57,7 +57,11 @@ pnpm add @ika.xyz/sdk
 ```typescript
 import { getNetworkConfig, IkaClient } from '@ika.xyz/sdk';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
-const suiClient = new SuiJsonRpcClient({ url: getJsonRpcFullnodeUrl('testnet'), network: 'testnet' });
+
+const suiClient = new SuiJsonRpcClient({
+	url: getJsonRpcFullnodeUrl('testnet'),
+	network: 'testnet',
+});
 const ikaClient = new IkaClient({ suiClient, config: getNetworkConfig('testnet'), cache: true });
 await ikaClient.initialize();
 ```
@@ -65,18 +69,21 @@ await ikaClient.initialize();
 ## Crypto Constants
 
 ### Curves
+
 - `0` = SECP256K1 (Bitcoin, Ethereum)
 - `1` = SECP256R1 (WebAuthn)
 - `2` = ED25519 (Solana, Substrate)
 - `3` = RISTRETTO (Privacy)
 
 ### Signature Algorithms (relative to curve)
+
 - SECP256K1: `0`=ECDSA, `1`=Taproot
 - SECP256R1: `0`=ECDSA
 - ED25519: `0`=EdDSA
 - RISTRETTO: `0`=Schnorrkel
 
 ### Hash Schemes (relative to curve+algo)
+
 - SECP256K1+ECDSA: `0`=KECCAK256(Ethereum), `1`=SHA256, `2`=DoubleSHA256(Bitcoin)
 - SECP256K1+Taproot: `0`=SHA256
 - SECP256R1+ECDSA: `0`=SHA256
@@ -148,16 +155,16 @@ Get ID in TypeScript: `ikaClient.ikaConfig.objects.ikaDWalletCoordinator.objectI
 
 ## Capabilities
 
-| Capability | Purpose | Created By |
-|---|---|---|
-| `DWalletCap` | Authorize signing | DKG |
-| `ImportedKeyDWalletCap` | Authorize imported key signing | Import verification |
-| `UnverifiedPresignCap` | Presign reference (needs verify) | Presign request |
-| `VerifiedPresignCap` | Ready for signing | `verify_presign_cap()` |
-| `UnverifiedPartialUserSignatureCap` | Partial sig (needs verify) | Future sign |
-| `VerifiedPartialUserSignatureCap` | Ready for completion | `verify_partial_user_signature_cap()` |
-| `MessageApproval` | Auth to sign specific message | `approve_message()` |
-| `ImportedKeyMessageApproval` | Auth for imported keys | `approve_imported_key_message()` |
+| Capability                          | Purpose                          | Created By                            |
+| ----------------------------------- | -------------------------------- | ------------------------------------- |
+| `DWalletCap`                        | Authorize signing                | DKG                                   |
+| `ImportedKeyDWalletCap`             | Authorize imported key signing   | Import verification                   |
+| `UnverifiedPresignCap`              | Presign reference (needs verify) | Presign request                       |
+| `VerifiedPresignCap`                | Ready for signing                | `verify_presign_cap()`                |
+| `UnverifiedPartialUserSignatureCap` | Partial sig (needs verify)       | Future sign                           |
+| `VerifiedPartialUserSignatureCap`   | Ready for completion             | `verify_partial_user_signature_cap()` |
+| `MessageApproval`                   | Auth to sign specific message    | `approve_message()`                   |
+| `ImportedKeyMessageApproval`        | Auth for imported keys           | `approve_imported_key_message()`      |
 
 ## SessionIdentifier
 
@@ -176,6 +183,7 @@ All ops require IKA+SUI fees. Pattern: withdraw all -> perform ops (fees auto-de
 ## Protocol: DKG (Create dWallet)
 
 ### Shared dWallet (recommended for contracts)
+
 Public user share, network signs without user interaction.
 
 ```rust
@@ -188,6 +196,7 @@ let (dwallet_cap, _) = coordinator.request_dwallet_dkg_with_public_user_secret_k
 ```
 
 ### Zero-Trust dWallet
+
 Encrypted user share, user must participate in every signature.
 
 ```rust
@@ -203,17 +212,22 @@ let (dwallet_cap, _) = coordinator.request_dwallet_dkg(
 
 ```typescript
 // Wait for DKG to complete and dWallet to reach AwaitingKeyHolderSignature state
-const awaitingDWallet = await ikaClient.getDWalletInParticularState(dwalletId, 'AwaitingKeyHolderSignature');
+const awaitingDWallet = await ikaClient.getDWalletInParticularState(
+	dwalletId,
+	'AwaitingKeyHolderSignature',
+);
 // The encrypted user secret key share ID comes from the DKG transaction event,
 // NOT from the dWallet ID.
-const encryptedShare = await ikaClient.getEncryptedUserSecretKeyShare(encryptedUserSecretKeyShareId);
+const encryptedShare = await ikaClient.getEncryptedUserSecretKeyShare(
+	encryptedUserSecretKeyShareId,
+);
 
 const tx = new Transaction();
 const ikaTx = new IkaTransaction({ ikaClient, transaction: tx, userShareEncryptionKeys: keys });
 await ikaTx.acceptEncryptedUserShare({
-    dWallet: awaitingDWallet,
-    encryptedUserSecretKeyShareId: encryptedShare.id,
-    userPublicOutput: new Uint8Array(dkgData.userPublicOutput),
+	dWallet: awaitingDWallet,
+	encryptedUserSecretKeyShareId: encryptedShare.id,
+	userPublicOutput: new Uint8Array(dkgData.userPublicOutput),
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 
@@ -226,7 +240,13 @@ This step is NOT needed for shared dWallets (created with `request_dwallet_dkg_w
 ### TypeScript DKG Prep
 
 ```typescript
-import { prepareDKGAsync, UserShareEncryptionKeys, Curve, createRandomSessionIdentifier } from '@ika.xyz/sdk';
+import {
+	createRandomSessionIdentifier,
+	Curve,
+	prepareDKGAsync,
+	UserShareEncryptionKeys,
+} from '@ika.xyz/sdk';
+
 const keys = await UserShareEncryptionKeys.fromRootSeedKey(seed, Curve.SECP256K1);
 const bytesToHash = createRandomSessionIdentifier(); // bytes hashed to derive the session identifier
 const dkgData = await prepareDKGAsync(ikaClient, Curve.SECP256K1, keys, bytesToHash, signerAddress);
@@ -235,6 +255,7 @@ const networkKey = await ikaClient.getLatestNetworkEncryptionKey();
 ```
 
 ### Sign During DKG (optional)
+
 Pass existing presign to get signature during DKG:
 
 ```rust
@@ -315,18 +336,27 @@ let sign_id = coordinator.request_sign_and_return_id(
 ### TypeScript: Create User Signature
 
 ```typescript
-import { createUserSignMessageWithPublicOutput, Curve, SignatureAlgorithm, Hash } from '@ika.xyz/sdk';
+import {
+	createUserSignMessageWithPublicOutput,
+	Curve,
+	Hash,
+	SignatureAlgorithm,
+} from '@ika.xyz/sdk';
+
 const completedPresign = await ikaClient.getPresignInParticularState(presignId, 'Completed');
-const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(undefined, Curve.SECP256K1);
+const protocolPublicParameters = await ikaClient.getProtocolPublicParameters(
+	undefined,
+	Curve.SECP256K1,
+);
 const msgSig = await createUserSignMessageWithPublicOutput(
-    protocolPublicParameters,
-    dWallet.state.Active!.public_output,
-    dWallet.public_user_secret_key_share,
-    completedPresign.presign,
-    message,
-    Hash.SHA256,
-    SignatureAlgorithm.Taproot,
-    Curve.SECP256K1,
+	protocolPublicParameters,
+	dWallet.state.Active!.public_output,
+	dWallet.public_user_secret_key_share,
+	completedPresign.presign,
+	message,
+	Hash.SHA256,
+	SignatureAlgorithm.Taproot,
+	Curve.SECP256K1,
 );
 // Pass msgSig as message_centralized_signature to Move
 ```
@@ -335,9 +365,16 @@ const msgSig = await createUserSignMessageWithPublicOutput(
 
 ```typescript
 const signSession = await ikaClient.getSignInParticularState(
-    signId, Curve.SECP256K1, SignatureAlgorithm.Taproot, 'Completed',
+	signId,
+	Curve.SECP256K1,
+	SignatureAlgorithm.Taproot,
+	'Completed',
 );
-const sig = await parseSignatureFromSignOutput(Curve.SECP256K1, SignatureAlgorithm.Taproot, signSession.signature);
+const sig = await parseSignatureFromSignOutput(
+	Curve.SECP256K1,
+	SignatureAlgorithm.Taproot,
+	signSession.signature,
+);
 ```
 
 ## Protocol: Future Signing (Two-Phase)
@@ -389,6 +426,7 @@ let imported_cap = coordinator.request_imported_key_dwallet_verification(
 ```
 
 ### Imported Key Differences
+
 - Use `ImportedKeyDWalletCap` instead of `DWalletCap`
 - Use `coordinator.approve_imported_key_message(...)` instead of `approve_message`
 - Use `coordinator.request_imported_key_sign_and_return_id(...)` for signing
@@ -551,19 +589,19 @@ fun return_payment_coins(self: &mut Treasury, ika: Coin<IKA>, sui: Coin<SUI>) {
 ```typescript
 const tx = new Transaction();
 tx.moveCall({
-    target: `${PACKAGE_ID}::treasury::create`,
-    arguments: [
-        tx.object(coordinatorId),
-        tx.object(ikaCoinId),
-        tx.splitCoins(tx.gas, [1000000]),
-        tx.pure.id(networkKeyId),
-        tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
-        tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
-        tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
-        tx.pure.vector('u8', Array.from(sessionIdentifier)),
-        tx.pure.vector('address', members),
-        tx.pure.u64(threshold),
-    ],
+	target: `${PACKAGE_ID}::treasury::create`,
+	arguments: [
+		tx.object(coordinatorId),
+		tx.object(ikaCoinId),
+		tx.splitCoins(tx.gas, [1000000]),
+		tx.pure.id(networkKeyId),
+		tx.pure.vector('u8', Array.from(dkgData.userDKGMessage)),
+		tx.pure.vector('u8', Array.from(dkgData.userPublicOutput)),
+		tx.pure.vector('u8', Array.from(dkgData.userSecretKeyShare)),
+		tx.pure.vector('u8', Array.from(sessionIdentifier)),
+		tx.pure.vector('address', members),
+		tx.pure.u64(threshold),
+	],
 });
 await suiClient.core.signAndExecuteTransaction({ transaction: tx, signer: keypair });
 ```
@@ -586,12 +624,11 @@ public macro fun hash_scheme(): u32 { 0 }
 
 ## Chain-Specific Config Quick Reference
 
-| Chain | Curve | Sig Algo | Hash |
-|---|---|---|---|
-| Bitcoin (Taproot) | 0 | 1 | 0 (SHA256) |
-| Bitcoin (Legacy) | 0 | 0 | 2 (DoubleSHA256) |
-| Ethereum | 0 | 0 | 0 (KECCAK256) |
-| Solana | 2 | 0 | 0 (SHA512) |
-| WebAuthn | 1 | 0 | 0 (SHA256) |
-| Substrate | 3 | 0 | 0 (Merlin) |
-
+| Chain             | Curve | Sig Algo | Hash             |
+| ----------------- | ----- | -------- | ---------------- |
+| Bitcoin (Taproot) | 0     | 1        | 0 (SHA256)       |
+| Bitcoin (Legacy)  | 0     | 0        | 2 (DoubleSHA256) |
+| Ethereum          | 0     | 0        | 0 (KECCAK256)    |
+| Solana            | 2     | 0        | 0 (SHA512)       |
+| WebAuthn          | 1     | 0        | 0 (SHA256)       |
+| Substrate         | 3     | 0        | 0 (Merlin)       |

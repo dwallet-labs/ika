@@ -1,0 +1,99 @@
+---
+title: prepareSign and assembleSign
+description: Split message preparation from signature assembly so custom gating can sit between them.
+---
+
+Every destination plugin exposes a two-phase signing API:
+
+```ts
+const { prep, preimage, plan } = await dWallet.bitcoin.prepareSign({
+	kind: 'psbt',
+	psbt,
+	inputIndex: 0,
+	mode: 'p2tr-script',
+});
+
+// any custom flow runs here. multisig vote, sponsored relay, future-sign, ...
+
+const signed = await dWallet.bitcoin.assembleSign(prep, signature);
+```
+
+`prepareSign` returns three values:
+
+- `prep`: the exact shape `assembleSign` reads later. The destination
+  pins the mode, the dWallet, the addresses, and the chain into prep.
+- `preimage`: the bytes you would hand to the MPC's signMessage call.
+- `plan`: `{ curve, signatureAlgorithm, hash }`. What the MPC will
+  apply to the preimage.
+
+`assembleSign` takes `(prep, signature)` and produces a fully-formed
+signed payload ready for the publisher.
+
+## When to use this split
+
+The one-shot `dWallet.<chain>.sign(input)` composes prepareSign,
+calling `ctx.source.signMessage`, and `assembleSign` in one call. Use
+it when the signature flows through the source plugin's normal path.
+
+The two-phase form is for the cases where the signature does not flow
+through the source's normal path:
+
+- **Move multisig contracts**. A multisig Move contract gates the
+  signature behind a vote. The contract holds the dWallet capability
+  and itself calls `request_sign`. You compute `preimage` and `plan`,
+  hand them to the contract, and call `assembleSign` once the
+  signature lands.
+- **Future-sign**. You produce the user-side sign material now and
+  release the signature later by capability. See
+  [Future-sign](./future-sign).
+- **Sponsored relays**. A third party pays gas and submits on your
+  behalf. They build the PTB with the sign request; you only see the
+  final signature on chain.
+- **Replay from storage**. The original sign request landed earlier
+  and you persisted the prep object. Re-fetch the signature from chain
+  and assemble.
+
+## What prep carries per chain
+
+The prep shape is different per destination because each chain
+encodes signatures differently. The high-level guarantee is that prep
+binds the destination, the mode (where applicable), and the dWallet
+public key, so applying a stale or wrong signature to prep produces a
+chain-rejecting payload, not a forgery.
+
+Per-chain prep shapes:
+
+- **Bitcoin**: `{ kind: 'psbt', mode, network, sender, psbt,
+  inputIndex, hashType, compressedPubkey, p2trBundle? }` for PSBT
+  mode; `{ kind: 'preimage', mode }` for raw preimage mode.
+- **Ethereum**: `{ digest, sender, input }`.
+- **Solana**: `{ sender, input }`.
+- **Sui**: `{ bytes, sender, curve, publicKey }`.
+
+## Reconstructing prep at a later time
+
+If you persist prep and rebuild it later, do not mutate the inner
+objects (PSBT, transaction) between prepareSign and assembleSign. The
+inner objects are part of what binds the signature; mutating them
+invalidates the assembly.
+
+## Source-side prepareSignMessage
+
+The Sui source exposes a parallel primitive for the user-side
+centralized-party sign message:
+
+```ts
+const userSignMessage = await ika.sui.prepareSignMessage({
+	dWallet,
+	message: preimage,
+	signatureAlgorithm,
+	hash,
+	presign,
+});
+```
+
+This is what the source would normally send through `signMessage`. Use
+it when your Move flow calls `request_sign` directly and you need to
+supply the user-side material out of band. Name disambiguation: the
+source's `prepareSignMessage` is distinct from the destination's
+`prepareSign`. They produce different things at different layers.

@@ -1,0 +1,77 @@
+---
+title: Learn
+description: Start here. Concepts, trust model, and cryptography behind Ika and dWallets.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Zap, Network, Shield, KeyRound, Cpu, Workflow, FileText, Sparkles } from 'lucide-react';
+
+Ika is a permissionless MPC signing network. A dWallet is a unit of
+remote signing authority: an MPC keypair plus the on-chain rules that
+govern which messages the network will sign on its behalf. The pages
+below cover how that works and how it is built.
+
+## Start here
+
+<Cards>
+	<Card
+		icon={<Zap />}
+		title="Quickstart"
+		description="Create a shared dWallet on Sui testnet, derive its Bitcoin address, sign and broadcast in under ten minutes."
+		href="./quickstart"
+	/>
+	<Card
+		icon={<Sparkles />}
+		title="What is Ika"
+		description="One page on what the network does, what it does not do, and who it is for."
+		href="./what-is-ika"
+	/>
+</Cards>
+
+## Core concepts
+
+<Cards>
+	<Card
+		icon={<KeyRound />}
+		title="dWallets"
+		description="The four kinds (zero-trust, shared, imported-key, imported-key-shared) and how each is created and signed against."
+		href="./dwallets"
+	/>
+	<Card
+		icon={<Shield />}
+		title="Trust model"
+		description="The most important page if you plan to store value. What survives which failure."
+		href="./trust-model"
+	/>
+	<Card
+		icon={<Network />}
+		title="Multi-chain vs cross-chain"
+		description="Where Ika sits and how dWallet signing differs from bridges and wrapped assets."
+		href="./multi-chain-vs-cross-chain"
+	/>
+</Cards>
+
+## Cryptography
+
+<Cards>
+	<Card
+		icon={<Workflow />}
+		title="2PC-MPC"
+		description="The two-party threshold-signing protocol Ika implements, at a level a developer can follow without the full paper."
+		href="./2pc-mpc"
+	/>
+	<Card
+		icon={<Cpu />}
+		title="Cryptography primitives"
+		description="Curves, signature algorithms, hashes, and the class-groups threshold encryption layer."
+		href="./cryptography"
+	/>
+	<Card
+		icon={<FileText />}
+		title="Whitepaper and references"
+		description="Academic papers, security proofs, and external reading."
+		href="./whitepaper"
+	/>
+</Cards>
+
+When [Build](../build) refers to a concept, it links back here.

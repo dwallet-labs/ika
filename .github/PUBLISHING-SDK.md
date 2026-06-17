@@ -30,6 +30,7 @@ sdk/typescript-{version}
 ```
 
 Examples:
+
 - `sdk/typescript-0.6.0`
 - `sdk/typescript-1.0.0`
 
@@ -58,15 +59,15 @@ Pre-release versions are published with their own npm dist-tag (e.g., `0.6.0-rc1
 
 ## Packages published
 
-| Package | Directory | Description |
-|---------|-----------|-------------|
-| `@ika.xyz/ika-wasm` | `sdk/ika-wasm/` | Rust-to-WASM crypto bindings |
-| `@ika.xyz/sdk` | `sdk/typescript/` | TypeScript SDK |
+| Package             | Directory         | Description                  |
+| ------------------- | ----------------- | ---------------------------- |
+| `@ika.xyz/ika-wasm` | `sdk/ika-wasm/`   | Rust-to-WASM crypto bindings |
+| `@ika.xyz/sdk`      | `sdk/typescript/` | TypeScript SDK               |
 
 ## npm dist-tags
 
-| Version format | npm tag | Example |
-|----------------|---------|---------|
-| `0.6.0` (tag push) | `latest` | `npm install @ika.xyz/sdk` |
-| `0.6.0-rc1` (manual) | `rc` | `npm install @ika.xyz/sdk@rc` |
-| `0.6.0-beta.1` (manual) | `beta` | `npm install @ika.xyz/sdk@beta` |
+| Version format          | npm tag  | Example                         |
+| ----------------------- | -------- | ------------------------------- |
+| `0.6.0` (tag push)      | `latest` | `npm install @ika.xyz/sdk`      |
+| `0.6.0-rc1` (manual)    | `rc`     | `npm install @ika.xyz/sdk@rc`   |
+| `0.6.0-beta.1` (manual) | `beta`   | `npm install @ika.xyz/sdk@beta` |

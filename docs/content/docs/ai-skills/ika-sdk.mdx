@@ -1,0 +1,73 @@
+---
+title: ika-sdk
+description: Claude Code skill for building applications with the Ika TypeScript SDK and the plugin layer.
+---
+
+## Install
+
+```bash
+npx skills add dwallet-labs/ika -s ika-sdk
+```
+
+## What the skill knows
+
+This skill loads context for working with `@ika.xyz/sdk` and
+`@ika.xyz/plugins`. It covers:
+
+**Core SDK** (`@ika.xyz/sdk`):
+
+- `IkaClient` for on-chain reads, protocol public parameters, polling
+  helpers.
+- `IkaTransaction` for DKG, presign, sign, future-sign, accept share,
+  reveal share, imported-key.
+- `UserShareEncryptionKeys` derivation, serialization, and
+  acceptance signing.
+- Cryptography helpers: `prepareDKGAsync`,
+  `createUserSignMessageWithPublicOutput`,
+  `publicKeyFromDWalletOutput`, `parseSignatureFromSignOutput`,
+  `prepareImportedKeyDWalletVerification`,
+  `createRandomSessionIdentifier`, and friends.
+- `Curve`, `SignatureAlgorithm`, `Hash` enums and the valid
+  combinations.
+- Low-level `coordinatorTransactions` and `systemTransactions` for
+  callers that compose at the Move-call level.
+
+**Plugin layer** (`@ika.xyz/plugins`):
+
+- The source / destination / publisher composition model.
+- `suiSource` with signer abstraction, `capRecipient`, `withSigner`,
+  and the optional explicit `userShareEncryptionKeys` override.
+- Per-chain destinations: `btc`, `eth`, `solana`, `sui`.
+- Publishers: `bitcoinPublisher`, `ethPublisher`, `solanaDevnet`,
+  `solanaMainnet`, `solanaPublisher`, `suiPublisher`.
+- The `prepareSign` / `assembleSign` two-phase API for custom gating
+  flows.
+- Future-sign Phase 1 (`requestFutureSign`) and Phase 2
+  (`completeFutureSign`).
+
+**Cryptographic invariants the skill enforces**:
+
+- Class-groups TAHE in the implementation. The SDK does not depend
+  on Paillier.
+- The hash scheme is applied inside the MPC, not by the client.
+  Plugin destinations build the preimage; the network hashes and
+  signs.
+- ECDSA signatures are not guaranteed low-S. The Bitcoin and Ethereum
+  plugins re-normalize defensively before assembly.
+- Bitcoin Taproot is script-path only, with a NUMS internal pubkey.
+
+## Sample prompts
+
+- "Create a shared dWallet on Sui testnet and sign a Bitcoin P2WPKH
+  transaction."
+- "Add an imported-key migration flow to my application that brings
+  in an existing secp256k1 key."
+- "Implement a future-sign pattern where my Move multisig holds the
+  partial cap and releases the signature on quorum vote."
+
+## Where the SKILL.md lives
+
+[`skills/ika-sdk/`](https://github.com/dwallet-labs/ika/tree/main/skills/ika-sdk)
+in the repository. See [Build → SDK](../build/sdk) and
+[Build → Plugins](../build/plugins) for the human-readable
+counterparts.

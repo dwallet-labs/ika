@@ -8,10 +8,10 @@ Type system, enums, curve/signature/hash validation, and state narrowing.
 
 ```typescript
 const Curve = {
-    SECP256K1: 'SECP256K1',    // Bitcoin, Ethereum (curveNumber: 0)
-    SECP256R1: 'SECP256R1',    // WebAuthn, P-256 (curveNumber: 1)
-    ED25519: 'ED25519',        // Solana, Substrate-Ed25519 (curveNumber: 2)
-    RISTRETTO: 'RISTRETTO',   // Schnorrkel/Substrate (curveNumber: 3)
+	SECP256K1: 'SECP256K1', // Bitcoin, Ethereum (curveNumber: 0)
+	SECP256R1: 'SECP256R1', // WebAuthn, P-256 (curveNumber: 1)
+	ED25519: 'ED25519', // Solana, Substrate-Ed25519 (curveNumber: 2)
+	RISTRETTO: 'RISTRETTO', // Schnorrkel/Substrate (curveNumber: 3)
 } as const;
 type Curve = (typeof Curve)[keyof typeof Curve];
 ```
@@ -20,11 +20,11 @@ type Curve = (typeof Curve)[keyof typeof Curve];
 
 ```typescript
 const SignatureAlgorithm = {
-    ECDSASecp256k1: 'ECDSASecp256k1',         // absoluteNumber: 0
-    Taproot: 'Taproot',                         // absoluteNumber: 1
-    ECDSASecp256r1: 'ECDSASecp256r1',          // absoluteNumber: 2
-    EdDSA: 'EdDSA',                             // absoluteNumber: 3
-    SchnorrkelSubstrate: 'SchnorrkelSubstrate', // absoluteNumber: 4
+	ECDSASecp256k1: 'ECDSASecp256k1', // absoluteNumber: 0
+	Taproot: 'Taproot', // absoluteNumber: 1
+	ECDSASecp256r1: 'ECDSASecp256r1', // absoluteNumber: 2
+	EdDSA: 'EdDSA', // absoluteNumber: 3
+	SchnorrkelSubstrate: 'SchnorrkelSubstrate', // absoluteNumber: 4
 } as const;
 type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgorithm];
 ```
@@ -33,11 +33,11 @@ type SignatureAlgorithm = (typeof SignatureAlgorithm)[keyof typeof SignatureAlgo
 
 ```typescript
 const Hash = {
-    KECCAK256: 'KECCAK256',       // absoluteNumber: 0
-    SHA256: 'SHA256',             // absoluteNumber: 1
-    DoubleSHA256: 'DoubleSHA256', // absoluteNumber: 2
-    SHA512: 'SHA512',             // absoluteNumber: 3
-    Merlin: 'Merlin',            // absoluteNumber: 4
+	KECCAK256: 'KECCAK256', // absoluteNumber: 0
+	SHA256: 'SHA256', // absoluteNumber: 1
+	DoubleSHA256: 'DoubleSHA256', // absoluteNumber: 2
+	SHA512: 'SHA512', // absoluteNumber: 3
+	Merlin: 'Merlin', // absoluteNumber: 4
 } as const;
 type Hash = (typeof Hash)[keyof typeof Hash];
 ```
@@ -73,32 +73,39 @@ RISTRETTO (curve=3):
 ### ValidSignatureAlgorithmForCurve
 
 ```typescript
-type ValidSignatureAlgorithmForCurve<C extends Curve> =
-    C extends 'SECP256K1' ? 'ECDSASecp256k1' | 'Taproot' :
-    C extends 'SECP256R1' ? 'ECDSASecp256r1' :
-    C extends 'ED25519' ? 'EdDSA' :
-    C extends 'RISTRETTO' ? 'SchnorrkelSubstrate' :
-    never;
+type ValidSignatureAlgorithmForCurve<C extends Curve> = C extends 'SECP256K1'
+	? 'ECDSASecp256k1' | 'Taproot'
+	: C extends 'SECP256R1'
+		? 'ECDSASecp256r1'
+		: C extends 'ED25519'
+			? 'EdDSA'
+			: C extends 'RISTRETTO'
+				? 'SchnorrkelSubstrate'
+				: never;
 ```
 
 ### ValidHashForSignature
 
 ```typescript
-type ValidHashForSignature<S extends SignatureAlgorithm> =
-    S extends 'ECDSASecp256k1' ? 'KECCAK256' | 'SHA256' | 'DoubleSHA256' :
-    S extends 'Taproot' ? 'SHA256' :
-    S extends 'ECDSASecp256r1' ? 'SHA256' :
-    S extends 'EdDSA' ? 'SHA512' :
-    S extends 'SchnorrkelSubstrate' ? 'Merlin' :
-    never;
+type ValidHashForSignature<S extends SignatureAlgorithm> = S extends 'ECDSASecp256k1'
+	? 'KECCAK256' | 'SHA256' | 'DoubleSHA256'
+	: S extends 'Taproot'
+		? 'SHA256'
+		: S extends 'ECDSASecp256r1'
+			? 'SHA256'
+			: S extends 'EdDSA'
+				? 'SHA512'
+				: S extends 'SchnorrkelSubstrate'
+					? 'Merlin'
+					: never;
 ```
 
 ### ValidatedSigningParams
 
 ```typescript
 type ValidatedSigningParams<S extends SignatureAlgorithm> = {
-    hashScheme: ValidHashForSignature<S>;
-    signatureAlgorithm: S;
+	hashScheme: ValidHashForSignature<S>;
+	signatureAlgorithm: S;
 };
 
 // Creates compile-time + runtime validated params
@@ -142,6 +149,7 @@ getHashName(hash: Hash): string                                  // e.g., 'KECCA
 ## Number Conversion
 
 Two numbering schemes:
+
 - **Relative**: Numbers within their parent (sigAlgo relative to curve, hash relative to curve+sigAlgo)
 - **Absolute**: Global unique numbers
 
@@ -181,10 +189,10 @@ fromNumbersToCurveAndSignatureAlgorithmAndHash(curveNum, sigAlgoNum, hashNum): {
 
 ```typescript
 const DWalletKind = {
-    ZeroTrust: 'zero-trust',
-    ImportedKey: 'imported-key',
-    ImportedKeyShared: 'imported-key-shared',
-    Shared: 'shared',
+	ZeroTrust: 'zero-trust',
+	ImportedKey: 'imported-key',
+	ImportedKeyShared: 'imported-key-shared',
+	Shared: 'shared',
 } as const;
 type DWalletKind = (typeof DWalletKind)[keyof typeof DWalletKind];
 ```
@@ -201,6 +209,7 @@ type ImportedSharedDWallet = DWalletInternal & { kind: 'imported-key-shared' };
 ```
 
 Kind is determined by:
+
 - Has `public_user_secret_key_share`? → shared or imported-key-shared
 - Has imported key markers? → imported-key or imported-key-shared
 - Otherwise → zero-trust
@@ -209,16 +218,16 @@ Kind is determined by:
 
 ```typescript
 interface DWalletInternal {
-    id: string;
-    created_at_epoch: string;                         // bigint as string
-    curve: number;                                    // Use fromNumberToCurve()
-    public_user_secret_key_share: number[] | null;    // null for zero-trust
-    dwallet_cap_id: string;
-    dwallet_network_encryption_key_id: string;
-    is_imported_key_dwallet: boolean;
-    state: DWalletState;                              // Discriminated union
-    // public_output is inside state (Active or AwaitingKeyHolderSignature)
-    // Access as: dWallet.state.Active.public_output
+	id: string;
+	created_at_epoch: string; // bigint as string
+	curve: number; // Use fromNumberToCurve()
+	public_user_secret_key_share: number[] | null; // null for zero-trust
+	dwallet_cap_id: string;
+	dwallet_network_encryption_key_id: string;
+	is_imported_key_dwallet: boolean;
+	state: DWalletState; // Discriminated union
+	// public_output is inside state (Active or AwaitingKeyHolderSignature)
+	// Access as: dWallet.state.Active.public_output
 }
 ```
 
@@ -228,18 +237,19 @@ interface DWalletInternal {
 
 ```typescript
 type DWalletState =
-    | 'DKGRequested'                              // DKG first round requested
-    | 'NetworkRejectedDKGRequest'                  // Network rejected DKG first round
-    | 'AwaitingUserDKGVerificationInitiation'      // DKG first round done, has first_round_output
-    | 'AwaitingNetworkDKGVerification'             // DKG second round requested
-    | 'NetworkRejectedDKGVerification'             // Network rejected DKG second round
-    | 'AwaitingNetworkImportedKeyVerification'     // Imported key verification requested
-    | 'NetworkRejectedImportedKeyVerification'     // Network rejected imported key
-    | 'AwaitingKeyHolderSignature'                 // DKG/import done, has public_output
-    | 'Active';                                    // Fully operational, has public_output
+	| 'DKGRequested' // DKG first round requested
+	| 'NetworkRejectedDKGRequest' // Network rejected DKG first round
+	| 'AwaitingUserDKGVerificationInitiation' // DKG first round done, has first_round_output
+	| 'AwaitingNetworkDKGVerification' // DKG second round requested
+	| 'NetworkRejectedDKGVerification' // Network rejected DKG second round
+	| 'AwaitingNetworkImportedKeyVerification' // Imported key verification requested
+	| 'NetworkRejectedImportedKeyVerification' // Network rejected imported key
+	| 'AwaitingKeyHolderSignature' // DKG/import done, has public_output
+	| 'Active'; // Fully operational, has public_output
 ```
 
 States with data:
+
 - `AwaitingUserDKGVerificationInitiation`: `{ first_round_output: number[] }`
 - `AwaitingKeyHolderSignature`: `{ public_output: number[] }`
 - `Active`: `{ public_output: number[] }`
@@ -250,46 +260,49 @@ States with data:
 
 ```typescript
 type PresignState =
-    | 'Requested'       // Presign requested, awaiting network
-    | 'NetworkRejected' // Network rejected the request
-    | 'Completed';      // Ready for signing, has presign data
+	| 'Requested' // Presign requested, awaiting network
+	| 'NetworkRejected' // Network rejected the request
+	| 'Completed'; // Ready for signing, has presign data
 ```
 
 States with data:
+
 - `Completed`: `{ presign: number[] }`
 
 ### SignState
 
 ```typescript
 type SignState =
-    | 'Requested'       // Sign requested, awaiting network
-    | 'NetworkRejected' // Network rejected the request
-    | 'Completed';      // Signature available
+	| 'Requested' // Sign requested, awaiting network
+	| 'NetworkRejected' // Network rejected the request
+	| 'Completed'; // Signature available
 ```
 
 States with data:
+
 - `Completed`: `{ signature: number[] }`
 
 ### PartialUserSignatureState
 
 ```typescript
 type PartialUserSignatureState =
-    | 'AwaitingNetworkVerification'       // Awaiting network verification
-    | 'NetworkVerificationCompleted'      // Network verified successfully
-    | 'NetworkVerificationRejected';      // Network rejected verification
+	| 'AwaitingNetworkVerification' // Awaiting network verification
+	| 'NetworkVerificationCompleted' // Network verified successfully
+	| 'NetworkVerificationRejected'; // Network rejected verification
 ```
 
 ### EncryptedUserSecretKeyShareState
 
 ```typescript
 type EncryptedUserSecretKeyShareState =
-    | 'AwaitingNetworkVerification'       // Awaiting network verification
-    | 'NetworkVerificationCompleted'      // Network verified successfully
-    | 'NetworkVerificationRejected'       // Network rejected verification
-    | 'KeyHolderSigned';                  // Key holder signed and accepted
+	| 'AwaitingNetworkVerification' // Awaiting network verification
+	| 'NetworkVerificationCompleted' // Network verified successfully
+	| 'NetworkVerificationRejected' // Network rejected verification
+	| 'KeyHolderSigned'; // Key holder signed and accepted
 ```
 
 States with data:
+
 - `KeyHolderSigned`: `{ user_output_signature: number[] }`
 
 ## State Narrowing Generics
@@ -323,22 +336,22 @@ const presign = await ikaClient.getPresignInParticularState(id, 'Completed');
 
 ```typescript
 interface IkaConfig {
-    packages: IkaPackageConfig;
-    objects: IkaObjectsConfig;
+	packages: IkaPackageConfig;
+	objects: IkaObjectsConfig;
 }
 
 interface IkaPackageConfig {
-    ikaPackage: string;
-    ikaCommonPackage: string;
-    ikaSystemOriginalPackage: string;
-    ikaDwallet2pcMpcOriginalPackage: string;
-    ikaDwallet2pcMpcPackage: string;
-    ikaSystemPackage: string;
+	ikaPackage: string;
+	ikaCommonPackage: string;
+	ikaSystemOriginalPackage: string;
+	ikaDwallet2pcMpcOriginalPackage: string;
+	ikaDwallet2pcMpcPackage: string;
+	ikaSystemPackage: string;
 }
 
 interface IkaObjectsConfig {
-    ikaSystemObject: { objectID: string; initialSharedVersion: number; };
-    ikaDWalletCoordinator: { objectID: string; initialSharedVersion: number; };
+	ikaSystemObject: { objectID: string; initialSharedVersion: number };
+	ikaDWalletCoordinator: { objectID: string; initialSharedVersion: number };
 }
 ```
 
@@ -346,11 +359,11 @@ interface IkaObjectsConfig {
 
 ```typescript
 interface IkaClientOptions {
-    config: IkaConfig;
-    suiClient: ClientWithCoreApi;      // @mysten/sui client
-    timeout?: number;
-    cache?: boolean;                    // default: true
-    encryptionKeyOptions?: EncryptionKeyOptions;
+	config: IkaConfig;
+	suiClient: ClientWithCoreApi; // @mysten/sui client
+	timeout?: number;
+	cache?: boolean; // default: true
+	encryptionKeyOptions?: EncryptionKeyOptions;
 }
 ```
 
@@ -358,8 +371,8 @@ interface IkaClientOptions {
 
 ```typescript
 interface EncryptionKeyOptions {
-    encryptionKeyID?: string;   // Use specific key
-    autoDetect?: boolean;       // Auto-detect from dWallet (default: true)
+	encryptionKeyID?: string; // Use specific key
+	autoDetect?: boolean; // Auto-detect from dWallet (default: true)
 }
 ```
 
@@ -367,10 +380,10 @@ interface EncryptionKeyOptions {
 
 ```typescript
 interface NetworkEncryptionKey {
-    id: string;
-    epoch: number;
-    networkDKGOutputID: string;
-    reconfigurationOutputID: string | undefined;
+	id: string;
+	epoch: number;
+	networkDKGOutputID: string;
+	reconfigurationOutputID: string | undefined;
 }
 ```
 
@@ -378,16 +391,16 @@ interface NetworkEncryptionKey {
 
 ```typescript
 type UserSignatureInputs = {
-    activeDWallet?: DWallet;
-    publicOutput?: Uint8Array;
-    secretShare?: Uint8Array;
-    encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
-    presign: Presign;
-    message: Uint8Array;
-    hash: Hash;
-    signatureScheme: SignatureAlgorithm;
-    curve: Curve;
-    createWithCentralizedOutput?: boolean;
+	activeDWallet?: DWallet;
+	publicOutput?: Uint8Array;
+	secretShare?: Uint8Array;
+	encryptedUserSecretKeyShare?: EncryptedUserSecretKeyShare;
+	presign: Presign;
+	message: Uint8Array;
+	hash: Hash;
+	signatureScheme: SignatureAlgorithm;
+	curve: Curve;
+	createWithCentralizedOutput?: boolean;
 };
 ```
 
@@ -397,61 +410,104 @@ type UserSignatureInputs = {
 
 ```typescript
 // Core
-import { IkaClient, IkaTransaction, getNetworkConfig } from '@ika.xyz/sdk';
-
 // Keys
-import { UserShareEncryptionKeys } from '@ika.xyz/sdk';
 
 // Enums
-import { Curve, SignatureAlgorithm, Hash } from '@ika.xyz/sdk';
 
 // Crypto functions
-import {
-    prepareDKGAsync, prepareDKG,
-    createRandomSessionIdentifier, sessionIdentifierDigest,
-    createUserSignMessageWithPublicOutput, createUserSignMessageWithCentralizedOutput,
-    publicKeyFromDWalletOutput, publicKeyFromCentralizedDKGOutput,
-    parseSignatureFromSignOutput,
-    prepareImportedKeyDWalletVerification,
-    verifyUserShare, verifySecpSignature, userAndNetworkDKGOutputMatch,
-    createClassGroupsKeypair, encryptSecretShare,
-} from '@ika.xyz/sdk';
-
-// Types
-import type {
-    DWallet, ZeroTrustDWallet, SharedDWallet, ImportedKeyDWallet, ImportedSharedDWallet,
-    DWalletCap, DWalletInternal, DWalletKind, DWalletState, DWalletWithState,
-    Presign, PresignState, PresignWithState,
-    Sign, SignState, SignWithState,
-    EncryptedUserSecretKeyShare, EncryptedUserSecretKeyShareState, EncryptedUserSecretKeyShareWithState,
-    PartialUserSignature, PartialUserSignatureState, PartialUserSignatureWithState,
-    EncryptionKey, NetworkEncryptionKey, EncryptionKeyOptions,
-    IkaConfig, IkaClientOptions, IkaPackageConfig, IkaObjectsConfig,
-    UserSignatureInputs,
-} from '@ika.xyz/sdk';
 
 // Validation
-import {
-    validateHashSignatureCombination, validateCurveSignatureAlgorithm,
-    isValidHashForSignature, isValidSignatureAlgorithmForCurve, isValidHashForCurveAndSignature,
-    getValidSignatureAlgorithmsForCurve, getValidHashesForCurveAndSignature,
-    createValidatedSigningParams,
-    fromCurveToNumber, fromSignatureAlgorithmToNumber, fromHashToNumber,
-    fromNumberToCurve, fromNumberToSignatureAlgorithm, fromNumberToHash,
-    fromSignatureAlgorithmToAbsoluteNumber, fromAbsoluteNumberToSignatureAlgorithm,
-    fromHashToAbsoluteNumber, fromAbsoluteNumberToHash,
-    fromCurveAndSignatureAlgorithmToNumbers, fromCurveAndSignatureAlgorithmAndHashToNumbers,
-    fromNumbersToCurveAndSignatureAlgorithm, fromNumbersToCurveAndSignatureAlgorithmAndHash,
-} from '@ika.xyz/sdk';
-import type {
-    ValidSignatureAlgorithmForCurve, ValidHashForSignature, ValidatedSigningParams,
-} from '@ika.xyz/sdk';
 
 // Low-level
-import { coordinatorTransactions, systemTransactions } from '@ika.xyz/sdk';
 
 // Errors
 import {
-    IkaClientError, ObjectNotFoundError, InvalidObjectError, NetworkError, CacheError,
+	CacheError,
+	coordinatorTransactions,
+	createClassGroupsKeypair,
+	createRandomSessionIdentifier,
+	createUserSignMessageWithCentralizedOutput,
+	createUserSignMessageWithPublicOutput,
+	createValidatedSigningParams,
+	Curve,
+	encryptSecretShare,
+	fromAbsoluteNumberToHash,
+	fromAbsoluteNumberToSignatureAlgorithm,
+	fromCurveAndSignatureAlgorithmAndHashToNumbers,
+	fromCurveAndSignatureAlgorithmToNumbers,
+	fromCurveToNumber,
+	fromHashToAbsoluteNumber,
+	fromHashToNumber,
+	fromNumbersToCurveAndSignatureAlgorithm,
+	fromNumbersToCurveAndSignatureAlgorithmAndHash,
+	fromNumberToCurve,
+	fromNumberToHash,
+	fromNumberToSignatureAlgorithm,
+	fromSignatureAlgorithmToAbsoluteNumber,
+	fromSignatureAlgorithmToNumber,
+	getNetworkConfig,
+	getValidHashesForCurveAndSignature,
+	getValidSignatureAlgorithmsForCurve,
+	Hash,
+	IkaClient,
+	IkaClientError,
+	IkaTransaction,
+	InvalidObjectError,
+	isValidHashForCurveAndSignature,
+	isValidHashForSignature,
+	isValidSignatureAlgorithmForCurve,
+	NetworkError,
+	ObjectNotFoundError,
+	parseSignatureFromSignOutput,
+	prepareDKG,
+	prepareDKGAsync,
+	prepareImportedKeyDWalletVerification,
+	publicKeyFromCentralizedDKGOutput,
+	publicKeyFromDWalletOutput,
+	sessionIdentifierDigest,
+	SignatureAlgorithm,
+	systemTransactions,
+	userAndNetworkDKGOutputMatch,
+	UserShareEncryptionKeys,
+	validateCurveSignatureAlgorithm,
+	validateHashSignatureCombination,
+	verifySecpSignature,
+	verifyUserShare,
+} from '@ika.xyz/sdk';
+// Types
+import type {
+	DWallet,
+	DWalletCap,
+	DWalletInternal,
+	DWalletKind,
+	DWalletState,
+	DWalletWithState,
+	EncryptedUserSecretKeyShare,
+	EncryptedUserSecretKeyShareState,
+	EncryptedUserSecretKeyShareWithState,
+	EncryptionKey,
+	EncryptionKeyOptions,
+	IkaClientOptions,
+	IkaConfig,
+	IkaObjectsConfig,
+	IkaPackageConfig,
+	ImportedKeyDWallet,
+	ImportedSharedDWallet,
+	NetworkEncryptionKey,
+	PartialUserSignature,
+	PartialUserSignatureState,
+	PartialUserSignatureWithState,
+	Presign,
+	PresignState,
+	PresignWithState,
+	SharedDWallet,
+	Sign,
+	SignState,
+	SignWithState,
+	UserSignatureInputs,
+	ValidatedSigningParams,
+	ValidHashForSignature,
+	ValidSignatureAlgorithmForCurve,
+	ZeroTrustDWallet,
 } from '@ika.xyz/sdk';
 ```

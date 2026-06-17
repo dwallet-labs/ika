@@ -1,0 +1,6 @@
+{
+	"private": true,
+	"import": "../dist/esm/plugin/index.js",
+	"main": "../dist/cjs/plugin/index.js",
+	"sideEffects": false
+}

@@ -1,0 +1,50 @@
+---
+title: ika-move
+description: Claude Code skill for writing Move contracts that consume dWallet capabilities on Sui.
+---
+
+## Install
+
+```bash
+npx skills add dwallet-labs/ika -s ika-move
+```
+
+## What the skill knows
+
+Move integration patterns for Ika dWallets on Sui:
+
+- **Coordinator API**: function signatures, parameters, and return
+  types for `ika_dwallet_2pc_mpc::coordinator`.
+- **DKG**: emitting DKG requests from inside a contract, including
+  zero-trust, shared, and imported-key flows.
+- **Presign**: requesting per-dWallet presigns and consuming them.
+- **Message approval**: building `MessageApproval` objects with the
+  correct `(dwallet, message, signature_algorithm, hash_scheme)`
+  binding.
+- **Sign**: `request_sign` with a verified presign cap and an
+  approval.
+- **Future-sign**: Phase 1 `request_future_sign` and Phase 2
+  `request_sign_with_partial_user_signature`. The on-chain
+  `match_partial_user_signature_with_message_approval` check.
+- **Treasury and multisig patterns**: holding a dWallet capability in
+  a contract, gating signatures behind multisig quorum, time-locks,
+  or arbitrary contract logic.
+- **Calling Move from the SDK**: composing PTBs that emit coordinator
+  calls and reading the resulting events.
+- **Reference contract**: the multisig Bitcoin Taproot treasury under
+  `examples/multisig-bitcoin/`.
+
+## Sample prompts
+
+- "Write a Move contract that holds a dWallet cap and exposes a
+  `release_signature` entry point gated by a 3-of-5 multisig vote."
+- "Wire my SDK code to call into a Move contract that itself calls
+  `request_sign`."
+- "Implement a presign pool in Move where users can reserve presigns
+  for later signing."
+
+## Where the SKILL.md lives
+
+[`skills/ika-move/`](https://github.com/dwallet-labs/ika/tree/main/skills/ika-move)
+in the repository. See [Build → Move integration](../build/move-integration)
+for the human-readable counterpart.

@@ -1,0 +1,68 @@
+# Build the `ika` CLI binary that drives the in-memory swarm via
+# `ika start --force-reinitiation`. The crypto deps live in a private
+# repo, so the build needs GITHUB_TOKEN at docker-build time.
+#
+# Build context is the repo root, NOT this directory. The docker-compose
+# in this folder sets `context: ../../../..` for that reason.
+
+FROM rust:1.93-bookworm AS builder
+
+ARG GITHUB_TOKEN
+ENV CARGO_HOME=/usr/local/cargo
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake clang pkg-config libssl-dev git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/ika
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+COPY contracts contracts
+COPY deployed_contracts deployed_contracts
+
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+      git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+
+# bin_version!() (used by ika's main) wants either a working `.git` tree or
+# a GIT_REVISION env var. The build context strips `.git`, so we pass a
+# placeholder — the value is only surfaced by `--version` and doesn't
+# affect runtime behaviour.
+ENV GIT_REVISION=localnet
+# Release mode is required — debug-mode crypto is unusably slow.
+RUN cargo build --release --bin ika
+
+FROM debian:bookworm-slim AS runtime
+
+# git is required at runtime: publishing the Move packages pulls
+# `MystenLabs/sui` (move-stdlib) via Move's dependency resolver, which
+# shells out to `git clone`. Without it the swarm aborts mid-bootstrap.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/ika/target/release/ika /usr/local/bin/ika
+
+# `ika start` writes `network.yaml` under IKA_CONFIG_DIR (or
+# `~/.ika/ika_config` if unset) and `ika_config.json` to CWD. Pinning
+# both to /var/lib/ika keeps everything in one volume the host can
+# read.
+ENV IKA_CONFIG_DIR=/var/lib/ika
+RUN mkdir -p /var/lib/ika
+WORKDIR /var/lib/ika
+
+# `ika start` ignores its --sui-fullnode-rpc-url / --sui-faucet-url CLI
+# flags (they're accepted but bound to `_` in the start function) and
+# instead reads the env vars below. See:
+# crates/ika-config/src/node.rs:get_testing_sui_fullnode_rpc_url.
+ENV SUI_FULLNODE_RPC_URL=http://sui:9000
+ENV SUI_FAUCET_URL=http://sui:9123/gas
+
+# Short epoch so DKG / encryption-key bootstrap completes quickly.
+# DO NOT pass `--no-full-node`: the fullnode also runs the notifier
+# that submits certified Ika checkpoints (including the network DKG
+# output) to Sui. Without it the validators agree on the DKG result
+# internally but nothing ever lands on chain.
+CMD ["ika", "start", "--force-reinitiation", "--epoch-duration-ms", "60000"]

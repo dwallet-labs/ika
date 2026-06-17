@@ -1,0 +1,293 @@
+---
+title: Writing your own plugin
+description: How to build a custom source, destination, or publisher plugin against the Ika plugin host.
+---
+
+The plugin layer is open. The four destinations and the one source that
+ship with `@ika.xyz/plugins` are the same code shape any third party
+can write. This page covers the contract: what your plugin must expose
+to install into an `IkaClient`, what the host gives you in return, and
+how the existing plugins implement it.
+
+## The three roles
+
+Every plugin is one of three kinds:
+
+- **Source**: manages dWallets on a coordination chain. Today the only
+  source that ships is `suiSource`. A Solana coordination-chain source
+  is in pre-alpha.
+- **Destination**: knows the wire format of a target chain. Builds the
+  preimage at sign time and assembles the signed payload when the
+  network signature lands.
+- **Publisher**: broadcasts an assembled payload to the target chain.
+
+You can write any of them. Each has a defined TypeScript interface in
+`@ika.xyz/sdk/plugin`. The host enforces shape and ordering; the
+plugin only does its own work.
+
+## The plugin host
+
+```ts
+import { IkaClient } from '@ika.xyz/sdk/plugin';
+
+const ika = await new IkaClient()
+	.use(yourSource(...))
+	.use(yourDestination(...))
+	.use(yourPublisher(...));
+```
+
+Rules the host enforces:
+
+- At most one source.
+- One destination per `name` (`bitcoin`, `ethereum`, ...). Two
+  destinations claiming the same name throw at `.use()` time.
+- One publisher per `chain`. Same collision rule.
+- Plugins are installed in declaration order. `install(ctx)` runs once
+  per plugin. The context exposes `ctx.source` (live reference) and
+  `ctx.client.decorate`.
+
+## Writing a destination
+
+A destination plugin signs for one chain. Use it when you want to add
+a new target chain to the Ika ecosystem.
+
+### Minimum interface
+
+```ts
+import { Curve } from '@ika.xyz/sdk';
+import type { DestinationPlugin, DWallet, IkaContext } from '@ika.xyz/sdk/plugin';
+
+export interface MyChainClientExtend {
+	readonly mychain: {
+		getAddress(dWallet: DWallet<Curve.SECP256K1>): Promise<string>;
+		sign(args: { dWallet: DWallet<Curve.SECP256K1>; message: Uint8Array }): Promise<MyChainSignedTx>;
+		prepareSign(args: { dWallet: DWallet<Curve.SECP256K1>; message: Uint8Array }): Promise<MyChainPrep>;
+		assembleSign(prep: MyChainPrep, signature: Uint8Array): Promise<MyChainSignedTx>;
+		createDWallet(input: { kind: 'shared' | 'zero-trust' }): Promise<DWallet<Curve.SECP256K1>>;
+	};
+}
+
+export interface MyChainDWalletExtend {
+	readonly mychain: {
+		getAddress(): Promise<string>;
+		sign(input: { message: Uint8Array }): Promise<MyChainSignedTx>;
+	};
+}
+
+export function mychain(): DestinationPlugin<
+	'mychain',
+	Curve.SECP256K1,
+	MyChainClientExtend,
+	MyChainDWalletExtend
+> {
+	let ctx: IkaContext | null = null;
+
+	return {
+		kind: 'destination',
+		name: 'mychain',
+		supportedCurves: [Curve.SECP256K1],
+		extend: {
+			mychain: {
+				/* `ika.mychain.*` methods */
+			},
+		},
+		dWalletExtend: (dWallet) => ({
+			mychain: {
+				/* per-dWallet methods, e.g. dWallet.mychain.sign(...) */
+			},
+		}),
+		install(installCtx) {
+			ctx = installCtx;
+		},
+	};
+}
+```
+
+### What your destination must do
+
+1. **Derive an address** from the dWallet's public output. Cache it
+   per dWallet; the same dWallet produces the same address every
+   call.
+2. **Build a preimage** in `prepareSign`. This is the bytes the
+   on-chain verifier of your target chain will hash before
+   verifying. Return it plus a `plan` object that names the curve,
+   signature algorithm, and hash scheme.
+3. **Assemble a signed payload** in `assembleSign`. Take the 64-byte
+   raw signature from the MPC and wrap it in your chain's wire
+   format. Examples: DER for Bitcoin ECDSA, recoverable `(r, s, v)`
+   for Ethereum.
+4. **Optionally expose `createDWallet` sugar** that binds the curve
+   to whatever your chain uses. Delegate to `ctx.source.createDWallet`
+   and let the source handle DKG.
+
+### Reading the bundled destinations
+
+The four destinations in `@ika.xyz/plugins` are good starting points:
+
+- `sdk/plugins/src/bitcoin/destination/`: PSBT mode + preimage mode,
+  four address types, low-S normalization.
+- `sdk/plugins/src/ethereum/destination/`: viem-backed transaction
+  serialization, EIP-191 and EIP-712 support, yParity recovery,
+  low-S normalization.
+- `sdk/plugins/src/solana/destination/`: VersionedTransaction
+  signing, base58 address derivation.
+- `sdk/plugins/src/sui/destination/`: intent-prefix construction,
+  blake2b digest, scheme-flag wire encoding.
+
+All four follow the same structure: `plugin.ts` is the entry, `sign.ts`
+holds the preimage/assembly logic, `address.ts` does derivation, and
+`types.ts` defines the input shapes.
+
+## Writing a publisher
+
+A publisher broadcasts to one chain. Use it when you have a custom
+broadcast infrastructure (e.g., an aggregator API, a private mempool
+relay, or a non-standard RPC).
+
+```ts
+import type { PublisherPlugin, SignedTx } from '@ika.xyz/sdk/plugin';
+
+export function mychainPublisher(opts: { url: string }): PublisherPlugin<'mychain', MyChainPayload, string> {
+	return {
+		kind: 'publisher',
+		chain: 'mychain',
+		async broadcast(signed, options) {
+			if (options?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+			const txid = await yourBroadcastFn(signed.payload, opts.url, options?.signal);
+			return txid;
+		},
+	};
+}
+```
+
+A publisher does not re-verify the signature off chain. That's the
+destination chain's job. A publisher should:
+
+- Honor `options.signal` for cancellation during confirmation polling.
+- Throw on broadcast failure with a clear message.
+- Return the chain-native identifier (txid, hash, signature string,
+  digest).
+- Not retry. Let the caller decide retry policy.
+
+## Writing a source
+
+A source manages dWallets on a coordination chain. This is the heaviest
+plugin to write. It needs to:
+
+- Hold or accept a signer for the coordination chain.
+- Submit DKG, presign, and sign requests on chain.
+- Implement the `SourceSurface` contract: `signMessage`, `getDWallet`,
+  and optionally `createDWallet`.
+- Expose a richer namespace on `ika.<chainName>` for application
+  callers: `requestSign`, `requestPresign`, `requestFutureSign`,
+  `completeFutureSign`, presign primitives, and any chain-specific
+  primitives.
+
+```ts
+import type { SourcePlugin, IkaContext, BaseSignResult, SignMessageInput, SourceCreateDWalletInput } from '@ika.xyz/sdk/plugin';
+
+export interface MyCoordinatorSourceExtend {
+	readonly mycoord: {
+		createDWallet(input: { kind: 'shared'; curve: Curve }): Promise<MyDWallet>;
+		// ... requestSign, requestPresign, withSigner, etc.
+	};
+}
+
+export function myCoordinatorSource(opts: {...}): SourcePlugin<
+	'mycoord',
+	MyDWallet,
+	MySignMessageInput,
+	BaseSignResult,
+	MyCoordinatorSourceExtend
+> {
+	return {
+		kind: 'source',
+		name: 'mycoord',
+		chain: 'mycoord',
+		surface: {
+			chain: 'mycoord',
+			signMessage: async (input) => { /* ... */ },
+			getDWallet: async (id) => { /* ... */ },
+			createDWallet: async (input: SourceCreateDWalletInput) => { /* ... */ },
+		},
+		extend: {
+			mycoord: {
+				/* ika.mycoord.* */
+			},
+		},
+		install(installCtx) { /* ... */ },
+	};
+}
+```
+
+The reference source plugin is `sdk/plugins/src/sui/source/`. Read
+through `plugin.ts` to see the full surface: it covers the source's
+binding pattern, the abort-signal threading, and how the source
+delegates to `@ika.xyz/sdk` for the on-chain Move calls.
+
+If you are writing a source for a chain other than Sui, the heaviest
+part is the on-chain coordinator integration. The cryptography (DKG
+math, sign-message construction) is mostly chain-agnostic and lives in
+the user-side WASM bindings.
+
+## What the host gives you back
+
+Each plugin's `install(ctx)` receives an `IkaContext`:
+
+```ts
+interface IkaContext {
+	source: SourceSurface | null;       // live reference; null until a source registers
+	client: {
+		decorate<D extends DWallet>(d: D): Promise<D>;
+		ready(): Promise<void>;
+	};
+}
+```
+
+- `ctx.source` is a getter. Reads it lazily so destinations registered
+  before the source still see the source once it lands.
+- `ctx.client.decorate(dWallet)` walks every registered destination's
+  `dWalletExtend` and merges the namespaces onto the dWallet. Used
+  when you return a dWallet from your plugin and want the caller to be
+  able to call destination methods on it directly.
+- `ctx.client.ready()` resolves once every queued install has settled.
+
+## Type safety and collisions
+
+Two collision points the host checks:
+
+1. **Top-level namespace** keys (`ika.<name>.*`) must not overlap
+   across plugins. The Sui source already owns `ika.sui.*`, so a
+   destination cannot also register a `createDWallet` under
+   `ika.sui.*`. The bundled Sui destination intentionally skips
+   `createDWallet` on its own namespace because of this.
+2. **Per-dWallet decoration** keys (`dWallet.<name>.*`) must be
+   unique. Two destinations cannot both register a `bitcoin`
+   decoration namespace.
+
+If you hit a collision at `.use()` time, the host throws with a
+specific error pointing at the colliding key. The fix is usually to
+rename one of the namespaces; the host does not silently overwrite.
+
+## Testing your plugin
+
+`sdk/plugins/test/unit/` has the patterns the bundled plugins use:
+
+- Mock the source's `signMessage` with a real keypair so the
+  destination's address derivation and signature assembly exercise
+  real curves.
+- Use vitest to register the plugin against a mock `IkaContext` and
+  call into the destination methods directly.
+- For localnet smoke tests, see `sdk/plugins/test/localnet/`.
+
+## Publishing your plugin
+
+If you are publishing a third-party plugin to npm:
+
+- Depend on `@ika.xyz/sdk` and `@ika.xyz/plugins` as peer
+  dependencies, not as direct dependencies. Consumers carry their own
+  versions of these.
+- Document which `@ika.xyz/sdk` major version you target.
+- Follow the subpath-export pattern (`yourpkg/destination`,
+  `yourpkg/publisher`) so consumers can tree-shake the parts they do
+  not use.
