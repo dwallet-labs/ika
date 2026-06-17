@@ -21,7 +21,7 @@
 		"build": "tsc --build"
 	},
 	"devDependencies": {
-		"esbuild": "^0.25.8",
+		"esbuild": "^0.28.1",
 		"find-up": "^7.0.0",
 		"typescript": "^5.8.3"
 	},
