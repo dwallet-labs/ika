@@ -730,6 +730,101 @@ impl DWalletMPCManager {
         agreed_presign_requests
     }
 
+    /// At v4 (`network_encryption_key_version == 3`) the validator MPC keys come
+    /// from off-chain announcements, not Sui. The genesis committee is loaded
+    /// bare from Sui (0 PVSS) before the announcements arrive, so
+    /// `validator_mpc_keys_by_party_id` is computed once at construction with
+    /// empty PVSS maps and the genesis network-key DKG then wedges checking a
+    /// stale 0-PVSS snapshot.
+    ///
+    /// A network DKG is a within-epoch system session — it always runs against
+    /// the current committee. Once the off-chain-assembled committee
+    /// (`next_active_committee`, built from the same announcements) is available
+    /// AND has the same member set as the current committee, copy its
+    /// per-validator key map (by authority name → current party id) into the
+    /// current per-party map so the DKG sees the full PVSS set.
+    ///
+    /// No-op at v3 (Sui's bare shape is correct there), once the per-party PVSS
+    /// maps are already complete, while the assembled committee is unavailable
+    /// or still converging, or if its member set differs from the current one —
+    /// so it is safe to call every service-loop iteration.
+    pub(crate) fn refresh_validator_keys_from_offchain(&mut self) -> DwalletMPCResult<()> {
+        if !self.protocol_config.is_network_encryption_key_version_v3() {
+            return Ok(());
+        }
+        let expected = self.committee.voting_rights.len();
+        if self.validator_mpc_keys_by_party_id.secp256k1_pvss.len() == expected
+            && self.validator_mpc_keys_by_party_id.secp256r1_pvss.len() == expected
+            && self.validator_mpc_keys_by_party_id.ristretto_pvss.len() == expected
+        {
+            return Ok(());
+        }
+        let Some(assembled) = self.next_active_committee.as_ref() else {
+            return Ok(());
+        };
+        let current_members: std::collections::BTreeSet<_> = self
+            .committee
+            .voting_rights
+            .iter()
+            .map(|(n, _)| *n)
+            .collect();
+        let assembled_members: std::collections::BTreeSet<_> =
+            assembled.voting_rights.iter().map(|(n, _)| *n).collect();
+        if current_members != assembled_members {
+            return Ok(());
+        }
+        let mut class_groups = HashMap::new();
+        let mut secp256k1_pvss = HashMap::new();
+        let mut secp256r1_pvss = HashMap::new();
+        let mut ristretto_pvss = HashMap::new();
+        let mut vss_hpke_verified_party_encryption_key_values = HashMap::new();
+        for (name, _) in self.committee.voting_rights.iter() {
+            let current_party_id =
+                authority_name_to_party_id_from_committee(&self.committee, name)?;
+            // `vss_hpke_verified_party_encryption_key_values` is keyed by the
+            // *assembled* committee's party ids, so translate via the name.
+            let assembled_party_id = authority_name_to_party_id_from_committee(assembled, name)?;
+            if let Some(k) = assembled.class_groups_public_keys_and_proofs.get(name) {
+                class_groups.insert(current_party_id, k.clone());
+            }
+            if let Some(k) = assembled.secp256k1_pvss_public_keys_and_proofs.get(name) {
+                secp256k1_pvss.insert(current_party_id, k.clone());
+            }
+            if let Some(k) = assembled.secp256r1_pvss_public_keys_and_proofs.get(name) {
+                secp256r1_pvss.insert(current_party_id, k.clone());
+            }
+            if let Some(k) = assembled.ristretto_pvss_public_keys_and_proofs.get(name) {
+                ristretto_pvss.insert(current_party_id, k.clone());
+            }
+            if let Some(v) = assembled
+                .vss_hpke_verified_party_encryption_key_values
+                .get(&assembled_party_id)
+            {
+                vss_hpke_verified_party_encryption_key_values.insert(current_party_id, v.clone());
+            }
+        }
+        // The announcements may still be converging — only adopt a fully
+        // covered PVSS set.
+        if secp256k1_pvss.len() != expected
+            || secp256r1_pvss.len() != expected
+            || ristretto_pvss.len() != expected
+        {
+            return Ok(());
+        }
+        self.validator_mpc_keys_by_party_id = ValidatorMpcKeysByPartyId {
+            class_groups,
+            secp256k1_pvss,
+            secp256r1_pvss,
+            ristretto_pvss,
+            vss_hpke_verified_party_encryption_key_values,
+        };
+        info!(
+            epoch = self.epoch_id,
+            "refreshed validator MPC keys from the off-chain-assembled committee (v4 genesis PVSS bootstrap)"
+        );
+        Ok(())
+    }
+
     /// Adopt this validator's locally-observed network-key outputs into
     /// the instantiation set (`adopted_network_key_data`), gated by the
     /// prior epoch's handoff cert — the cross-epoch agreement on which

@@ -507,6 +507,18 @@ impl DWalletMPCService {
         self.dwallet_mpc_manager
             .adopt_cert_verified_keys(&overlay_snapshot);
         self.dwallet_mpc_manager.instantiate_adopted_network_keys();
+        // At v4 the validator MPC keys (incl. PVSS) come from off-chain
+        // announcements, not Sui. The genesis committee is loaded bare (0 PVSS)
+        // before the announcements land, so refresh the per-party key map from
+        // the off-chain-assembled committee once it's available — otherwise the
+        // genesis network-key DKG wedges on a stale 0-PVSS snapshot. No-op at v3
+        // / once complete (see the method).
+        if let Err(e) = self
+            .dwallet_mpc_manager
+            .refresh_validator_keys_from_offchain()
+        {
+            error!(error = ?e, "failed to refresh validator MPC keys from off-chain announcements");
+        }
 
         self.process_consensus_rounds_from_storage().await;
         // Network-key instantiations complete asynchronously on the rayon
