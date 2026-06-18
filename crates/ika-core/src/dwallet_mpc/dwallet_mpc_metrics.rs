@@ -305,7 +305,7 @@ impl DWalletMPCMetrics {
             )
             .unwrap(),
             malicious_actors_count: register_int_gauge_with_registry!(
-                "dwallet_mpc_malicious_actors_count",
+                "ika_dwallet_mpc_malicious_actors_count",
                 "Number of distinct authorities recorded as malicious this epoch",
                 registry
             )

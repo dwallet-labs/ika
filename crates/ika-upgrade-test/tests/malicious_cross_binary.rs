@@ -20,7 +20,7 @@
 //! Expectation: the honest validators must identify the faulty one as a
 //! malicious actor and reconfigure without it (committee dips to 3), so the
 //! network still reaches epoch 3. The test asserts detection **programmatically**
-//! by scraping the honest validators' `dwallet_mpc_malicious_actors_count`
+//! by scraping the honest validators' `ika_dwallet_mpc_malicious_actors_count`
 //! gauge (`expect_malicious_actors_at_least(1)`) — no log grep. A green run
 //! means the harness/protocol catches a cross-binary misbehaving validator —
 //! i.e. malicious detection is not vacuous. This is NOT a production test; it
@@ -127,6 +127,6 @@ async fn honest_committee_marks_faulty_local_validator_malicious() {
 
     tracing::info!(
         "malicious-cross PASSED: honest committee reached epoch 3 AND recorded the faulty \
-         validator as malicious (asserted via the dwallet_mpc_malicious_actors_count gauge)"
+         validator as malicious (asserted via the ika_dwallet_mpc_malicious_actors_count gauge)"
     );
 }

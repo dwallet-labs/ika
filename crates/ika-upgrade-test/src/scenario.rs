@@ -80,7 +80,7 @@ pub enum Step {
         label: String,
     },
     /// Assert that at least one running validator's
-    /// `dwallet_mpc_malicious_actors_count` gauge is `>= min_total` — i.e.
+    /// `ika_dwallet_mpc_malicious_actors_count` gauge is `>= min_total` — i.e.
     /// malicious detection actually fired. Scrapes metrics, no log grep.
     ExpectMaliciousActorsAtLeast {
         min_total: u64,
@@ -232,7 +232,7 @@ impl Scenario {
     }
 
     /// Assert at least one running validator recorded `>= min_total` malicious
-    /// actors this epoch (scrapes the `dwallet_mpc_malicious_actors_count`
+    /// actors this epoch (scrapes the `ika_dwallet_mpc_malicious_actors_count`
     /// gauge).
     pub fn expect_malicious_actors_at_least(mut self, min_total: u64) -> Self {
         self.steps

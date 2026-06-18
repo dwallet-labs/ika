@@ -98,7 +98,7 @@ pub async fn record_snapshot(
     Ok(snapshot)
 }
 
-/// Scrape every running validator's `dwallet_mpc_malicious_actors_count` gauge
+/// Scrape every running validator's `ika_dwallet_mpc_malicious_actors_count` gauge
 /// and return the maximum across the cluster. Used by the cross-binary
 /// malicious-detection test to assert programmatically that at least one honest
 /// validator recorded a malicious actor — instead of grepping node logs. A
@@ -116,7 +116,8 @@ pub async fn max_malicious_actors_count(cluster: &ClusterOfProcesses) -> Result<
                 continue;
             }
         };
-        if let Some(count) = parse_unlabeled_gauge(&body, "dwallet_mpc_malicious_actors_count") {
+        if let Some(count) = parse_unlabeled_gauge(&body, "ika_dwallet_mpc_malicious_actors_count")
+        {
             tracing::info!(index = proc.index, count, "scraped malicious-actors gauge");
             max_count = max_count.max(count);
         }
