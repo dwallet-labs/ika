@@ -41,7 +41,7 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
@@ -57,21 +57,20 @@ pub enum StopReason {
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
-/// Serialized submission state for the notifier's single Sui address.
+/// Submission state for the notifier's single Sui address.
 ///
-/// `last_tx_digest` gates submission ordering (wait for the previous tx
-/// to be observed before sending the next). `gas_coins` caches the gas
-/// `ObjectRef` carried by the previous tx's effects so the next tx is
-/// built against the *authoritative* post-tx gas version rather than the
-/// notifier fullnode's `get_gas_objects` view, which lags the validators
-/// by hundreds of versions under checkpoint-heavy load and otherwise
-/// produces "transaction needs to be rebuilt (stale object version)"
-/// rejections that stall epoch advance. Submission is serial (the lock is
-/// held across each `submit_tx_to_sui`), so the cached ref is always the
-/// exact current version when the next tx is built.
+/// `gas_coins` caches the gas `ObjectRef` carried by the previous tx's effects
+/// so the next tx is built against the *authoritative* post-tx gas version
+/// rather than the notifier fullnode's `get_gas_objects` view, which lags the
+/// validators by hundreds of versions under checkpoint-heavy load and otherwise
+/// produces "transaction needs to be rebuilt (stale object version)" rejections
+/// that stall epoch advance. Submission is serial (the lock is held across each
+/// `submit_tx_to_sui`), so the cached ref is always the exact current version
+/// when the next tx is built — the prior tx is also already finalized on the
+/// validators by then (every caller awaits its `WaitForEffectsCert`/finalized
+/// response), so no separate fullnode observability wait is needed.
 #[derive(Default)]
 struct NotifierSubmitState {
-    last_tx_digest: Option<TransactionDigest>,
     gas_coins: Option<Vec<ObjectRef>>,
     /// The gas ref(s) handed to the most recent submission, so a failure can
     /// learn which version was rejected without threading it back through the
@@ -950,26 +949,18 @@ where
         sui_client: &Arc<SuiClient<C>>,
     ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
         let mut state = notifier_tx_lock.lock().await;
-        if let Some(prev_digest) = state.last_tx_digest {
-            while sui_client
-                .get_events_by_tx_digest(prev_digest)
-                .await
-                .is_err()
-            {
-                debug!(
-                    transaction_digest = ?prev_digest,
-                    "The last submitted transaction has not been processed yet, retrying..."
-                );
-                // Small delay to avoid spamming the node.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-
-            debug!(
-            transaction_digest = ?prev_digest,
-            "The last submitted transaction has been processed, submitting the next one",
-                        );
-        }
-
+        // No pre-wait on the prior tx's observability. `execute_transaction`
+        // below drives the tx through the validator transaction-driver and
+        // returns only on FINALIZED effects, and every caller awaits that before
+        // building the next tx — so the prior tx is already final on the
+        // validators (the authoritative source) when this one is submitted, and
+        // the gas ref this tx carries is the cached post-prior-tx ref from those
+        // effects. The previous gate spun on `get_events_by_tx_digest` (a
+        // `get_transaction_checkpoint` read) against the notifier's own fullnode,
+        // which lags the validators by minutes under sustained checkpoint load
+        // and is itself prune-prone — throttling write-back to <1/min, which
+        // freezes dwallet advancement under heavy sequential load. The stale-gas
+        // recovery below stays as the safety net for a rare cached-ref miss.
         debug!(
             transaction_digest = ?transaction.digest(),
             "Submitting a transaction to Sui"
@@ -1047,7 +1038,6 @@ where
             .into());
         };
 
-        state.last_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
