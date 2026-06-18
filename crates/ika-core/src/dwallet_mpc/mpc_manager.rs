@@ -15,8 +15,8 @@ use crate::dwallet_mpc::network_dkg::spawn_network_encryption_key_public_data_in
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
-    generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
-    party_id_to_authority_name,
+    class_groups_keys_by_party_id, generate_access_structure_from_committee,
+    get_validator_mpc_keys_by_party_id, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
 use dwallet_classgroups_types::ValidatorMPCSecrets;
@@ -390,9 +390,11 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            // Off-chain-only PVSS / VSS keys aren't on `committee`; they are
-            // ingested per-epoch from the off-chain key channels. Start empty.
-            validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId::empty(),
+            // class_groups is on `committee` in every mode (the bare on-chain
+            // key) — seed it now so the backward-compatible network DKG works
+            // without the off-chain pipeline. The off-chain-only PVSS / VSS keys
+            // are ingested per-epoch from the off-chain key channels.
+            validator_mpc_keys_by_party_id: class_groups_keys_by_party_id(&committee)?,
             next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
