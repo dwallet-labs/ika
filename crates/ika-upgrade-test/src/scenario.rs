@@ -79,6 +79,12 @@ pub enum Step {
     RunWorkload {
         label: String,
     },
+    /// Assert that at least one running validator's
+    /// `dwallet_mpc_malicious_actors_count` gauge is `>= min_total` — i.e.
+    /// malicious detection actually fired. Scrapes metrics, no log grep.
+    ExpectMaliciousActorsAtLeast {
+        min_total: u64,
+    },
 }
 
 /// What a scenario run produced beyond pass/fail: the labeled MPC timing
@@ -225,6 +231,15 @@ impl Scenario {
         self
     }
 
+    /// Assert at least one running validator recorded `>= min_total` malicious
+    /// actors this epoch (scrapes the `dwallet_mpc_malicious_actors_count`
+    /// gauge).
+    pub fn expect_malicious_actors_at_least(mut self, min_total: u64) -> Self {
+        self.steps
+            .push(Step::ExpectMaliciousActorsAtLeast { min_total });
+        self
+    }
+
     /// Genesis `min_validator_count` override, for scenarios that shrink the
     /// committee below the protocol default of 4.
     pub fn with_min_validator_count(mut self, n: u64) -> Self {
@@ -361,6 +376,23 @@ impl Scenario {
                         .context("RecordMpcTimings before StartAll")?;
                     let snapshot = mpc_timings::record_snapshot(c, label.clone()).await?;
                     timing_snapshots.push(snapshot);
+                }
+                Step::ExpectMaliciousActorsAtLeast { min_total } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectMaliciousActorsAtLeast before StartAll")?;
+                    let got = mpc_timings::max_malicious_actors_count(c).await?;
+                    if got < *min_total {
+                        bail!(
+                            "expected at least {min_total} malicious actor(s) recorded, \
+                             but the max across running validators was {got}"
+                        );
+                    }
+                    tracing::info!(
+                        got,
+                        expected = *min_total,
+                        "malicious-actors assertion passed (scraped from metrics)"
+                    );
                 }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;

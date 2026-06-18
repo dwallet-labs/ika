@@ -77,6 +77,12 @@ where
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
+        current_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        next_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
         mode: NodeMode,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
@@ -121,6 +127,8 @@ where
                 system_object_receiver.clone(),
                 next_epoch_committee_sender.clone(),
                 chain_next_committee_sender.clone(),
+                current_epoch_mpc_keys_sender.clone(),
+                next_epoch_mpc_keys_sender.clone(),
                 class_groups_source.clone(),
                 self.metrics.clone(),
             ));
@@ -318,6 +326,12 @@ where
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
+        current_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        next_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
         class_groups_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
@@ -342,6 +356,10 @@ where
         // pre-freeze window re-sends every tick, so intermediate
         // re-sends demote to debug.
         let mut last_logged_committee_send: Option<(EpochId, bool)> = None;
+        // Epoch whose CURRENT-committee off-chain keys we've already delivered;
+        // the keys are deterministic and the current committee is fixed within
+        // an epoch, so one successful send per epoch is enough.
+        let mut current_keys_sent_for_epoch: Option<EpochId> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -356,6 +374,38 @@ where
                 Duration::from_secs(10),
             );
             let SystemInner::V1(system_inner) = system_inner;
+
+            // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
+            // VSS HPKE) to the MPC manager. The within-epoch network DKG needs
+            // them, and at genesis they were never assembled as a prior epoch's
+            // "next". Current committee members self-announce for the current
+            // epoch, so the live (current-epoch) source's frozen set covers them
+            // — assemble directly for the current committee, not by borrowing
+            // the next committee's keys. Runs before the next-committee check so
+            // it still fires when Sui hasn't selected a next committee yet.
+            let current_epoch = system_inner.epoch();
+            if current_keys_sent_for_epoch != Some(current_epoch)
+                && let Some(source) = class_groups_source.load_full()
+            {
+                let current_members: Vec<AuthorityName> = system_inner
+                    .read_bls_committee(&system_inner.get_ika_active_committee())
+                    .into_iter()
+                    .map(|(_, (name, _))| name)
+                    .collect();
+                if let crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) =
+                    source.try_assemble_mpc_data(&current_members)
+                    && current_epoch_mpc_keys_sender
+                        .send(Some((current_epoch, bundles)))
+                        .is_ok()
+                {
+                    current_keys_sent_for_epoch = Some(current_epoch);
+                    info!(
+                        current_epoch,
+                        "delivered current-epoch off-chain validator MPC keys to the manager"
+                    );
+                }
+            }
+
             let Some(new_next_bls_committee) = system_inner.get_ika_next_epoch_committee() else {
                 debug!("ika next epoch active committee not found, retrying...");
                 continue;
@@ -413,7 +463,7 @@ where
             let frozen_at_assembly = class_groups_snapshot
                 .as_ref()
                 .is_some_and(|source| source.is_frozen());
-            let committee = match Self::new_committee(
+            let (committee, next_epoch_bundles) = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
                 next_epoch,
@@ -428,9 +478,9 @@ where
             )
             .await
             {
-                Ok(committee) => {
+                Ok(committee_and_bundles) => {
                     consecutive_incomplete_ticks = 0;
-                    committee
+                    committee_and_bundles
                 }
                 Err(e @ DwalletMPCError::OffChainAssemblyIncomplete { .. }) => {
                     // Expected per-tick retry while the off-chain pipeline
@@ -461,6 +511,14 @@ where
                 }
             };
             let committee_epoch = committee.epoch();
+            // Deliver the next epoch's off-chain validator MPC keys alongside
+            // its committee — network reconfiguration encrypts under the
+            // upcoming parties' PVSS keys. `None` only on the legacy chain
+            // fallback (no off-chain bundle), where reconfiguration runs the
+            // backward-compatible party that needs no PVSS.
+            if let Some(bundles) = next_epoch_bundles {
+                let _ = next_epoch_mpc_keys_sender.send(Some((committee_epoch, bundles)));
+            }
             if let Err(err) = next_epoch_committee_sender.send(committee) {
                 error!(error=?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
             } else {
@@ -503,7 +561,10 @@ where
         frozen_at_assembly: bool,
         log_state: &mut AssemblyLogState,
         metrics: &SuiConnectorMetrics,
-    ) -> DwalletMPCResult<Committee> {
+    ) -> DwalletMPCResult<(
+        Committee,
+        Option<crate::validator_metadata::OffChainCommitteeBundles>,
+    )> {
         // Try the off-chain assembly first. The strict
         // `Complete`/`Incomplete` gate inside the source means we
         // only use the off-chain map when every (non-excluded)
@@ -553,20 +614,21 @@ where
                             "re-assembled identical committee mpc_data off-chain"
                         );
                     }
-                    return Ok(Committee::new(
+                    // class_groups stays on `Committee` (the bare on-chain key).
+                    // The PVSS + VSS HPKE keys travel out-of-band: return the
+                    // full bundle so the caller delivers them to the MPC manager
+                    // via the off-chain key channels, never on `Committee`.
+                    let committee = Committee::new(
                         epoch,
                         committee
                             .iter()
                             .map(|(_, (name, stake))| (*name, *stake))
                             .collect(),
-                        bundles.class_groups,
-                        bundles.secp256k1_pvss,
-                        bundles.secp256r1_pvss,
-                        bundles.ristretto_pvss,
-                        bundles.vss_hpke,
+                        bundles.class_groups.clone(),
                         quorum_threshold,
                         validity_threshold,
-                    ));
+                    );
+                    return Ok((committee, Some(bundles)));
                 }
                 crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
                     if off_chain_on {
@@ -693,21 +755,20 @@ where
             })
             .collect();
 
-        Ok(Committee::new(
-            epoch,
-            committee
-                .iter()
-                .map(|(_, (name, stake))| (*name, *stake))
-                .collect(),
-            class_group_encryption_keys_and_proofs,
-            // PVSS + VSS HPKE come from the off-chain pipeline (PR #1721), not
-            // from chain reads — empty here.
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            quorum_threshold,
-            validity_threshold,
+        // Chain fallback (legacy mode): only the bare class-groups key is on
+        // chain, so there are no off-chain PVSS/VSS bundles to deliver.
+        Ok((
+            Committee::new(
+                epoch,
+                committee
+                    .iter()
+                    .map(|(_, (name, stake))| (*name, *stake))
+                    .collect(),
+                class_group_encryption_keys_and_proofs,
+                quorum_threshold,
+                validity_threshold,
+            ),
+            None,
         ))
     }
 

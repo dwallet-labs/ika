@@ -84,16 +84,12 @@ async fn test_network_key_reconfiguration() {
         network_owned_address_sign_output_receivers,
     };
     let (consensus_round, _, key_id) = create_network_key_test(&mut test_state).await;
-    let (
-        next_epoch_dwallet_mpc_services,
-        _next_epoch_sui_data_senders,
-        _next_epoch_sent_consensus_messages_collectors,
-        _next_epoch_epoch_stores,
-        _next_epoch_notify_services,
-        _next_epoch_network_owned_address_sign_request_senders,
-        _next_epoch_network_owned_address_sign_output_receivers,
-    ) = utils::create_dwallet_mpc_services(4);
-    let mut next_committee = (*next_epoch_dwallet_mpc_services[0].committee.clone()).clone();
+    // The upcoming committee: a fresh validator set (its own seeds). Its
+    // off-chain PVSS/VSS keys travel on the next-epoch key channel (no longer on
+    // `Committee`), so deliver both the committee and its bundles — reconfig
+    // encrypts the dealings under the upcoming parties' PVSS keys.
+    let (mut next_committee, _next_seeds, next_bundles) =
+        utils::build_committee_with_random_seeds(4);
     next_committee.epoch = epoch_id + 1;
     test_state
         .sui_data_senders
@@ -102,6 +98,9 @@ async fn test_network_key_reconfiguration() {
             let _ = sui_data_sender
                 .next_epoch_committee_sender
                 .send(next_committee.clone());
+            let _ = sui_data_sender
+                .next_epoch_mpc_keys_sender
+                .send(Some((next_committee.epoch, next_bundles.clone())));
         });
     send_start_network_key_reconfiguration_event(
         epoch_id,

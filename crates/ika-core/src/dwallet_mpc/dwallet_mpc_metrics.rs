@@ -136,6 +136,13 @@ pub struct DWalletMPCMetrics {
     /// `decrypt_failed` is an expected transient for recently-joined
     /// validators — tune alerts per reason.
     pub(crate) network_key_instantiation_failures_total: IntCounterVec,
+
+    /// Number of distinct authorities this validator has recorded as malicious
+    /// in the current epoch (quorum-agreed; see
+    /// `DWalletMPCManager::record_malicious_actors`). A scrapable signal that
+    /// detection fired — used by the cross-binary malicious-detection test to
+    /// assert exclusion programmatically instead of grepping logs.
+    pub(crate) malicious_actors_count: IntGauge,
 }
 
 impl DWalletMPCMetrics {
@@ -294,6 +301,12 @@ impl DWalletMPCMetrics {
                 "dwallet_mpc_network_key_instantiation_failures_total",
                 "Network-key instantiation failures by reason",
                 &["reason"],
+                registry
+            )
+            .unwrap(),
+            malicious_actors_count: register_int_gauge_with_registry!(
+                "dwallet_mpc_malicious_actors_count",
+                "Number of distinct authorities recorded as malicious this epoch",
                 registry
             )
             .unwrap(),

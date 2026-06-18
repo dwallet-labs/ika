@@ -79,6 +79,7 @@ pub(crate) fn session_input_from_request(
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
     validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
@@ -210,12 +211,11 @@ pub(crate) fn session_input_from_request(
             // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
-                // At `_version == 3` every committee member MUST publish the post-PR-#1707
-                // bundle shape (class-groups + per-curve PVSS HPKE). The shape-tolerant
-                // decoder accepts old-shape submissions silently, so a validator that
-                // hasn't migrated would land here with empty PVSS entries while their
-                // class-groups entry is present — fail loudly rather than running DKG
-                // on a partial map.
+                // At `_version == 3` every committee member's off-chain bundle
+                // (class-groups + per-curve PVSS HPKE) must have been ingested
+                // into `validator_mpc_keys_by_party_id`. If the off-chain
+                // assembly hasn't completed yet, the maps are short — fail loudly
+                // (the request retries) rather than running DKG on a partial map.
                 let expected = committee.voting_rights.len();
                 let class_groups_count = validator_mpc_keys_by_party_id.class_groups.len();
                 let secp256k1_pvss_count = validator_mpc_keys_by_party_id.secp256k1_pvss.len();
@@ -270,10 +270,19 @@ pub(crate) fn session_input_from_request(
                 network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
 
             let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
+                // The upcoming committee's off-chain PVSS / VSS keys (dealers
+                // encrypt under the upcoming parties' PVSS keys). Delivered on
+                // the next-epoch key channel; absent until the next-epoch
+                // off-chain assembly completes — error to retry, like a missing
+                // next committee.
+                let upcoming_validator_mpc_keys = next_epoch_validator_mpc_keys.ok_or(
+                    DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
+                )?;
                 PublicInput::NetworkEncryptionKeyReconfiguration(
                     <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
+                        upcoming_validator_mpc_keys,
                         network_dkg_public_output,
                         latest_reconfiguration_public_output,
                     )?,

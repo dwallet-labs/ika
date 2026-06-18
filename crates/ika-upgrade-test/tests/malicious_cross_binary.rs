@@ -5,28 +5,37 @@
 //!
 //! Boots a 4-validator committee on a HONEST binary (intended: the literal
 //! `mainnet-v1.1.8` `ika-node`, via `OLD_BIN`), lets it complete the genesis
-//! network DKG, then swaps **one** validator to a deliberately-FAULTY local
-//! build (`FAULTY_BIN`) that corrupts its outgoing backward-compat (v3)
-//! reconfiguration round message by one trailing byte (the `TEST-TESTING
-//! FAULT` in `reconfiguration.rs`). The committee stays at protocol v3 (the
-//! honest binary caps there), so the faulty validator runs the
-//! backward-compat reshare path and broadcasts a malformed contribution at
+//! network DKG, then swaps **one** validator to a deliberately-FAULTY build
+//! (`FAULTY_BIN`) that corrupts its outgoing backward-compat (v3)
+//! reconfiguration round message by one trailing byte. The committee stays at
+//! protocol v3 (the honest binary caps there), so the faulty validator runs
+//! the backward-compat reshare path and broadcasts a malformed contribution at
 //! the next epoch boundary.
 //!
+//! The faulty binary is NOT a source edit: build `ika-validator` with the
+//! `test-reconfig-fault` cargo feature (`cargo build --release -p ika-node
+//! --bin ika-validator --features test-reconfig-fault`). The fault is compiled
+//! out of every normal build, so a plain release can never carry it.
+//!
 //! Expectation: the honest validators must identify the faulty one as a
-//! malicious actor (`mpc_manager`: "malicious actors identified & recorded")
-//! and reconfigure without it (committee dips to 3), so the network still
-//! reaches epoch 3. A green run here means the harness/protocol catches a
-//! cross-binary misbehaving validator — i.e. malicious detection is not
-//! vacuous. This is NOT a production test; it exists to validate the test
-//! infrastructure (see `.claude/skills/test-testing`).
+//! malicious actor and reconfigure without it (committee dips to 3), so the
+//! network still reaches epoch 3. The test asserts detection **programmatically**
+//! by scraping the honest validators' `dwallet_mpc_malicious_actors_count`
+//! gauge (`expect_malicious_actors_at_least(1)`) — no log grep. A green run
+//! means the harness/protocol catches a cross-binary misbehaving validator —
+//! i.e. malicious detection is not vacuous. This is NOT a production test; it
+//! exists to validate the test infrastructure (see `.claude/skills/test-testing`).
 //!
 //! Opt-in, via `RUN_MALICIOUS_CROSS=1`:
 //!
 //! ```bash
+//! # Build the faulty binary via the feature (no source edit):
+//! cargo build --release -p ika-node --bin ika-validator --features test-reconfig-fault
+//! cp target/release/ika-validator /tmp/ika-validator-FAULTY-RECONFIG
+//! # then run:
 //! RUN_MALICIOUS_CROSS=1 \
 //!   OLD_BIN=/tmp/ika-v118/target/release/ika-node \
-//!   FAULTY_BIN=/tmp/ika-bins-de3cddd/ika-validator-FAULTY-RECONFIG \
+//!   FAULTY_BIN=/tmp/ika-validator-FAULTY-RECONFIG \
 //!   NOTIFIER_BIN=target/release/ika-notifier \
 //!   IKA_BIN=target/release/ika \
 //!   SUI_BIN=$(which sui) \
@@ -59,10 +68,11 @@ async fn honest_committee_marks_faulty_local_validator_malicious() {
 
     // Honest reference binary (intended: literal mainnet-v1.1.8 ika-node).
     let honest = BinarySpec::Path(bin_from_env("OLD_BIN", "target/release/ika-node"));
-    // Deliberately-faulty local build (corrupts its v3 reshare message).
+    // Deliberately-faulty build (corrupts its v3 reshare message), produced by
+    // `cargo build --bin ika-validator --features test-reconfig-fault`.
     let faulty = BinarySpec::Path(bin_from_env(
         "FAULTY_BIN",
-        "/tmp/ika-bins-de3cddd/ika-validator-FAULTY-RECONFIG",
+        "/tmp/ika-validator-FAULTY-RECONFIG",
     ));
     let notifier = bin_from_env("NOTIFIER_BIN", "target/release/ika-notifier");
     let ika_cli = bin_from_env("IKA_BIN", "target/release/ika");
@@ -106,12 +116,17 @@ async fn honest_committee_marks_faulty_local_validator_malicious() {
         // The honest validators must mark validator 3 malicious and reshare
         // without it — the network still reaches epoch 3.
         .wait_for_epoch(3)
+        // Programmatic assertion (not a log grep): at least one honest validator
+        // recorded a malicious actor. The exit code alone is not the assertion —
+        // the network could reach epoch 3 without ever flagging anyone, which is
+        // exactly the vacuous-pass this guards against.
+        .expect_malicious_actors_at_least(1)
         .run()
         .await
         .expect("honest committee should reconfigure past a faulty cross-binary validator");
 
     tracing::info!(
-        "malicious-cross PASSED: honest committee reached epoch 3 despite a faulty local validator; \
-         grep the honest validator-0/1/2 node.logs for \"malicious actors identified & recorded\""
+        "malicious-cross PASSED: honest committee reached epoch 3 AND recorded the faulty \
+         validator as malicious (asserted via the dwallet_mpc_malicious_actors_count gauge)"
     );
 }

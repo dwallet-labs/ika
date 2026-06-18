@@ -107,8 +107,19 @@ pub(crate) struct ValidatorMpcKeysByPartyId {
     pub vss_hpke_verified_party_encryption_key_values: HashMap<PartyID, curve25519::Value>,
 }
 
+/// Re-key an epoch's off-chain validator MPC keys from `AuthorityName` to the
+/// committee's 1-based `PartyID`, producing the form the crypto library
+/// consumes.
+///
+/// `class_groups` is taken from `committee` (the bare mainnet-v1.1.8 key is the
+/// only validator MPC key on chain, so it is the authoritative source). The
+/// three per-curve PVSS HPKE keys and the Fast Schnorr (VSS) HPKE key come from
+/// `bundles` — the off-chain-assembled set delivered per-epoch to the manager,
+/// never from `Committee`. The VSS UC proofs are verified here (once), keyed by
+/// the committee's party ids, exactly as `Committee::new` used to do.
 pub(crate) fn get_validator_mpc_keys_by_party_id(
     committee: &Committee,
+    bundles: &crate::validator_metadata::OffChainCommitteeBundles,
 ) -> DwalletMPCResult<ValidatorMpcKeysByPartyId> {
     let mut class_groups = HashMap::new();
     let mut secp256k1_pvss = HashMap::new();
@@ -123,25 +134,13 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
         {
             class_groups.insert(party_id, k);
         }
-        if let Some(k) = committee
-            .secp256k1_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
+        if let Some(k) = bundles.secp256k1_pvss.get(name).cloned() {
             secp256k1_pvss.insert(party_id, k);
         }
-        if let Some(k) = committee
-            .secp256r1_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
+        if let Some(k) = bundles.secp256r1_pvss.get(name).cloned() {
             secp256r1_pvss.insert(party_id, k);
         }
-        if let Some(k) = committee
-            .ristretto_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
+        if let Some(k) = bundles.ristretto_pvss.get(name).cloned() {
             ristretto_pvss.insert(party_id, k);
         }
     }
@@ -150,11 +149,32 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
         secp256k1_pvss,
         secp256r1_pvss,
         ristretto_pvss,
-        // Verified-once at Committee::new — copy the cached values directly.
+        // Verify the VSS HPKE UC proofs once, keyed by this committee's party ids.
         vss_hpke_verified_party_encryption_key_values: committee
-            .vss_hpke_verified_party_encryption_key_values
-            .clone(),
+            .verified_vss_hpke_party_encryption_key_values(&bundles.vss_hpke),
     })
+}
+
+impl ValidatorMpcKeysByPartyId {
+    /// An empty key set — the manager starts here each epoch and ingests the
+    /// real keys once the off-chain assembly for the epoch is delivered.
+    pub(crate) fn empty() -> Self {
+        Self {
+            class_groups: HashMap::new(),
+            secp256k1_pvss: HashMap::new(),
+            secp256r1_pvss: HashMap::new(),
+            ristretto_pvss: HashMap::new(),
+            vss_hpke_verified_party_encryption_key_values: HashMap::new(),
+        }
+    }
+
+    /// Whether every per-curve PVSS map covers all `expected` committee members
+    /// — the readiness gate for running network DKG / reconfiguration.
+    pub(crate) fn is_complete(&self, expected: usize) -> bool {
+        self.secp256k1_pvss.len() == expected
+            && self.secp256r1_pvss.len() == expected
+            && self.ristretto_pvss.len() == expected
+    }
 }
 
 /// Convert a `committee` to a `WeightedThresholdAccessStructure` that is used by the cryptographic library.

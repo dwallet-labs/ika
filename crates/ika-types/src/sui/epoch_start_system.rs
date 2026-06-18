@@ -141,10 +141,10 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .iter()
             .map(|validator| {
                 // Chain reads decode the mainnet-v1.1.8 bare
-                // `ClassGroupsEncryptionKeyAndProof` shape exclusively. PVSS +
-                // VSS HPKE keys arrive via the off-chain validator-metadata
-                // pipeline (PR #1721), not from this chain payload, so they're
-                // `None` here regardless of validator binary version.
+                // `ClassGroupsEncryptionKeyAndProof` shape exclusively. The
+                // off-chain-only PVSS / VSS HPKE keys are not carried on the
+                // chain-derived metadata; they reach the MPC manager via the
+                // off-chain key channels.
                 let class_groups_public_key_and_proof =
                     validator.mpc_data.as_ref().and_then(|mpc_data| {
                         bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
@@ -152,9 +152,6 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                         )
                         .ok()
                     });
-                let secp256k1_pvss_public_key_and_proof = None;
-                let secp256r1_pvss_public_key_and_proof = None;
-                let ristretto_pvss_public_key_and_proof = None;
 
                 (
                     validator.authority_name(),
@@ -166,9 +163,6 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
                             consensus_address: validator.consensus_address.clone(),
                             network_public_key: Some(validator.network_pubkey.clone()),
                             class_groups_public_key_and_proof,
-                            secp256k1_pvss_public_key_and_proof,
-                            secp256r1_pvss_public_key_and_proof,
-                            ristretto_pvss_public_key_and_proof,
                         },
                     ),
                 )
@@ -186,10 +180,9 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             .collect();
 
         // Chain reads decode the mainnet-v1.1.8 bare
-        // `ClassGroupsEncryptionKeyAndProof` shape exclusively. PVSS + VSS
-        // HPKE maps are populated by the off-chain validator-metadata
-        // pipeline (PR #1721) overlaying onto `Committee` separately — empty
-        // here.
+        // `ClassGroupsEncryptionKeyAndProof` shape exclusively — the only
+        // validator MPC key on `Committee`. The off-chain-only PVSS / VSS HPKE
+        // keys reach the MPC manager via the off-chain key channels, not here.
         let class_groups_public_keys_and_proofs = self
             .active_validators
             .iter()
@@ -215,10 +208,6 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             self.epoch,
             voting_rights,
             class_groups_public_keys_and_proofs,
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
             self.quorum_threshold,
             self.validity_threshold,
         )

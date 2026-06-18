@@ -105,3 +105,8 @@ class_groups = { workspace = true, features = ["threshold", "parallel"] }
 [features]
 test-utils = []
 enforce-minimum-cpu = []
+# TEST-ONLY: corrupts this validator's outgoing backward-compatible network
+# reconfiguration message so the cross-binary malicious-detection harness can
+# verify honest peers detect and exclude it. Never enable in a real build —
+# the fault is compiled out unless this feature is explicitly set.
+test-reconfig-fault = []

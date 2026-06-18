@@ -108,12 +108,18 @@ pub(crate) struct DWalletMPCManager {
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
-    /// All four per-validator on-chain public-key payloads (class groups + 3
-    /// PVSS HPKE) keyed by party id. Built once at MPC manager init from the
-    /// committee's 4 sibling HashMaps; passed to `session_input_from_request`
-    /// per session-input construction. See `ValidatorMpcKeysByPartyId`
-    /// for the bundle's contents.
+    /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
+    /// verified VSS), keyed by party id. `class_groups` comes from the
+    /// committee; the off-chain-only PVSS / VSS keys are ingested from the
+    /// `current_epoch_mpc_keys` channel once the off-chain assembly completes —
+    /// the manager starts each epoch with `empty()` and fills this in. Passed to
+    /// `session_input_from_request` per session-input construction.
     pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    /// The NEXT epoch's per-validator MPC keys, ingested from the
+    /// `next_epoch_mpc_keys` channel. Consumed by network reconfiguration (the
+    /// dealers encrypt under the upcoming parties' PVSS keys). `None` until the
+    /// next-epoch off-chain assembly is delivered.
+    pub(crate) next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
 
     /// The set of malicious actors that were agreed upon by a quorum of validators.
@@ -384,7 +390,10 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            validator_mpc_keys_by_party_id: get_validator_mpc_keys_by_party_id(&committee)?,
+            // Off-chain-only PVSS / VSS keys aren't on `committee`; they are
+            // ingested per-epoch from the off-chain key channels. Start empty.
+            validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId::empty(),
+            next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
             last_session_to_complete_in_current_epoch: 0,
@@ -730,98 +739,68 @@ impl DWalletMPCManager {
         agreed_presign_requests
     }
 
-    /// At v4 (`network_encryption_key_version == 3`) the validator MPC keys come
-    /// from off-chain announcements, not Sui. The genesis committee is loaded
-    /// bare from Sui (0 PVSS) before the announcements arrive, so
-    /// `validator_mpc_keys_by_party_id` is computed once at construction with
-    /// empty PVSS maps and the genesis network-key DKG then wedges checking a
-    /// stale 0-PVSS snapshot.
+    /// Ingest the per-epoch off-chain validator MPC keys (3 PVSS HPKE + VSS
+    /// HPKE) delivered on the `current_epoch_mpc_keys` / `next_epoch_mpc_keys`
+    /// channels into `validator_mpc_keys_by_party_id` (current) and
+    /// `next_epoch_validator_mpc_keys` (next).
     ///
-    /// A network DKG is a within-epoch system session — it always runs against
-    /// the current committee. Once the off-chain-assembled committee
-    /// (`next_active_committee`, built from the same announcements) is available
-    /// AND has the same member set as the current committee, copy its
-    /// per-validator key map (by authority name → current party id) into the
-    /// current per-party map so the DKG sees the full PVSS set.
-    ///
-    /// No-op at v3 (Sui's bare shape is correct there), once the per-party PVSS
-    /// maps are already complete, while the assembled committee is unavailable
-    /// or still converging, or if its member set differs from the current one —
-    /// so it is safe to call every service-loop iteration.
-    pub(crate) fn refresh_validator_keys_from_offchain(&mut self) -> DwalletMPCResult<()> {
-        if !self.protocol_config.is_network_encryption_key_version_v3() {
-            return Ok(());
-        }
+    /// The off-chain-only keys are no longer carried on `Committee`; the sync
+    /// loop assembles them directly for each epoch's own committee (the current
+    /// epoch's members self-announce for the current epoch, so the live source
+    /// covers them — no borrowing the next committee's keys). `class_groups`
+    /// still comes from the committee. Cheap and idempotent: once a key set is
+    /// complete it is not rebuilt, so this is safe to call every service-loop
+    /// iteration.
+    pub(crate) fn ingest_offchain_mpc_keys(&mut self) -> DwalletMPCResult<()> {
         let expected = self.committee.voting_rights.len();
-        if self.validator_mpc_keys_by_party_id.secp256k1_pvss.len() == expected
-            && self.validator_mpc_keys_by_party_id.secp256r1_pvss.len() == expected
-            && self.validator_mpc_keys_by_party_id.ristretto_pvss.len() == expected
-        {
-            return Ok(());
-        }
-        let Some(assembled) = self.next_active_committee.as_ref() else {
-            return Ok(());
-        };
-        let current_members: std::collections::BTreeSet<_> = self
-            .committee
-            .voting_rights
-            .iter()
-            .map(|(n, _)| *n)
-            .collect();
-        let assembled_members: std::collections::BTreeSet<_> =
-            assembled.voting_rights.iter().map(|(n, _)| *n).collect();
-        if current_members != assembled_members {
-            return Ok(());
-        }
-        let mut class_groups = HashMap::new();
-        let mut secp256k1_pvss = HashMap::new();
-        let mut secp256r1_pvss = HashMap::new();
-        let mut ristretto_pvss = HashMap::new();
-        let mut vss_hpke_verified_party_encryption_key_values = HashMap::new();
-        for (name, _) in self.committee.voting_rights.iter() {
-            let current_party_id =
-                authority_name_to_party_id_from_committee(&self.committee, name)?;
-            // `vss_hpke_verified_party_encryption_key_values` is keyed by the
-            // *assembled* committee's party ids, so translate via the name.
-            let assembled_party_id = authority_name_to_party_id_from_committee(assembled, name)?;
-            if let Some(k) = assembled.class_groups_public_keys_and_proofs.get(name) {
-                class_groups.insert(current_party_id, k.clone());
-            }
-            if let Some(k) = assembled.secp256k1_pvss_public_keys_and_proofs.get(name) {
-                secp256k1_pvss.insert(current_party_id, k.clone());
-            }
-            if let Some(k) = assembled.secp256r1_pvss_public_keys_and_proofs.get(name) {
-                secp256r1_pvss.insert(current_party_id, k.clone());
-            }
-            if let Some(k) = assembled.ristretto_pvss_public_keys_and_proofs.get(name) {
-                ristretto_pvss.insert(current_party_id, k.clone());
-            }
-            if let Some(v) = assembled
-                .vss_hpke_verified_party_encryption_key_values
-                .get(&assembled_party_id)
+
+        // Current epoch: fill the within-epoch DKG / presign key set.
+        if !self.validator_mpc_keys_by_party_id.is_complete(expected) {
+            let delivered = self
+                .sui_data_receivers
+                .current_epoch_mpc_keys_receiver
+                .borrow()
+                .clone();
+            if let Some((epoch, bundles)) = delivered
+                && epoch == self.epoch_id
             {
-                vss_hpke_verified_party_encryption_key_values.insert(current_party_id, v.clone());
+                let keys = get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
+                if keys.is_complete(expected) {
+                    self.validator_mpc_keys_by_party_id = keys;
+                    info!(
+                        epoch = self.epoch_id,
+                        "ingested current-epoch off-chain validator MPC keys"
+                    );
+                }
             }
         }
-        // The announcements may still be converging — only adopt a fully
-        // covered PVSS set.
-        if secp256k1_pvss.len() != expected
-            || secp256r1_pvss.len() != expected
-            || ristretto_pvss.len() != expected
+
+        // Next epoch: fill the reconfiguration key set, keyed by the next
+        // committee's party ids (so it must be assembled against that committee).
+        if self.next_epoch_validator_mpc_keys.is_none()
+            && let Some(next_committee) = self.next_active_committee.as_ref()
         {
-            return Ok(());
+            let next_expected = next_committee.voting_rights.len();
+            let delivered = self
+                .sui_data_receivers
+                .next_epoch_mpc_keys_receiver
+                .borrow()
+                .clone();
+            if let Some((epoch, bundles)) = delivered
+                && epoch == next_committee.epoch
+            {
+                let keys = get_validator_mpc_keys_by_party_id(next_committee, &bundles)?;
+                if keys.is_complete(next_expected) {
+                    self.next_epoch_validator_mpc_keys = Some(keys);
+                    info!(
+                        epoch = self.epoch_id,
+                        next_epoch = next_committee.epoch,
+                        "ingested next-epoch off-chain validator MPC keys"
+                    );
+                }
+            }
         }
-        self.validator_mpc_keys_by_party_id = ValidatorMpcKeysByPartyId {
-            class_groups,
-            secp256k1_pvss,
-            secp256r1_pvss,
-            ristretto_pvss,
-            vss_hpke_verified_party_encryption_key_values,
-        };
-        info!(
-            epoch = self.epoch_id,
-            "refreshed validator MPC keys from the off-chain-assembled committee (v4 genesis PVSS bootstrap)"
-        );
+
         Ok(())
     }
 
@@ -1401,6 +1380,7 @@ impl DWalletMPCManager {
             &self.network_keys,
             self.next_active_committee.clone(),
             self.validator_mpc_keys_by_party_id.clone(),
+            self.next_epoch_validator_mpc_keys.clone(),
             &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => SessionStatus::Active {
@@ -2738,6 +2718,12 @@ impl DWalletMPCManager {
                 malicious_authorities =? authorities,
                 "malicious actors identified & recorded"
             );
+
+            // Scrapable signal that detection fired (the cross-binary
+            // malicious-detection test asserts on this instead of grepping logs).
+            self.dwallet_mpc_metrics
+                .malicious_actors_count
+                .set(self.malicious_actors.len() as i64);
         }
     }
 

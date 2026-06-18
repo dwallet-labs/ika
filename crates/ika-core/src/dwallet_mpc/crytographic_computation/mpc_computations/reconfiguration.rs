@@ -8,7 +8,8 @@ use crate::dwallet_mpc::crytographic_computation::mpc_computations::network_dkg:
 };
 use crate::dwallet_mpc::dwallet_mpc_metrics::DWalletMPCMetrics;
 use crate::dwallet_mpc::{
-    authority_name_to_party_id_from_committee, generate_access_structure_from_committee,
+    ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
+    generate_access_structure_from_committee,
 };
 use class_groups::SecretKeyShareSizedInteger;
 use commitment::CommitmentSizedNumber;
@@ -34,9 +35,15 @@ use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_c
 
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
+    ///
+    /// `upcoming_validator_mpc_keys` is the upcoming committee's off-chain
+    /// validator MPC key set (class groups + per-curve PVSS HPKE + verified
+    /// VSS), keyed by the upcoming committee's party ids — the off-chain-only
+    /// keys are no longer carried on `new_committee`, so they are passed in.
     fn generate_public_input(
         committee: &Committee,
         new_committee: Committee,
+        upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
     ) -> DwalletMPCResult<<ReconfigurationParty as mpc::Party>::PublicInput>;
@@ -46,6 +53,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
     fn generate_public_input(
         current_committee: &Committee,
         upcoming_committee: Committee,
+        upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
     ) -> DwalletMPCResult<<ReconfigurationParty as Party>::PublicInput> {
@@ -68,17 +76,16 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         // in `2pc-mpc/src/decentralized_party/reconfiguration.rs:401, 689`)
         // shows they correspond to the UPCOMING committee — the dealers send
         // ciphertexts encrypted under each upcoming participating party's PVSS
-        // public key.
-        let upcoming_validators_pvss_hpke_keys_by_party_id =
-            crate::dwallet_mpc::get_validator_mpc_keys_by_party_id(&upcoming_committee)?;
+        // public key. Delivered from the off-chain next-epoch key channel
+        // (no longer carried on `upcoming_committee`), keyed by the upcoming
+        // committee's party ids.
+        let upcoming_validators_pvss_hpke_keys_by_party_id = upcoming_validator_mpc_keys;
 
-        // At main Reconfig (callable only from `_version == 3`) every upcoming
-        // committee member MUST publish the version-3 bundle shape
-        // (class-groups + per-curve PVSS HPKE keys). The
-        // shape-tolerant decoder accepts old-shape submissions silently, so a
-        // not-yet-migrated validator in the upcoming committee would land here
-        // with empty PVSS entries while their class-groups entry is present.
-        // Fail loudly rather than running reconfig on a partial map.
+        // At main Reconfig (callable only from `_version == 3`) the upcoming
+        // committee's full off-chain bundle (class-groups + per-curve PVSS HPKE
+        // keys) must have been ingested and passed in. A short map means the
+        // next-epoch off-chain assembly hasn't fully converged — fail loudly
+        // rather than running reconfig on a partial map.
         let expected = upcoming_committee.voting_rights.len();
         let class_groups_count = upcoming_validators_pvss_hpke_keys_by_party_id
             .class_groups
@@ -364,6 +371,18 @@ pub(crate) fn advance_network_reconfiguration_bwd_compat(
 
     match result {
         GuaranteedOutputDeliveryRoundResult::Advance { message } => {
+            // Test-only fault injection for the cross-binary malicious-detection
+            // harness: corrupt this validator's outgoing reconfiguration message
+            // so honest peers must detect and exclude it. Gated behind the
+            // `test-reconfig-fault` cargo feature — compiled out of every normal
+            // (release) build, so the only way to produce a faulty binary is an
+            // explicit `--features test-reconfig-fault`, never a source edit.
+            #[cfg(feature = "test-reconfig-fault")]
+            let message = {
+                let mut message = message;
+                message.push(0u8);
+                message
+            };
             Ok(GuaranteedOutputDeliveryRoundResult::Advance { message })
         }
         GuaranteedOutputDeliveryRoundResult::Finalize {
