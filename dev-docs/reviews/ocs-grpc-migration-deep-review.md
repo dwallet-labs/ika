@@ -68,7 +68,10 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    head above its own (lower-seq) objects. On crash the persisted head overstates
    the persisted objects, defeating the rehydration anti-staleness guarantee the
    head exists for. **Fix:** persist `min(source_seq, head_seq())` from the seq
-   actually being folded, not the shared atomic. RESOLUTION: open.
+   actually being folded, not the shared atomic. RESOLUTION: fixed in `65756c0ffa`
+   — `persist` takes the caller's own in-order `source_seq`, and reader shadow-writes
+   use a new non-persisting `absorb_shadow_entries`, so only the single-threaded
+   pusher persists (contiguous, never overstates). Regression test added.
 
 3. **[MEDIUM — needs author confirmation of reachability] Sender-fork silent drop
    → MPC starvation.** `mod.rs:147,193`, `sui_syncer.rs`. `run_legacy_event_ingestion
@@ -82,7 +85,10 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    unreachable (same boolean gates sender-presence and the expect). **Fix:** gate
    the pump on `state.is_validator` (the consumer predicate), or assert
    `reader.is_some() ⇒ mode.is_validator()`, or at minimum log the dropped-sender
-   branch. RESOLUTION: open (confirm the config combination is reachable first).
+   branch. RESOLUTION: fixed in `006317652b` — added a loud `warn!` on the
+   `reader.is_some() && mode != Validator` branch (the senders are still dropped,
+   but no longer silently; a clear misconfiguration signal). Not a panic, since a
+   fullnode/notifier with an anchor that runs no MPC is a legitimate config.
 
 4. **[LOW] `persist_end_of_epoch` is not atomic across its two columns.**
    `push_worker.rs:290-295`. The epoch→seq index and the retained `CheckpointData`
