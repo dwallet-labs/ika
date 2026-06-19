@@ -289,4 +289,126 @@ mod tests {
                 .is_none()
         );
     }
+
+    /// An inner transport that *answers* the two retained primitives with
+    /// sentinel values — so a successful delegation is observable (the opposite
+    /// of `PanicTransport`).
+    struct DelegateTransport;
+    #[async_trait]
+    impl SuiTransport for DelegateTransport {
+        async fn get_full_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            Ok(checkpoint_at(seq))
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            Ok(999)
+        }
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unimplemented!()
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
+            unimplemented!()
+        }
+        async fn get_committee(
+            &self,
+            _epoch: Option<u64>,
+        ) -> Result<sui_types::committee::Committee, TransportError> {
+            unimplemented!()
+        }
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _digest: sui_types::digests::CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn get_object_with_version(
+            &self,
+            _id: ObjectID,
+            _version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unimplemented!()
+        }
+        async fn batch_get_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<Vec<Object>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_owned_gas_coins(
+            &self,
+            _address: SuiAddress,
+        ) -> Result<Vec<ObjectRef>, TransportError> {
+            unimplemented!()
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _parent: ObjectID,
+            _page_size: Option<u32>,
+            _page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unimplemented!()
+        }
+        async fn get_transaction_checkpoint(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unimplemented!()
+        }
+        async fn execute_transaction(
+            &self,
+            _tx: &Transaction,
+        ) -> Result<SubmittedTransaction, TransportError> {
+            unimplemented!()
+        }
+    }
+
+    /// When the retained store yields no value for the two committee-ratchet
+    /// primitives, the wrapper delegates to the inner transport rather than
+    /// surfacing the absence as an error.
+    ///
+    /// Note on the literal "DB error" case: the wrapper's guard is
+    /// `if let Ok(Some(..)) = self.perpetual.get_*()`, so a getter returning
+    /// `Err(_)` falls through to `self.inner` on *exactly the same branch* as
+    /// `Ok(None)`. `RetainedFullnodeTransport` holds a concrete
+    /// `AuthorityPerpetualTables` (not a trait), and its end-of-epoch columns
+    /// are `pub(crate)` — so there is no in-crate seam to inject a `TypedStore`
+    /// error from this module without a production refactor or a corrupted DB.
+    /// This test drives the delegation via the observable `Ok(None)` path, which
+    /// covers the identical fall-through the `Err(_)` arm would take.
+    #[tokio::test]
+    async fn db_error_on_retained_lookup_delegates_to_inner() {
+        let dir = tempfile::tempdir().unwrap();
+        // An EMPTY perpetual store: every retained-store lookup returns
+        // `Ok(None)`, so both primitives must fall through to the inner transport.
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let wrapper = RetainedFullnodeTransport::new(Arc::new(DelegateTransport), perpetual);
+
+        // Nothing retained → delegate. The inner transport's sentinels prove the
+        // delegation happened (rather than an error or a retained-store hit).
+        assert_eq!(wrapper.last_checkpoint_of_epoch(7).await.unwrap(), 999);
+        let got = wrapper.get_full_checkpoint(55).await.unwrap();
+        assert_eq!(*got.checkpoint_summary.sequence_number(), 55);
+    }
 }

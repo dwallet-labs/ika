@@ -467,4 +467,304 @@ mod tests {
         );
         Transaction::from_data(data, vec![])
     }
+
+    // -- helpers + provider for the verified-walk tests (7 & 8) -------------------------------
+
+    use std::collections::{BTreeMap, HashMap};
+    use std::sync::Mutex;
+
+    use ika_network::proof_provider::VerifiedObjectEntry;
+    use sui_light_client::proof::ocs::{ModifiedObjectTree, OCSInclusionProof};
+    use sui_types::base_types::ObjectDigest;
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::digests::CheckpointContentsDigest;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
+    };
+    use sui_types::object::Owner;
+
+    fn test_object(id: ObjectID, version: u64, owner: Owner) -> Object {
+        Object::with_id_owner_version_for_testing(id, SequenceNumber::from(version), owner)
+    }
+
+    /// Committee-sign a summary committing to `leaves`, and build the inclusion
+    /// proof for `target`. Mirrors `verified_reader`'s `sign_inclusion` test
+    /// helper: summary commitment and proof root come from the same artifacts,
+    /// so they verify together against `committee`.
+    fn sign_inclusion(
+        committee: &SuiCommittee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        leaves: &[&Object],
+        target: &Object,
+    ) -> (CertifiedCheckpointSummary, OCSInclusionProof) {
+        let object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)> = leaves
+            .iter()
+            .map(|o| {
+                let (id, version, digest) = o.compute_object_reference();
+                (id, (version, digest))
+            })
+            .collect();
+        let artifacts = CheckpointArtifacts::from_object_states(object_states);
+        let artifacts_digest = artifacts.digest().expect("artifacts digest");
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: CheckpointContentsDigest::new([0; 32]),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![CheckpointCommitment::from(artifacts_digest)],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let cert =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee);
+        let proof = ModifiedObjectTree::new(&artifacts)
+            .expect("modified object tree")
+            .get_inclusion_proof(target.compute_object_reference())
+            .expect("inclusion proof");
+        (cert, proof)
+    }
+
+    /// A `ProofProvider` that serves a verified-object response per requested
+    /// id (each consumed once) and at most one bag page. `VerifiedObjectResponse`
+    /// isn't `Clone` (its proof isn't), so each id's response is `remove`d on
+    /// first read — exactly matching the one-read-per-id walk shape.
+    struct MapProvider {
+        objects: Mutex<HashMap<ObjectID, VerifiedObjectResponse>>,
+        bag: Mutex<Option<VerifiedBagPageResponse>>,
+    }
+
+    impl MapProvider {
+        fn new() -> Self {
+            Self {
+                objects: Mutex::new(HashMap::new()),
+                bag: Mutex::new(None),
+            }
+        }
+        fn with_object(self, id: ObjectID, resp: VerifiedObjectResponse) -> Self {
+            self.objects.lock().unwrap().insert(id, resp);
+            self
+        }
+        fn with_bag(self, resp: VerifiedBagPageResponse) -> Self {
+            *self.bag.lock().unwrap() = Some(resp);
+            self
+        }
+    }
+
+    #[async_trait]
+    impl ProofProvider for MapProvider {
+        async fn verified_object(
+            &self,
+            id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            self.objects
+                .lock()
+                .unwrap()
+                .remove(&id)
+                .ok_or_else(|| TransportError::NotFound(format!("no staged object for {id}")))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            Err(TransportError::Network("batch not staged".into()))
+        }
+        async fn verified_bag_page(
+            &self,
+            _request: VerifiedBagPageRequest,
+        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            self.bag
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or_else(|| TransportError::Network("no staged bag page".into()))
+        }
+    }
+
+    fn object_response(
+        object: Object,
+        summary: CertifiedCheckpointSummary,
+        proof: OCSInclusionProof,
+        seq: CheckpointSequenceNumber,
+    ) -> VerifiedObjectResponse {
+        VerifiedObjectResponse {
+            object,
+            summary,
+            proof,
+            claimed_latest_checkpoint_seq: seq,
+        }
+    }
+
+    /// The peer-only `get_system_inner` walk decomposes into exactly the two
+    /// verified `get_object` reads this transport serves: the committee-signed
+    /// outer `System` anchor, then its versioned `Field<u64, _>` child at the
+    /// deterministically-derived child id. Both come back verified, and the
+    /// verified bytes survive a BCS round-trip (the transport returns the raw
+    /// committee-proven object; the higher-level backend is what decodes them
+    /// into `System` / `SystemInnerV1`). An id-substituted child — the relay
+    /// answering the derived-child read with a different (validly-proven) object
+    /// — is rejected as a `Network` error rather than silently accepted.
+    #[tokio::test]
+    async fn peer_only_get_system_inner_walk_over_staged_provider() {
+        // We must sign against the SAME committee the transport's store trusts;
+        // build it once and seed both.
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let system_version = 1u64;
+        let system_id = ObjectID::from_single_byte(0x10);
+        let child_id =
+            ika_sui_client::transport::derive_versioned_child_id(system_id, system_version)
+                .expect("derive versioned child id");
+
+        // Outer System anchor (owned by an address) and its versioned child
+        // (owned by the System object — the dynamic-field ownership the walk
+        // relies on). Both are committee-proven at checkpoint 100.
+        let system_obj = test_object(
+            system_id,
+            system_version,
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let child_obj = test_object(child_id, 1, Owner::ObjectOwner(system_id.into()));
+        let (sum_sys, proof_sys) = sign_inclusion(
+            &committee,
+            &keys,
+            100,
+            &[&system_obj, &child_obj],
+            &system_obj,
+        );
+        let (sum_child, proof_child) = sign_inclusion(
+            &committee,
+            &keys,
+            100,
+            &[&system_obj, &child_obj],
+            &child_obj,
+        );
+
+        let provider = Arc::new(
+            MapProvider::new()
+                .with_object(
+                    system_id,
+                    object_response(system_obj.clone(), sum_sys, proof_sys, 100),
+                )
+                .with_object(
+                    child_id,
+                    object_response(child_obj.clone(), sum_child, proof_child, 100),
+                ),
+        );
+        let (_dir, transport) = transport_over_with_committee(provider, committee.clone());
+
+        // get_object(system_id): verified outer anchor, returned at the
+        // requested id; its move contents survive a BCS round-trip.
+        let got_system = transport.get_object(system_id).await.unwrap();
+        assert_eq!(got_system.id(), system_id);
+        let system_bytes = ika_sui_client::transport::move_object_contents(&got_system)
+            .expect("verified System anchor must be a Move object");
+        assert!(!system_bytes.is_empty(), "verified bytes round-trip intact");
+
+        // Walk to the derived child: also verified, returned at the derived id.
+        let got_child = transport.get_object(child_id).await.unwrap();
+        assert_eq!(got_child.id(), child_id);
+        assert!(
+            matches!(got_child.owner(), Owner::ObjectOwner(addr) if ObjectID::from(*addr) == system_id)
+        );
+
+        // An id-substituted child: a fresh transport whose provider answers the
+        // derived-child read with a DIFFERENT (validly-proven) object. The
+        // reader's id binding rejects it; the transport surfaces a Network error.
+        let other_id = ObjectID::from_single_byte(0x77);
+        let other_obj = test_object(
+            other_id,
+            1,
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (sum_other, proof_other) =
+            sign_inclusion(&committee, &keys, 100, &[&other_obj], &other_obj);
+        let substituting = Arc::new(MapProvider::new().with_object(
+            // Keyed by the child id the walk will request, but carrying a
+            // foreign object — the substitution the id binding must catch.
+            child_id,
+            object_response(other_obj, sum_other, proof_other, 100),
+        ));
+        let (_dir2, sub_transport) = transport_over_with_committee(substituting, committee);
+        let err = sub_transport.get_object(child_id).await.unwrap_err();
+        assert!(
+            matches!(err, TransportError::Network(_)),
+            "an id-substituted child must be rejected as a Network error, got {err:?}"
+        );
+    }
+
+    /// Seeds the committee store with the *given* committee (so test-signed
+    /// summaries verify). The transport's relay is panicking — `get_object`
+    /// never touches it.
+    fn transport_over_with_committee(
+        provider: Arc<dyn ProofProvider>,
+        committee: SuiCommittee,
+    ) -> (tempfile::TempDir, VerifiedSuiTransport) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap(),
+        );
+        let reader = Arc::new(OcsVerifiedReader::new(
+            provider,
+            committees,
+            OcsMetrics::new_for_testing(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        ));
+        let transport = VerifiedSuiTransport::new(reader, Arc::new(PanickingRelay));
+        (dir, transport)
+    }
+
+    /// `list_dynamic_fields` collapses the verified bag page to identity-only
+    /// entries: every entry carries its `object_id`, but the field-name metadata
+    /// is intentionally empty (`name_type == ""`, `name_value_bcs` empty). That's
+    /// all the backend's dynamic-field walk consumes — it re-parses the name from
+    /// the child object's own BCS — and dropping the relay's unverified name
+    /// metadata keeps the surface honest.
+    #[tokio::test]
+    async fn list_dynamic_fields_returns_empty_name_metadata() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x40);
+        let entry_id = ObjectID::from_single_byte(0x41);
+        let entry_obj = test_object(entry_id, 1, Owner::ObjectOwner(bag_id.into()));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&entry_obj], &entry_obj);
+
+        // The relay carries field-name metadata, but the verified surface must
+        // strip it: stage an entry whose name metadata is non-empty upstream.
+        let bag = VerifiedBagPageResponse {
+            bag: None,
+            summaries: BTreeMap::from([(100u64, summary)]),
+            entries: vec![VerifiedObjectEntry {
+                object: entry_obj,
+                checkpoint_seq: 100,
+                proof,
+                dynamic_field_name_type: "u64".to_string(),
+                dynamic_field_name_bcs: bcs::to_bytes(&7u64).unwrap(),
+            }],
+            next_page_token: None,
+            claimed_latest_checkpoint_seq: 100,
+        };
+        let provider = Arc::new(MapProvider::new().with_bag(bag));
+        let (_dir, transport) = transport_over_with_committee(provider, committee);
+
+        let page = transport
+            .list_dynamic_fields(bag_id, None, None)
+            .await
+            .unwrap();
+        assert_eq!(page.entries.len(), 1);
+        let entry = &page.entries[0];
+        assert_eq!(entry.object_id, entry_id, "object_id is populated");
+        assert_eq!(entry.name_type, "", "name_type is stripped to empty");
+        assert!(
+            entry.name_value_bcs.is_empty(),
+            "name_value_bcs is stripped to empty"
+        );
+    }
 }

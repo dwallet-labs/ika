@@ -432,7 +432,9 @@ mod tests {
     use sui_types::transaction::Transaction;
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
-    use crate::sui_connector::verified_state_cache::VerifiedStateCache;
+    use crate::sui_connector::verified_state_cache::{
+        SharedVerifiedStateCache, VerifiedStateCache,
+    };
 
     /// Mock transport that serves a fixed `get_latest_checkpoint` and a
     /// configurable set of full checkpoints; a missing seq is `NotFound`
@@ -586,19 +588,66 @@ mod tests {
         }
     }
 
+    /// A plain (non-end-of-epoch) `CheckpointData` at `seq` with no
+    /// transactions. `build_entries` returns `None` for it (nothing Ika to
+    /// fold), so it advances the cursor / processed head without folding.
+    fn plain_checkpoint(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+    ) -> CheckpointData {
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        let checkpoint_summary =
+            CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee);
+        CheckpointData {
+            checkpoint_summary,
+            checkpoint_contents: contents,
+            transactions: vec![],
+        }
+    }
+
     async fn pusher_over(
         perpetual: Arc<AuthorityPerpetualTables>,
         committees: Arc<CommitteeStore>,
         transport: Arc<dyn SuiTransport>,
     ) -> IkaCheckpointPusher {
+        pusher_over_with_cache(
+            perpetual,
+            committees,
+            transport,
+            Arc::new(VerifiedStateCache::new()),
+            OcsMetrics::new_for_testing(),
+        )
+        .await
+    }
+
+    async fn pusher_over_with_cache(
+        perpetual: Arc<AuthorityPerpetualTables>,
+        committees: Arc<CommitteeStore>,
+        transport: Arc<dyn SuiTransport>,
+        cache: SharedVerifiedStateCache,
+        metrics: Arc<OcsMetrics>,
+    ) -> IkaCheckpointPusher {
         let packages = test_packages();
         IkaCheckpointPusher::new(
             transport,
             perpetual,
-            OcsMetrics::new_for_testing(),
+            metrics,
             &packages,
             Duration::from_secs(2),
-            Arc::new(VerifiedStateCache::new()),
+            cache,
             committees,
         )
         .await
@@ -730,5 +779,161 @@ mod tests {
         assert_eq!(perpetual.get_sui_end_of_epoch_seq(0).unwrap(), Some(30));
         // The boundary past the prune gap was never captured.
         assert_eq!(perpetual.get_sui_end_of_epoch_seq(2).unwrap(), None);
+    }
+
+    /// A transport that returns `NotFound` for every third checkpoint (modeling
+    /// a sparse upstream prune) must not wedge: `advance()` streams to the
+    /// latest, advancing the processed head all the way, incrementing the
+    /// fetch-failure metric once per missing seq. No object is folded for a
+    /// failed seq (a gap in the cache), and an end-of-epoch checkpoint that
+    /// lands on a failed (NotFound) seq is NOT retained — the fetch fails before
+    /// `persist_end_of_epoch` could run.
+    #[tokio::test]
+    async fn fetch_failure_advances_processed_head_and_warns_on_lost_eoe() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        // Stream seqs 1..=9 from cursor 0. Every third seq (3, 6, 9) is OMITTED
+        // from the served map, so its fetch is NotFound. Seq 6 — a failed seq —
+        // WOULD have been an end-of-epoch checkpoint had it been served; since it
+        // is NotFound, the pusher never reaches `persist_end_of_epoch`, so no
+        // end-of-epoch checkpoint is retained for it.
+        let latest_seq = 9u64;
+        let mut checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData> = HashMap::new();
+        let mut failed_seqs = Vec::new();
+        for seq in 1..=latest_seq {
+            if seq % 3 == 0 {
+                failed_seqs.push(seq);
+                continue; // omit → NotFound on fetch
+            }
+            checkpoints.insert(seq, plain_checkpoint(&committee, &keys, seq));
+        }
+        let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints,
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(0).unwrap();
+
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let metrics = OcsMetrics::new_for_testing();
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache.clone(),
+            metrics.clone(),
+        )
+        .await;
+        pusher.advance().await.unwrap();
+
+        // The processed head advanced all the way to the latest despite the
+        // gaps, so the reader's staleness tripwire sees the pusher as current.
+        assert_eq!(cache.processed_head_seq(), latest_seq);
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(latest_seq)
+        );
+
+        // Exactly one fetch-failure metric increment per omitted seq (3, 6, 9).
+        assert_eq!(
+            metrics.pusher_fetch_failures_total.get(),
+            failed_seqs.len() as u64
+        );
+
+        // Plain checkpoints fold nothing, so the cache is empty (a gap for every
+        // seq, failed or not — none carried an Ika object).
+        assert!(cache.is_empty());
+
+        // The end-of-epoch checkpoint that would have lived at the failed seq 6
+        // was never retained — the fetch failed before it could be persisted.
+        assert!(
+            perpetual
+                .get_sui_end_of_epoch_checkpoint(6)
+                .unwrap()
+                .is_none(),
+            "an end-of-epoch checkpoint on a failed (NotFound) seq must not be retained"
+        );
+    }
+
+    /// The pusher resumes from its persisted cursor across a restart: once
+    /// `advance()` has driven the cursor to N and persisted it, a fresh pusher
+    /// constructed over the SAME perpetual tables boots at cursor N and, on
+    /// construction, seeds the cache's processed head to N (so the reader's
+    /// tripwire doesn't fire before the first tick). A second `advance()` with
+    /// no new upstream checkpoints is a no-op that leaves the cursor at N.
+    #[tokio::test]
+    async fn restart_resumes_from_persisted_cursor() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+
+        // First run: stream 1..=5 from cursor 0; the cursor lands on 5.
+        let latest_seq = 5u64;
+        let checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData> = (1..=latest_seq)
+            .map(|seq| (seq, plain_checkpoint(&committee, &keys, seq)))
+            .collect();
+        let latest = plain_checkpoint(&committee, &keys, latest_seq).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest: latest.clone(),
+            checkpoints: checkpoints.clone(),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(0).unwrap();
+
+        let mut first = pusher_over(perpetual.clone(), committees.clone(), transport).await;
+        first.advance().await.unwrap();
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(latest_seq)
+        );
+        drop(first);
+
+        // Restart: a fresh pusher over the SAME perpetual tables resumes at the
+        // persisted cursor (5) — it does NOT re-fetch from upstream latest. Its
+        // construction seeds the cache's processed head to the resumed cursor.
+        let resume_cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let transport2: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints,
+            eoe_seqs: HashMap::new(),
+        });
+        let mut resumed = pusher_over_with_cache(
+            perpetual.clone(),
+            committees,
+            transport2,
+            resume_cache.clone(),
+            OcsMetrics::new_for_testing(),
+        )
+        .await;
+        assert_eq!(
+            resume_cache.processed_head_seq(),
+            latest_seq,
+            "a fresh pusher seeds the cache processed head from its resumed cursor"
+        );
+
+        // Upstream hasn't advanced past 5, so a second advance is a no-op: the
+        // cursor stays at 5 (no re-stream of already-processed checkpoints).
+        resumed.advance().await.unwrap();
+        assert_eq!(
+            perpetual.get_sui_pusher_last_seq().unwrap(),
+            Some(latest_seq)
+        );
     }
 }

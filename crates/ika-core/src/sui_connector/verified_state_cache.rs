@@ -724,4 +724,193 @@ mod tests {
         assert!(durable.is_empty());
         assert_eq!(durable.head_seq(), 0);
     }
+
+    /// The retention floor never drops below the oldest committee-verifiable
+    /// checkpoint summary: a mirrored peer bootstrapping from that summary's
+    /// checkpoint still needs the objects last modified at/after it. With a
+    /// committee summary recorded at checkpoint seq `S`, folding objects far
+    /// past `S` with a small retain window leaves `prune_floor() == min(head -
+    /// window, S)` — so snapshots at/after `S` always survive; and when the
+    /// oldest summary's seq is *below* `head - window`, the floor follows the
+    /// window (the summary only ever lowers the floor, never raises it above
+    /// `head - window`).
+    #[tokio::test]
+    async fn prune_floor_never_drops_below_oldest_committee_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+
+        // Record a committee transition whose end-of-epoch summary sits at
+        // checkpoint seq S = 50. `oldest_sui_committee_summary()` then returns a
+        // summary with `sequence_number() == 50`.
+        let target = ObjectID::from_single_byte(0xF0);
+        let summary_object = Object::with_id_owner_version_for_testing(
+            target,
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (committee_summary, _) = signed_entry(&committee, &keys, 50, &summary_object);
+
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        perpetual
+            .record_sui_committee_transition(&committee_summary)
+            .unwrap();
+        assert_eq!(
+            *perpetual
+                .oldest_sui_committee_summary()
+                .unwrap()
+                .unwrap()
+                .sequence_number(),
+            50
+        );
+
+        let cache = VerifiedStateCache::open(perpetual.clone())
+            .unwrap()
+            .with_retain_window(Some(20));
+
+        // Fold an object at seq 100. head - window = 80, but the oldest
+        // committee summary is at 50, so the floor is clamped DOWN to 50 — never
+        // up to 80, which would prune below the bootstrap anchor.
+        let object = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x01),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (summary100, entry100) = signed_entry(&committee, &keys, 100, &object);
+        cache.absorb_entries(&summary100, &[entry100]);
+        assert_eq!(cache.head_seq(), 100);
+        assert_eq!(
+            cache.prune_floor(),
+            Some(50),
+            "floor follows the oldest committee summary (50), not head-window (80)"
+        );
+
+        // A snapshot at/after S (= 50) survives the floor: fold one at seq 55,
+        // then advance the head to 120 so a prune sweep actually runs. 55 is
+        // below head-window (100) but >= floor (50), so it is NOT pruned.
+        let object55 = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x03),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (summary55, entry55) = signed_entry(&committee, &keys, 55, &object55);
+        cache.absorb_entries(&summary55, &[entry55]);
+        let object_head = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x04),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+        let (summary_head, entry_head) = signed_entry(&committee, &keys, 120, &object_head);
+        cache.absorb_entries(&summary_head, &[entry_head]);
+        // head=120, window=20 → head-window=100, clamped down to summary seq 50.
+        assert_eq!(cache.prune_floor(), Some(50));
+        assert!(
+            cache.get(object55.id()).is_some(),
+            "the seq-55 snapshot is at/after the committee summary seq (50) and must survive"
+        );
+    }
+
+    /// A version downgrade is skipped end-to-end: after caching `id@v8`, an
+    /// `absorb` of `id@v5` returns `false` from `insert_inner`, so the cached
+    /// version stays `v8`, the skipped id is not persisted, and the
+    /// parent→children index is untouched.
+    #[tokio::test]
+    async fn absorb_never_downgrades_a_cached_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let cache = VerifiedStateCache::open(perpetual.clone()).unwrap();
+
+        let id = ObjectID::from_single_byte(0x01);
+        let parent = ObjectID::from_single_byte(0xAB);
+        let v8 = Object::with_id_owner_version_for_testing(
+            id,
+            SequenceNumber::from(8u64),
+            Owner::ObjectOwner(parent.into()),
+        );
+        let (summary_v8, entry_v8) = signed_entry(&committee, &keys, 80, &v8);
+        cache.absorb_entries(&summary_v8, &[entry_v8]);
+        assert_eq!(
+            cache.get(id).unwrap().object.version(),
+            SequenceNumber::from(8u64)
+        );
+        assert_eq!(cache.children_of(parent), vec![id]);
+
+        // Now an out-of-order absorb of the SAME id at the OLDER version 5,
+        // arriving at a later checkpoint (a network shadow-write racing the
+        // pusher). It must be skipped: the cached object stays v8.
+        let v5 = Object::with_id_owner_version_for_testing(
+            id,
+            SequenceNumber::from(5u64),
+            // A different parent — to prove the children index is NOT touched on
+            // a skipped downgrade.
+            Owner::ObjectOwner(ObjectID::from_single_byte(0xCD).into()),
+        );
+        let (summary_v5, entry_v5) = signed_entry(&committee, &keys, 90, &v5);
+
+        // The insert is skipped directly.
+        assert!(
+            !cache.insert_inner(&entry_v5, &summary_v5, 90),
+            "a lower-version absorb must report skipped (insert_inner == false)"
+        );
+
+        // Cached version is still v8.
+        assert_eq!(
+            cache.get(id).unwrap().object.version(),
+            SequenceNumber::from(8u64),
+            "the cache must not downgrade v8 to v5"
+        );
+        // The children index is untouched: the old parent still owns the id, the
+        // downgrade's would-be parent was never inserted.
+        assert_eq!(cache.children_of(parent), vec![id]);
+        assert!(
+            cache
+                .children_of(ObjectID::from_single_byte(0xCD))
+                .is_empty()
+        );
+
+        // The persisted column still carries the v8 snapshot, not v5: a reopen
+        // sees v8 (the downgrade was never written through).
+        drop(cache);
+        let reopened = VerifiedStateCache::open(perpetual).unwrap();
+        assert_eq!(
+            reopened.get(id).unwrap().object.version(),
+            SequenceNumber::from(8u64)
+        );
+    }
+
+    /// `open` seeds the processed head from the persisted fold head, so the
+    /// reader's boot-time staleness tripwire doesn't fire spuriously before the
+    /// worker's first tick re-establishes its cursor. After folding through seq
+    /// 500 on a durable cache, a drop+reopen restores `head_seq() == 500` AND
+    /// `processed_head_seq() == 500` (rather than 0).
+    #[tokio::test]
+    async fn open_sets_processed_head_to_fold_head_avoiding_spurious_tripwire() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let object = Object::with_id_owner_version_for_testing(
+            ObjectID::from_single_byte(0x01),
+            SequenceNumber::from(1u64),
+            Owner::AddressOwner(ObjectID::from_single_byte(0x02).into()),
+        );
+
+        {
+            let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+            let cache = VerifiedStateCache::open(perpetual).unwrap();
+            let (summary, entry) = signed_entry(&committee, &keys, 500, &object);
+            cache.absorb_entries(&summary, &[entry]);
+            assert_eq!(cache.head_seq(), 500);
+        }
+
+        // Reopen: both the fold head and the processed head come back at 500.
+        // Processed head starting at 0 would make the reader believe the pusher
+        // is 500 checkpoints behind on boot and trip the staleness tripwire.
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let reopened = VerifiedStateCache::open(perpetual).unwrap();
+        assert_eq!(reopened.head_seq(), 500);
+        assert_eq!(
+            reopened.processed_head_seq(),
+            500,
+            "processed head must boot from the fold head, not 0, to avoid a spurious tripwire"
+        );
+    }
 }
