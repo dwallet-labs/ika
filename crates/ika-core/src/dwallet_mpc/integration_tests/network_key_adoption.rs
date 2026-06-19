@@ -31,6 +31,7 @@
 //!   already been burnt on the rayon pool).
 
 use crate::dwallet_mpc::integration_tests::utils;
+use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 use ika_types::messages_dwallet_mpc::{
@@ -77,6 +78,10 @@ async fn empty_reconfiguration_overlay_is_not_adopted_when_cert_pins_reconfigura
     let prior_epoch = epoch_id - 1;
 
     let key_id = ObjectID::random();
+    // The cert is keyed by NetworkKeyId; register the mapping so adopt can
+    // translate this overlay key's ObjectID to it.
+    let network_key_id = NetworkKeyId([0x42; 32]);
+    crate::network_key_id_mapping::register(key_id, network_key_id);
     let dkg_output = b"test network dkg public output".to_vec();
     let reconfiguration_output = b"test network reconfiguration public output".to_vec();
 
@@ -88,11 +93,15 @@ async fn empty_reconfiguration_overlay_is_not_adopted_when_cert_pins_reconfigura
         next_committee_pubkey_set_hash: [0u8; 32],
         items: vec![
             (
-                HandoffItemKey::NetworkDkgOutput { key_id },
+                HandoffItemKey::NetworkDkgOutput {
+                    key_id: network_key_id,
+                },
                 mpc_data_blob_hash(&dkg_output),
             ),
             (
-                HandoffItemKey::NetworkReconfigurationOutput { key_id },
+                HandoffItemKey::NetworkReconfigurationOutput {
+                    key_id: network_key_id,
+                },
                 mpc_data_blob_hash(&reconfiguration_output),
             ),
         ],

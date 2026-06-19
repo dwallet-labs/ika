@@ -22,7 +22,7 @@ use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionReques
 use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
-    VersionedPresignOutput,
+    NetworkKeyId, VersionedPresignOutput,
 };
 use dwallet_mpc_types::mpc_protocol_configuration::network_presign_pool_algorithms;
 use dwallet_rng::RootSeed;
@@ -921,8 +921,8 @@ impl DWalletMPCManager {
         {
             return;
         }
-        let mut dkg_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
-        let mut reconfiguration_digests: HashMap<ObjectID, [u8; 32]> = HashMap::new();
+        let mut dkg_digests: HashMap<NetworkKeyId, [u8; 32]> = HashMap::new();
+        let mut reconfiguration_digests: HashMap<NetworkKeyId, [u8; 32]> = HashMap::new();
         if let Some(cert) = &cert {
             for (item, digest) in &cert.attestation.items {
                 match item {
@@ -977,6 +977,16 @@ impl DWalletMPCManager {
                 }
             }
             let local_dkg_digest = mpc_data_blob_hash(&data.network_dkg_public_output);
+            // The cert is keyed by the content-derived NetworkKeyId; translate
+            // this overlay key's ObjectID via the temporary map. An unmapped
+            // key (e.g. a brand-new key not yet instantiated/registered) is
+            // treated as not-pinned-by-the-cert — correct for a fresh key,
+            // which the prior epoch's cert never references.
+            let network_key_id = crate::network_key_id_mapping::network_key_id_for(key_id);
+            let cert_dkg_digest = network_key_id.as_ref().and_then(|id| dkg_digests.get(id));
+            let cert_reconfig_digest = network_key_id
+                .as_ref()
+                .and_then(|id| reconfiguration_digests.get(id));
             if data.current_reconfiguration_public_output.is_empty() {
                 // A cert that pins a reconfiguration digest for this key means
                 // the committee agreed this epoch runs on parameters derived
@@ -993,9 +1003,7 @@ impl DWalletMPCManager {
                 // become locally resolvable. Warn once per cert digest
                 // (deduped), debug on repeats — same pattern as the
                 // mismatch skips below.
-                if off_chain_on
-                    && let Some(cert_reconfiguration_digest) = reconfiguration_digests.get(key_id)
-                {
+                if off_chain_on && let Some(cert_reconfiguration_digest) = cert_reconfig_digest {
                     if self
                         .warned_cert_digest_mismatches
                         .insert((*key_id, *cert_reconfiguration_digest))
@@ -1020,7 +1028,7 @@ impl DWalletMPCManager {
                 }
                 // Initial-DKG state: adopt the deterministic local DKG
                 // output. Require the match only if a cert pins it.
-                if let Some(cert_dkg) = dkg_digests.get(key_id)
+                if let Some(cert_dkg) = cert_dkg_digest
                     && *cert_dkg != local_dkg_digest
                 {
                     // A locally-held DKG output contradicting the
@@ -1053,7 +1061,7 @@ impl DWalletMPCManager {
                 // the overlay carries locally-cached blobs, so anchor them
                 // against the prior epoch's cert — both the stable DKG digest
                 // and the epoch-specific reconfiguration digest must match.
-                if dkg_digests.get(key_id) != Some(&local_dkg_digest) {
+                if cert_dkg_digest != Some(&local_dkg_digest) {
                     // Same anomaly as above for a reconfigured key's
                     // stable DKG digest.
                     if self
@@ -1062,7 +1070,7 @@ impl DWalletMPCManager {
                     {
                         warn!(
                             ?key_id,
-                            cert_dkg_digest = ?dkg_digests.get(key_id),
+                            cert_dkg_digest = ?cert_dkg_digest,
                             local_dkg_digest = ?local_dkg_digest,
                             "local network-key DKG output digest does not match the prior \
                              epoch's handoff cert — skipping adoption"
@@ -1078,7 +1086,7 @@ impl DWalletMPCManager {
                 }
                 let local_reconfiguration_digest =
                     mpc_data_blob_hash(&data.current_reconfiguration_public_output);
-                if reconfiguration_digests.get(key_id) != Some(&local_reconfiguration_digest) {
+                if cert_reconfig_digest != Some(&local_reconfiguration_digest) {
                     // NOT contradiction-only: once THIS epoch's
                     // reconfiguration completes, the overlay carries the
                     // new epoch-keyed output which by design mismatches
@@ -1094,7 +1102,7 @@ impl DWalletMPCManager {
                         {
                             warn!(
                                 ?key_id,
-                                cert_reconfiguration_digest = ?reconfiguration_digests.get(key_id),
+                                cert_reconfiguration_digest = ?cert_reconfig_digest,
                                 local_reconfiguration_digest = ?local_reconfiguration_digest,
                                 "local network-key reconfiguration output digest does not \
                                  match the prior epoch's handoff cert and the key has no \

@@ -468,6 +468,19 @@ impl DwalletMPCNetworkKeys {
         access_structure: &WeightedThresholdAccessStructure,
     ) -> DwalletMPCResult<()> {
         self.network_encryption_keys.insert(key_id, key.clone());
+        // Record the temporary ObjectID <-> NetworkKeyId mapping so the
+        // handoff cert (keyed by the content-derived NetworkKeyId) can be
+        // built and consumed for this key. The NOA pubkey is already in
+        // `key`. TODO(NetworkKeyId-from-event): remove with the mapping
+        // once the request event carries the NetworkKeyId directly.
+        match key.network_key_id() {
+            Ok(network_key_id) => crate::network_key_id_mapping::register(key_id, network_key_id),
+            Err(e) => error!(
+                ?key_id,
+                error = ?e,
+                "could not derive NetworkKeyId for the temporary ObjectID mapping"
+            ),
+        }
         self.validator_private_dec_key_data
             .decrypt_and_store_secret_key_shares(key_id, key.clone(), access_structure)
             .await
@@ -835,6 +848,7 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
 /// from the reconfiguration output). The result matches what
 /// instantiation computes because both seed `compute_noa_dkg` on the
 /// curve25519 encryption-key parameters.
+#[cfg(test)]
 pub fn derive_curve25519_network_owned_address_public_key(
     curve25519_protocol_public_parameters: &[u8],
 ) -> DwalletMPCResult<Vec<u8>> {
