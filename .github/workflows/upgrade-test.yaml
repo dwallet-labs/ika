@@ -100,7 +100,7 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Full history + tags: the OLD binary is built from an arbitrary
           # ref (e.g. the mainnet-v1.1.8 tag) via `git worktree add`.
