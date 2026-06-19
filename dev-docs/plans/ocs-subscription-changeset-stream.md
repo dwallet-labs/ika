@@ -1,28 +1,37 @@
 # OCS Subscription-Based Changeset Stream — Design Specification
 
-Status: design, **sound but not yet implementation-ready** (paused after 5
+Status: design, **sound but not yet implementation-ready** (after 6
 design/adversarial-review rounds). Successor to the full-set `changeset_page`
 path documented in `dev-docs/plans/ocs-changeset-stream-mirror-currency.md`.
 Branch: `feat/ocs-grpc-migration`.
 
-> **Known remaining gap (blocks implementation; not a soundness hole — the design
-> is fail-closed, no false `Current` is ever reachable).** The single shared
-> `contiguous_head` is driven forward by the always-present roots/inners cohort, so
-> a freshly-subscribed dynamic id's catch-up entries arrive *below* the head and are
-> classified `AlreadyFolded` — but per-id `coverage.head(id)` advancement is only
-> defined for the head-path (`seq == contiguous_head + 1`) and the drain-path, never
-> for the sub-head/`AlreadyFolded` case. A fresh dwallet's coverage therefore never
-> advances → permanent `Unknown` (per-read fallback) for the dynamic set the design
-> exists to cover. Plus a bootstrap off-by-one: the construction-seeded roots'
-> `resume` yields `from_seq = seed.seq` while the position gate demands `seed.seq+1`,
-> so on an empty index the head never bootstraps. The fix is a *consolidated*
-> specification of per-id coverage advancement fully **decoupled** from
-> `contiguous_head` (advance `coverage.head(id)` on any verified entry — head, drain,
-> or sub-head — verifying each requested id's proof against the trusted summary at
-> that gated seq and tracking per-id forward-chain against `coverage.head_digest(id)`),
-> which would also close the recurring shared-head-vs-per-id tension seen in the
-> drain-coverage (round 3) and subscribe-instant (round 4) fixes. Deferred to a
-> future round.
+> **Round 6 fixed the sub-head advancement *mechanism* (entries below the
+> roots-driven `contiguous_head` now advance per-id `coverage.head(id)`, each gated
+> by verifying that id's proof against the position-gated summary at the entry's
+> `seq` and forward-chaining against the per-id `coverage.head_digest(id)`, not the
+> global head) and the seeded-root bootstrap off-by-one. Fail-closed soundness is
+> unchanged — no false `Current` is reachable.**
+>
+> **Known remaining gap (blocks implementation; liveness, not soundness — the
+> anchor-coverage problem).** A fresh id only catches up *forward* from
+> `subscribed_at_seq` (the head `H` at enrollment), so `floor(X) = subscribed_at_seq`.
+> But a freshly-discovered dwallet is read at its **last-modifying checkpoint
+> `M_last`**, which is generically **below** `H` (the roots/inners drive `H` ahead
+> independently; `M_last == H` only if the dwallet was modified at the exact current
+> head). Since `M_last < floor(X)`, `currency_subscribed` returns **Unknown
+> permanently** for the common current-state read — the per-id interval
+> `[subscribed_at_seq, head]` never brackets the enrollment-read anchor, and the
+> global `currency()` (which *would* bracket it) is deliberately not consulted for
+> Subscribed-mode ids (the S4/S7 fix). So the design's purpose — currency for the
+> dynamic dwallet set — does not engage for the common case. **Fix direction
+> (round 7):** a freshly-enrolled id's catch-up cohort must resume **below**
+> `subscribed_at_seq` down to a bounded floor (`max(oldest_folded, head -
+> retain_window)`) so `floor(X) ≤ M_last` and the interval brackets the anchor —
+> anchored on the global chain the index has *already* folded (every such
+> checkpoint's digest is already a trusted index record, so no new trust root). The
+> §4.3 cohorting optimization avoided this rewind for *cost*; the spec conflated that
+> cost optimization with a correctness gate. See §5.2 (CoverageInterval), §5.3
+> (`currency_subscribed`), §8 (`absorb_subscribed` step 6).
 
 This document specifies a per-id, subscription-keyed changeset stream that bounds
 both bandwidth and `ChangesetIndex` memory by the subscribed id-set size rather
@@ -385,7 +394,15 @@ this transport, so there is no new serialization risk.
   Cohorting bounds total catch-up work by `Σ_cohorts (|cohort| · cohort_span · log N)`,
   never `(K · slowest_span · log N)`. Ids whose `resume` already equals the
   relay's head form a single steady-state cohort that advances one checkpoint at a
-  time; only genuinely-lagging ids ride a deeper-`from_seq` cohort. A practical
+  time; only genuinely-lagging ids ride a deeper-`from_seq` cohort. A lagging cohort's
+  entries arrive **below** the index's global `contiguous_head` (the always-present
+  roots/inners drove the shared head ahead while the laggard was catching up) and are
+  classified `AlreadyFolded` by the position gate, **yet each still advances its cohort
+  ids' per-id `coverage.head`** — per-id coverage advancement is decoupled from the
+  global head (§5.2, §8 step 6), so a laggard catches its own coverage up to
+  `coverage.head(id)` over the same entries the global head already crossed. Cohorting
+  is thus purely a bandwidth/CPU optimisation (it bounds re-proof work), **not** a
+  correctness gate on whether a sub-head id can advance. A practical
   partition buckets ids by `resume` (exact, or coarsened into a small number of
   range buckets to cap the request fan-out), then **further splits any bucket
   whose size exceeds `MAX_SUBSCRIPTION_IDS` into `⌈|bucket| / MAX_SUBSCRIPTION_IDS⌉`
@@ -461,8 +478,13 @@ this transport, so there is no new serialization risk.
   > genuine, correctly-signed proof for an *older* checkpoint (where the id truly was
   > absent) could be replayed in the slot of a *newer* checkpoint (where the id was
   > modified), masking the modification with a real-but-stale non-inclusion. This is
-  > enforced in `absorb_subscribed` (§8), mirroring the full-set `absorb`'s
-  > `head_seq + 1` / `previous_digest` gate (`ocs_currency.rs:269-285`).
+  > enforced in `absorb_subscribed` (§8): the carried `summary` is position-gated
+  > against the global frontier (`head_seq + 1` / `previous_digest`, mirroring the
+  > full-set `absorb`, `ocs_currency.rs:269-285`) for the *global* head, and — for
+  > **sub-head** entries a catching-up id rides — each id's proof is additionally
+  > chained against that id's own `coverage.head_digest(id)`, so a stale-but-signed
+  > proof can advance neither the global head nor any per-id coverage out of position
+  > (§5.2, §8 step 6).
 
 ### 4.4 Non-inclusion encoding — single-target, no new primitive
 
@@ -553,7 +575,12 @@ currency gate (see the admission invariant below).
 > (the inners), **never relay-listed**, so they carry **no** foreign-id-injection risk
 > — the relay supplies neither a static config id nor a child-derivation seed. This is
 > the enrollment the head driver (§8) rests on: it keeps the pinned set in *every*
-> steady-state cohort's `ids`, so the shared head advances one checkpoint at a time.
+> steady-state cohort's `ids`, so the shared `contiguous_head` advances one checkpoint
+> at a time, guaranteeing an entry exists at every height. The shared head advancing is
+> what keeps the *index* able to answer (§5.3); it does **not** by itself advance any
+> dynamic id's per-id coverage — a fresh id advances its own `coverage.head` on the
+> entries that carry its proof, whether those land at the head or below it (§5.2, §8
+> step 6).
 >
 > **(B) Bag-path binding-checked enqueue (the dynamic class-5 ids).** An `ObjectID`
 > enters the subscription registry as a verified child of a pinned bag **only** when
@@ -608,10 +635,10 @@ currency gate (see the admission invariant below).
 coverage: HashMap<ObjectID, CoverageInterval>,
 
 struct CoverageInterval {
-    subscribed_at_seq: CheckpointSequenceNumber,   // global contiguous head when subscribed; the entry AT this seq was folded before the id joined the request set, so it carries no proof for the id and floor is always STRICTLY above it. EXCEPTION — the construction-seeded roots (§5.1 site A): seeded BEFORE the index folds anything, they take subscribed_at_seq = seed.seq (the TrustedSeed/bootstrap height, §8), so their floor can begin at the very first folded checkpoint seed.seq+1. A version-derived inner pinned mid-stream takes subscribed_at_seq = the contiguous head at its first verified read, exactly like a bag child
-    floor: Option<CheckpointSequenceNumber>,       // first contiguously-folded seq that actually carries the id's proof; always > subscribed_at_seq (never ==)
+    subscribed_at_seq: CheckpointSequenceNumber,   // the resume seq the fresh id is requested from = the global contiguous head when it joined the request set (for the construction-seeded roots, §5.1 site A, this is seed.seq, the TrustedSeed/bootstrap height, §8; a version-derived inner pinned mid-stream takes the contiguous head at its first verified read, exactly like a bag child). The id's catch-up entries from this seq onward carry its proof, even when they arrive BELOW the global head and are classified AlreadyFolded (§8 step 2) — per-id coverage advancement is decoupled from the global head, so floor can land at subscribed_at_seq itself, NOT strictly above it
+    floor: Option<CheckpointSequenceNumber>,       // first per-id-chained seq that actually carries the id's proof; lands at subscribed_at_seq on a fresh id whose first proof-bearing entry chains onto the trusted seed/head_digest (no off-by-one)
     head: Option<CheckpointSequenceNumber>,        // per-id contiguous head
-    head_digest: Option<CheckpointDigest>,         // for per-id forward-chain
+    head_digest: Option<CheckpointDigest>,         // the digest of the entry at `head` — the per-id forward-chain anchor that the NEXT entry's previous_digest must match; this is what gates sub-head/AlreadyFolded advancement, NOT the global contiguous_head
     // DIAGNOSTIC-ONLY (not read by any verdict path): the digest of the
     // locally-trusted predecessor the floor entry chained onto (the seed
     // digest at the very floor, the prior contiguous-head digest thereafter).
@@ -637,43 +664,42 @@ forge a non-inclusion there — `non_inclusion_binds_id` rejects it — and won'
 the real inclusion), so `coverage.head(X)` stalls below the hidden modification and
 any anchor at/above the gap reads `Unknown`.
 
-**The subscribe instant and why `floor > subscribed_at_seq` is strict.**
-`subscribed_at_seq` is the index's global contiguous head `H` at the moment `X` is
-enrolled (§5.4 SUBSCRIBE). The entry at `H` was already folded **before** `X` was in
-the request set, so it carries **no** `SubscribedIdProof` for `X` — neither a
-`Modified` leaf nor an id-bound `Absent`. `X`'s own coverage therefore cannot begin
-at `H`: it begins at the first contiguously-folded checkpoint that actually carries a
-verified inclusion-or-id-bound-non-inclusion for `X` **and** forward-chains onto the
-already-trusted head. The first such checkpoint is `H + 1` (the next entry the
-receiver folds with `X` in the cohort). Consequently:
+**The subscribe instant — per-id coverage advances on sub-head entries too, so
+`floor` lands at `subscribed_at_seq` with no off-by-one.**
+`subscribed_at_seq` is the resume seq the fresh id `X` is requested from — the index's
+global contiguous head `H` at the moment `X` is enrolled (§5.4 SUBSCRIBE). Because the
+always-present roots/inners cohort drove the shared `contiguous_head` forward while `X`
+was being enrolled, the catch-up entries the receiver fetches for `X` from
+`subscribed_at_seq` onward arrive **below** the global head and are classified
+`AlreadyFolded` against it (§8 step 2). The earlier draft treated such sub-head entries
+as advancing nothing, which left `X` permanently `Unknown`; that is the gap this design
+closes. **Per-id coverage advancement is decoupled from the global head**: a sub-head
+entry that carries a verified inclusion-or-id-bound-non-inclusion for `X` **and**
+forward-chains onto the per-id chain anchor (the trusted seed at the floor, or
+`coverage.head_digest(X)` thereafter — *not* the global `contiguous_head`) advances
+`coverage.head(X)`, regardless of whether the global head already crossed that seq.
+Consequently:
 
-- **`floor(X) > subscribed_at_seq` always, never `==`.** There is no construction in
-  which a coverage floor lands exactly on the subscription instant: the floor is the
-  first *proof-bearing, chained* fold for `X`, and the `subscribed_at_seq` entry is
-  neither (it predates the id's enrollment). `floor(X) == subscribed_at_seq` is
-  unreachable.
-- **First-cohort floor lands at `subscribed_at_seq + 1`.** A freshly-enrolled id's
-  resume point is `resume(id) = cov.head(id).map(+1).unwrap_or(subscribed_at_seq)`
-  (§5.3); since `cov.head` is `None` on a fresh id, the receiver requests from
-  `subscribed_at_seq` for it — **but** the entry at `subscribed_at_seq` that comes
-  back does **not** advance `X`'s coverage, because the index already folded that seq
-  (it is `AlreadyFolded` for the head, §8 step 2) and `X`'s `floor` is set only on the
-  **first** entry the contiguity arm admits *while `X` is in the request set*, which is
-  `subscribed_at_seq + 1`. The practical effect is identical to requesting
-  `subscribed_at_seq + 1`: the floor lands at `subscribed_at_seq + 1`, never below.
-  (An implementation MAY request `subscribed_at_seq + 1` directly for fresh ids; the
-  observable floor is the same either way.)
-- **An anchor at `M == subscribed_at_seq` returns `Unknown` until folded.** A read of
+- **`floor(X)` lands at `subscribed_at_seq` — no off-by-one.** A fresh id's resume
+  point is `resume(id) = cov.head(id).map(+1).unwrap_or(subscribed_at_seq)` (§5.3);
+  since `cov.head` is `None` on a fresh id, the receiver requests from
+  `subscribed_at_seq`. The entry at `subscribed_at_seq` is `AlreadyFolded` against the
+  **global** head, but it is the **first** proof-bearing, per-id-chained entry for `X`
+  (it carries `X`'s proof and its `previous_digest` chains onto the index's already-trusted
+  summary at `subscribed_at_seq - 1` — for an empty-index root the trusted predecessor is
+  the seed, §8 step 6), so it **does** advance `X`'s coverage: `floor(X)` is set to
+  `subscribed_at_seq` itself and `head(X)` rises with it. There is no `+1`: the fresh
+  id's floor lands at its resume seq, not at `resume + 1`.
+- **An anchor at `M == subscribed_at_seq` sharpens once that entry folds.** A read of
   `X` version-anchored exactly at the subscription instant `M = subscribed_at_seq`
-  falls in `M < cov.floor` (since `floor > subscribed_at_seq == M`), so
-  `currency_subscribed` returns `Unknown → fallback` (§5.3) — never a verdict drawn
-  from a checkpoint `X` was not yet subscribed for. This is sound, not a false reject:
-  the per-read OCS inclusion + membership binding still gate the read. Once `X`'s
-  stream folds forward to a head `>= M` over a contiguous interval whose floor brackets
-  `M` — which can only happen if `M >= floor > subscribed_at_seq`, i.e. **never** for
-  `M == subscribed_at_seq` — the verdict could sharpen; an anchor sitting exactly at
-  the subscription instant is permanently `Unknown` from this index and always served
-  by per-read fallback.
+  reads `Unknown → fallback` (§5.3) only until `X`'s catch-up entry at
+  `subscribed_at_seq` folds and sets `floor(X) == M`; once the per-id interval brackets
+  `M`, the verdict sharpens to a definite `Current`/`Stale`/`NotLive` drawn from `X`'s
+  own folded coverage. While still `Unknown` the read is sound, not a false reject: the
+  per-read OCS inclusion + membership binding still gate it. The only anchors
+  permanently `Unknown` from this index are those **below** the deepest checkpoint the
+  node can fold at all — the seed (`M == seed.seq`, never folded, §8) — not the
+  subscription instant of a mid-stream id.
 
 **The per-id chain anchor — what plays `contiguous_head`'s role at the floor.**
 A "contiguous run" is only meaningful relative to a *seed* the node already
@@ -690,9 +716,10 @@ authentic; it does **not** prove `F` is contiguous with what this node already
 folded.
 
 Therefore the floor entry of every per-id interval **must forward-chain onto a
-summary the node already trusts independently of this stream**. There are exactly
-two such trusted predecessors, and which one applies depends only on whether the
-index has folded anything yet:
+summary the node already trusts independently of this stream**, and every later
+per-id entry **must forward-chain onto that id's own previously-admitted entry**.
+The trusted predecessor at the floor is one of exactly two, depending only on whether
+the index has folded anything yet; **thereafter the chain is per-id**:
 
 - **At the floor (index empty).** The first checkpoint `absorb_subscribed` folds
   must chain onto a checkpoint the node trusts **without** the relay — the
@@ -705,40 +732,61 @@ index has folded anything yet:
   own base. This is what defeats a self-consistent, internally forward-chained run
   `[F, F+1, …]` of genuinely BLS-signed but stale summaries — `F`'s `previous_digest`
   cannot equal `seed.digest` unless `F` genuinely is `seed.seq + 1`.
-- **Thereafter (index non-empty).** Every later checkpoint chains onto the index's
-  own already-committed global `contiguous_head` (`ocs_currency.rs:153`), admitted
-  exactly when `seq == head + 1 && previous_digest == Some(head_digest)`, identical
-  to `absorb`'s contiguity arm.
+- **At the floor (index non-empty, mid-stream fresh id).** A dynamic id enrolled
+  after the index has been folding takes its floor at `subscribed_at_seq` (the global
+  contiguous head when it joined). Its floor entry — fetched on catch-up, at
+  `seq == subscribed_at_seq` — chains onto the index's already-trusted summary at
+  `subscribed_at_seq - 1` (the entry the global head folded just before, whose digest the
+  index already holds, established from the seed by the static-set driver), so the floor
+  is anchored on a height the global chain has already reached from the trusted base,
+  never on a relay-chosen floating start. The entry is `AlreadyFolded` against the
+  *global* head yet still admitted into the id's coverage, because its chain check is the
+  **per-id** one below — not the global `+1` gate, which never examines a sub-head entry.
+- **Thereafter (per-id forward-chain).** Every later entry for `X` chains onto `X`'s
+  **own** `coverage.head_digest(X)` — the digest of `X`'s current per-id head —
+  admitted exactly when `previous_digest == Some(coverage.head_digest(X))`, the per-id
+  analog of `absorb`'s contiguity arm. This is what advances `coverage.head(X)` on a
+  sub-head/`AlreadyFolded` entry the global `contiguous_head` already crossed: the
+  per-id chain re-imposes position-binding on every entry that moves `X`'s coverage,
+  independent of where the global head sits.
 
 `coverage.floor(X)` is set to the first admitted seq for `X`. The trusted-predecessor
-chain is enforced by the **position gate** (§8 step 2), which verifies `previous_digest
-== Some(seed.digest)` at the floor and `previous_digest == Some(head_digest)`
-thereafter **before** the fold — that gate, not any stored field, is what discharges
-the soundness of the floor. `coverage.floor_anchored_on(X)` merely **records** which
-trusted predecessor digest was used (the seed digest at the very floor, the prior
-`contiguous_head` digest thereafter) as a **diagnostic** breadcrumb; it is **write-only
-— no verdict path reads it** (`currency_subscribed` consults only `floor`, `head`, and
-the index record, §5.3), and it MAY be dropped without weakening any verdict. This
-makes the trusted chain — seeded by `TrustedSeed`, then carried by
-`contiguous_head` — the per-id seed: the static-set driver (the always-present
-roots/inners stream) keeps the global frontier advancing checkpoint-by-checkpoint
-*from that trusted base*, so a per-id interval can only *attach* at a height the
-global chain has already reached from the seed — never at a relay-chosen floating
-start. Because the subscribed ids ride the **same entries** (one `summary` per
-checkpoint shared across all `K` ids, §4.2), the per-id floor and the global head
-advance over the *same* forward-chained summaries; there is no separate per-id trust
-root to forge.
+chain is enforced by the **position gate** (§8 step 2 + step 6's per-id chain check),
+which verifies `previous_digest == Some(seed.digest)` at an empty-index floor, chains a
+mid-stream floor onto the trusted summary at `subscribed_at_seq`, and verifies
+`previous_digest == Some(coverage.head_digest(X))` for every later per-id entry
+**before** it advances `X`'s coverage — that gate, not any stored field, is what
+discharges the soundness of the floor and of every sub-head advance.
+`coverage.floor_anchored_on(X)` merely **records** which trusted predecessor digest was
+used (the seed digest at an empty-index floor, the prior per-id `head_digest` thereafter)
+as a **diagnostic** breadcrumb; it is **write-only — no verdict path reads it**
+(`currency_subscribed` consults only `floor`, `head`, and the index record, §5.3), and
+it MAY be dropped without weakening any verdict. The static-set driver (the
+always-present roots/inners stream) keeps the global frontier advancing
+checkpoint-by-checkpoint *from the trusted base*, guaranteeing an entry exists at every
+height for a per-id interval to ride; but whether that interval **advances** is governed
+by the per-id chain, so a per-id interval can attach and advance over the same
+forward-chained summaries the global head crossed — at the head or below it — never at a
+relay-chosen floating start. Because the subscribed ids ride the **same entries** (one
+`summary` per checkpoint shared across all `K` ids, §4.2), the per-id chains and the
+global head advance over the *same* forward-chained summaries; there is no separate
+per-id trust root to forge.
 
-A relay that wants to bless a forged-start run must therefore make the global
-`contiguous_head` jump to its forged base — which the position gate already rejects:
-at the floor because `previous_digest != Some(seed.digest)` (`BrokenChain`), and
-thereafter because `absorb`'s `+1` / `previous_digest` gate (`270-287`) rejects it,
-while the single-writer-per-index invariant (§8) keeps any second writer from racing
-that head. With no trusted seed reachable, `coverage.floor(X)` is never set
-(`floor == None`) and every read of `X` returns `Unknown → fallback`. This is
-the exact S4/S7 seam closed: it is not enough that the global frontier *brackets*
-`M`; the id's own floor must be *anchored* on the same locally-trusted chain
-before any `Current`/`Stale`/`NotLive` verdict is issued.
+A relay that wants to bless a forged-start run must therefore either make the global
+`contiguous_head` jump to its forged base — which the position gate rejects at an
+empty-index floor because `previous_digest != Some(seed.digest)` (`BrokenChain`) and at
+the head because `absorb`'s `+1` / `previous_digest` gate (`270-287`) rejects it — **or**
+advance a fresh id's per-id coverage onto a forged sub-head base, which the per-id chain
+check (§8 step 6) rejects because the forged entry's `previous_digest` cannot match
+`coverage.head_digest(X)` (at an empty-index floor) or the trusted summary at
+`subscribed_at_seq` (at a mid-stream floor). The single-writer-per-index invariant (§8)
+keeps any second writer from racing the head. With no trusted seed reachable,
+`coverage.floor(X)` is never set (`floor == None`) and every read of `X` returns
+`Unknown → fallback`. This is the exact S4/S7 seam closed: it is not enough that the
+global frontier *brackets* `M`; the id's own floor must be *anchored* on the same
+locally-trusted chain — and every entry that advances its coverage, at the head or below
+it, re-chained against the per-id anchor — before any `Current`/`Stale`/`NotLive`
+verdict is issued.
 
 ### 5.3 `currency_subscribed(id, M)` — the gated verdict
 
@@ -765,15 +813,16 @@ below `cov.floor` (anchor predates the id's subscription) or `M` above `cov.head
 (the id's stream stalled or was pruned) both yield `Unknown` → fallback, never a
 false `Current` and never a false `Stale`.
 
-> **The subscription-instant boundary.** Because `floor(X) > subscribed_at_seq`
-> strictly (§5.2), an anchor at `M == subscribed_at_seq` — a read whose served object
-> was last modified exactly at the checkpoint that was the global head when `X` was
-> enrolled — satisfies `M < cov.floor` and returns `Unknown → fallback`. This is the
-> off-by-one that the floor's strict inequality forces: the entry at `subscribed_at_seq`
-> was folded before `X` joined the request set, so it carries no proof for `X` and
-> cannot bracket an anchor at its own seq. `M == subscribed_at_seq` is therefore
-> *permanently* `Unknown` from this index (the floor can never descend to it) and is
-> always served by per-read fallback — sound, never a false verdict.
+> **The subscription-instant boundary.** Because per-id coverage advances on sub-head
+> entries too (§5.2), a fresh id's `floor(X)` lands at `subscribed_at_seq` itself (its
+> catch-up entry at `subscribed_at_seq` is `AlreadyFolded` against the *global* head but
+> still advances `X`'s coverage). So a read anchored at `M == subscribed_at_seq` reads
+> `Unknown → fallback` only until `X`'s catch-up entry at `subscribed_at_seq` folds and
+> sets `floor(X) == M`; thereafter the per-id interval brackets `M` and the verdict
+> sharpens to a definite `Current`/`Stale`/`NotLive`. There is no off-by-one at the
+> subscription instant. The **only** anchor permanently `Unknown` from this index is one
+> below the deepest foldable checkpoint — the seed (`M == seed.seq`, never folded, §8) —
+> which is sound and served by per-read fallback, never a false verdict.
 
 `currency()` (global) is retained unchanged for the full-set path; `check_currency`
 dispatches to `currency_subscribed` for ids governed by a subscription index and to
@@ -790,8 +839,10 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
    `IkaObjectsConfig`, `messages_dwallet_mpc.rs:813-818`), recording each with
    `subscribed_at_seq = seed.seq` — the `TrustedSeed`/bootstrap height (§8) — and
    `floor = None`, so a root's floor can begin at the very first folded checkpoint
-   `seed.seq + 1` and the always-present static set drives the shared head from the
-   trusted base (§8). Each version-derived inner
+   `seed.seq + 1`. The always-present static set drives the shared `contiguous_head`
+   from the trusted base (§8); each subscribed id (root or dynamic) advances its own
+   `coverage.head` on the entries carrying its proof, at the head or below it (§5.2,
+   §8 step 6). Each version-derived inner
    (`derive_versioned_child_id(root, outer.version)`) is pinned on its first verified
    read, recorded with `subscribed_at_seq = current contiguous head` like any
    mid-stream id. The pinned roots/inners are **never GC'd** (§5.4 GC) and are in
@@ -906,16 +957,19 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
    `resume(id) = cov.head(id).map(+1).unwrap_or(subscribed_at_seq)` and issues one
    `subscribed_changeset_page` per cohort with `from_seq = resume` shared across that
    cohort's ids (§4.3 Resume). For a fresh id (`cov.head == None`) the resume point is
-   `subscribed_at_seq`; the entry at `subscribed_at_seq` returns `AlreadyFolded` for
-   the head (the index already folded that seq) and does **not** advance the fresh id's
-   coverage, so the **first** seq the id's `floor` can take is `subscribed_at_seq + 1`
-   — the first contiguity-arm fold that admits the id while it is in the request set.
+   `subscribed_at_seq`; the entry at `subscribed_at_seq` returns `AlreadyFolded` for the
+   **global** head (the index already folded that seq), but per-id coverage is decoupled
+   from the global head — that entry carries the fresh id's proof, so it **does** advance
+   the id's coverage: `floor` is set to `subscribed_at_seq` (the first proof-bearing,
+   per-id-chained entry for the id) and `head` rises with it (§5.2, §8 step 6). There is
+   no off-by-one: the fresh id's `floor` lands at its resume seq, not at `resume + 1`.
    This replaces a single request at the global `min over ids of resume(id)`, which
    would re-prove every already-current id back to the slowest id's lag and forfeit the
-   §7 `O(K · log N)`-per-checkpoint bound. As each cohort's entries fold, every id's
-   `floor` is set to the first contiguously-folded seq that carries the id's proof —
-   strictly `> subscribed_at_seq`, never `==` it (§5.2) — and `head` rises only with
-   that id's contiguous frontier, so an id graduates to a higher (closer-to-head)
+   §7 `O(K · log N)`-per-checkpoint bound. As each cohort's entries fold (at the head,
+   on drain, or below the head), every id's `floor` is set to the first per-id-chained
+   seq that carries the id's proof, and `head` rises only with that id's own contiguous
+   frontier — independent of whether the global `contiguous_head` had already crossed
+   those seqs (§5.2, §8 step 6) — so an id graduates to a higher (closer-to-head)
    cohort on the next tick and is never re-proven below its own `cov.head`. New ids
    enqueued by SUBSCRIBE join whichever cohort matches their `subscribed_at_seq` resume
    point.
@@ -1177,10 +1231,12 @@ boundary fails closed (stall) rather than folding unverified.
 
 **(b) Per-id chain re-anchor is automatic at the first checkpoint of `E+1`.** No
 per-id re-anchor step is needed: the `previous_digest` of `E+1`'s first checkpoint
-chains onto `E`'s last `head_digest`, so a subscribed id's `CoverageInterval`
-advances across the boundary exactly as within an epoch — `head` rises and
-`head_digest` is set from the new summary, with the BLS anchor having silently moved
-to `committee[E+1]` inside `verify_summary`. The id's `IdRecord.last_seq` and its
+chains onto the id's own `coverage.head_digest(id)` (which at the boundary holds `E`'s
+last summary digest — the per-id chain anchor of §5.2/§8 step 6, **not** the global
+`contiguous_head`), so a subscribed id's `CoverageInterval` advances across the boundary
+exactly as within an epoch — `coverage.head(id)` rises and `coverage.head_digest(id)` is
+set from the new summary, with the BLS anchor having silently moved to `committee[E+1]`
+inside `verify_summary`. The id's `IdRecord.last_seq` and its
 `(version, digest)` leaf are epoch-agnostic (they live in `ModifiedObjectTree`,
 which carries no epoch), so the per-id `previous_digest` chain crossing a boundary
 needs no new field. The single invariant to preserve: an interval is only valid if
@@ -1400,10 +1456,14 @@ only at `head_seq + 1` and only if `incoming.previous_digest == Some(head_digest
 `AlreadyFolded`/`Queued`/`BrokenChain`, never folded as the head. `absorb_subscribed`
 inherits the identical gate (§8). Two distinct forgeries this closes:
 
-- **Skip.** A successor summary that does not chain onto the per-id head is
-  `BrokenChain`/queued/dropped (`absorb` `258-287`, `drain_pending` `379-382`);
-  `coverage.head(X)` does not advance over the gap, so any anchor at/above it reads
-  `Unknown` → fallback.
+- **Skip.** A successor summary that does not forward-chain — onto the **global**
+  frontier (the entry is `BrokenChain`/queued/dropped, `absorb` `258-287`,
+  `drain_pending` `379-382`) **or**, for an id catching up below the head, onto that
+  id's own `coverage.head_digest(X)` — cannot advance `coverage.head(X)` over the gap,
+  so any anchor at/above the gap reads `Unknown` → fallback. The per-id chain check
+  (§5.2, §8 step 6) is what discharges skip for a sub-head catch-up entry, since such
+  an entry is `AlreadyFolded` against the global head and the global `+1` gate never
+  examines it.
 - **Stale replay.** A genuine `Absent(OCSNonInclusionProof)` for `C-100` (where `X`
   really was not modified) carries `C-100`'s correctly-BLS-signed summary, whose
   artifacts digest genuinely commits `C-100`'s tree, and `verify_proof`
@@ -1412,13 +1472,19 @@ inherits the identical gate (§8). Two distinct forgeries this closes:
   The position gate rejects it: replaying it in `C`'s slot fails the
   `sequence_number() == expected_next_seq` check, and chaining `C-100`'s summary onto
   the head fails `previous_digest`. So `X`'s real modification at `C` cannot be masked
-  by a valid-but-stale absence — `coverage.head(X)` cannot cross `C` without the
-  proof that actually verifies at `C`'s root, which (since `X` was modified there)
-  can only be an inclusion at the real `(X,v,d)` leaf.
+  by a valid-but-stale absence — `coverage.head(X)` cannot cross `C` without the proof
+  that actually verifies at `C`'s root (which, since `X` was modified there, can only be
+  an inclusion at the real `(X,v,d)` leaf), and that holds whether `C` is folded at the
+  global head or crossed by `X` below the head on catch-up: the per-id forward-chain on
+  `coverage.head_digest(X)` (§5.2, §8 step 6) re-imposes position-binding on every entry
+  that advances `X`'s coverage, not only on the entry at the global frontier.
 
 > **The decisive correction over the unsound framings:** omission is discharged by
 > the **per-id coverage-interval invariant + completeness contract**, NOT by the
-> global frontier and NOT by contiguity alone. The fatal refutations all exploited
+> global frontier and NOT by global contiguity alone — and, because per-id coverage
+> advances on sub-head catch-up entries too, the invariant binds **every** entry that
+> moves `coverage.head(X)`, including those the global `+1` gate classifies
+> `AlreadyFolded` (§5.2, §8 step 6). The fatal refutations all exploited
 > the assumption that "global frontier brackets `M`" implies "X was checked over
 > `[M,head]`." It does not, and `currency_subscribed` no longer makes that
 > inference.
@@ -1703,16 +1769,23 @@ checkpoint and shared across all `K` ids** in the entry (§4.2), so the global h
 and every per-id `CoverageInterval` advance over the *same* chained summaries; there
 is no separate per-id trust root and no separate per-id chain to forge. A
 freshly-subscribed id's interval can only *attach* at a height the shared head has
-already reached from its trusted base (§5.2), and from there `coverage.head(id)`
-rises with that id's own contiguous frontier. The "memory bounded by `K`" claim (§7)
+already reached from its trusted base (§5.2) — the global head bounds the *reachable*
+attach height — but the id's `coverage.head(id)` then rises with that id's **own**
+per-id-chained frontier over the entries that carry its proof, **whether those entries
+land at the global head or below it** (a catch-up entry is `AlreadyFolded` against the
+global head yet still advances the id's coverage, §8 step 6). The shared head advancing
+is what guarantees an entry exists at every height for the id to ride; it is not itself
+the thing that advances the id's coverage. The "memory bounded by `K`" claim (§7)
 is unchanged: one index, `O(K)` `IdRecord`s + `O(K)` `CoverageInterval`s.
 
 > **A static-set proof is not optional padding — it is the head driver.** If a page
 > ever returned entries that omitted the pinned roots/inners ids, that page would
 > fail the §4.3 completeness contract (`proofs` keyset ≠ requested `ids`) and be
 > rejected. So the receiver always requests the pinned set in *every* cohort whose
-> `from_seq` is the steady-state head (§5.4 CATCH-UP), guaranteeing the shared head
-> never stalls for lack of an entry while honest checkpoints exist. A genuine stall
+> `from_seq` is the steady-state head (§5.4 CATCH-UP), guaranteeing the shared
+> `contiguous_head` never stalls for lack of an entry while honest checkpoints exist —
+> which in turn guarantees an entry exists at every height for a sub-head id to ride and
+> advance its own `coverage.head` over (§8 step 6). A genuine stall
 > (e.g. an awaited `committee[E+1]`, §5.6(a)) stalls **all** ids together and is
 > surfaced as a boundary stall, not a selective-id stall (§9).
 
@@ -1790,12 +1863,26 @@ The steps:
      `F` (even a genuinely-BLS-signed run `[F, F+1, …]` of *real but stale*
      checkpoints) fails here because `F`'s `previous_digest` cannot equal
      `seed.digest` unless `F` is genuinely `seed.seq + 1`.
-   - **Index non-empty**: classify exactly as `absorb` — `AlreadyFolded` at/below
-     head, the contiguity arm at `head + 1` requiring `previous_digest ==
-     Some(head_digest)`, `Queued` for a forward gap.
-   A stale-but-valid summary for an *older* checkpoint fails the position gate (wrong
-   `seq` and/or non-chaining `previous_digest`) and is never folded — closing the
-   replay where a genuine non-inclusion for `C-100` is served in `C`'s slot.
+   - **Index non-empty**: classify exactly as `absorb` for the *global* head —
+     `AlreadyFolded` at/below head, the contiguity arm at `head + 1` requiring
+     `previous_digest == Some(head_digest)`, `Queued` for a forward gap. **`AlreadyFolded`
+     governs the global `contiguous_head` and the index fold only; it does NOT discard
+     the entry for per-id coverage.** A sub-head entry (`seq <= contiguous_head`) carries
+     a fresh, lagging id's catch-up proof — the always-present roots/inners cohort drove
+     the global head ahead while that id was being enrolled — and step 6 advances the
+     id's per-id coverage from it via the per-id chain check, gated against the summary's
+     committee signature (step 1) and artifacts binding (step 4) at the **same gated
+     `seq`**. The position gate verifies the summary sits at *its own* checkpoint position
+     (its `sequence_number()` and `previous_digest` are the summary's real ones); a
+     sub-head entry whose `summary` is genuine and at its real position is therefore a
+     legitimate per-id catch-up entry, not a replay.
+   A stale-but-valid summary for an *older* checkpoint fails the position gate **for the
+   head** (wrong `seq` and/or non-chaining `previous_digest`) and is never folded into
+   the index — closing the replay where a genuine non-inclusion for `C-100` is served in
+   `C`'s slot **of the head stream**. A sub-head per-id catch-up entry is a different
+   thing: its `summary` genuinely sits at `seq` and the entry advances *only* the per-id
+   coverage of the lagging id whose chain anchor it matches (step 6), never the global
+   head and never any other id's coverage out of position.
 3. **Completeness**: error if `proofs` keyset ≠ `requested_ids` (§4.3).
 4. **Per-id proof verification** against **this position-gated** summary's artifacts
    digest:
@@ -1807,33 +1894,69 @@ The steps:
    `drain_pending` machinery (no change to `fold`), reusing `prune` **extended** to
    also bound the `coverage` map (§5.4 *Coverage-map pruning*) — `prune` is the one
    piece of that machinery that is not byte-identical for the subscribed index,
-   because the full-set `prune` sweeps only `self.index`. The full-set
-   `from_object_states` artifacts-digest check (`241-249`) is **replaced** for this
-   path by the per-id binding (step 4) **plus** the position gate (step 2) — the
+   because the full-set `prune` sweeps only `self.index`. The `fold` step writes an
+   id's `IdRecord` under last-write-wins by `seq`, so a **sub-head** `Modified` delta a
+   lagging id rides (at `seq <= contiguous_head`) updates that id's record only when it
+   is the id's latest known modification and never clobbers a later record — the index
+   record and the per-id coverage (step 6) advance over the *same* sub-head entries. The
+   full-set `from_object_states` artifacts-digest check (`241-249`) is **replaced** for
+   this path by the per-id binding (step 4) **plus** the position gate (step 2) — the
    former proves *what* is in the committed root, the latter proves *which* checkpoint's
    root it is.
-6. **Advance coverage on the gated `seq`, on both the head path and the drain path.**
-   The entry's **full requested-id keyset** (the `Modified` ids ∪ the `Absent` ids =
-   `requested_ids`, by step 3) is the set whose `coverage.head` this checkpoint
-   advances — an `Absent` id writes nothing to `index` but its coverage **still**
-   advances (the id's prior record stays its latest, which is exactly what `Current`
-   depends on). On an id's **first** contiguous fold its `floor` is set (always to a
-   `seq > subscribed_at_seq`, §5.2), but **only** because step 2's position gate
-   *already admitted* this checkpoint by the contiguity arm (its `previous_digest`
-   chained onto the index's already-trusted head — the trusted seed at the floor, or
-   the prior contiguous head thereafter), never onto a relay-supplied floating base.
-   The position gate (step 2) is the soundness boundary; setting `floor` here is a
-   bookkeeping consequence of a fold the gate has already blessed. `floor_anchored_on`
-   is updated alongside as a **diagnostic-only** breadcrumb of the trusted predecessor
-   digest — it is never read by `currency_subscribed` (§5.3) and may be dropped without
-   affecting any verdict. If the entry is `Queued` (a gap precedes it) **nothing advances yet** — not
-   the index and not coverage — and the id's `floor` stays `None` until the gap
-   drains. Because the head and drain paths fold the *same* `PendingChangeset`
-   carrying the *same* `covered_ids`, an entry that arrives out of order and drains
-   later advances coverage for every id it covered **at drain time**, identically to
-   one folded directly at the head (see *Drain* below). Since `head`/coverage is only
-   ever advanced to a position-gated, forward-chained `seq`, no id's coverage can be
-   advanced past a checkpoint by a proof drawn from a different checkpoint.
+6. **Advance per-id coverage on every verified entry — head, drain, OR
+   sub-head/`AlreadyFolded` — each gated by a per-id forward-chain, decoupled from the
+   global `contiguous_head`.** The entry's **full requested-id keyset** (the `Modified`
+   ids ∪ the `Absent` ids = `requested_ids`, by step 3) is the set whose
+   `coverage.head` this checkpoint may advance — an `Absent` id writes nothing to
+   `index` but its coverage **still** advances (the id's prior record stays its latest,
+   which is exactly what `Current` depends on). For **each** id `X` in that keyset,
+   coverage advances **iff** the entry forward-chains onto `X`'s own per-id anchor at
+   the gated `seq`:
+
+   - **Per-id chain check (the soundness boundary for sub-head advancement).** Let `seq
+     = summary.sequence_number()` (the position-gated seq of step 2). `X`'s coverage
+     advances to `seq` only if `seq == coverage.head(X) + 1 && summary.previous_digest
+     == Some(coverage.head_digest(X))` — `X`'s **own** per-id head, not the global
+     `contiguous_head`. On `X`'s **first** entry (`coverage.head(X) == None`) the anchor
+     is the trusted predecessor of §5.2: at an empty-index floor, `seq == seed.seq + 1
+     && previous_digest == Some(seed.digest)`; at a mid-stream floor, the floor entry sits
+     at `seq == subscribed_at_seq` and chains onto the index's **already-trusted summary
+     at `subscribed_at_seq - 1`** (the entry the global head folded just before, whose
+     digest the index already holds), i.e. `previous_digest ==
+     Some(digest(subscribed_at_seq - 1))`. (Equivalently: `subscribed_at_seq` is itself
+     at-or-below the global `contiguous_head`, so its predecessor digest is already a
+     trusted index record — the floor never chains onto a relay-supplied base.) On success
+     `coverage.head(X) = seq`, `coverage.head_digest(X) = summary.digest()`, and on the
+     first such advance `coverage.floor(X) = seq` (which, for a mid-stream fresh id, is
+     `subscribed_at_seq` itself — **no off-by-one**, §5.2). An entry that does **not** chain onto `X`'s
+     anchor (a gap or a forged sub-head base) advances neither `coverage.head(X)` nor
+     `floor(X)` — it is a per-id `BrokenChain`, leaving `X` `Unknown` over the gap. This
+     per-id chain — **not** the global `+1` gate of step 2, which never examines a
+     sub-head entry — is what re-imposes position-binding on every entry that moves
+     `X`'s coverage, so a stale-but-signed sub-head proof can mask no omission below the
+     head.
+   - **Head path (`seq == contiguous_head + 1`).** The entry also advances the global
+     `contiguous_head` and folds its `Modified` deltas into `index` (step 5). Every id
+     in `requested_ids` whose per-id chain matches (which, at the head, is every id that
+     has been continuously covered) advances in lockstep.
+   - **Sub-head path (`seq <= contiguous_head`, `AlreadyFolded` for the head).** The
+     global head and `index` are untouched (the seq was already folded), but the per-id
+     chain check still runs for each id in `requested_ids` and advances the coverage of
+     any lagging id whose anchor it matches. This is what lets a freshly-subscribed
+     dynamic id whose catch-up entries arrive below the head advance its own coverage
+     and leave `Unknown` — the gap this design closes.
+   - **Drain path.** A `Queued` entry advances nothing yet — not the index, not coverage
+     — until the gap before it drains. When `drain_pending` pulls it, the same per-id
+     chain check runs against each covered id's anchor, so an out-of-order entry advances
+     coverage for every id it covered **at drain time**, identically to one folded
+     directly (see *Drain* below).
+
+   `floor_anchored_on(X)` is updated alongside `floor`/`head` as a **diagnostic-only**
+   breadcrumb of the trusted predecessor digest the advance chained onto — it is never
+   read by `currency_subscribed` (§5.3) and may be dropped without affecting any verdict.
+   Because every advance — head, sub-head, or drain — is gated on a forward-chain onto a
+   position-gated, committee-signed `seq`, no id's coverage can be advanced past a
+   checkpoint by a proof drawn from a different checkpoint.
 
 **Where the seed comes from, and how the seed checkpoint itself is treated.**
 `TrustedSeed` is the node's own bootstrap/ratchet trust anchor, read out-of-band from
@@ -1920,20 +2043,26 @@ the seed checkpoint is never folded, no id's `floor` can be `<= seed.seq`: the f
 foldable checkpoint is `seed.seq + 1`, so `floor >= seed.seq + 1 > seed.seq` for every
 id. An object whose last modification was at `M == seed.seq` with **no** later
 modification therefore has `M < cov.floor`, and `currency_subscribed` returns `Unknown
-→ per-read fallback` (§5.3) — it is **not** a false verdict. This is the same off-by-one
-as the subscription-instant boundary (§5.2/§5.3): a checkpoint that was never folded
-with the id in the request set (here, never folded at all) cannot anchor a currency
-verdict, so the read falls back to the per-read OCS inclusion + membership binding,
-which is sound. The full-set path exhibits the identical behavior at its own
+→ per-read fallback` (§5.3) — it is **not** a false verdict. This is the **only**
+permanently-`Unknown` anchor from this index (§5.2/§5.3): the seed checkpoint is never
+folded at all, so no id's coverage can ever bracket it — unlike a mid-stream fresh id's
+subscription instant, whose catch-up entry at `subscribed_at_seq` *does* fold and set
+`floor == subscribed_at_seq` (the decoupled, no-off-by-one model, §5.2/§8 step 6). A
+checkpoint that was never folded cannot anchor a currency verdict, so the read falls
+back to the per-read OCS inclusion + membership binding, which is sound. The full-set
+path exhibits the identical behavior at its own
 `oldest_folded` floor — an anchor at `seed.seq` is below `oldest_folded` (which the
 full-set `absorb` also sets to its first fold at `seed.seq + 1`) and `currency` returns
 `Unknown` there too — so this is not a property the subscription introduces.
 
-This makes `contiguous_head` the per-id seed for every interval (§5.2): the
-always-present pinned roots/inners stream keeps the shared head advancing
-checkpoint-by-checkpoint *from the trusted base*, so a per-id interval can only attach
-at a height the global chain has already reached from that base — never at a
-relay-chosen floating start.
+This makes the **trusted base** the anchor of every interval (§5.2): the always-present
+pinned roots/inners stream keeps the shared `contiguous_head` advancing
+checkpoint-by-checkpoint *from that base*, guaranteeing an entry exists at every height,
+so a per-id interval can only attach at a height the global chain has already reached
+from the base — never at a relay-chosen floating start. Whether the interval then
+*advances* is governed by the per-id chain (`coverage.head_digest(id)`, seeded by the
+trusted base, §8 step 6), so it advances over the same forward-chained summaries the
+global head crossed — at the head or below it — never out of position.
 
 **Drain (coverage advances on out-of-order entries).** `drain_pending`
 (`ocs_currency.rs:368-385`) currently folds a queued entry's `object_states` into the
@@ -2179,16 +2308,24 @@ direct/pre-catchup nodes.
 
 - `currency_subscribed` bracket: `Unknown` for `M < floor`, `M > head`, `floor None`,
   `head None`, untracked id; `Current`/`Stale`/`NotLive` only inside `[floor, head]`.
-  Include the **subscription-instant boundary**: an anchor at `M == subscribed_at_seq`
-  reads `Unknown` (it is `< floor`, since `floor > subscribed_at_seq` strictly, §5.2),
-  and an anchor at `M == floor == subscribed_at_seq + 1` reads a definite verdict once
-  `head >= M`.
-- `floor` strict inequality: for any folded id, `floor(id) > subscribed_at_seq` always,
-  never `==` — assert no fold sequence (including out-of-order drain) ever sets a floor
-  equal to the subscription instant.
+  Include the **subscription-instant boundary**: a fresh id subscribed at
+  `subscribed_at_seq` whose catch-up entry at `subscribed_at_seq` (`AlreadyFolded`
+  against the global head) folds sets `floor == subscribed_at_seq`, so an anchor at
+  `M == subscribed_at_seq` reads `Unknown` only until that entry folds and then sharpens
+  to a definite verdict once `head >= M` — there is **no** off-by-one at the
+  subscription instant (§5.2, §8 step 6).
+- `floor` lands at the resume seq (no off-by-one): for a fresh id, the first
+  proof-bearing, per-id-chained entry sets `floor(id) == subscribed_at_seq` (its resume
+  seq), not `subscribed_at_seq + 1` — assert this for both the head/sub-head and the
+  out-of-order drain path. The only floor that cannot descend to a given seq is one
+  below the seed (`floor > seed.seq`, §8), never the subscription instant.
 - `absorb_subscribed` folds a per-id delta identically to the full-set `fold` for the
   same ids (last-write-wins in contiguous seq order).
-- Coverage `floor`/`head` advance only on a contiguous, X-proven, forward-chained run.
+- Coverage `floor`/`head` advance only on an X-proven entry that forward-chains onto
+  `X`'s own per-id anchor (`coverage.head_digest(X)`, or the trusted seed/the trusted
+  summary at `subscribed_at_seq` at the floor) — at the head, on drain, OR below the
+  head (`AlreadyFolded` against the global head), decoupled from the global
+  `contiguous_head` (§5.2, §8 step 6).
 - Tombstone: a `Modified` entry carrying `[99;32]`/`[88;32]` → `Deleted`/`Wrapped`
   → `NotLive`.
 
@@ -2219,29 +2356,33 @@ direct/pre-catchup nodes.
     at the wrap, the stale `Wrapped` record makes `currency_subscribed(X, M')` read
     `Stale` — a false reject. Companion case: an id `Deleted` at `M` and never
     re-folded stays `NotLive` and is legitimately evictable (contrast with `Wrapped`).
-5. **Premature-Current via global-frontier confusion (fatal S4 regression), with the
-   subscription-instant boundary.** Construct it on the SINGLE index in `Subscribed`
-   mode. Seed the index from a `TrustedSeed` at the genesis anchor; advance the shared
-   head to `5000` by folding the always-present pinned roots/inners every checkpoint;
-   subscribe fresh id `X` at head `5000` (so `subscribed_at_seq(X) == 5000`) with a
-   genuine inclusion anchored at `M = 4000` but never fold `X`'s coverage over
-   `[4000, 5000]`. Assert `currency_subscribed(X, 4000)` returns `Unknown`
-   (`cov.floor(X)` is `None` / `> 4000`), never `Current`/`Stale`. This proves the
+5. **Premature-Current via global-frontier confusion (fatal S4 regression).**
+   Construct it on the SINGLE index in `Subscribed` mode. Seed the index from a
+   `TrustedSeed` at the genesis anchor; advance the shared head to `5000` by folding the
+   always-present pinned roots/inners every checkpoint; subscribe fresh id `X` at head
+   `5000` (so `subscribed_at_seq(X) == 5000`) with a genuine inclusion anchored at
+   `M = 4000` but never fold `X`'s coverage over `[4000, 5000]`. Assert
+   `currency_subscribed(X, 4000)` returns `Unknown` (`cov.floor(X)` is `None`, or
+   `> 4000` once `X` catches up from `5000`), never `Current`/`Stale`. This proves the
    single shared head does not bless `X`'s anchor — the global frontier brackets `4000`
-   yet `X`'s own floor never does.
-   **Subscription-instant boundary case (`M == subscribed_at_seq`).** Continue the
-   same fixture: now fold `X`'s coverage **forward** from the subscription instant by
-   feeding entries from `5001` onward (each carrying `X`'s proof, forward-chained), so
-   `cov.floor(X)` lands at `5001` and `cov.head(X)` rises above `5000`. Assert that an
-   anchor at `M == 5000` (exactly `subscribed_at_seq`) **still** reads `Unknown`,
-   because `floor(X) == 5001 > 5000` and the §5.3 bracket rejects `M < floor` — the
-   entry at `5000` was folded before `X` joined the request set and carries no proof
-   for `X`, so no fold can ever make `floor(X) == subscribed_at_seq`. Assert also that
-   `floor(X)` is strictly `> subscribed_at_seq` (never `==`) and that an anchor at
-   `M == 5001` (the floor) **does** sharpen to a definite verdict once
-   `cov.head(X) >= 5001`. This pins the off-by-one: the first contiguously-folded
-   checkpoint that carries `X`'s proof is `subscribed_at_seq + 1`, and an anchor at the
-   subscription instant is permanently `Unknown → fallback`.
+   yet `X`'s own floor never does (`4000 < subscribed_at_seq(X)`, below where `X` could
+   ever begin folding). This arm tests fail-closed soundness and is unchanged by the
+   decoupled advancement model: an anchor below the id's own folded coverage reads
+   `Unknown`.
+5b. **Sub-head catch-up advances a fresh id's coverage (the closed-gap regression).**
+   Continue the same fixture (shared head already at `5000`, `X` fresh with
+   `subscribed_at_seq(X) == 5000`). Feed `X`'s catch-up entries for `[5000, ...]` that
+   land **below** the global `contiguous_head` (classified `AlreadyFolded` for the
+   global head), each carrying `X`'s `Modified`/`Absent` proof and forward-chaining onto
+   `X`'s per-id anchor (the trusted summary at `subscribed_at_seq`, then
+   `coverage.head_digest(X)`). Assert these sub-head entries **do** advance
+   `coverage.floor(X)` and `coverage.head(X)` — decoupled advancement, §5.2/§8 step 6 —
+   so `X` is **not** stuck `Unknown` below the head. Assert `coverage.floor(X) == 5000`
+   (its resume seq, **no** off-by-one, **not** `5001`), and that once `coverage.head(X)`
+   rises past an anchor `M` (e.g. a genuine inclusion `X` carries at some `M' >= 5000`)
+   `currency_subscribed(X, M')` sharpens from `Unknown` to a definite verdict. This is
+   the direct regression for the gap a fresh dynamic id whose catch-up entries arrive
+   below the head must still advance its own coverage.
 6. **Stalled-stream-looks-healthy (fatal S7 regression).** Outer id healthy to head
    `200`; inner id frozen at `coverage.head = 160` while really modified at `175`.
    `currency_subscribed(inner, 155)` is inside `[floor, 160]` only if `160 >= 155`;
@@ -2380,11 +2521,18 @@ direct/pre-catchup nodes.
     position gate (§8 step 2), which is the subject of tests #18 and #19, not by this
     recorded digest. (An implementation that drops `floor_anchored_on` entirely drops
     only this diagnostic line, not any verdict.)
-22. **Single-index static-set drives the shared head every checkpoint.** Subscribe only
-    the pinned roots/inners plus one dynamic id that is `Absent` every checkpoint; fold
-    a contiguous run and assert `highest_contiguous_seq()` advances by 1 per entry (the
-    static-set proofs alone advance the head) and the dynamic id's `coverage.head`
-    tracks it.
+22. **Single-index static-set drives the shared head every checkpoint.** Subscribe
+    only the pinned roots/inners plus one dynamic id that is `Absent` every checkpoint;
+    fold a contiguous run and assert `highest_contiguous_seq()` advances by 1 per entry
+    (the static-set proofs alone advance the **global** head) and the dynamic id's
+    `coverage.head` tracks it **because each entry carries the dynamic id's `Absent`
+    proof** — i.e. the dynamic id advances on its own per-id-chained proofs, not because
+    the global head moved. Companion arm: subscribe a **second** dynamic id mid-run, at
+    a height where the global head is already ahead, and feed it catch-up entries that
+    land **below** `contiguous_head` (classified `AlreadyFolded` for the global head);
+    assert those sub-head entries still advance the second id's `coverage.floor`/`head`
+    (decoupled advancement, §5.2/§8 step 6), so a freshly-subscribed id below the head
+    is not stuck `Unknown`.
 22a. **Receiver seeds the static roots at construction; head advances on a root-only
     modification.** Construct a `SubscribedChangesetReceiver` and assert that, **before
     any page is folded**, its registry already holds the two static roots
@@ -2539,6 +2687,28 @@ direct/pre-catchup nodes.
     seq-0 / no-predecessor self-bootstrap: with seed `None` the index's
     `contiguous_head` stays `None` and no entry is admitted as a floor, distinguishing
     the subscription path from the full-set `setup.rs:347-351` `.unwrap_or(0)` behavior.
+47. **Per-id forward-chain guards a sub-head entry (per-id `BrokenChain`).** Subscribe
+    id `X`; advance the global `contiguous_head` ahead via the static cohort so any of
+    `X`'s catch-up entries land below the head (`AlreadyFolded` for the global head).
+    Feed `X` a sub-head `Absent` entry whose `summary.previous_digest` does **not** match
+    `coverage.head_digest(X)`. Assert the entry advances neither `coverage.head(X)` nor
+    `coverage.floor(X)` nor any verdict (a per-id `BrokenChain`), proving the **per-id**
+    chain check (§5.2/§8 step 6) — not the global `+1` gate of step 2 — guards sub-head
+    advancement, and that a stale-but-signed sub-head proof cannot mask an omission below
+    the head. Then feed the genuine chaining entry (`previous_digest ==
+    coverage.head_digest(X)`) and assert it advances `X`'s coverage.
+48. **Fresh-id floor bootstraps at the resume seq (no off-by-one).** Two cases.
+    (a) *Empty-index root:* with an empty index seeded by `TrustedSeed`, subscribe a
+    construction-seeded root with `subscribed_at_seq == seed.seq`; feed the first
+    proof-bearing entry at `seed.seq + 1` whose `previous_digest == seed.digest`; assert
+    `coverage.floor(root) == seed.seq + 1` (the first foldable checkpoint, `> seed.seq`)
+    and that the head bootstraps from the empty index. (b) *Mid-stream dynamic id:* with
+    the global head already at `H`, subscribe a fresh id `X` with `subscribed_at_seq == H`;
+    feed `X`'s first proof-bearing catch-up entry at `H` (`AlreadyFolded` against the
+    global head, its `previous_digest` chaining onto the index's already-trusted summary
+    at `H - 1`); assert `coverage.floor(X) == H` (its resume seq, the entry that an
+    earlier draft would have discarded as `AlreadyFolded`), **not** `H + 1`. This is the regression for the
+    bootstrap off-by-one called out in the (now-resolved) header gap block.
 
 ### 11.3 Liveness / observability tests
 
@@ -2595,7 +2765,10 @@ direct/pre-catchup nodes.
 
 6. **Selective-id / tail-stall liveness (mitigated, not eliminated).** A byzantine
    relay can keep a targeted id (or the whole frontier) permanently in `Unknown`
-   fallback without producing a false read. Soundness holds; the defense is
+   fallback without producing a false read — under the decoupled advancement model this
+   is now a withheld-per-id-proof stall (the id's `coverage.head` cannot cross a
+   checkpoint whose proof is withheld), the same fail-closed behavior as a withheld head
+   entry, surfaced by the §9 per-id frontier-lag alarm. Soundness holds; the defense is
    observability + failover + health-gating (§9), not a cryptographic guarantee. A
    timing adversary that controls all reachable peers can deny currency indefinitely
    — this is a liveness limit of any untrusted-relay design, not specific to the
