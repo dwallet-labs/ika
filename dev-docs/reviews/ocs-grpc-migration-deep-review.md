@@ -47,7 +47,16 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    treat a `SerializationError` from these caches as cold-cache → drop+recreate
    the column family / re-anchor, never propagate. (The related upgrade concern —
    new CFs on an existing DB — is already handled: `populate_missing_cfs` +
-   `create_missing_column_families` auto-create them.) RESOLUTION: open.
+   `create_missing_column_families` auto-create them.) RESOLUTION: fixed in
+   `cdf8ede388` — cache opens empty + re-folds on a `SerializationError`; the
+   committee chain surfaces an actionable error (default) or auto-re-anchors from
+   the pinned anchor behind the new `auto_reanchor_on_format_change` flag.
+   Residual: this typed_store build's range deletes are no-ops and corrupt-value
+   keys can't be enumerated, so the `verified_object_cache` value entries can't be
+   physically wiped — they're left and not loaded, so cache *persistence* stays
+   degraded (re-fold from the fullnode each boot) until the operator clears the
+   cache. The boot-halt itself is gone. A per-value schema-version envelope would
+   close the residual cleanly if wanted.
 
 2. **[MEDIUM] Persisted `verified_object_cache_head` can be written ahead of its
    objects under concurrent absorb.** `verified_state_cache.rs:199-218,311-326`.
