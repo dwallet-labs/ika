@@ -157,6 +157,43 @@ pub struct NetworkEncryptionKeyPublicData {
     pub ristretto_network_owned_address_public_key: Vec<u8>,
 }
 
+/// Content-derived identity of a network encryption key: the curve25519
+/// network-owned-address ed25519 public key, used as the key's identity
+/// in the cross-epoch handoff (replacing the Sui `ObjectID`).
+///
+/// It is a deterministic function of the network DKG output (the NOA DKG
+/// is seeded on the class-group encryption key), so every validator
+/// derives the same value; and it is invariant across reconfiguration
+/// and the v2->v3 DKG-output reconstruction because that encryption key
+/// is invariant. Kept Sui-free (no `ObjectID`): `dwallet-mpc-types` does
+/// not depend on `sui-types`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct NetworkKeyId(pub [u8; 32]);
+
+impl NetworkKeyId {
+    pub const LENGTH: usize = 32;
+
+    /// Builds a `NetworkKeyId` from raw curve25519 NOA public-key bytes,
+    /// which must be exactly 32 bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DwalletNetworkMPCError> {
+        let bytes: [u8; Self::LENGTH] = bytes
+            .try_into()
+            .map_err(|_| DwalletNetworkMPCError::InvalidNetworkKeyIdLength(bytes.len()))?;
+        Ok(Self(bytes))
+    }
+}
+
+impl NetworkEncryptionKeyPublicData {
+    /// This key's content-derived [`NetworkKeyId`] — its curve25519
+    /// network-owned-address ed25519 public key. curve25519 is always
+    /// computed during instantiation regardless of `supported_curves`,
+    /// so this is available for every instantiated key; a non-32-byte
+    /// value is a hard error rather than a silent fallback.
+    pub fn network_key_id(&self) -> Result<NetworkKeyId, DwalletNetworkMPCError> {
+        NetworkKeyId::from_bytes(&self.curve25519_network_owned_address_public_key)
+    }
+}
+
 #[derive(
     strum_macros::Display,
     strum_macros::EnumString,
@@ -353,6 +390,9 @@ pub enum DwalletNetworkMPCError {
 
     #[error("missing protocol public parameters for curve: {0}")]
     MissingProtocolPublicParametersForCurve(DWalletCurve),
+
+    #[error("network key id must be 32 bytes, got {0}")]
+    InvalidNetworkKeyIdLength(usize),
 }
 
 /// Opaque BCS bytes of a validator's published MPC public-key payload.

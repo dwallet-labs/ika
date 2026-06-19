@@ -16,9 +16,9 @@
 
 use crate::committee::EpochId;
 use crate::crypto::AuthorityName;
+use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
 use fastcrypto::ed25519::Ed25519Signature;
 use serde::{Deserialize, Serialize};
-use sui_types::base_types::ObjectID;
 
 /// Identifies a single piece of state covered by a `HandoffAttestation`.
 ///
@@ -29,11 +29,13 @@ use sui_types::base_types::ObjectID;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HandoffItemKey {
     /// Network DKG public output for a specific encryption key. Stable
-    /// across an encryption key's lifetime.
-    NetworkDkgOutput { key_id: ObjectID },
+    /// across an encryption key's lifetime. `key_id` is the key's
+    /// content-derived [`NetworkKeyId`] (its curve25519 NOA ed25519
+    /// public key), not the Sui `ObjectID`.
+    NetworkDkgOutput { key_id: NetworkKeyId },
     /// Network reconfiguration public output for a specific encryption
     /// key, produced this epoch.
-    NetworkReconfigurationOutput { key_id: ObjectID },
+    NetworkReconfigurationOutput { key_id: NetworkKeyId },
     /// MPC class-groups public material of a committee member, pinned
     /// to the exact version that was consumed as input by this epoch's
     /// MPC sessions.
@@ -99,7 +101,6 @@ pub struct CertifiedHandoffAttestation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sui_types::base_types::ObjectID;
 
     fn make_authority(byte: u8) -> AuthorityName {
         // BLS12381 min_pk public keys are 48 bytes. The fake bytes
@@ -113,8 +114,8 @@ mod tests {
         // Variant order in the enum defines the canonical sort key
         // for items; freeze it so reordering the enum is caught
         // here.
-        let key_id_a = ObjectID::random();
-        let key_id_b = ObjectID::random();
+        let key_id_a = NetworkKeyId([1u8; 32]);
+        let key_id_b = NetworkKeyId([2u8; 32]);
         let auth = make_authority(0);
         let mut keys = vec![
             HandoffItemKey::ValidatorMpcData { validator: auth },
@@ -144,7 +145,7 @@ mod tests {
     /// upgrade — never silently.
     #[test]
     fn handoff_item_key_bcs_variant_tags_are_frozen() {
-        let key_id = ObjectID::from_bytes([0x11; ObjectID::LENGTH]).unwrap();
+        let key_id = NetworkKeyId([0x11; 32]);
         let validator = AuthorityName::new([0x22; 48]);
 
         let dkg_bytes =
@@ -170,7 +171,7 @@ mod tests {
 
     #[test]
     fn handoff_attestation_bcs_roundtrip_preserves_sorted_items() {
-        let key_id = ObjectID::random();
+        let key_id = NetworkKeyId([0x55; 32]);
         let auth = make_authority(1);
         let attestation = HandoffAttestation {
             epoch: 7,
