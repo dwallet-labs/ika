@@ -235,6 +235,32 @@ impl OcsVerifiedReader {
         result
     }
 
+    /// Hot-path read for the singleton System / DWalletCoordinator inner anchors,
+    /// which the executor polls every ~120ms and which change only on the order
+    /// of epoch boundaries. Serve the committee-verified cached snapshot whenever
+    /// it is present — bypassing the cache-staleness tripwire — so that under
+    /// load (the pusher lagging past the tripwire bound) these reads don't reach
+    /// back to the fullnode every tick. That per-tick reach-back is itself what
+    /// slows the pusher further and latches the tripwire: a feedback loop that
+    /// throttles dwallet advancement (the heaviest integration file). `high_water`
+    /// still rejects a rollback, so only a stale-BUT-monotonic anchor is served;
+    /// a genuine cache miss (or a high-water rejection — a newer version was
+    /// already served) falls through to the verified network path. Direct nodes
+    /// only: mirror nodes have no local verified cache (`cache_first` is false)
+    /// and keep the per-read-verified path.
+    async fn verified_anchor_object(&self, id: ObjectID) -> Result<VerifiedObject, ReaderError> {
+        if self.cache_first
+            && let Some(hit) = self.cache_fallback(id)
+        {
+            self.metrics
+                .cache_read_total
+                .with_label_values(&["anchor"])
+                .inc();
+            return Ok(hit);
+        }
+        self.verified_object(id).await
+    }
+
     /// Batch counterpart of [`Self::verified_object`]: one provider
     /// round-trip for all `ids`, then the same per-object guarantees —
     /// freshness against the monotonic observed head, inclusion proof
@@ -641,7 +667,7 @@ impl OcsVerifiedReader {
         &self,
         coordinator_id: ObjectID,
     ) -> Result<(DWalletCoordinator, DWalletCoordinatorInner), ReaderError> {
-        let outer_obj = self.verified_object(coordinator_id).await?;
+        let outer_obj = self.verified_anchor_object(coordinator_id).await?;
         let outer_bcs = move_object_contents(&outer_obj.object)?;
         let outer: DWalletCoordinator = bcs::from_bytes(outer_bcs)
             .map_err(|e| ReaderError::Decode(format!("DWalletCoordinator: {e}")))?;
@@ -649,7 +675,7 @@ impl OcsVerifiedReader {
         match outer.version {
             1 | 2 => {
                 let child_id = derive_versioned_child_id(coordinator_id, outer.version)?;
-                let child_obj = self.verified_object(child_id).await?;
+                let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
                 let field: Field<u64, DWalletCoordinatorInnerV1> = bcs::from_bytes(child_bcs)
                     .map_err(|e| {
@@ -671,7 +697,7 @@ impl OcsVerifiedReader {
         &self,
         system_id: ObjectID,
     ) -> Result<(System, SystemInner), ReaderError> {
-        let outer_obj = self.verified_object(system_id).await?;
+        let outer_obj = self.verified_anchor_object(system_id).await?;
         let outer_bcs = move_object_contents(&outer_obj.object)?;
         let outer: System =
             bcs::from_bytes(outer_bcs).map_err(|e| ReaderError::Decode(format!("System: {e}")))?;
@@ -679,7 +705,7 @@ impl OcsVerifiedReader {
         match outer.version {
             1 | 2 => {
                 let child_id = derive_versioned_child_id(system_id, outer.version)?;
-                let child_obj = self.verified_object(child_id).await?;
+                let child_obj = self.verified_anchor_object(child_id).await?;
                 let child_bcs = move_object_contents(&child_obj.object)?;
                 let field: Field<u64, SystemInnerV1> = bcs::from_bytes(child_bcs)
                     .map_err(|e| ReaderError::Decode(format!("Field<u64, SystemInnerV1>: {e}")))?;
@@ -1401,6 +1427,85 @@ mod tests {
             err,
             ReaderError::Transport(TransportError::NotFound(_))
         ));
+    }
+
+    /// The singleton anchors (System / DWalletCoordinator inner) are polled
+    /// every ~120ms via [`OcsVerifiedReader::verified_anchor_object`]. When the
+    /// pusher lags past the staleness bound the tripwire trips — but an anchor
+    /// read must still be served from the committee-verified cache rather than
+    /// reaching back to the fullnode every tick (the feedback loop that throttles
+    /// dwallet advancement). `UnusedProvider` panics if the network is touched,
+    /// so a successful read proves the cache short-circuit fired through the
+    /// tripped tripwire.
+    #[tokio::test]
+    async fn anchor_reads_serve_cache_through_a_tripped_tripwire() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            Arc::new(UnusedProvider), // unreachable!() if the read hits the network
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true,      // cache_first (sui-state-direct)
+            Some(100), // staleness bound
+        );
+
+        // Fold a committee-verified snapshot of the anchor (version 5) at seq 42.
+        let id = ObjectID::from_single_byte(0x55);
+        let obj = test_object(id, 5, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&obj], &obj);
+        let entry = VerifiedObjectEntry {
+            object: obj.clone(),
+            checkpoint_seq: 42,
+            proof,
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        reader.cache.absorb_entries(&summary, &[entry]);
+
+        // Pusher far behind the tip (processed 42 vs head 1000, bound 100): the
+        // tripwire is tripped, so a plain `verified_object` would reach back to
+        // the network — which here would panic.
+        reader.cache.note_processed(42);
+        reader.note_upstream_head(1000);
+        assert!(
+            reader.try_cache_hit(id).is_none(),
+            "tripwire must be tripped for this test to exercise the bypass",
+        );
+
+        // The anchor read serves the cached snapshot WITHOUT touching the provider.
+        let got = reader
+            .verified_anchor_object(id)
+            .await
+            .expect("anchor read serves the committee-verified cache through the tripwire");
+        assert_eq!(got.object.id(), id);
+        assert_eq!(got.object.version(), SequenceNumber::from(5u64));
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["anchor"])
+                .get(),
+            1,
+            "served via the anchor short-circuit",
+        );
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["fallback"])
+                .get(),
+            0,
+            "anchor short-circuit precedes — and avoids — the NotFound fallback path",
+        );
     }
 
     fn bag_entry(
