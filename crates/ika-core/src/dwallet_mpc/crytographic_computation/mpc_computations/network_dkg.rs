@@ -825,6 +825,134 @@ pub(crate) fn compute_all_network_owned_address_dkg_outputs(
     })
 }
 
+/// Derives a network key's content-derived identity material — its
+/// curve25519 network-owned-address ed25519 public key (the value used
+/// as the `NetworkKeyId`) — from the key's serialized curve25519
+/// protocol public parameters. Callers obtain those from
+/// `dwallet_mpc_centralized_party::{network_dkg_public_output,reconfiguration_public_output}_to_protocol_pp_inner`,
+/// which handle the V1/V2/V3 + reconfiguration cases (deployed keys have
+/// a V1 DKG output kept current via reconfiguration, so the params come
+/// from the reconfiguration output). The result matches what
+/// instantiation computes because both seed `compute_noa_dkg` on the
+/// curve25519 encryption-key parameters.
+pub fn derive_curve25519_network_owned_address_public_key(
+    curve25519_protocol_public_parameters: &[u8],
+) -> DwalletMPCResult<Vec<u8>> {
+    let protocol_public_parameters: twopc_mpc::curve25519::class_groups::ProtocolPublicParameters =
+        bcs::from_bytes(curve25519_protocol_public_parameters).map_err(DwalletMPCError::BcsError)?;
+    let encryption_key =
+        bcs::to_bytes(&protocol_public_parameters.encryption_scheme_public_parameters)
+            .map_err(DwalletMPCError::BcsError)?;
+    let noa = compute_noa_dkg::<Curve25519AsyncDKGProtocol>(
+        &encryption_key,
+        DWalletCurve::Curve25519,
+        &protocol_public_parameters,
+    )?;
+    Ok(noa.public_key)
+}
+
+/// One-off tool (not a unit test): fetches the deployed network key from
+/// testnet/mainnet and prints its `NetworkKeyId` (curve25519 NOA ed25519
+/// pubkey) for baking into the temporary static ObjectID->NetworkKeyId
+/// map. Run with:
+///   cargo test -p ika-core --release print_deployed_network_key_ids -- --ignored --nocapture
+#[cfg(test)]
+mod network_key_id_derivation_tool {
+    use super::derive_curve25519_network_owned_address_public_key;
+    use dwallet_mpc_centralized_party::{
+        network_dkg_public_output_to_protocol_pp_inner,
+        reconfiguration_public_output_to_protocol_pp_inner,
+    };
+    use ika_sui_client::SuiConnectorClient;
+    use ika_sui_client::metrics::SuiClientMetrics;
+    use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
+    use ika_types::sui::DWalletCoordinatorInner;
+    use std::str::FromStr;
+    use sui_types::base_types::ObjectID;
+
+    #[ignore = "real-network tool; run manually to derive deployed NetworkKeyIds"]
+    #[tokio::test]
+    async fn print_deployed_network_key_ids() {
+        // (env, rpc, ika, common, twopc, system_pkg, system_obj, coordinator_obj) — from ika_sui_config.yaml
+        let envs: &[(&str, &str, &str, &str, &str, &str, &str, &str)] = &[
+            (
+                "testnet",
+                "https://fullnode.testnet.sui.io:443",
+                "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a",
+                "0x96fc75633b6665cf84690587d1879858ff76f88c10c945e299f90bf4e0985eb0",
+                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
+                "0xde05f49e5f1ee13ed06c1e243c0a8e8fe858e1d8689476fdb7009af8ddc3c38b",
+                "0x2172c6483ccd24930834e30102e33548b201d0607fb1fdc336ba3267d910dec6",
+                "0x4d157b7415a298c56ec2cb1dcab449525fa74aec17ddba376a83a7600f2062fc",
+            ),
+            (
+                "mainnet",
+                "https://fullnode.mainnet.sui.io:443",
+                "0x7262fb2f7a3a14c888c438a3cd9b912469a58cf60f367352c46584262e8299aa",
+                "0x9e1e9f8e4e51ee2421a8e7c0c6ab3ef27c337025d15333461b72b1b813c44175",
+                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
+                "0xd69f947d7ee6f224dd0dd31ec3ec30c0dd0f713a1de55d564e8e98910c4f9553",
+                "0x215de95d27454d102d6f82ff9c54d8071eb34d5706be85b5c73cbd8173013c80",
+                "0x5ea59bce034008a006425df777da925633ef384ce25761657ea89e2a08ec75f3",
+            ),
+        ];
+        let oid = |s: &str| ObjectID::from_str(s).unwrap();
+        for (name, rpc, ika, common, twopc, sys_pkg, sys_obj, coord) in envs {
+            let config = IkaNetworkConfig::new(
+                oid(ika),
+                oid(common),
+                oid(twopc),
+                None,
+                oid(sys_pkg),
+                oid(sys_obj),
+                oid(coord),
+            );
+            let client = SuiConnectorClient::new(rpc, SuiClientMetrics::new_for_testing(), config)
+                .await
+                .unwrap();
+            let (_, coordinator_inner) = client.must_get_dwallet_coordinator_inner().await;
+            let DWalletCoordinatorInner::V1(inner) = &coordinator_inner;
+            let epoch = inner.current_epoch;
+            let network_keys = client
+                .get_dwallet_mpc_network_keys(&coordinator_inner)
+                .await
+                .unwrap();
+            for (id, key) in &network_keys {
+                let key_data = client
+                    .get_network_encryption_key_with_full_data_by_epoch(key, epoch)
+                    .await
+                    .unwrap();
+                // curve25519 curve id = 2 (DWalletCurve::Curve25519). Deployed keys
+                // have a V1 DKG output kept current via reconfiguration, so derive
+                // the curve25519 protocol params from the reconfiguration output
+                // when present (matching the binary's instantiation path).
+                let curve25519_protocol_pp =
+                    if key_data.current_reconfiguration_public_output.is_empty() {
+                        network_dkg_public_output_to_protocol_pp_inner(
+                            2,
+                            key_data.network_dkg_public_output,
+                        )
+                        .unwrap()
+                    } else {
+                        reconfiguration_public_output_to_protocol_pp_inner(
+                            2,
+                            key_data.current_reconfiguration_public_output,
+                            key_data.network_dkg_public_output,
+                        )
+                        .unwrap()
+                    };
+                let network_key_id =
+                    derive_curve25519_network_owned_address_public_key(&curve25519_protocol_pp)
+                        .unwrap();
+                println!(
+                    "NETWORK_KEY_ID {name}: object_id={id} network_key_id=0x{}",
+                    hex::encode(network_key_id)
+                );
+            }
+        }
+    }
+}
+
 /// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
 pub(crate) fn build_network_encryption_key_public_data(
     epoch: u64,
