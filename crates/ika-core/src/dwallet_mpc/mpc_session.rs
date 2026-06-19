@@ -406,14 +406,14 @@ impl DWalletMPCManager {
         if self.next_active_committee.is_none() {
             let got_next_active_committee = self.try_receiving_next_active_committee();
             if got_next_active_committee {
-                // The next committee just arrived — ingest its off-chain PVSS/VSS
-                // keys before processing the reconfiguration requests queued for
-                // it, so their session input finds `next_epoch_validator_mpc_keys`
-                // populated (the off-chain-only keys are delivered separately from
-                // the committee, so this isn't implied by receiving the committee).
-                if let Err(e) = self.ingest_offchain_mpc_keys() {
-                    error!(error = ?e, "failed to ingest off-chain validator MPC keys after receiving next committee");
-                }
+                // The next committee's off-chain PVSS/VSS keys arrive on a separate
+                // channel, so receiving the committee does not imply they're
+                // ingested yet (the committee can land before the keys). We do NOT
+                // ingest here: any reconfig request drained below whose
+                // `next_epoch_validator_mpc_keys` isn't populated yet hits the
+                // off-chain freeze gate, parks on `requests_pending_for_frozen_mpc_data`,
+                // and re-drains on a later cycle once the top-of-loop
+                // `ingest_offchain_mpc_keys` (`dwallet_mpc_service`) fills it in.
                 let events_pending_for_next_active_committee =
                     mem::take(&mut self.requests_pending_for_next_active_committee);
 
