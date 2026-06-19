@@ -271,4 +271,16 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   the commit/round semantics ika's freeze and epoch-close logic rely on
   (leader rounds, commit boundaries) live in Sui's `consensus/core`, not
   in ika (see the upstream reference above)
-- **NOA checkpoints not live**: The NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`) is under active development and not yet deployed. No backward compatibility constraints on serialization formats or type names
+- **Currently on protocol version 3 — v4 not active yet**: the live
+  network runs protocol v3. Protocol v4 gates off-chain validator
+  metadata (`off_chain_validator_metadata_enabled()`), the cross-epoch
+  handoff (`dev-docs/specs/handoff.md`), and the deferred epoch close —
+  all implemented but NOT yet active on any deployed network. Treat
+  v4-gated paths as forward-looking: there are no deployed-network
+  backward-compatibility constraints on v4-only behavior until the
+  upgrade lands.
+- **NOA not live**: the network-owned-address (NOA) system — both NOA
+  signing AND the NOA checkpoint system (`crates/ika-core/src/noa_checkpoints/`)
+  — is under active development and not deployed at all. No backward
+  compatibility constraints on its serialization formats, type names, or
+  derived addresses.
