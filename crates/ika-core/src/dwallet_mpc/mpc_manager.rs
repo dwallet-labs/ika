@@ -109,14 +109,16 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
-    /// verified VSS), keyed by party id. `class_groups` is seeded from the
-    /// committee at construction (so the backward-compatible DKG works without
-    /// the off-chain pipeline); the off-chain-only PVSS / VSS keys are ingested
-    /// from the `current_epoch_mpc_keys` channel once the consensus freeze
-    /// decides the agreed set. That agreed set may legitimately omit
-    /// offline/withholding validators — the DKG deals only to the parties that
-    /// have keys. Passed to `session_input_from_request` per session-input
-    /// construction.
+    /// verified VSS), keyed by party id. At network-key-version 2 (no off-chain
+    /// pipeline) this is initialized at construction by re-keying
+    /// `class_groups` straight off the on-chain committee (the bare key Sui
+    /// already carries), with empty PVSS/VSS — all the backward-compatible DKG
+    /// needs. At version 3 it starts empty and the whole set (class_groups
+    /// included) is read from the `current_epoch_mpc_keys` channel by
+    /// `ingest_offchain_mpc_keys` once the consensus freeze decides the agreed
+    /// set. That agreed set may legitimately omit offline/withholding validators
+    /// — the DKG deals only to the parties that have keys. Passed to
+    /// `session_input_from_request` per session-input construction.
     pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
     /// Set once the current epoch's off-chain key set has been ingested (the
     /// consensus-frozen agreed set). Gates session initiation so the DKG never
@@ -397,13 +399,14 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            // Take keys from Sui (the chain-derived committee) ONLY at network
-            // key version 2 (mainnet-v1.1.8 / backward-compat): there the DKG
-            // needs the bare on-chain class_groups and there is no off-chain
-            // pipeline. At version 3 ALL keys — class_groups included — come from
-            // the off-chain consensus-agreed set, so start empty and let the
-            // ingest fill them in (seeding from Sui here would be the full N-party
-            // class_groups, the wrong source/shape for the v3 agreed subset).
+            // Take class_groups straight off the on-chain committee (the bare key
+            // Sui already carries) ONLY at network key version 2 (mainnet-v1.1.8 /
+            // backward-compat): there the DKG needs the on-chain class_groups and
+            // there is no off-chain pipeline. At version 3 ALL keys — class_groups
+            // included — come from the off-chain consensus-agreed set, so start
+            // empty and let the ingest fill them in (taking them from Sui here
+            // would be the full N-party class_groups, the wrong source/shape for
+            // the v3 agreed subset).
             validator_mpc_keys_by_party_id: if protocol_config
                 .is_network_encryption_key_version_v3()
             {
