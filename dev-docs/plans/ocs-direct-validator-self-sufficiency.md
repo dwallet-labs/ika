@@ -139,6 +139,16 @@ retention) the degrade differs by read kind:
   attempts, escalate to a single clear "likely a Sui-fullnode retention gap;
   raise fullnode retention or re-anchor" diagnostic. The failures themselves are
   already metered by the reader's proof/cache failure counters.
+  **Follow-on (separate from finding 17):** these same anchor reads run every
+  ~120 ms, and were later found to *force* a network reach-back whenever the
+  cache-staleness tripwire tripped under load — a self-reinforcing loop (the
+  reach-backs slow the pusher, which keeps the tripwire tripped) that throttled
+  dwallet throughput until the heaviest integration files timed out. Fixed by
+  serving the two singleton anchors (System / Coordinator inner) from the
+  verified cache *through* a tripped tripwire (`verified_anchor_object`); the
+  backoff above stays the fallback on a genuine cache miss. Durable behavior:
+  the OCS spec's *cache fast path*
+  ([`../specs/ocs-verified-sui-reads.md`](../specs/ocs-verified-sui-reads.md)).
 - **Ratchet:** a pruned-and-uncaptured EoE still returns `ProofChainBroken`
   (re-anchor required) — but with Slice 1 the pusher captures committees eagerly,
   so the ratchet rarely reaches back, and a wedge is already observable as the

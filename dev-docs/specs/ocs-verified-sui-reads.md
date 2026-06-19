@@ -136,7 +136,10 @@ can never poison it.
 The absolute checkpoint-distance bound (`StaleCheckpoint`) is wired but
 **dormant** in production (`freshness_bound = None`). The active
 anti-rollback guarantees today are version monotonicity and the
-cache-first staleness tripwire.
+cache-first staleness tripwire — except the two singleton anchors
+(`System` / `DWalletCoordinator` inner), which are deliberately served
+*through* a tripped tripwire on direct nodes (see *The cache fast path*)
+and so rely on version monotonicity alone.
 
 **Eclipse residual (known non-guarantee):** the monotone defenses are
 relative, not absolute. A fresh node whose only relay is malicious can
@@ -249,6 +252,22 @@ to the network when the cache lags). Because the folder reads from the
 node's own authoritative Sui access and folds in order, a cache hit is
 the object's current state up to the poll lag, and may skip re-running
 the proof.
+
+The two **singleton anchors** — the `System` and `DWalletCoordinator`
+inner objects (and their versioned-child inners) — are served from the
+folded cache **even when the staleness tripwire trips**.
+`verified_anchor_object` prefers the cached snapshot and reaches the
+network only on a genuine cache miss; the per-object version high-water
+still rejects a rollback, and the executor re-reads every ~120 ms so
+staleness stays bounded. The exception exists because these anchors are
+on the MPC hot path: under heavy load the pusher's processed head lags
+the live head past the tripwire bound, and a tripwire-forced reach-back
+on *every* 120 ms tick (each anchor read is the outer wrapper plus its
+versioned-child inner — several fullnode round-trips) slows the pusher
+further and latches the tripwire, a self-reinforcing loop that collapses
+dwallet throughput. Ordinary (non-anchor) reads still fall through to
+the network when the tripwire trips. Cache-served anchors are counted
+`ika_ocs_cache_read_total{outcome="anchor"}`.
 
 The cache is authoritatively populated *only* by the node's own folder —
 it does not ingest peer state. Mirrored and peer-only validators have no
