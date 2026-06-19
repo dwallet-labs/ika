@@ -24,7 +24,7 @@
 //! never receive the session requests and these waits would time out.
 
 use ika_protocol_config::ProtocolVersion;
-use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder};
+use ika_test_cluster::{IkaTestCluster, IkaTestClusterBuilder, wait_for_node_epoch};
 
 /// dWallet curve id for secp256k1 (matches the on-chain enum discriminant).
 const DWALLET_CURVE_SECP256K1: u32 = 0;
@@ -363,4 +363,86 @@ async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
         .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
         .await
         .expect("user DKG did not complete after a relay peer died — relay failover broken");
+}
+
+/// A validator that joins LATE — after the cluster has already crossed several
+/// epoch boundaries — must bootstrap its OCS stack from the epoch-0 genesis
+/// anchor and ratchet its Sui committee forward across EVERY elapsed boundary
+/// before it can verify a single read.
+///
+/// `add_joiner_validator` hands the joiner the same unsafe-genesis committee the
+/// bootstrap validators booted from (`with_unsafe_genesis_committee`), so the
+/// joiner's OCS committee store starts at `committee[0]` while the chain is
+/// already several committees ahead. To advance its own epoch view the joiner
+/// must verified-read `system_inner` across each boundary, and each such read
+/// requires the committee that signed that checkpoint — so its ratchet has to
+/// walk `committee[0] -> committee[1] -> ... -> committee[current]` with no gap.
+///
+/// The genesis-present multi-epoch test above proves a node that has been
+/// ratcheting all along stays in step one boundary at a time; the early-joiner
+/// test in `joiner.rs` only crosses a single boundary (`committee[0] -> [1]`).
+/// Neither covers the harder, realistic case: a node whose anchor is ALREADY
+/// stale at boot must catch its ratchet up over a run of boundaries in one go,
+/// then keep pace. That is the fresh-sync / late-join path.
+///
+/// The assertion is that the joiner's node reaches the current epoch within a
+/// bounded window: a ratchet that skipped or mis-derived any `committee[E+1]`
+/// would fail the verified epoch-advance read and stall the node below the
+/// target rather than catching up. The cluster's own epoch advance is driven by
+/// the four genesis validators (quorum), so `wait_for_epoch` returning is
+/// independent of the joiner — the separate `wait_for_node_epoch(&joiner, ...)`
+/// is what pins the joiner's ratchet. Slow (several 60s epochs) — a
+/// cluster-suite test, not the fast unit pass.
+#[tokio::test(flavor = "multi_thread")]
+async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(60_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .with_ocs_genesis_anchor(true)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    // Cross two boundaries first so the genesis anchor the joiner boots from is
+    // already two committees stale relative to the active committee. (Reaching
+    // epoch 2 also implies the network-key DKG completed — reconfiguration
+    // can't advance past epoch 1 without it — so this is a sufficient health
+    // gate before perturbing the set.)
+    cluster.wait_for_epoch(2).await;
+
+    // Add the late joiner. Its OCS committee store starts at committee[0]
+    // (add_joiner_validator hands it the unsafe-genesis committee) and must
+    // ratchet up to the current committee over the verified read path. It
+    // becomes part of the active set at the next boundary.
+    let joiner = cluster
+        .add_joiner_validator()
+        .await
+        .expect("add_joiner_validator failed");
+
+    // Advance one boundary. To move its own epoch view to 3 the joiner must have
+    // ratcheted committee[0] -> committee[3] (the two boundaries that elapsed
+    // before it booted, plus this one) over the verified reader.
+    cluster.wait_for_epoch(3).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        wait_for_node_epoch(&joiner.node_handle, 3),
+    )
+    .await
+    .expect(
+        "late joiner did not reach epoch 3 — its OCS committee ratchet failed to \
+         catch up from the stale genesis anchor",
+    );
+
+    // And it keeps pace across one more boundary, proving the ratchet continues
+    // from a mid-stream join rather than only doing a one-shot catch-up.
+    cluster.wait_for_epoch(4).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        wait_for_node_epoch(&joiner.node_handle, 4),
+    )
+    .await
+    .expect("late joiner fell behind after joining — OCS ratchet did not continue");
 }
