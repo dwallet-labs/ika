@@ -167,6 +167,11 @@ not re-proposed).
 
 ### Unit / integration — P0 (15; the trust-chain & fail-closed boundary)
 
+> **Status: all 15 landed** (`407faa49e5`, `fefa972d26`). The relay-failover
+> verdict was made unit-testable by a behavior-preserving extraction of
+> `classify_failed_pass` from `try_peers`; the anemo round-trip / demotion
+> plumbing and the cluster-only scenarios below remain for the cluster suite.
+
 - `ocs_verifier::unverified_fallback_rejects_epoch_mismatch` — guards committee-002.
 - `ocs_verifier::ratchet_does_not_fall_back_on_network_error` — fallback keys
   strictly on `NotFound`, never `Network`.
