@@ -197,3 +197,33 @@ async fn ocs_verifier_v4_peer_only_validator_drives_user_dkg_and_epoch_advance()
     // committee ratchet — entirely over the relay.
     drive_dkg_and_epoch_advance(&mut cluster, "peer-only").await;
 }
+
+/// Peer-only validators (no Sui uplink) crossing MULTIPLE epoch boundaries.
+/// After the initial DKGs, the cluster advances through several more
+/// reconfigurations, exercising the committee ratchet + follower over a run of
+/// boundaries entirely over the relay — the finding-17 committee half: a skipped
+/// or mis-derived `committee[E+1]` would stall reconfiguration. The single-epoch
+/// topology tests above prove one crossing; this proves the chain holds over
+/// many. Slow (several 60s epochs) — a cluster-suite test, not the fast unit pass.
+#[tokio::test(flavor = "multi_thread")]
+async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(60_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .with_ocs_genesis_anchor(true)
+        .with_sui_state_direct_count(2)
+        .with_peer_only_mirrored(true)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    // Initial DKGs + the first boundary (reaches epoch 2).
+    drive_dkg_and_epoch_advance(&mut cluster, "peer-only-multi-epoch").await;
+    // Cross several more boundaries: each peer-only validator's committee ratchet
+    // + follower must install every committee[E+1] over the relay without
+    // skipping, or reconfiguration would stall here.
+    cluster.wait_for_epoch(5).await;
+}

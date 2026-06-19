@@ -564,6 +564,54 @@ mod tests {
         );
     }
 
+    /// finding-17 core, trusted-only posture: with the unverified fallback
+    /// DISABLED (the default), a pruned end-of-epoch checkpoint
+    /// (`get_full_checkpoint` -> NotFound) makes the ratchet fail with a TERMINAL
+    /// `ProofChainBroken` rather than silently fetch `committee[E+1]` from the
+    /// untrusted endpoint. The head does not advance, `get_committee` is never
+    /// called, and the error is non-retryable (the operator must re-anchor). This
+    /// is the in-process proxy for the cluster "peer-only bootstrap aborts on a
+    /// pruned end-of-epoch" scenario — the real-pruning version is not expressible
+    /// in the in-process Sui test cluster.
+    #[tokio::test]
+    async fn ratchet_pruned_end_of_epoch_is_fatal_without_fallback() {
+        let (committee, _keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee);
+        assert_eq!(store.head_epoch(), 0);
+
+        // head=0, target=1: the end-of-epoch checkpoint of epoch 0 (seq 0) is
+        // pruned upstream.
+        let mut mock = RatchetMock::new(1);
+        mock.full_checkpoints
+            .insert(0, FullCheckpointOutcome::NotFound);
+        let mock = Arc::new(mock);
+        let metrics = OcsMetrics::new_for_testing();
+        // allow_unverified_committee_fallback = false (the default, trust-preserving).
+        let client = OcsVerifyingClient::new(mock.clone(), store.clone(), metrics.clone(), false);
+
+        let err = client.ratchet_to_current_epoch().await.unwrap_err();
+        assert!(
+            matches!(err, OcsError::ProofChainBroken { epoch: 0 }),
+            "a pruned end-of-epoch with fallback disabled must be a terminal \
+             ProofChainBroken, got {err:?}"
+        );
+        assert!(
+            !err.is_retryable(),
+            "ProofChainBroken is fatal (operator must re-anchor), not retryable"
+        );
+        assert_eq!(store.head_epoch(), 0, "head must not advance");
+        assert_eq!(
+            mock.get_committee_call_count(),
+            0,
+            "the trusted-only path must never fetch a committee from the endpoint"
+        );
+        assert_eq!(
+            metrics.unverified_committee_fallback_total.get(),
+            0,
+            "no fallback was attempted"
+        );
+    }
+
     /// Driving the ratchet from head E to target E+2 over correctly-chained,
     /// committee-signed end-of-epoch checkpoints installs exactly E+1 then E+2
     /// -- head advances by exactly one per verified step, never skipping. A
