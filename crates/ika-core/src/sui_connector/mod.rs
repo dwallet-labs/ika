@@ -30,7 +30,7 @@ use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionDa
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod bag_event_pump;
 pub mod changeset_receiver;
@@ -214,6 +214,27 @@ impl SuiConnectorService {
                     Duration::from_millis(50),
                 );
                 tokio::spawn(pump.run());
+            } else {
+                // `reader.is_some()` (OCS configured) but this node's mode is not
+                // Validator, so the `BagEventPump` — the only MPC event source on
+                // the OCS path — is not spawned and these two non-`Clone` senders
+                // are dropped. Harmless for a pure fullnode/notifier that runs no
+                // MPC; but the MPC service is built on committee membership
+                // (`AuthorityState::is_validator`), a different predicate than the
+                // config-derived `mode`. A node that is a committee member yet
+                // configured without `consensus_config` (so `mode != Validator`)
+                // would then consume a closed channel and silently receive no
+                // sessions. Surface it loudly rather than drop in silence.
+                warn!(
+                    ?mode,
+                    "OCS reader configured but node mode is not Validator: the \
+                     BagEventPump is not spawned and the MPC event senders are \
+                     dropped. Harmless for a pure fullnode/notifier; if this node is \
+                     a committee member, it is a misconfiguration (committee key \
+                     without consensus_config) and MPC will not receive sessions — \
+                     run a committee member in Validator mode."
+                );
+                drop((new_requests_sender, uncompleted_requests_sender));
             }
         }
 
