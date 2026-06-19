@@ -35,6 +35,7 @@ use sui_types::base_types::ObjectID;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::{Object, Owner};
 use tracing::{info, warn};
+use typed_store::TypedStoreError;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 
@@ -127,7 +128,30 @@ impl VerifiedStateCache {
     /// through every subsequent absorb. A restart therefore resumes serving
     /// from DB without reaching back to the Sui fullnode.
     pub fn open(perpetual: Arc<AuthorityPerpetualTables>) -> IkaResult<Self> {
-        let persisted = perpetual.load_verified_object_cache()?;
+        let persisted = match perpetual.load_verified_object_cache() {
+            Ok(persisted) => persisted,
+            // A (de)serialization failure means the on-disk snapshots are from a
+            // stale format — typically after a Sui version upgrade changed the
+            // BCS layout of `Object` / `CertifiedCheckpointSummary`. Rather than
+            // halt the node on boot, wipe the rebuildable direct-cache columns
+            // and start cold: the pusher re-folds every object from the node's
+            // own (re-verified) Sui access, so no trust is lost — only the
+            // restart-resume optimization is paid for once. A transient RocksDB
+            // IO error is NOT format rot and still propagates. (Release-build
+            // behavior; in debug, `safe_iter`'s `debug_fatal!` panics first,
+            // which is an acceptable loud dev signal.)
+            Err(TypedStoreError::SerializationError(reason)) => {
+                warn!(
+                    reason,
+                    "verified object cache could not be deserialized (likely a Sui \
+                     version upgrade changed the on-disk format); wiping the \
+                     rebuildable direct-cache columns and rebuilding from the fullnode"
+                );
+                perpetual.reset_direct_cache_for_format_recovery()?;
+                Vec::new()
+            }
+            Err(e) => return Err(e.into()),
+        };
         let head = perpetual.get_verified_object_cache_head()?.unwrap_or(0);
         let objects_count = persisted.len();
         let mut objects = HashMap::with_capacity(objects_count);

@@ -436,6 +436,17 @@ pub struct SuiConnectorConfig {
     /// degraded trust to preserve liveness from a stale anchor.
     #[serde(default)]
     pub allow_unverified_committee_fallback: bool,
+    /// When the persisted OCS committee state cannot be deserialized on boot —
+    /// typically after a Sui version upgrade changed its on-disk BCS layout —
+    /// automatically wipe the committee tables and re-anchor from the configured
+    /// `sui_trusted_anchor` (digest-gated) instead of failing to boot. Default
+    /// `false`: rebuilding the trust root is normally a deliberate operator
+    /// action (clear the OCS committee tables, then restart so the next boot
+    /// re-seeds from the anchor). Requires a trust anchor to be configured. The
+    /// rebuildable verified-object cache always self-recovers regardless of this
+    /// flag; only the committee trust chain is gated by it.
+    #[serde(default)]
+    pub auto_reanchor_on_format_change: bool,
     /// The expected sui chain identifier connecting to.
     pub sui_chain_identifier: SuiChainIdentifier,
     /// The move package ID of ika (IKA) on sui.

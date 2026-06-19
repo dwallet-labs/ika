@@ -19,6 +19,7 @@ use sui_types::messages_checkpoint::{
     CheckpointSequenceNumber as SuiCheckpointSequenceNumber,
 };
 use typed_store::DBMapUtils;
+use typed_store::TypedStoreError;
 use typed_store::rocks::{DBBatch, DBMap, MetricConf};
 use typed_store::rocksdb::Options;
 
@@ -556,8 +557,14 @@ impl AuthorityPerpetualTables {
     }
 
     /// All persisted verified-state-cache snapshots, for rehydrating
-    /// `VerifiedStateCache` on boot.
-    pub fn load_verified_object_cache(&self) -> IkaResult<Vec<(ObjectID, VerifiedSnapshot)>> {
+    /// `VerifiedStateCache` on boot. Returns the raw `TypedStoreError` (rather
+    /// than the stringified `IkaError`) so the caller can distinguish a
+    /// `SerializationError` — a stale on-disk format after a Sui upgrade, which
+    /// is recoverable by wiping and rebuilding — from a transient RocksDB IO
+    /// error, which is not.
+    pub fn load_verified_object_cache(
+        &self,
+    ) -> Result<Vec<(ObjectID, VerifiedSnapshot)>, TypedStoreError> {
         let mut out = Vec::new();
         for item in self.verified_object_cache.safe_iter() {
             out.push(item?);
@@ -589,6 +596,67 @@ impl AuthorityPerpetualTables {
         let mut wb = self.verified_object_cache.batch();
         wb.delete_batch(&self.verified_object_cache, ids.iter())?;
         wb.write()?;
+        Ok(())
+    }
+
+    /// Reset the direct-node verified-cache cursors so the node boots cold after
+    /// the persisted cache fails to deserialize — a Sui version upgrade changed
+    /// the on-disk BCS layout of `Object` / `CertifiedCheckpointSummary`. Only the
+    /// singleton cache head and pusher cursor are deleted (reliable point
+    /// deletes). The `verified_object_cache` value entries themselves are left in
+    /// place: they no longer decode, so they're simply not loaded (`open` returns
+    /// empty) and the pusher re-folds from the node's own re-verified Sui access,
+    /// overwriting live entries. A physical wipe of the arbitrary-`ObjectID`-keyed
+    /// column isn't possible here — this typed_store build's range deletes are
+    /// no-ops, and the keys can't be enumerated once the values stop decoding — so
+    /// persistence is degraded (re-fold from the fullnode each boot) until the
+    /// operator clears the OCS cache, but the node BOOTS, which is the point.
+    /// Trust is unaffected: every re-folded object is re-verified.
+    pub fn reset_direct_cache_for_format_recovery(&self) -> IkaResult {
+        let mut batch = self.verified_object_cache_head.batch();
+        batch.delete_batch(&self.verified_object_cache_head, std::iter::once(()))?;
+        batch.delete_batch(&self.sui_pusher_last_seq, std::iter::once(()))?;
+        batch.write()?;
+        Ok(())
+    }
+
+    /// Wipe the Sui committee trust columns (committees, summaries, head) so the
+    /// next bootstrap re-anchors from the operator-pinned trust anchor. Used only
+    /// by the opt-in `auto_reanchor_on_format_change` recovery after a committee
+    /// value fails to deserialize on boot. Sui epochs are small and sequential, so
+    /// the committee columns are swept by point-deleting their known key space
+    /// `0..=head` (this typed_store build's range deletes are no-ops); the
+    /// singleton head is reset too. Reads only the head (a stable `u64`); never
+    /// deserializes the stale committee values.
+    pub fn wipe_sui_committee_state_for_format_recovery(&self) -> IkaResult {
+        let head = self.sui_committee_head.get(&())?.unwrap_or(0);
+        let mut batch = self.sui_committees.batch();
+        batch.delete_batch(&self.sui_committees, 0..=head)?;
+        batch.delete_batch(&self.sui_committee_summaries, 0..=head)?;
+        batch.delete_batch(&self.sui_committee_head, std::iter::once(()))?;
+        batch.write()?;
+        Ok(())
+    }
+
+    /// Probe whether the persisted head Sui committee still deserializes. Returns
+    /// `Ok(())` when there is no committee state, or when the head committee
+    /// (stored directly, or derived from the prior epoch's end-of-epoch summary)
+    /// decodes. Surfaces a `TypedStoreError::SerializationError` (distinct from a
+    /// transient `RocksDBError`) when the on-disk format is stale after a Sui
+    /// upgrade, so the caller can tell a format break from an IO error. Mirrors
+    /// `CommitteeStore::resolve_committee`'s read path. (Release-build behavior:
+    /// in debug, `DBMap::get`'s `debug_fatal!` panics first — an acceptable loud
+    /// dev signal.)
+    pub fn probe_head_committee_readable(&self) -> Result<(), TypedStoreError> {
+        let Some(head) = self.sui_committee_head.get(&())? else {
+            return Ok(());
+        };
+        if self.sui_committees.get(&head)?.is_some() {
+            return Ok(());
+        }
+        if let Some(prev) = head.checked_sub(1) {
+            self.sui_committee_summaries.get(&prev)?;
+        }
         Ok(())
     }
 }
@@ -749,5 +817,63 @@ mod tests {
                 .is_none(),
             "rejected insert must not write the blob"
         );
+    }
+
+    // -- OCS stale-format recovery (the N1 boot-halt fix) ---------------------
+
+    #[tokio::test]
+    async fn reset_direct_cache_for_format_recovery_resets_the_cursors() {
+        let (_dir, tables) = open_tables();
+        tables.put_sui_pusher_last_seq(4242).unwrap();
+        assert_eq!(tables.get_sui_pusher_last_seq().unwrap(), Some(4242));
+
+        tables.reset_direct_cache_for_format_recovery().unwrap();
+
+        assert_eq!(
+            tables.get_sui_pusher_last_seq().unwrap(),
+            None,
+            "the pusher cursor is reset so the cold cache re-folds from the start"
+        );
+        assert!(
+            tables.get_verified_object_cache_head().unwrap().is_none(),
+            "the cache head is reset so the staleness tripwire isn't seeded stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn wipe_sui_committee_state_empties_the_head_and_committees() {
+        let (_dir, tables) = open_tables();
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee();
+        let epoch = committee.epoch;
+        tables.install_sui_committee(&committee).unwrap();
+        assert_eq!(tables.highest_sui_committee_epoch().unwrap(), Some(epoch));
+        assert!(tables.get_sui_committee(epoch).unwrap().is_some());
+
+        tables
+            .wipe_sui_committee_state_for_format_recovery()
+            .unwrap();
+
+        // With the committee state gone, `highest_sui_committee_epoch()` is None,
+        // so the next bootstrap re-anchors from the configured trust anchor.
+        assert_eq!(tables.highest_sui_committee_epoch().unwrap(), None);
+        assert!(tables.get_sui_committee(epoch).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn probe_head_committee_readable_ok_on_empty_and_on_valid_state() {
+        let (_dir, tables) = open_tables();
+        // No committee state yet → nothing to read → Ok.
+        tables
+            .probe_head_committee_readable()
+            .expect("empty committee state is readable");
+        // A directly-installed committee decodes → Ok. (A SerializationError can
+        // only arise from a genuinely stale on-disk format, which can't be
+        // injected here without raw-byte access — that end-to-end recovery path
+        // is exercised by the release-mode setup/cache recovery tests.)
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee();
+        tables.install_sui_committee(&committee).unwrap();
+        tables
+            .probe_head_committee_readable()
+            .expect("valid committee state is readable");
     }
 }

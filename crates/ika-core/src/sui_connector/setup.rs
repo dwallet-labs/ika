@@ -48,6 +48,7 @@ use ika_network::sui_state_mirror::{
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::transport::SuiTransport;
 use tracing::{info, warn};
+use typed_store::TypedStoreError;
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::sui_connector::changeset_receiver::{ChangesetReceiver, SharedChangesetIndex};
@@ -121,6 +122,14 @@ pub enum SetupError {
     },
     #[error("anchor summary at digest {0:?} is not end-of-epoch (no end_of_epoch_data)")]
     AnchorNotEndOfEpoch(CheckpointDigest),
+    #[error(
+        "persisted OCS committee state could not be deserialized ({0}); this usually \
+         means a Sui version upgrade changed its on-disk format. To recover, clear the \
+         node's OCS committee tables and restart with the trust anchor configured so it \
+         re-anchors and re-ratchets — or set `auto_reanchor_on_format_change = true` to \
+         do this automatically."
+    )]
+    PersistedCommitteeUnreadable(String),
     #[error("transport: {0}")]
     Transport(String),
     #[error(transparent)]
@@ -274,6 +283,35 @@ pub async fn build_sui_connector_stack(
 
     // 2. Probe artifacts-digest support before doing anything else.
     probe_artifacts_digest(&raw_for_ratchet).await?;
+
+    // 2b. Recover from a stale persisted committee format before resolving the
+    //     bootstrap plan. A Sui version upgrade can change the on-disk BCS
+    //     layout of the committee / summary columns; rather than halt on boot,
+    //     either re-anchor from the pinned trust anchor (opt-in) or surface an
+    //     actionable error. The rebuildable verified-object cache recovers itself
+    //     inside `VerifiedStateCache::open`; this handles the trust chain. (A
+    //     transient RocksDB IO error is not format rot and still propagates.)
+    if let Err(e) = perpetual.probe_head_committee_readable() {
+        match e {
+            TypedStoreError::SerializationError(reason) if cfg.auto_reanchor_on_format_change => {
+                warn!(
+                    reason,
+                    "persisted Sui committee state could not be deserialized (likely a Sui \
+                     version upgrade); auto_reanchor_on_format_change is set — wiping the \
+                     committee tables and re-anchoring from the configured trust anchor"
+                );
+                perpetual
+                    .wipe_sui_committee_state_for_format_recovery()
+                    .map_err(SetupError::Ika)?;
+                // Cleared: `highest_sui_committee_epoch()` is now `None`, so the
+                // bootstrap below takes the configured-anchor path (digest-gated).
+            }
+            TypedStoreError::SerializationError(reason) => {
+                return Err(SetupError::PersistedCommitteeUnreadable(reason));
+            }
+            other => return Err(SetupError::Ika(other.into())),
+        }
+    }
 
     // 3. Resolve trust anchor → fetch + verify summary → committee
     //    store → ratchet client. The anchor digest is the trust gate;
