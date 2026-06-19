@@ -27,6 +27,7 @@ use sui_types::message_envelope::Message;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
+use tracing::warn;
 
 /// Does `proof` actually attest the absence of the *id* `target_id`, rather
 /// than merely the absence of some `ObjectRef` that happens to carry it?
@@ -140,6 +141,15 @@ struct PendingChangeset {
     previous_digest: Option<CheckpointDigest>,
     object_states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)>,
 }
+
+/// Hard cap on the out-of-order `pending` queue. A byzantine relay can withhold
+/// the contiguous-head checkpoint while feeding a run of higher, real,
+/// committee-signed changesets — each one queues in `pending` and never drains.
+/// Bound it so the relay can't grow our memory without limit; at the cap, a new
+/// out-of-order entry is dropped (it is re-pulled from the contiguous head once
+/// the gap fills, and the affected ids read a safe `Unknown` meanwhile). Sized
+/// for many epochs of legitimate brief reordering.
+const MAX_PENDING_CHANGESETS: usize = 256;
 
 /// A mirrored node's fold of the committee-signed changeset stream into a
 /// per-id `(last-modifying seq, status)` index with an **enforced contiguous
@@ -279,6 +289,21 @@ impl ChangesetIndex {
                     Ok(AbsorbOutcome::Advanced {
                         new_head: self.head_seq(),
                     })
+                } else if self.pending.len() >= MAX_PENDING_CHANGESETS
+                    && !self.pending.contains_key(&seq)
+                {
+                    // Queue full — a relay is likely withholding the contiguous
+                    // head while feeding higher seqs. Drop this out-of-order entry
+                    // rather than grow unbounded; it is re-pulled from the
+                    // contiguous head later, and the affected ids read a safe
+                    // `Unknown` (per-read fallback) until the gap fills.
+                    warn!(
+                        seq,
+                        pending = self.pending.len(),
+                        "changeset pending queue at cap; dropping out-of-order entry \
+                         (relay may be withholding the contiguous head)"
+                    );
+                    Ok(AbsorbOutcome::Queued)
                 } else {
                     self.pending.insert(seq, incoming);
                     Ok(AbsorbOutcome::Queued)

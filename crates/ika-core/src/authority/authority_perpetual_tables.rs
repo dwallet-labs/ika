@@ -507,6 +507,27 @@ impl AuthorityPerpetualTables {
         Ok(())
     }
 
+    /// Persist an end-of-epoch checkpoint AND its epoch→seq index entry in ONE
+    /// batch, so a crash can't leave the `sui_end_of_epoch_seqs` mapping without
+    /// its backing `CheckpointData` in `sui_end_of_epoch_checkpoints` (or vice
+    /// versa). Both serve a mirrored peer's committee ratchet; a dangling half
+    /// would just force a fullnode fallback, but keeping them atomic avoids that.
+    pub fn put_sui_end_of_epoch(
+        &self,
+        sui_epoch: u64,
+        seq: SuiCheckpointSequenceNumber,
+        checkpoint: &CheckpointData,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_seqs.batch();
+        wb.insert_batch(&self.sui_end_of_epoch_seqs, [(sui_epoch, seq)])?;
+        wb.insert_batch(
+            &self.sui_end_of_epoch_checkpoints,
+            [(seq, checkpoint.clone())],
+        )?;
+        wb.write()?;
+        Ok(())
+    }
+
     /// Drop retained end-of-epoch checkpoints below `floor` (the verified-cache
     /// retention floor) — a mirrored peer cannot bootstrap below it anyway.
     pub fn retain_sui_end_of_epoch_checkpoints(

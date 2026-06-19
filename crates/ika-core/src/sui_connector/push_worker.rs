@@ -287,11 +287,10 @@ impl IkaCheckpointPusher {
             return;
         }
         let epoch = data.checkpoint_summary.epoch();
-        if let Err(e) = self.perpetual.put_sui_end_of_epoch_seq(epoch, seq) {
-            warn!(epoch, seq, error = ?e, "failed to persist end-of-epoch seq");
-        }
-        if let Err(e) = self.perpetual.put_sui_end_of_epoch_checkpoint(seq, data) {
-            warn!(seq, error = ?e, "failed to persist end-of-epoch checkpoint for mirrored peers");
+        // One batch: the epoch→seq index and its backing CheckpointData are
+        // persisted atomically, so a crash can't leave a dangling half.
+        if let Err(e) = self.perpetual.put_sui_end_of_epoch(epoch, seq, data) {
+            warn!(epoch, seq, error = ?e, "failed to persist end-of-epoch (seq + checkpoint) for mirrored peers");
         }
     }
 

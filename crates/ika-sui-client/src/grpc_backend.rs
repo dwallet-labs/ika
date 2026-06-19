@@ -29,7 +29,6 @@ use itertools::Itertools;
 use sui_json_rpc_types::{
     EventFilter, EventPage, SuiEvent, SuiTransactionBlockEffects, SuiTransactionBlockResponse,
 };
-use sui_types::TypeTag;
 use sui_types::base_types::{EpochId, ObjectID, ObjectRef, SuiAddress};
 use sui_types::collection_types::Table;
 use sui_types::digests::TransactionDigest;
@@ -232,43 +231,25 @@ impl SuiClientInner for GrpcSuiClient {
         self.object_bcs(dwallet_coordinator_id).await
     }
 
-    /// Fetch events for which no output was received (weren't completed).
+    /// Unsupported on the gRPC backend: OCS ingests session events via the
+    /// `BagEventPump` (`verified_bag_page`), which binds every entry to its
+    /// parent bag (spec invariant 5). The recovery walk this replaced read each
+    /// entry with an inclusion-only `get_object` and SKIPPED that
+    /// collection-membership binding, so a relay could have injected a
+    /// validly-proven event from a foreign bag. It was already dead here — the
+    /// only caller runs solely on the legacy JSON-RPC path (`reader.is_none()`),
+    /// which dispatches to the JSON-RPC backend, never this one — so erroring
+    /// kills the latent footgun: an accidental future wiring fails loudly rather
+    /// than ingesting collection-unbound events. Mirrors `query_events`.
     async fn get_uncompleted_events(
         &self,
-        coordinator_events_bag_id: ObjectID,
+        _coordinator_events_bag_id: ObjectID,
     ) -> Result<Vec<DBSuiEvent>, Self::Error> {
-        let mut events = Vec::new();
-        let mut page_token = None;
-        loop {
-            let page = self
-                .transport
-                .list_dynamic_fields(coordinator_events_bag_id, None, page_token)
-                .await?;
-            for entry in &page.entries {
-                let object = self.transport.get_object(entry.object_id).await?;
-                let Some(move_object) = object.data.try_as_move() else {
-                    return Err(GrpcSuiClientError::Decode(format!(
-                        "object {:?} is not a MoveObject",
-                        entry.object_id
-                    )));
-                };
-                let type_params = move_object.type_().type_params();
-                let Some(TypeTag::Struct(event_tag)) = type_params.get(1).map(|t| t.as_ref())
-                else {
-                    continue;
-                };
-                events.push(DBSuiEvent {
-                    type_: *event_tag.clone(),
-                    contents: move_object.contents().to_vec(),
-                    pulled: true,
-                });
-            }
-            match page.next_page_token {
-                Some(token) => page_token = Some(token),
-                None => break,
-            }
-        }
-        Ok(events)
+        Err(GrpcSuiClientError::Other(
+            "get_uncompleted_events is unsupported on the gRPC backend; OCS mode \
+             ingests events via BagEventPump (which binds each entry to its bag)"
+                .into(),
+        ))
     }
 
     async fn get_mpc_data_from_validators_pool(
