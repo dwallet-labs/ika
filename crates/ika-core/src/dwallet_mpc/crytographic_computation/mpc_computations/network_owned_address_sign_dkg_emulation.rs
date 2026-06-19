@@ -5,7 +5,8 @@
 //!
 //! Holds two ika-side helpers for the NOA-DKG path that have no upstream equivalent:
 //! - [`network_owned_address_sign_dkg_session_identifier`] derives a curve-specific
-//!   (sig-algo-independent) session id from `network_key_id + curve`.
+//!   (sig-algo-independent) session id from the curve's network encryption
+//!   key + curve.
 //! - [`compute_noa_dkg`] runs upstream's native
 //!   `<D as twopc_mpc::dkg::Protocol>::threshold_dkg_output(pp, session_id)`
 //!   for a single curve, extracts the public key, and wraps the output in
@@ -26,15 +27,19 @@ use merlin::Transcript;
 ///
 /// DKG is curve-specific but signature-algorithm-independent: a single DKG on a curve
 /// produces key shares usable by any signature algorithm on that curve.
+///
+/// Seeded by the curve's network **encryption key** (not the network key's
+/// Sui `ObjectID`), so the derived network-owned addresses are a pure function
+/// of cryptographic key material and carry no Sui dependency.
 pub fn network_owned_address_sign_dkg_session_identifier(
-    network_key_id: &[u8],
+    encryption_key: &[u8],
     curve: DWalletCurve,
 ) -> SessionIdentifier {
     // Use binary enum discriminant instead of string representation to prevent
     // collision if two variants ever produce the same Display output.
     let mut transcript =
         Transcript::new(b"Network Owned Address Sign DKG session identifier preimage");
-    transcript.append_message(b"network_key_id", network_key_id);
+    transcript.append_message(b"encryption_key", encryption_key);
     transcript.append_u64(b"curve", curve as u64);
 
     let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =
@@ -54,11 +59,11 @@ pub fn network_owned_address_sign_dkg_session_identifier(
 /// ika's NOA emulator was removed; this calls upstream's native
 /// `<D as twopc_mpc::dkg::Protocol>::threshold_dkg_output(pp, session_id)` directly
 /// to produce the decentralized-party DKG output for threshold (no centralized
-/// party) mode. The session id is derived from `network_key_id + curve`
+/// party) mode. The session id is derived from the curve's encryption key + curve
 /// (curve-specific, sig-algo independent) per
 /// [`network_owned_address_sign_dkg_session_identifier`].
 pub(crate) fn compute_noa_dkg<D>(
-    network_key_id: &[u8; 32],
+    encryption_key: &[u8],
     curve: DWalletCurve,
     protocol_public_parameters: &D::ProtocolPublicParameters,
 ) -> DwalletMPCResult<PerCurveNetworkOwnedAddressDkgData>
@@ -66,7 +71,7 @@ where
     D: twopc_mpc::dkg::Protocol,
 {
     let session_identifier =
-        network_owned_address_sign_dkg_session_identifier(network_key_id, curve);
+        network_owned_address_sign_dkg_session_identifier(encryption_key, curve);
     let session_id = CommitmentSizedNumber::from_le_slice(&session_identifier.into_bytes());
 
     let dkg_output =

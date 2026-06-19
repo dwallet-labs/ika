@@ -79,12 +79,12 @@ async fn network_owned_address_sign_flow(
     let mut test_state = build_test_state(4);
 
     // Create a network key (required for network-owned-address signing).
-    let (consensus_round, _network_key_bytes, network_key_id) =
+    let (consensus_round, _network_key_bytes, encryption_key) =
         create_network_key_test(&mut test_state).await;
 
     info!(
         "Network key created at consensus round {}, key_id: {:?}",
-        consensus_round, network_key_id
+        consensus_round, encryption_key
     );
     test_state.consensus_round = consensus_round as usize;
 
@@ -100,7 +100,7 @@ async fn network_owned_address_sign_flow(
     let consensus_round = utils::advance_rounds_while_presign_pool_empty(
         &mut test_state,
         signature_algorithm,
-        network_key_id,
+        encryption_key,
         start_round,
     )
     .await;
@@ -108,7 +108,7 @@ async fn network_owned_address_sign_flow(
 
     // Record pool size and snapshot pool contents (session identifiers) before signing.
     let pool_size_before = test_state.epoch_stores[0]
-        .presign_pool_size(signature_algorithm, network_key_id)
+        .presign_pool_size(signature_algorithm, encryption_key)
         .expect("failed to get pool size");
     info!(
         pool_size_before,
@@ -122,7 +122,7 @@ async fn network_owned_address_sign_flow(
         .presign_pools
         .lock()
         .unwrap()
-        .get(&(signature_algorithm, network_key_id))
+        .get(&(signature_algorithm, encryption_key))
         .map(|pool| {
             pool.iter()
                 .map(|(id, blending_index, _)| (*id, *blending_index))
@@ -308,31 +308,31 @@ async fn test_network_owned_address_sign_taproot() {
 /// and that changing any single input produces a different session identifier.
 #[test]
 fn test_network_owned_address_sign_dkg_session_identifier_determinism() {
-    let network_key_id = [1u8; 32];
+    let encryption_key = [1u8; 32];
     let curve = DWalletCurve::Curve25519;
 
     // Same inputs produce same session identifier
     let session_identifier_first =
-        network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
+        network_owned_address_sign_dkg_session_identifier(&encryption_key, curve);
     let session_identifier_second =
-        network_owned_address_sign_dkg_session_identifier(&network_key_id, curve);
+        network_owned_address_sign_dkg_session_identifier(&encryption_key, curve);
     assert_eq!(
         session_identifier_first, session_identifier_second,
         "session identifiers should be deterministic for identical inputs"
     );
 
-    // Different network key ID produces different session identifier
-    let different_key_id = [2u8; 32];
+    // Different encryption key produces different session identifier
+    let different_encryption_key = [2u8; 32];
     let session_identifier_different_key =
-        network_owned_address_sign_dkg_session_identifier(&different_key_id, curve);
+        network_owned_address_sign_dkg_session_identifier(&different_encryption_key, curve);
     assert_ne!(
         session_identifier_first, session_identifier_different_key,
-        "different network key IDs should produce different session identifiers"
+        "different encryption keys should produce different session identifiers"
     );
 
     // Different curve produces different session identifiers
     let session_identifier_different_curve =
-        network_owned_address_sign_dkg_session_identifier(&network_key_id, DWalletCurve::Secp256k1);
+        network_owned_address_sign_dkg_session_identifier(&encryption_key, DWalletCurve::Secp256k1);
     assert_ne!(
         session_identifier_first, session_identifier_different_curve,
         "different curves should produce different session identifiers"
@@ -347,7 +347,7 @@ fn test_network_owned_address_sign_dkg_session_identifier_determinism() {
 
     let session_identifiers: Vec<_> = curves
         .iter()
-        .map(|c| network_owned_address_sign_dkg_session_identifier(&network_key_id, *c))
+        .map(|c| network_owned_address_sign_dkg_session_identifier(&encryption_key, *c))
         .collect();
 
     for (i, id_a) in session_identifiers.iter().enumerate() {
@@ -362,26 +362,26 @@ fn test_network_owned_address_sign_dkg_session_identifier_determinism() {
         }
     }
 
-    // Single-bit-flip edge case: flipping one bit in the network key ID must change the session identifier
-    let mut flipped_key_id = [1u8; 32];
-    flipped_key_id[0] ^= 1;
+    // Single-bit-flip edge case: flipping one bit in the encryption key must change the session identifier
+    let mut flipped_encryption_key = [1u8; 32];
+    flipped_encryption_key[0] ^= 1;
     let flipped_session_identifier = network_owned_address_sign_dkg_session_identifier(
-        &flipped_key_id,
+        &flipped_encryption_key,
         DWalletCurve::Curve25519,
     );
     assert_ne!(
         session_identifier_first, flipped_session_identifier,
-        "single-bit flip in network key ID should produce a different session identifiers"
+        "single-bit flip in encryption key should produce a different session identifiers"
     );
 
-    // Boundary edge cases: all-zeros and all-0xFF key IDs must produce different session identifiers
+    // Boundary edge cases: all-zeros and all-0xFF encryption keys must produce different session identifiers
     let zero_id =
         network_owned_address_sign_dkg_session_identifier(&[0u8; 32], DWalletCurve::Curve25519);
     let max_id =
         network_owned_address_sign_dkg_session_identifier(&[0xFFu8; 32], DWalletCurve::Curve25519);
     assert_ne!(
         zero_id, max_id,
-        "all-zeros and all-0xFF key IDs should produce different session identifiers"
+        "all-zeros and all-0xFF encryption keys should produce different session identifiers"
     );
 
     info!(
@@ -394,20 +394,26 @@ fn test_network_owned_address_sign_dkg_session_identifier_determinism() {
 /// and unique per key.
 #[test]
 fn test_dkg_session_identifier_stability() {
-    let key_id = [42u8; 32];
+    let encryption_key = [42u8; 32];
 
-    let first_call =
-        network_owned_address_sign_dkg_session_identifier(&key_id, DWalletCurve::Curve25519);
-    let second_call =
-        network_owned_address_sign_dkg_session_identifier(&key_id, DWalletCurve::Curve25519);
+    let first_call = network_owned_address_sign_dkg_session_identifier(
+        &encryption_key,
+        DWalletCurve::Curve25519,
+    );
+    let second_call = network_owned_address_sign_dkg_session_identifier(
+        &encryption_key,
+        DWalletCurve::Curve25519,
+    );
     assert_eq!(
         first_call, second_call,
         "DKG session identifiers must be byte-identical across calls"
     );
 
-    let different_key = [43u8; 32];
-    let third_call =
-        network_owned_address_sign_dkg_session_identifier(&different_key, DWalletCurve::Curve25519);
+    let different_encryption_key = [43u8; 32];
+    let third_call = network_owned_address_sign_dkg_session_identifier(
+        &different_encryption_key,
+        DWalletCurve::Curve25519,
+    );
     assert_ne!(
         first_call, third_call,
         "different keys should produce different DKG session identifiers"
@@ -436,7 +442,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
     let mut test_state = build_test_state(4);
 
     // Create a network key (required for network-owned-address signing).
-    let (consensus_round, _network_key_bytes, network_key_id) =
+    let (consensus_round, _network_key_bytes, encryption_key) =
         create_network_key_test(&mut test_state).await;
     test_state.consensus_round = consensus_round as usize;
 
@@ -445,7 +451,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
     let consensus_round = utils::advance_rounds_while_presign_pool_empty(
         &mut test_state,
         DWalletSignatureAlgorithm::EdDSA,
-        network_key_id,
+        encryption_key,
         start_round,
     )
     .await;
@@ -453,7 +459,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
 
     // Record the pool size before sending sign requests.
     let pool_size_before = test_state.epoch_stores[0]
-        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, encryption_key)
         .expect("failed to get pool size");
     info!(
         pool_size_before,
@@ -487,7 +493,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
 
     // Assert: pool is empty (all presigns consumed).
     let pool_size_after = test_state.epoch_stores[0]
-        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+        .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, encryption_key)
         .expect("failed to get pool size");
     info!(pool_size_after, "EdDSA pool size after exhaustion");
     assert_eq!(
@@ -530,7 +536,7 @@ async fn test_presign_pool_exhaustion_buffers_excess_sign_requests() {
             test_state.dwallet_mpc_services[0].pending_network_owned_address_sign_request_count();
         if round < 10 || round % 50 == 0 || pending < excess_count {
             let pool_size = test_state.epoch_stores[0]
-                .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, network_key_id)
+                .presign_pool_size(DWalletSignatureAlgorithm::EdDSA, encryption_key)
                 .unwrap_or(0);
             info!(
                 round,

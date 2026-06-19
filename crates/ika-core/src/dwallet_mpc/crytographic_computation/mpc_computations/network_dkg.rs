@@ -736,7 +736,6 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
                     key_data.dkg_at_epoch,
                     &access_structure,
                     &key_data.network_dkg_public_output,
-                    key_data.id.into_bytes(),
                     &metrics,
                 )
             }
@@ -747,7 +746,6 @@ pub(crate) fn spawn_network_encryption_key_public_data_instantiation(
                 &access_structure,
                 &key_data.current_reconfiguration_public_output,
                 &key_data.network_dkg_public_output,
-                key_data.id.into_bytes(),
                 &metrics,
             )
         };
@@ -776,29 +774,46 @@ pub(crate) struct AllCurvesNetworkOwnedAddressDkgData {
 
 /// Computes DKG outputs and public keys for all 4 curves.
 pub(crate) fn compute_all_network_owned_address_dkg_outputs(
-    network_key_id: &[u8; 32],
     secp256k1_protocol_public_parameters: &twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters,
     secp256r1_protocol_public_parameters: &twopc_mpc::secp256r1::class_groups::ProtocolPublicParameters,
     ristretto_protocol_public_parameters: &twopc_mpc::ristretto::class_groups::ProtocolPublicParameters,
     curve25519_protocol_public_parameters: &twopc_mpc::curve25519::class_groups::ProtocolPublicParameters,
 ) -> DwalletMPCResult<AllCurvesNetworkOwnedAddressDkgData> {
+    // Seed each curve's NOA DKG with that curve's class-groups encryption
+    // public-key parameters (which embed the network encryption key) rather
+    // than the network key's Sui ObjectID. This makes the network-owned
+    // addresses a pure function of cryptographic key material, with no Sui
+    // dependency. The encryption key is stable across reconfiguration, so the
+    // addresses are stable too.
+    let secp256k1_encryption_key =
+        bcs::to_bytes(&secp256k1_protocol_public_parameters.encryption_scheme_public_parameters)?;
     let secp256k1 = compute_noa_dkg::<Secp256k1AsyncDKGProtocol>(
-        network_key_id,
+        &secp256k1_encryption_key,
         DWalletCurve::Secp256k1,
         secp256k1_protocol_public_parameters,
     )?;
+    let secp256r1_encryption_key =
+        bcs::to_bytes(&secp256r1_protocol_public_parameters.encryption_scheme_public_parameters)?;
     let secp256r1 = compute_noa_dkg::<Secp256r1AsyncDKGProtocol>(
-        network_key_id,
+        &secp256r1_encryption_key,
         DWalletCurve::Secp256r1,
         secp256r1_protocol_public_parameters,
     )?;
+    // curve25519 shares ristretto's scalar field and has no separate encryption
+    // key of its own; its protocol public parameters carry the same encryption
+    // key. The `curve` tag in the session id keeps the two curves' addresses
+    // distinct.
+    let curve25519_encryption_key =
+        bcs::to_bytes(&curve25519_protocol_public_parameters.encryption_scheme_public_parameters)?;
     let curve25519 = compute_noa_dkg::<Curve25519AsyncDKGProtocol>(
-        network_key_id,
+        &curve25519_encryption_key,
         DWalletCurve::Curve25519,
         curve25519_protocol_public_parameters,
     )?;
+    let ristretto_encryption_key =
+        bcs::to_bytes(&ristretto_protocol_public_parameters.encryption_scheme_public_parameters)?;
     let ristretto = compute_noa_dkg::<RistrettoAsyncDKGProtocol>(
-        network_key_id,
+        &ristretto_encryption_key,
         DWalletCurve::Ristretto,
         ristretto_protocol_public_parameters,
     )?;
@@ -900,7 +915,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
     dkg_at_epoch: u64,
     access_structure: &WeightedThresholdAccessStructure,
     public_output_bytes: &SerializedWrappedMPCPublicOutput,
-    network_key_id: [u8; 32],
     metrics: &DWalletMPCMetrics,
 ) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
     let mpc_public_output: VersionedNetworkDkgOutput =
@@ -961,7 +975,6 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
 
             let noa_dkg_data = timed_sub_call(metrics, "noa_dkg_outputs", || {
                 compute_all_network_owned_address_dkg_outputs(
-                    &network_key_id,
                     &secp256k1_protocol_public_parameters,
                     &secp256r1_protocol_public_parameters,
                     &ristretto_protocol_public_parameters,
