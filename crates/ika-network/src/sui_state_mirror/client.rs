@@ -127,21 +127,27 @@ impl SuiMirrorPeers {
         }
 
         let mut last_err: Option<String> = None;
-        let mut all_not_found = true;
-        let mut tried_any = false;
+        // One entry per peer we actually reached and that failed (a success
+        // short-circuits the pass). The relay verdict is computed from these.
+        let mut reached: Vec<PeerFailure> = Vec::new();
         for peer_id in peers {
             let Some(peer) = self.network.peer(peer_id) else {
                 debug!(?peer_id, "{op_label}: peer not connected, skipping");
                 continue;
             };
-            tried_any = true;
             let mut client = SuiStateMirrorClient::new(peer);
             match tokio::time::timeout(RELAY_REQUEST_TIMEOUT, op(&mut client)).await {
                 Ok(Ok(resp)) => return Ok(resp.into_inner()),
                 Ok(Err(status)) => {
-                    if status.status() != anemo::types::response::StatusCode::NotFound {
-                        all_not_found = false;
-                    }
+                    // Only a genuine NotFound keeps the all-peers-NotFound verdict
+                    // alive; any other error is a peer/network failure.
+                    reached.push(
+                        if status.status() == anemo::types::response::StatusCode::NotFound {
+                            PeerFailure::NotFound
+                        } else {
+                            PeerFailure::Unreachable
+                        },
+                    );
                     warn!(
                         ?peer_id,
                         ?status,
@@ -158,7 +164,7 @@ impl SuiMirrorPeers {
                     // A timeout is a peer/network failure, not a NotFound, so it
                     // must not be folded into the all-peers-NotFound result that
                     // the committee ratchet keys its fallback decision on.
-                    all_not_found = false;
+                    reached.push(PeerFailure::Unreachable);
                     warn!(
                         ?peer_id,
                         timeout = ?RELAY_REQUEST_TIMEOUT,
@@ -173,19 +179,42 @@ impl SuiMirrorPeers {
                 }
             }
         }
-        // Preserve `NotFound` semantics across the relay: if every peer
-        // we successfully reached said NotFound, the underlying data
-        // really doesn't exist (committee ratchet uses this distinction
-        // to decide whether to fall back to direct committee fetch).
-        if tried_any && all_not_found {
-            return Err(TransportError::NotFound(
-                last_err.unwrap_or_else(|| format!("{op_label}: not found")),
-            ));
-        }
-        Err(TransportError::Network(format!(
+        // Verdict for a pass in which no peer returned a successful response.
+        Err(classify_failed_pass(op_label, &reached, last_err))
+    }
+}
+
+/// One reached-but-failed peer's outcome within a `try_peers` pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerFailure {
+    /// The peer answered `NotFound` — the data may genuinely be absent.
+    NotFound,
+    /// The peer returned a non-`NotFound` error, or timed out: a peer/network
+    /// failure that must NOT be folded into the all-peers-NotFound verdict.
+    Unreachable,
+}
+
+/// The relay verdict for a pass in which no peer returned a successful response.
+///
+/// `NotFound` is preserved across the untrusted relay ONLY when at least one
+/// peer was reached AND every reached peer answered `NotFound` — the committee
+/// ratchet keys its "fall back to a direct committee fetch" decision on exactly
+/// this distinction, so a timeout or any non-`NotFound` error (and the
+/// no-peer-reached case) must downgrade the verdict to a retriable `Network`
+/// error. (Spec invariant 6.)
+fn classify_failed_pass(
+    op_label: &str,
+    reached: &[PeerFailure],
+    last_err: Option<String>,
+) -> TransportError {
+    let all_not_found = !reached.is_empty() && reached.iter().all(|f| *f == PeerFailure::NotFound);
+    if all_not_found {
+        TransportError::NotFound(last_err.unwrap_or_else(|| format!("{op_label}: not found")))
+    } else {
+        TransportError::Network(format!(
             "{op_label}: all peers failed (last: {})",
             last_err.unwrap_or_else(|| "no peers reachable".into())
-        )))
+        ))
     }
 }
 
@@ -516,5 +545,49 @@ impl SuiTransport for SuiMirrorTransport {
              fallback gRPC client"
                 .into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The relay verdict for a pass in which no peer succeeded: `NotFound` is
+    /// preserved across the untrusted relay ONLY when at least one peer was
+    /// reached and EVERY reached peer answered `NotFound`; a timeout, any
+    /// non-`NotFound` error, or no peer reached at all downgrades to a retriable
+    /// `Network` error. The committee ratchet's fall-back-to-direct decision keys
+    /// on exactly this distinction (spec invariant 6), so this is a trust gate.
+    /// (The anemo round-trip / demotion plumbing is covered by the cluster
+    /// failover tests; this pins the classification logic deterministically.)
+    #[test]
+    fn try_peers_verdict_preserves_notfound_only_when_all_reached_agree() {
+        use PeerFailure::{NotFound, Unreachable};
+
+        // (a) every reached peer NotFound -> NotFound (carries the last message).
+        match classify_failed_pass("op", &[NotFound, NotFound, NotFound], Some("gone".into())) {
+            TransportError::NotFound(msg) => assert_eq!(msg, "gone"),
+            other => panic!("all-NotFound must be NotFound, got {other:?}"),
+        }
+        // A single reached peer that said NotFound is still NotFound.
+        match classify_failed_pass("op", &[NotFound], None) {
+            TransportError::NotFound(_) => {}
+            other => panic!("single NotFound must be NotFound, got {other:?}"),
+        }
+        // (b) mixed NotFound + a non-NotFound error -> Network (never NotFound).
+        match classify_failed_pass("op", &[NotFound, Unreachable], Some("boom".into())) {
+            TransportError::Network(_) => {}
+            other => panic!("a non-NotFound error must downgrade to Network, got {other:?}"),
+        }
+        // (c) a single timeout / network error -> Network, never NotFound.
+        match classify_failed_pass("op", &[Unreachable], Some("timed out".into())) {
+            TransportError::Network(_) => {}
+            other => panic!("a timeout must be Network, got {other:?}"),
+        }
+        // (d) no peer reached (tried_any == false) -> Network, never NotFound.
+        match classify_failed_pass("op", &[], None) {
+            TransportError::Network(msg) => assert!(msg.contains("no peers reachable")),
+            other => panic!("no peer reached must be Network, got {other:?}"),
+        }
     }
 }

@@ -367,3 +367,35 @@ impl SuiTransport for SuiGrpcClient {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A gRPC `NotFound` must map to `TransportError::NotFound` (carrying the
+    /// message), and every other status code to `TransportError::Network`. This
+    /// is the source classification the committee ratchet's prune-fallback
+    /// decision keys on (it falls back ONLY on a genuine NotFound), so a 404
+    /// misclassified as Network — or the reverse — is a real bug.
+    #[test]
+    fn rpc_status_err_maps_not_found_distinctly_from_network() {
+        match SuiGrpcClient::rpc_status_err(tonic::Status::not_found("checkpoint 42 pruned")) {
+            TransportError::NotFound(msg) => assert_eq!(msg, "checkpoint 42 pruned"),
+            other => panic!("not_found must map to NotFound, got {other:?}"),
+        }
+        for status in [
+            tonic::Status::unavailable("backend down"),
+            tonic::Status::internal("boom"),
+            tonic::Status::deadline_exceeded("slow"),
+            tonic::Status::unknown("?"),
+            tonic::Status::unauthenticated("nope"),
+            tonic::Status::resource_exhausted("busy"),
+        ] {
+            let code = status.code();
+            match SuiGrpcClient::rpc_status_err(status) {
+                TransportError::Network(_) => {}
+                other => panic!("{code:?} must map to Network, got {other:?}"),
+            }
+        }
+    }
+}
