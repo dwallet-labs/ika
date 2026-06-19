@@ -351,11 +351,16 @@ impl PresignPublicInputByProtocol {
             }
             // VSS (Fast Schnorr) presign PublicInput carries the per-party
             // curve25519 HPKE encryption keys + the UC-verified party set.
-            // UC proofs were verified ONCE at `Committee::new`; the verified
-            // public-key values live in
+            // UC proofs were verified ONCE when the epoch's off-chain key set was
+            // ingested (`get_validator_mpc_keys_by_party_id` →
+            // `Committee::verified_vss_hpke_party_encryption_key_values`); the
+            // verified public-key values live in
             // `validator_mpc_keys_by_party_id.vss_hpke_verified_party_encryption_key_values`.
             // Here we only re-parse them into `EncryptionPublicKey` (a cheap
             // curve-point check), with no per-session UC proof re-verification.
+            // The map already covers only the parties that have keys (the agreed
+            // subset), so the presign deals to exactly those — no all-committee
+            // requirement.
             DWalletSignatureAlgorithm::TaprootVSS => {
                 let _ = dwallet_dkg_output;
                 let protocol_public_parameters =

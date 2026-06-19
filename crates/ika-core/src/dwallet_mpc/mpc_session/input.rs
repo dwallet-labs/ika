@@ -253,11 +253,13 @@ pub(crate) fn session_input_from_request(
                 network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
 
             let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
-                // The upcoming committee's off-chain PVSS / VSS keys (dealers
-                // encrypt under the upcoming parties' PVSS keys). Delivered on
-                // the next-epoch key channel; absent until the next-epoch
-                // off-chain assembly completes — error to retry, like a missing
-                // next committee.
+                // Main reconfig (network_encryption_key_version == 3): all keys
+                // come from the off-chain consensus-agreed sets, never Sui. The
+                // current set is this epoch's agreed keys (the parties holding
+                // shares from the DKG); the upcoming set is delivered on the
+                // next-epoch channel and is absent until the next-epoch off-chain
+                // assembly completes — error to retry, like a missing next
+                // committee.
                 let upcoming_validator_mpc_keys = next_epoch_validator_mpc_keys.ok_or(
                     DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
                 )?;
@@ -265,6 +267,7 @@ pub(crate) fn session_input_from_request(
                     <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
+                        validator_mpc_keys_by_party_id,
                         upcoming_validator_mpc_keys,
                         network_dkg_public_output,
                         latest_reconfiguration_public_output,

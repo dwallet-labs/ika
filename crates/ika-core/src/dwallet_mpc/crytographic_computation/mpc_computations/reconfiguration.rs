@@ -36,13 +36,19 @@ use twopc_mpc::decentralized_party_backward_compatible::reconfiguration as bwd_c
 pub(crate) trait ReconfigurationPartyPublicInputGenerator: Party {
     /// Generates the public input required for the reconfiguration protocol.
     ///
-    /// `upcoming_validator_mpc_keys` is the upcoming committee's off-chain
-    /// validator MPC key set (class groups + per-curve PVSS HPKE + verified
-    /// VSS), keyed by the upcoming committee's party ids — the off-chain-only
-    /// keys are no longer carried on `new_committee`, so they are passed in.
+    /// `current_validator_mpc_keys` / `upcoming_validator_mpc_keys` are the
+    /// current and upcoming committees' off-chain consensus-agreed key sets
+    /// (class groups + per-curve PVSS HPKE + verified VSS), keyed by their
+    /// respective committee's party ids. This is the MAIN reconfig party, which
+    /// only runs at `network_encryption_key_version == 3` — so ALL validator
+    /// keys come from these agreed sets, never from Sui; the committees supply
+    /// only the access structures. Each agreed set may cover a subset of its
+    /// committee (offline/withholding validators are undealt but stay committee
+    /// members for consensus).
     fn generate_public_input(
         committee: &Committee,
         new_committee: Committee,
+        current_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
@@ -53,21 +59,29 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
     fn generate_public_input(
         current_committee: &Committee,
         upcoming_committee: Committee,
+        current_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         upcoming_validator_mpc_keys: ValidatorMpcKeysByPartyId,
         network_dkg_public_output: VersionedNetworkDkgOutput,
         latest_reconfiguration_public_output: Option<VersionedDecryptionKeyReconfigurationOutput>,
     ) -> DwalletMPCResult<<ReconfigurationParty as Party>::PublicInput> {
         let current_committee = current_committee.clone();
+        // Committees supply ONLY the access structures (voting weights /
+        // threshold over the full committee).
         let current_access_structure =
             generate_access_structure_from_committee(&current_committee)?;
         let upcoming_access_structure =
             generate_access_structure_from_committee(&upcoming_committee)?;
 
+        // class_groups (and PVSS, below) come from the off-chain consensus-agreed
+        // key sets — NOT from Sui. This is the main reconfig party, which runs
+        // only at `network_encryption_key_version == 3`, where the validator keys
+        // live off-chain. (The bwd-compat party, at key version 2, reads them
+        // from the committee — see `reconfiguration_bwd_compat_public_input`.)
+        // The current set is the parties that actually hold shares from the
+        // current DKG; the upcoming set is the reshare targets. Either may be a
+        // subset of its committee — the reshare deals only to parties with keys.
         let current_encryption_keys_per_crt_prime_and_proofs =
-            extract_class_groups_encryption_keys_from_committee(&current_committee)?;
-
-        let upcoming_encryption_keys_per_crt_prime_and_proofs =
-            extract_class_groups_encryption_keys_from_committee(&upcoming_committee)?;
+            current_validator_mpc_keys.class_groups;
 
         // Per-curve PVSS HPKE encryption keys + proofs. Upstream's
         // `new_from_dkg_output` / `new_from_reconfiguration_output` accept a
@@ -76,17 +90,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         // in `2pc-mpc/src/decentralized_party/reconfiguration.rs:401, 689`)
         // shows they correspond to the UPCOMING committee — the dealers send
         // ciphertexts encrypted under each upcoming participating party's PVSS
-        // public key. Delivered from the off-chain next-epoch key channel
-        // (no longer carried on `upcoming_committee`), keyed by the upcoming
-        // committee's party ids.
+        // public key.
         let upcoming_validators_pvss_hpke_keys_by_party_id = upcoming_validator_mpc_keys;
-
-        // No all-committee completeness check: `upcoming_validator_mpc_keys` is
-        // the consensus-frozen agreed set for the upcoming committee, which may
-        // legitimately omit offline/withholding validators. Reconfiguration
-        // reshares only to the upcoming parties that have keys; the rest stay in
-        // the committee, just undealt. The next-epoch freeze gate in
-        // `handle_mpc_request` ensures this set is the agreed one before we run.
+        let upcoming_encryption_keys_per_crt_prime_and_proofs =
+            upcoming_validators_pvss_hpke_keys_by_party_id
+                .class_groups
+                .clone();
 
         let current_tangible_party_id_to_upcoming =
             current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);

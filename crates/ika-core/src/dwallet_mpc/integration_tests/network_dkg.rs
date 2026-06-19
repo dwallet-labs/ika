@@ -229,6 +229,112 @@ async fn test_network_key_reconfiguration() {
     );
 }
 
+/// Partial UPCOMING keys: reconfigure into a full (4-member) next committee where
+/// only 3 of the upcoming validators delivered off-chain keys. The withholding
+/// validator is offline for the reshare (it never delivered its next-epoch key
+/// and is not advanced), so the reshare deals only to the 3 upcoming parties that
+/// have keys and still completes (3 = quorum for n=4); the 4th stays a committee
+/// member, just undealt.
+///
+/// Regression test for the all-N reconfig gate (now removed) and for sourcing the
+/// upcoming `class_groups` from the off-chain agreed set rather than the full
+/// committee — with the old code this rejected on `InvalidMPCPartyType` (3/4) and
+/// wedged reconfiguration on a single missing upcoming validator.
+#[tokio::test]
+#[cfg(test)]
+async fn test_reconfiguration_completes_with_partial_upcoming_keys() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, _) = Committee::new_simple_test_committee();
+    let epoch_id = 1;
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(4);
+    let mut test_state = IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee: committee.clone(),
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+    // Full DKG on the current committee (all 4 have keys), then reconfigure.
+    let (consensus_round, _, key_id) = create_network_key_test(&mut test_state).await;
+
+    // Upcoming committee of 4, but deliver off-chain keys for only 3 — the 4th
+    // (party index 3, the last voting-rights entry) is the offline/withholding
+    // validator. Both committees share authority names (deterministic test
+    // committees), so this is also current party index 3, which we leave offline
+    // for the reshare below.
+    let (mut next_committee, _next_seeds, mut next_bundles) =
+        utils::build_committee_with_random_seeds(4);
+    next_committee.epoch = epoch_id + 1;
+    let dropped = next_committee
+        .voting_rights
+        .last()
+        .expect("committee has members")
+        .0;
+    next_bundles.class_groups.remove(&dropped);
+    next_bundles.secp256k1_pvss.remove(&dropped);
+    next_bundles.secp256r1_pvss.remove(&dropped);
+    next_bundles.ristretto_pvss.remove(&dropped);
+    next_bundles.vss_hpke.remove(&dropped);
+    assert_eq!(
+        next_bundles.secp256k1_pvss.len(),
+        3,
+        "exactly 3 of 4 upcoming validators should have keys"
+    );
+
+    test_state
+        .sui_data_senders
+        .iter()
+        .for_each(|sui_data_sender| {
+            let _ = sui_data_sender
+                .next_epoch_committee_sender
+                .send(next_committee.clone());
+            let _ = sui_data_sender
+                .next_epoch_mpc_keys_sender
+                .send(Some((next_committee.epoch, next_bundles.clone())));
+        });
+    send_start_network_key_reconfiguration_event(
+        epoch_id,
+        &mut test_state.sui_data_senders,
+        [3u8; 32],
+        3,
+        key_id,
+    );
+    // Reshare with the 3 keyed validators online (the 4th withheld its upcoming
+    // key and is offline). The reshare deals only to the 3-party agreed upcoming
+    // set and completes (3 = quorum for n=4).
+    let (_, reconfiguration_checkpoint) = utils::advance_mpc_flow_until_completion_for_parties(
+        &mut test_state,
+        consensus_round,
+        &[0, 1, 2],
+    )
+    .await;
+    let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkReconfigurationOutput(message) =
+        reconfiguration_checkpoint
+            .messages()
+            .first()
+            .expect("Expected a reconfiguration message")
+    else {
+        panic!("Expected a RespondDWalletMPCNetworkReconfigurationOutput message");
+    };
+    assert!(
+        !message.rejected,
+        "reconfiguration into a 3/4-keyed upcoming committee should not be rejected"
+    );
+}
+
 pub(crate) async fn create_network_key_test(
     test_state: &mut IntegrationTestState,
 ) -> (Round, Vec<u8>, ObjectID) {
