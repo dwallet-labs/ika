@@ -1175,6 +1175,283 @@ mod tests {
         reader.check_freshness(0, 1_000_000).unwrap();
     }
 
+    /// The freshness gate is `gap <= bound` for `gap = head - proof_seq`, swept
+    /// across representative bounds {0, 1, 100}: a proof exactly `bound` behind
+    /// the head is the last accepted one (`gap == bound`), one closer still
+    /// passes (`gap == bound - 1`), and one checkpoint further (`gap == bound + 1`)
+    /// is the first rejection — surfaced as `StaleCheckpoint { gap, bound, .. }`
+    /// with the gap and bound it was judged against. (`bound == 0` has no
+    /// `bound - 1` case: zero gap is the tightest possible.)
+    #[tokio::test]
+    async fn freshness_boundary_conditions() {
+        // Pin the head so `proof_seq` follows from the desired gap. Picked high
+        // enough that `head - (bound + 1)` never underflows for these bounds.
+        let head: CheckpointSequenceNumber = 1_000;
+        for bound in [0u64, 1, 100] {
+            let (_dir, reader) = test_reader(Some(bound));
+
+            // gap == bound: the boundary, still fresh.
+            let at_bound = head - bound;
+            reader
+                .check_freshness(at_bound, head)
+                .unwrap_or_else(|e| panic!("bound {bound}: gap == bound must pass, got {e:?}"));
+
+            // gap == bound - 1: one closer, fresh. (Skip for bound 0.)
+            if bound > 0 {
+                let inside_bound = head - (bound - 1);
+                reader
+                    .check_freshness(inside_bound, head)
+                    .unwrap_or_else(|e| {
+                        panic!("bound {bound}: gap == bound - 1 must pass, got {e:?}")
+                    });
+            }
+
+            // gap == bound + 1: the first stale proof.
+            let past_bound = head - (bound + 1);
+            let err = reader
+                .check_freshness(past_bound, head)
+                .expect_err("gap == bound + 1 must be rejected");
+            match err {
+                ReaderError::StaleCheckpoint {
+                    object_seq,
+                    head: err_head,
+                    gap,
+                    bound: err_bound,
+                } => {
+                    assert_eq!(object_seq, past_bound, "bound {bound}");
+                    assert_eq!(err_head, head, "bound {bound}");
+                    assert_eq!(gap, bound + 1, "bound {bound}");
+                    assert_eq!(err_bound, bound, "bound {bound}");
+                }
+                other => panic!("bound {bound}: expected StaleCheckpoint, got {other:?}"),
+            }
+        }
+    }
+
+    /// `observed_upstream_head` only ratchets up (`fetch_max` in
+    /// `note_upstream_head`), so once any provider response has shown a newer
+    /// head, a later response under-reporting a lower one cannot talk freshness
+    /// back below it. A relay that first reveals head 1000, then claims 10, is
+    /// still held to 1000: a proof anchored at 950 (gap 50 vs the real tip) stays
+    /// judged against 1000, not the relay's freshly-lowered 10 (against which its
+    /// gap would saturate to 0 and pass). Pins the monotonic floor.
+    #[tokio::test]
+    async fn observed_upstream_head_is_monotonic_and_pins_freshness() {
+        // Bound 10: a 50-checkpoint gap is stale iff judged against 1000.
+        let (_dir, reader) = test_reader(Some(10));
+
+        reader.note_upstream_head(1000);
+        // A later, lower claim must NOT lower the pin.
+        reader.note_upstream_head(10);
+        let observed_head = reader.observed_upstream_head.load(Ordering::Relaxed);
+        assert_eq!(
+            observed_head, 1000,
+            "fetch_max must not lower the observed head"
+        );
+
+        // Against the monotonic 1000, a proof at 950 (gap 50 > bound 10) is stale.
+        let err = reader
+            .check_freshness(950, observed_head)
+            .expect_err("gap 50 vs the pinned head 1000 exceeds bound 10");
+        match err {
+            ReaderError::StaleCheckpoint {
+                gap, head, bound, ..
+            } => {
+                assert_eq!(head, 1000);
+                assert_eq!(gap, 50);
+                assert_eq!(bound, 10);
+            }
+            other => panic!("expected StaleCheckpoint, got {other:?}"),
+        }
+
+        // Had the pin followed the relay's lowered claim of 10, the same proof
+        // would have judged fresh (gap saturates to 0) — the failure mode this
+        // guards against.
+        reader
+            .check_freshness(950, 10)
+            .expect("sanity: against a head of 10 the proof is trivially 'fresh'");
+    }
+
+    /// The per-object high-water mark is the single source of truth for version
+    /// monotonicity on *both* the cache fast-path and the network/verify path.
+    /// After serving a newer version (mark at 5), a later read returning an older
+    /// version of the same id is a rollback and must be rejected on whichever
+    /// path it arrives — and the rejection must not lower the mark. The cache
+    /// path (`try_cache_hit`) folds the rollback into a `None` (fall through);
+    /// the network path (`verify_response`) surfaces it as `StaleVersion`.
+    #[tokio::test]
+    async fn high_water_rejects_network_rollback_after_cache_hit() {
+        let id = ObjectID::from_single_byte(0x07);
+
+        // --- cache path: a cached v3 below the mark is not served ---
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let cache_reader = OcsVerifiedReader::new(
+            Arc::new(UnusedProvider), // a cache-rejected read must not hit the network
+            committees,
+            OcsMetrics::new_for_testing(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true, // cache_first
+            None, // no staleness bound — isolate the high-water gate
+        );
+
+        // A newer version (5) was already served, so the mark sits at 5.
+        cache_reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+        // Seed the cache with a stale v3 of the same id.
+        let stale = test_object(id, 3, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        let entry = VerifiedObjectEntry {
+            object: stale,
+            checkpoint_seq: 42,
+            proof,
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        cache_reader.cache.absorb_entries(&summary, &[entry]);
+
+        // The cache fast-path consults the same mark: v3 < 5, so it falls through
+        // (None) rather than serving the rollback — and the mark is untouched.
+        assert!(
+            cache_reader.try_cache_hit(id).is_none(),
+            "cache must not serve a version below the high-water mark"
+        );
+
+        // --- network path: a valid proof for v3 is still a StaleVersion ---
+        let proven = test_object(id, 3, address_owner(0xAA));
+        let (net_summary, net_proof) = sign_inclusion(&committee, &keys, 100, &[&proven], &proven);
+        let provider = StagedProvider::object(object_response(proven, net_summary, net_proof, 100));
+        let (_dir, net_reader, metrics) = reader_with(provider, committee, None);
+        net_reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+
+        let err = net_reader.verified_object(id).await.unwrap_err();
+        match err {
+            ReaderError::StaleVersion {
+                id: got_id,
+                got,
+                cached,
+            } => {
+                assert_eq!(got_id, id);
+                assert_eq!(got, SequenceNumber::from(3u64));
+                assert_eq!(cached, SequenceNumber::from(5u64));
+            }
+            other => panic!("expected StaleVersion, got {other:?}"),
+        }
+        assert_eq!(failure_count(&metrics, "object", "stale_version"), 1);
+
+        // The rejected rollback left the mark at 5: re-asserting 5 still succeeds,
+        // and anything below it is still rejected.
+        net_reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+        assert!(matches!(
+            net_reader.record_high_water(id, SequenceNumber::from(4u64)),
+            Err(ReaderError::StaleVersion { .. })
+        ));
+    }
+
+    /// The anchor cache fast-path is forward-only. After a newer anchor version
+    /// has been served (mark at 6), the cache still holding an older v5 must not
+    /// be served back by `verified_anchor_object`: `cache_fallback` re-checks the
+    /// high-water mark (`record_high_water(_, v5)` fails since 5 < 6) and returns
+    /// `None`, so the anchor falls through to the network instead of serving the
+    /// stale-but-cached snapshot. Here the network is `PrunedProvider`, so the
+    /// fall-through surfaces as `NotFound` — proving the read did NOT short-circuit
+    /// to the stale v5.
+    #[tokio::test]
+    async fn anchor_fallback_rejects_a_cached_version_below_high_water() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            Arc::new(PrunedProvider), // network reach-back fails NotFound
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true,      // cache_first (sui-state-direct)
+            Some(100), // staleness bound — tripped below so try_cache_hit also bypasses
+        );
+
+        // Seed the cache with anchor@v5 at seq 42.
+        let id = ObjectID::from_single_byte(0x55);
+        let stale = test_object(id, 5, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        let entry = VerifiedObjectEntry {
+            object: stale,
+            checkpoint_seq: 42,
+            proof,
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        reader.cache.absorb_entries(&summary, &[entry]);
+
+        // A newer version (6) was already served: the mark is now ahead of the
+        // cached v5.
+        reader
+            .record_high_water(id, SequenceNumber::from(6u64))
+            .unwrap();
+
+        // Trip the staleness tripwire too (processed 42 vs head 1000, bound 100),
+        // so neither the anchor short-circuit nor `try_cache_hit` can serve the
+        // stale v5 — both consult the high-water mark, which now rejects it.
+        reader.cache.note_processed(42);
+        reader.note_upstream_head(1000);
+
+        let err = reader.verified_anchor_object(id).await.unwrap_err();
+        assert!(
+            matches!(err, ReaderError::Transport(TransportError::NotFound(_))),
+            "anchor must fall through to the (pruned) network, not serve stale v5; got {err:?}"
+        );
+
+        // The cache-served counters stayed at zero: nothing was ever served from
+        // the cache for this id.
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["anchor"])
+                .get(),
+            0,
+            "the anchor short-circuit must not have served the stale snapshot"
+        );
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["fallback"])
+                .get(),
+            0,
+            "the NotFound fallback must not have served the stale snapshot"
+        );
+        // The mark is untouched at 6: a fresh v6 read still succeeds, v5 still fails.
+        reader
+            .record_high_water(id, SequenceNumber::from(6u64))
+            .unwrap();
+        assert!(matches!(
+            reader.record_high_water(id, SequenceNumber::from(5u64)),
+            Err(ReaderError::StaleVersion { .. })
+        ));
+    }
+
     // ===== End-to-end crypto-fixture tests =====
     //
     // These build a *self-consistent* OCS fixture: a test committee signs a

@@ -299,4 +299,36 @@ mod tests {
         assert!(matches!(result, Err(ChangesetError::Unverified(_))));
         assert_eq!(index.read().highest_contiguous_seq(), None);
     }
+
+    /// A correctly committee-signed page whose summary commits to the artifacts
+    /// of `{A, B}` but whose shipped `object_states` carries only `{A}` is
+    /// rejected past the BLS gate: `absorb` re-derives the artifacts digest of
+    /// the shipped set and finds it doesn't match the summary's commitment, so
+    /// `pump_changesets` surfaces `ArtifactsMismatch`. Nothing is folded — the
+    /// contiguous frontier is unchanged. A relay can't strip ids out from under
+    /// a genuine signature.
+    #[tokio::test]
+    async fn forged_object_states_are_rejected_and_not_folded() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = committee_store(committee.clone());
+
+        // Summary signed over the artifacts of {A, B}.
+        let honest: States = [modified(0xA1, 1), modified(0xB2, 1)].into();
+        let (entry, _digest) = signed_entry(&committee, &keys, 10, None, honest);
+        // ...but the page ships only {A}: drop B while keeping the {A, B} signature.
+        let forged_states: States = [modified(0xA1, 1)].into();
+        let forged_entry = ChangesetEntry {
+            summary: entry.summary,
+            object_states: forged_states,
+        };
+        let source = VecSource(vec![forged_entry]);
+
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        let result = pump_changesets(&index, &source, &store, 64, 10).await;
+
+        // Past BLS, the artifacts re-derivation rejects the dropped id.
+        assert_eq!(result, Err(ChangesetError::ArtifactsMismatch(10)));
+        // Nothing folded: the frontier is untouched.
+        assert_eq!(index.read().highest_contiguous_seq(), None);
+    }
 }

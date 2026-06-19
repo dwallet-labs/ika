@@ -212,3 +212,259 @@ impl SuiTransport for VerifiedSuiTransport {
         Err(Self::unreachable("execute_transaction"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ika_network::proof_provider::{
+        BatchVerifiedObjectsResponse, ProofProvider, VerifiedBagPageRequest,
+        VerifiedBagPageResponse, VerifiedObjectResponse,
+    };
+    use sui_types::committee::Committee as SuiCommittee;
+
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::sui_connector::committee_store::{CommitteeBootstrap, CommitteeStore};
+    use crate::sui_connector::ocs_metrics::OcsMetrics;
+    use crate::sui_connector::verified_state_cache::VerifiedStateCache;
+
+    /// A proof provider whose every read fails with a `Network` error. Lets us
+    /// prove `get_object` / `batch_get_objects` map a reader-layer failure to a
+    /// transport `Network` error (fail closed — never silently return data).
+    struct FailingProvider;
+
+    #[async_trait]
+    impl ProofProvider for FailingProvider {
+        async fn verified_object(
+            &self,
+            _id: ObjectID,
+        ) -> Result<VerifiedObjectResponse, TransportError> {
+            Err(TransportError::Network("provider down".into()))
+        }
+        async fn batch_verified_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
+            Err(TransportError::Network("provider down".into()))
+        }
+        async fn verified_bag_page(
+            &self,
+            _request: VerifiedBagPageRequest,
+        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            Err(TransportError::Network("provider down".into()))
+        }
+    }
+
+    /// A relay that panics on every call: the peer-only-unreachable methods and
+    /// the reader-delegating object reads must never touch the relay, so any
+    /// call here is a test failure.
+    struct PanickingRelay;
+
+    #[async_trait]
+    impl SuiTransport for PanickingRelay {
+        async fn get_chain_identifier(&self) -> Result<String, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_current_epoch(&self) -> Result<u64, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_latest_checkpoint(
+            &self,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_full_checkpoint(
+            &self,
+            _seq: CheckpointSequenceNumber,
+        ) -> Result<CheckpointData, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_checkpoint_summary_by_digest(
+            &self,
+            _digest: CheckpointDigest,
+        ) -> Result<CertifiedCheckpointSummary, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn last_checkpoint_of_epoch(
+            &self,
+            _epoch: u64,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_object_with_version(
+            &self,
+            _id: ObjectID,
+            _version: SequenceNumber,
+        ) -> Result<Object, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn batch_get_objects(
+            &self,
+            _ids: &[ObjectID],
+        ) -> Result<Vec<Object>, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn list_owned_gas_coins(
+            &self,
+            _address: SuiAddress,
+        ) -> Result<Vec<ObjectRef>, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn list_dynamic_fields(
+            &self,
+            _parent: ObjectID,
+            _page_size: Option<u32>,
+            _page_token: Option<Vec<u8>>,
+        ) -> Result<DynamicFieldPage, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_transaction(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<ExecutedTransaction, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn get_transaction_checkpoint(
+            &self,
+            _tx: TransactionDigest,
+        ) -> Result<CheckpointSequenceNumber, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+        async fn execute_transaction(
+            &self,
+            _tx: &Transaction,
+        ) -> Result<SubmittedTransaction, TransportError> {
+            unreachable!("relay must not be hit by this test")
+        }
+    }
+
+    fn transport_over_stubs() -> (tempfile::TempDir, VerifiedSuiTransport) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee_of_size(4);
+        let committees = Arc::new(
+            CommitteeStore::open(tables, Some(CommitteeBootstrap::UnsafeGenesis(committee)))
+                .unwrap(),
+        );
+        let reader = Arc::new(OcsVerifiedReader::new(
+            Arc::new(FailingProvider),
+            committees,
+            OcsMetrics::new_for_testing(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            false,
+            None,
+        ));
+        let transport = VerifiedSuiTransport::new(reader, Arc::new(PanickingRelay));
+        (dir, transport)
+    }
+
+    fn network_message(err: TransportError) -> String {
+        match err {
+            TransportError::Network(msg) => msg,
+            other => panic!("expected TransportError::Network, got {other:?}"),
+        }
+    }
+
+    /// Invariant 6 (fail closed, never silently return data): every method a
+    /// peer-only validator can't serve returns a `Network` error whose message
+    /// names the method and says it's unreachable on a peer-only validator —
+    /// rather than silently returning wrong or stale data.
+    #[tokio::test]
+    async fn unreachable_methods_error_with_descriptive_message() {
+        let (_dir, transport) = transport_over_stubs();
+        let id = ObjectID::random();
+
+        // The genuinely-unreachable methods: descriptive, method-naming errors.
+        let cases: Vec<(&str, TransportError)> = vec![
+            (
+                "get_committee",
+                transport.get_committee(None).await.unwrap_err(),
+            ),
+            (
+                "get_object_with_version",
+                transport
+                    .get_object_with_version(id, SequenceNumber::from(1u64))
+                    .await
+                    .unwrap_err(),
+            ),
+            (
+                "list_owned_gas_coins",
+                transport
+                    .list_owned_gas_coins(SuiAddress::ZERO)
+                    .await
+                    .unwrap_err(),
+            ),
+            (
+                "get_transaction",
+                transport
+                    .get_transaction(TransactionDigest::random())
+                    .await
+                    .unwrap_err(),
+            ),
+            (
+                "execute_transaction",
+                transport
+                    .execute_transaction(&dummy_transaction())
+                    .await
+                    .unwrap_err(),
+            ),
+        ];
+        for (method, err) in cases {
+            let msg = network_message(err);
+            assert!(
+                msg.contains(method),
+                "{method} error must name the method, got: {msg}"
+            );
+            assert!(
+                msg.contains("unreachable on a peer-only validator"),
+                "{method} error must say it's unreachable on a peer-only validator, got: {msg}"
+            );
+        }
+
+        // get_object / batch_get_objects delegate to the reader and map a reader
+        // failure to a `Network` error — fail closed, never silently empty.
+        let object_err = network_message(transport.get_object(id).await.unwrap_err());
+        assert!(
+            object_err.contains("verified relay read failed"),
+            "get_object must map a reader failure to a descriptive Network error, got: {object_err}"
+        );
+        let batch_err = network_message(transport.batch_get_objects(&[id]).await.unwrap_err());
+        assert!(
+            batch_err.contains("verified relay read failed"),
+            "batch_get_objects must map a reader failure to a descriptive Network error, \
+             got: {batch_err}"
+        );
+    }
+
+    /// A syntactically-valid but empty transaction, only as an
+    /// `execute_transaction` argument — the method errors before inspecting it.
+    fn dummy_transaction() -> Transaction {
+        use sui_types::base_types::ObjectDigest;
+        use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
+        use sui_types::transaction::{TransactionData, TransactionKind};
+
+        let pt = ProgrammableTransactionBuilder::new().finish();
+        let data = TransactionData::new(
+            TransactionKind::ProgrammableTransaction(pt),
+            SuiAddress::ZERO,
+            (
+                ObjectID::ZERO,
+                SequenceNumber::from(0u64),
+                ObjectDigest::MIN,
+            ),
+            0,
+            0,
+        );
+        Transaction::from_data(data, vec![])
+    }
+}

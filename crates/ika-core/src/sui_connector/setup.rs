@@ -63,6 +63,7 @@ use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, Verif
 use parking_lot::RwLock;
 use std::time::Duration;
 use sui_types::digests::CheckpointDigest;
+use sui_types::messages_checkpoint::CertifiedCheckpointSummary;
 
 pub struct SuiConnectorStack {
     /// Verified-read surface used by all consumers.
@@ -197,6 +198,29 @@ pub fn resolve_bootstrap_plan(
     Ok(BootstrapPlan::Hydrated)
 }
 
+/// Apply the trust-anchor gate to a fetched `CertifiedCheckpointSummary`: the
+/// fetched summary's RECOMPUTED digest is the source of truth. The upstream is
+/// untrusted, so we only accept when the digest matches the operator-pinned
+/// value byte-for-byte, and the summary must be end-of-epoch (it is where
+/// `committee[E+1]` is extracted from). Both gates fail closed; on success the
+/// caller bootstraps the committee store from the summary.
+fn verify_anchor_summary(
+    summary: CertifiedCheckpointSummary,
+    pinned: CheckpointDigest,
+) -> Result<CommitteeBootstrap, SetupError> {
+    let fetched_digest = sui_types::message_envelope::Message::digest(summary.data());
+    if fetched_digest != pinned {
+        return Err(SetupError::AnchorDigestMismatch {
+            fetched: fetched_digest,
+            pinned,
+        });
+    }
+    if summary.data().end_of_epoch_data.is_none() {
+        return Err(SetupError::AnchorNotEndOfEpoch(pinned));
+    }
+    Ok(CommitteeBootstrap::EndOfEpoch(summary))
+}
+
 /// The role-dependent transports + provider resolved from the data source: the
 /// raw ratchet transport, the read `ProofProvider`, whether this node can serve
 /// the mirror (sui-state-direct), the optional raw transport for the pusher
@@ -327,20 +351,7 @@ pub async fn build_sui_connector_stack(
                 .map_err(|e| {
                     SetupError::Transport(format!("get_checkpoint_summary_by_digest: {e}"))
                 })?;
-            // The fetched summary's digest is the source of truth. The
-            // upstream is untrusted; we only accept when the digest
-            // matches the operator-pinned value byte-for-byte.
-            let fetched_digest = sui_types::message_envelope::Message::digest(summary.data());
-            if fetched_digest != digest {
-                return Err(SetupError::AnchorDigestMismatch {
-                    fetched: fetched_digest,
-                    pinned: digest,
-                });
-            }
-            if summary.data().end_of_epoch_data.is_none() {
-                return Err(SetupError::AnchorNotEndOfEpoch(digest));
-            }
-            Some(CommitteeBootstrap::EndOfEpoch(summary))
+            Some(verify_anchor_summary(summary, digest)?)
         }
         BootstrapPlan::UnsafeGenesis(committee) => {
             warn!(
@@ -549,4 +560,147 @@ async fn probe_artifacts_digest(transport: &Arc<dyn SuiTransport>) -> Result<(),
         return Err(SetupError::ArtifactsDigestUnsupported);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ika_config::node::SuiDataSource;
+    use sui_types::base_types::ObjectID;
+    use sui_types::committee::{Committee, ProtocolVersion};
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::message_envelope::Message;
+    use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSummary, EndOfEpochData};
+
+    /// A committee-signed `CertifiedCheckpointSummary` at `committee`'s epoch.
+    /// `end_of_epoch` toggles whether it carries `end_of_epoch_data` (and thus
+    /// passes the anchor's end-of-epoch gate). Built the same way as the
+    /// pusher/ratchet tests so the recomputed `Message::digest` is stable.
+    fn signed_summary(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        end_of_epoch: bool,
+    ) -> CertifiedCheckpointSummary {
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let end_of_epoch_data = end_of_epoch.then(|| EndOfEpochData {
+            next_epoch_committee: committee.voting_rights.clone(),
+            next_epoch_protocol_version: ProtocolVersion::MIN,
+            epoch_commitments: vec![],
+        });
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: 42,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data,
+            version_specific_data: Vec::new(),
+        };
+        CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee)
+    }
+
+    /// Minimal `SuiConnectorConfig` for `resolve_bootstrap_plan`: only the
+    /// anchor / unsafe-genesis / chain-identifier fields it reads matter; the
+    /// rest are filler. (Mirrors the swarm node-config builder's construction.)
+    fn config_with_anchor(sui_trusted_anchor: Option<CheckpointDigest>) -> SuiConnectorConfig {
+        SuiConnectorConfig {
+            sui_rpc_url: None,
+            sui_data_source: Some(SuiDataSource::SuiStateDirect {
+                url: "http://unused".to_string(),
+                serve_mirror: false,
+            }),
+            sui_state_mirror_peers: vec![],
+            sui_trusted_anchor,
+            sui_unsafe_genesis_committee: None,
+            allow_unverified_committee_fallback: false,
+            auto_reanchor_on_format_change: false,
+            sui_chain_identifier: SuiChainIdentifier::Custom,
+            ika_package_id: ObjectID::random(),
+            ika_common_package_id: ObjectID::random(),
+            ika_dwallet_2pc_mpc_package_id: ObjectID::random(),
+            ika_dwallet_2pc_mpc_package_id_v2: None,
+            ika_system_package_id: ObjectID::random(),
+            ika_system_object_id: ObjectID::random(),
+            ika_dwallet_coordinator_object_id: ObjectID::random(),
+            verified_cache_retention_checkpoints: None,
+            notifier_client_key_pair: None,
+            sui_ika_system_module_last_processed_event_id_override: None,
+        }
+    }
+
+    /// The anchor trust gate accepts a fetched summary ONLY when its RECOMPUTED
+    /// digest matches the operator-pinned value byte-for-byte. A summary whose
+    /// real digest differs from the pinned digest is rejected with
+    /// `AnchorDigestMismatch` (and no committee is installed -- the caller never
+    /// reaches `CommitteeStore::open`).
+    #[test]
+    fn anchor_digest_mismatch_is_rejected() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let summary = signed_summary(&committee, &keys, true);
+        let real_digest = Message::digest(summary.data());
+        // Pin a different digest than the summary actually hashes to.
+        let pinned = CheckpointDigest::random();
+        assert_ne!(real_digest, pinned);
+
+        // Avoid `unwrap_err` (the Ok type `CommitteeBootstrap` isn't `Debug`).
+        match verify_anchor_summary(summary, pinned) {
+            Err(SetupError::AnchorDigestMismatch { fetched, pinned: p }) => {
+                assert_eq!(fetched, real_digest, "reports the recomputed digest");
+                assert_eq!(p, pinned, "reports the operator-pinned digest");
+            }
+            Err(other) => panic!("expected AnchorDigestMismatch, got {other:?}"),
+            Ok(_) => panic!("a digest-mismatched anchor must be rejected"),
+        }
+    }
+
+    /// Even when the digest matches the pin, the anchor MUST be an end-of-epoch
+    /// summary (that is where `committee[E+1]` is extracted from). A digest-
+    /// matching summary with `end_of_epoch_data = None` is rejected with
+    /// `AnchorNotEndOfEpoch`.
+    #[test]
+    fn anchor_not_end_of_epoch_is_rejected() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let summary = signed_summary(&committee, &keys, false);
+        // Pin the summary's REAL digest so the digest gate passes and the
+        // end-of-epoch gate is the one that fires.
+        let pinned = Message::digest(summary.data());
+        assert!(summary.data().end_of_epoch_data.is_none());
+
+        match verify_anchor_summary(summary, pinned) {
+            Err(SetupError::AnchorNotEndOfEpoch(d)) => assert_eq!(d, pinned),
+            Err(other) => panic!("expected AnchorNotEndOfEpoch, got {other:?}"),
+            Ok(_) => panic!("a non-end-of-epoch anchor must be rejected"),
+        }
+    }
+
+    /// Invariant: perpetual committee state ALWAYS wins over a configured
+    /// anchor. With a committee already installed (head set), resolving the
+    /// bootstrap plan with a DIFFERENT `sui_trusted_anchor` set returns
+    /// `Hydrated` -- the anchor is a first-boot seed and is ignored once the
+    /// node has verified past it (re-anchoring requires wiping the tables).
+    #[tokio::test]
+    async fn perpetual_state_overrides_reconfigured_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = AuthorityPerpetualTables::open(dir.path(), None);
+        // Install a committee -> head is set, so the node is "hydrated".
+        let (committee, _keys) = Committee::new_simple_test_committee();
+        perpetual.install_sui_committee(&committee).unwrap();
+        assert_eq!(
+            perpetual.highest_sui_committee_epoch().unwrap(),
+            Some(committee.epoch)
+        );
+
+        // A different anchor in the config must NOT re-anchor.
+        let cfg = config_with_anchor(Some(CheckpointDigest::random()));
+        let plan = resolve_bootstrap_plan(&cfg, cfg.sui_chain_identifier, &perpetual).unwrap();
+        assert!(
+            matches!(plan, BootstrapPlan::Hydrated),
+            "perpetual committee state must override the reconfigured anchor"
+        );
+    }
 }

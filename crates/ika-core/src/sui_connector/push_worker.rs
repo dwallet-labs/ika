@@ -441,6 +441,10 @@ mod tests {
     struct MockTransport {
         latest: CertifiedCheckpointSummary,
         checkpoints: HashMap<CheckpointSequenceNumber, CheckpointData>,
+        /// `epoch -> last checkpoint seq of that epoch`, for
+        /// `last_checkpoint_of_epoch` (the catch-up boundary walk). Empty for
+        /// the slices that never reach `capture_committees_through`.
+        eoe_seqs: HashMap<u64, CheckpointSequenceNumber>,
     }
 
     #[async_trait]
@@ -480,9 +484,12 @@ mod tests {
         }
         async fn last_checkpoint_of_epoch(
             &self,
-            _epoch: u64,
+            epoch: u64,
         ) -> Result<CheckpointSequenceNumber, TransportError> {
-            unimplemented!()
+            self.eoe_seqs
+                .get(&epoch)
+                .copied()
+                .ok_or_else(|| TransportError::NotFound(format!("epoch {epoch} boundary unknown")))
         }
         async fn get_object(&self, _id: ObjectID) -> Result<Object, TransportError> {
             unimplemented!()
@@ -620,6 +627,7 @@ mod tests {
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
             latest,
             checkpoints: HashMap::from([(100u64, eoe)]),
+            eoe_seqs: HashMap::new(),
         });
         // Resume from seq 99 so advance() streams exactly seq 100.
         perpetual.put_sui_pusher_last_seq(99).unwrap();
@@ -661,6 +669,7 @@ mod tests {
         let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
             latest,
             checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
         });
         perpetual.put_sui_pusher_last_seq(99).unwrap();
 
@@ -669,5 +678,57 @@ mod tests {
 
         assert_eq!(committees.head_epoch(), 0);
         assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(100));
+    }
+
+    /// Fast-forward catch-up walks the still-available end-of-epoch boundaries
+    /// in order, installing each committee — but it must NOT skip a pruned
+    /// boundary. With boundaries at seqs 30/60/90 and seq 60 pruned (NotFound),
+    /// the walk installs epoch-0's transition (head → 1) from seq 30, then stops
+    /// at the pruned seq-60 boundary: the committee head advances only to the
+    /// epoch *before* the gap, never jumping past it to a later boundary.
+    #[tokio::test]
+    async fn fast_forward_captures_all_boundaries_then_stops_at_a_pruned_one() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        assert_eq!(committees.head_epoch(), 0);
+
+        // End-of-epoch boundaries at 30, 60, 90. Seq 60 is pruned: present in the
+        // epoch→seq map (so the boundary is *known*) but absent from the fetchable
+        // checkpoints, so `get_full_checkpoint(60)` is NotFound.
+        let eoe_30 = end_of_epoch_checkpoint(&committee, &keys, 30);
+        let eoe_90 = end_of_epoch_checkpoint(&committee, &keys, 90);
+
+        // latest far beyond FAR_BEHIND_THRESHOLD (1_000) so advance() fast-forwards
+        // and runs the catch-up boundary walk. new_cursor = latest - 100 = 2_000,
+        // which is > 90, so the walk's `eoe_seq > through_seq` guard never trips
+        // before the prune does.
+        let latest = end_of_epoch_checkpoint(&committee, &keys, 2_100).checkpoint_summary;
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::from([(30u64, eoe_30), (90u64, eoe_90)]),
+            eoe_seqs: HashMap::from([(0u64, 30), (1u64, 60), (2u64, 90)]),
+        });
+        // Resume from seq 0 → lag 2_100 > FAR_BEHIND_THRESHOLD → fast-forward path.
+        perpetual.put_sui_pusher_last_seq(0).unwrap();
+
+        let mut pusher = pusher_over(perpetual.clone(), committees.clone(), transport).await;
+        pusher.advance().await.unwrap();
+
+        // Seq 30 installed epoch-0's transition; the pruned seq-60 boundary halted
+        // the walk before epoch 1's boundary (seq 90) could be reached. The head
+        // never jumps the gap to a later boundary.
+        assert_eq!(committees.head_epoch(), 1);
+        // Boundary actually walked-through is retained for mirrored peers.
+        assert_eq!(perpetual.get_sui_end_of_epoch_seq(0).unwrap(), Some(30));
+        // The boundary past the prune gap was never captured.
+        assert_eq!(perpetual.get_sui_end_of_epoch_seq(2).unwrap(), None);
     }
 }
