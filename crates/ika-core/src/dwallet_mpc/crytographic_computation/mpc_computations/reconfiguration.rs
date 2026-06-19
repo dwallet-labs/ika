@@ -356,10 +356,10 @@ pub(crate) fn advance_network_reconfiguration_bwd_compat(
             // Test-only fault injection for the cross-binary malicious-detection
             // harness: corrupt this validator's outgoing reconfiguration message
             // so honest peers must detect and exclude it. Gated behind the
-            // `test-reconfig-fault` cargo feature — compiled out of every normal
+            // general `test-testing` cargo feature — compiled out of every normal
             // (release) build, so the only way to produce a faulty binary is an
-            // explicit `--features test-reconfig-fault`, never a source edit.
-            #[cfg(feature = "test-reconfig-fault")]
+            // explicit `--features test-testing`, never a source edit.
+            #[cfg(feature = "test-testing")]
             let message = {
                 let mut message = message;
                 message.push(0u8);

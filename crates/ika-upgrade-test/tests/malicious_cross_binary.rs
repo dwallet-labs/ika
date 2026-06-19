@@ -13,8 +13,8 @@
 //! the next epoch boundary.
 //!
 //! The faulty binary is NOT a source edit: build `ika-validator` with the
-//! `test-reconfig-fault` cargo feature (`cargo build --release -p ika-node
-//! --bin ika-validator --features test-reconfig-fault`). The fault is compiled
+//! general `test-testing` cargo feature (`cargo build --release -p ika-node
+//! --bin ika-validator --features test-testing`). The fault is compiled
 //! out of every normal build, so a plain release can never carry it.
 //!
 //! Expectation: the honest validators must identify the faulty one as a
@@ -30,7 +30,7 @@
 //!
 //! ```bash
 //! # Build the faulty binary via the feature (no source edit):
-//! cargo build --release -p ika-node --bin ika-validator --features test-reconfig-fault
+//! cargo build --release -p ika-node --bin ika-validator --features test-testing
 //! cp target/release/ika-validator /tmp/ika-validator-FAULTY-RECONFIG
 //! # then run:
 //! RUN_MALICIOUS_CROSS=1 \
@@ -69,7 +69,7 @@ async fn honest_committee_marks_faulty_local_validator_malicious() {
     // Honest reference binary (intended: literal mainnet-v1.1.8 ika-node).
     let honest = BinarySpec::Path(bin_from_env("OLD_BIN", "target/release/ika-node"));
     // Deliberately-faulty build (corrupts its v3 reshare message), produced by
-    // `cargo build --bin ika-validator --features test-reconfig-fault`.
+    // `cargo build --bin ika-validator --features test-testing`.
     let faulty = BinarySpec::Path(bin_from_env(
         "FAULTY_BIN",
         "/tmp/ika-validator-FAULTY-RECONFIG",
