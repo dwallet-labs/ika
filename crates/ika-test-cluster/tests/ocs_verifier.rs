@@ -227,3 +227,140 @@ async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() 
     // skipping, or reconfiguration would stall here.
     cluster.wait_for_epoch(5).await;
 }
+
+/// A direct validator is stopped and restarted mid-run. On reboot its OCS stack
+/// rehydrates: the verified state cache reloads from the perpetual
+/// `verified_object_cache` (N1/N2 — `open` restores the head and seeds the
+/// processed head from the fold head so the staleness tripwire doesn't fire
+/// spuriously on boot) and the committee ratchet resumes from the persisted
+/// committee chain rather than cold-starting from the fullnode. The proof is
+/// liveness THROUGH the restart: the cluster keeps advancing and a fresh user
+/// DKG completes afterwards, which requires the restarted validator's verified
+/// reads + MPC ingestion to be working again. A broken rehydration (stale-on-boot
+/// tripwire, a lost cache that can't refill, or a re-anchor that breaks the
+/// ratchet) would drop it below quorum and stall. Acquire node handles ON DEMAND
+/// only — a handle held across stop/start keeps the old RocksDB store lock and
+/// the respawn dies on it (see restart_mid_grace). Slow — a cluster-suite test.
+#[tokio::test(flavor = "multi_thread")]
+async fn ocs_verifier_v4_direct_validator_restart_resumes_and_keeps_serving() {
+    telemetry_subscribers::init_for_testing();
+
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(45_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .with_ocs_genesis_anchor(true)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    // Reach a steady state: the pusher has folded Ika objects into the persisted
+    // cache and the committee chain has crossed a boundary.
+    cluster.wait_for_epoch(2).await;
+    let (network_key_id, network_dkg_public_output) = cluster
+        .wait_for_network_key()
+        .await
+        .expect("network key DKG did not complete before the restart");
+
+    // Restart one validator. Never bind its handle across stop()/start().
+    let restart_name = cluster.validator_names[3];
+    cluster
+        .swarm
+        .node(&restart_name)
+        .expect("validator exists")
+        .stop();
+    cluster
+        .swarm
+        .node(&restart_name)
+        .expect("validator exists")
+        .start()
+        .await
+        .expect("validator failed to restart");
+
+    // Liveness through the restart: a fresh user DKG must complete, which needs
+    // the restarted validator's rehydrated verified reads + MPC ingestion.
+    let user_key = cluster
+        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [9u8; 32])
+        .await
+        .expect("register_user_encryption_key failed");
+    let dkg_handle = cluster
+        .request_user_dwallet_dkg(
+            DWALLET_CURVE_SECP256K1,
+            network_key_id,
+            network_dkg_public_output,
+            &user_key,
+            cluster.packages.ika_supply_id,
+        )
+        .await
+        .expect("request_user_dwallet_dkg failed");
+    cluster
+        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
+        .await
+        .expect("user DKG did not complete after the validator restart — OCS rehydration broken");
+
+    // And cross another boundary: the restarted validator's committee ratchet
+    // resumed from persisted state, so reconfiguration still works.
+    cluster.wait_for_epoch(4).await;
+}
+
+/// Relay failover: in the mirrored topology the first two (direct) validators
+/// serve the `SuiStateMirror` relay to the two mirrored validators. Kill ONE
+/// direct relay-serving validator after the network is live: each mirrored
+/// validator's `SuiMirrorPeers::try_peers` must fail over to the surviving relay
+/// peer (demoting the dead one) and keep reading verified Sui state, so the
+/// cluster still completes a user DKG. (The single-pass classification —
+/// NotFound only if every reached peer agrees, timeout/error -> Network — is
+/// unit-tested in `try_peers_verdict_*`; this is the live multi-peer failover the
+/// in-process harness CAN express, unlike a hung-but-connected peer, which needs
+/// fault injection the harness lacks.) Slow — a cluster-suite test.
+#[tokio::test(flavor = "multi_thread")]
+async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
+    telemetry_subscribers::init_for_testing();
+
+    // 2 direct (relay servers) + 2 mirrored, as in the mirrored-relay test.
+    let mut cluster = IkaTestClusterBuilder::new()
+        .with_num_validators(4)
+        .with_epoch_duration_ms(60_000)
+        .with_protocol_version(ProtocolVersion::new(4))
+        .with_ocs_genesis_anchor(true)
+        .with_sui_state_direct_count(2)
+        .build()
+        .await
+        .expect("IkaTestClusterBuilder::build() failed");
+
+    cluster.wait_for_epoch(1).await;
+    let (network_key_id, network_dkg_public_output) = cluster
+        .wait_for_network_key()
+        .await
+        .expect("network key DKG did not complete before the relay kill");
+
+    // Kill one of the two direct relay-serving validators. Each mirrored
+    // validator now has exactly one surviving relay peer to fail over to; with
+    // four validators the MPC quorum is three, so completing the DKG below
+    // REQUIRES the two mirrored validators' failed-over relay reads.
+    let dead_relay = cluster.validator_names[0];
+    cluster
+        .swarm
+        .node(&dead_relay)
+        .expect("relay validator exists")
+        .stop();
+
+    let user_key = cluster
+        .register_user_encryption_key(DWALLET_CURVE_SECP256K1, [11u8; 32])
+        .await
+        .expect("register_user_encryption_key failed");
+    let dkg_handle = cluster
+        .request_user_dwallet_dkg(
+            DWALLET_CURVE_SECP256K1,
+            network_key_id,
+            network_dkg_public_output,
+            &user_key,
+            cluster.packages.ika_supply_id,
+        )
+        .await
+        .expect("request_user_dwallet_dkg failed");
+    cluster
+        .wait_for_dwallet_dkg_complete(dkg_handle.dwallet_id, std::time::Duration::from_secs(600))
+        .await
+        .expect("user DKG did not complete after a relay peer died — relay failover broken");
+}
