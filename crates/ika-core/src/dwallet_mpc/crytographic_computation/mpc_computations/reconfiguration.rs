@@ -81,39 +81,12 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
         // committee's party ids.
         let upcoming_validators_pvss_hpke_keys_by_party_id = upcoming_validator_mpc_keys;
 
-        // At main Reconfig (callable only from `_version == 3`) the upcoming
-        // committee's full off-chain bundle (class-groups + per-curve PVSS HPKE
-        // keys) must have been ingested and passed in. A short map means the
-        // next-epoch off-chain assembly hasn't fully converged — fail loudly
-        // rather than running reconfig on a partial map.
-        let expected = upcoming_committee.voting_rights.len();
-        let class_groups_count = upcoming_validators_pvss_hpke_keys_by_party_id
-            .class_groups
-            .len();
-        let secp256k1_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
-            .secp256k1_pvss
-            .len();
-        let secp256r1_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
-            .secp256r1_pvss
-            .len();
-        let ristretto_pvss_count = upcoming_validators_pvss_hpke_keys_by_party_id
-            .ristretto_pvss
-            .len();
-        if class_groups_count != expected
-            || secp256k1_pvss_count != expected
-            || secp256r1_pvss_count != expected
-            || ristretto_pvss_count != expected
-        {
-            return Err(DwalletMPCError::InvalidMPCPartyType(format!(
-                "at reconfiguration_message_version == 3 every upcoming committee \
-                 member must publish the version-3 bundle shape (class-groups + \
-                 per-curve PVSS HPKE keys), but only \
-                 {class_groups_count}/{expected} class-groups, \
-                 {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
-                 {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
-                 {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
-            )));
-        }
+        // No all-committee completeness check: `upcoming_validator_mpc_keys` is
+        // the consensus-frozen agreed set for the upcoming committee, which may
+        // legitimately omit offline/withholding validators. Reconfiguration
+        // reshares only to the upcoming parties that have keys; the rest stay in
+        // the committee, just undealt. The next-epoch freeze gate in
+        // `handle_mpc_request` ensures this set is the agreed one before we run.
 
         let current_tangible_party_id_to_upcoming =
             current_tangible_party_id_to_upcoming(current_committee, upcoming_committee);

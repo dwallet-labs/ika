@@ -109,16 +109,23 @@ pub(crate) struct DWalletMPCManager {
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
     /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
-    /// verified VSS), keyed by party id. `class_groups` comes from the
-    /// committee; the off-chain-only PVSS / VSS keys are ingested from the
-    /// `current_epoch_mpc_keys` channel once the off-chain assembly completes —
-    /// the manager starts each epoch with `empty()` and fills this in. Passed to
-    /// `session_input_from_request` per session-input construction.
+    /// verified VSS), keyed by party id. `class_groups` is seeded from the
+    /// committee at construction (so the backward-compatible DKG works without
+    /// the off-chain pipeline); the off-chain-only PVSS / VSS keys are ingested
+    /// from the `current_epoch_mpc_keys` channel once the consensus freeze
+    /// decides the agreed set. That agreed set may legitimately omit
+    /// offline/withholding validators — the DKG deals only to the parties that
+    /// have keys. Passed to `session_input_from_request` per session-input
+    /// construction.
     pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    /// Set once the current epoch's off-chain key set has been ingested (the
+    /// consensus-frozen agreed set). Gates session initiation so the DKG never
+    /// runs before the agreed keys are in, and makes the ingest run exactly once.
+    pub(crate) current_epoch_keys_ingested: bool,
     /// The NEXT epoch's per-validator MPC keys, ingested from the
     /// `next_epoch_mpc_keys` channel. Consumed by network reconfiguration (the
     /// dealers encrypt under the upcoming parties' PVSS keys). `None` until the
-    /// next-epoch off-chain assembly is delivered.
+    /// next-epoch agreed set is delivered.
     pub(crate) next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
 
@@ -395,6 +402,7 @@ impl DWalletMPCManager {
             // without the off-chain pipeline. The off-chain-only PVSS / VSS keys
             // are ingested per-epoch from the off-chain key channels.
             validator_mpc_keys_by_party_id: class_groups_keys_by_party_id(&committee)?,
+            current_epoch_keys_ingested: false,
             next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
@@ -746,18 +754,16 @@ impl DWalletMPCManager {
     /// channels into `validator_mpc_keys_by_party_id` (current) and
     /// `next_epoch_validator_mpc_keys` (next).
     ///
-    /// The off-chain-only keys are no longer carried on `Committee`; the sync
-    /// loop assembles them directly for each epoch's own committee (the current
-    /// epoch's members self-announce for the current epoch, so the live source
-    /// covers them — no borrowing the next committee's keys). `class_groups`
-    /// still comes from the committee. Cheap and idempotent: once a key set is
-    /// complete it is not rebuilt, so this is safe to call every service-loop
-    /// iteration.
+    /// The producer only delivers a bundle once the per-epoch set is frozen by
+    /// consensus (a stake-quorum of `EpochMpcDataReadySignal`s), so the delivered
+    /// bundle IS the agreed set. We ingest it **once** and do NOT re-impose an
+    /// all-committee completeness check: the agreed set may legitimately omit
+    /// offline/withholding validators, and the DKG/reconfig deal only to the
+    /// parties that have keys (the rest stay active in consensus, just undealt).
+    /// `class_groups` still comes from the committee.
     pub(crate) fn ingest_offchain_mpc_keys(&mut self) -> DwalletMPCResult<()> {
-        let expected = self.committee.voting_rights.len();
-
-        // Current epoch: fill the within-epoch DKG / presign key set.
-        if !self.validator_mpc_keys_by_party_id.is_complete(expected) {
+        // Current epoch: fill the within-epoch network DKG key set, once.
+        if !self.current_epoch_keys_ingested {
             let delivered = self
                 .sui_data_receivers
                 .current_epoch_mpc_keys_receiver
@@ -766,23 +772,24 @@ impl DWalletMPCManager {
             if let Some((epoch, bundles)) = delivered
                 && epoch == self.epoch_id
             {
-                let keys = get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
-                if keys.is_complete(expected) {
-                    self.validator_mpc_keys_by_party_id = keys;
-                    info!(
-                        epoch = self.epoch_id,
-                        "ingested current-epoch off-chain validator MPC keys"
-                    );
-                }
+                self.validator_mpc_keys_by_party_id =
+                    get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
+                self.current_epoch_keys_ingested = true;
+                info!(
+                    epoch = self.epoch_id,
+                    dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
+                    committee = self.committee.voting_rights.len(),
+                    "ingested current-epoch off-chain validator MPC keys (agreed frozen set)"
+                );
             }
         }
 
         // Next epoch: fill the reconfiguration key set, keyed by the next
-        // committee's party ids (so it must be assembled against that committee).
+        // committee's party ids (so it must be assembled against that committee),
+        // once.
         if self.next_epoch_validator_mpc_keys.is_none()
             && let Some(next_committee) = self.next_active_committee.as_ref()
         {
-            let next_expected = next_committee.voting_rights.len();
             let delivered = self
                 .sui_data_receivers
                 .next_epoch_mpc_keys_receiver
@@ -792,14 +799,14 @@ impl DWalletMPCManager {
                 && epoch == next_committee.epoch
             {
                 let keys = get_validator_mpc_keys_by_party_id(next_committee, &bundles)?;
-                if keys.is_complete(next_expected) {
-                    self.next_epoch_validator_mpc_keys = Some(keys);
-                    info!(
-                        epoch = self.epoch_id,
-                        next_epoch = next_committee.epoch,
-                        "ingested next-epoch off-chain validator MPC keys"
-                    );
-                }
+                info!(
+                    epoch = self.epoch_id,
+                    next_epoch = next_committee.epoch,
+                    dealt = keys.secp256k1_pvss.len(),
+                    next_committee = next_committee.voting_rights.len(),
+                    "ingested next-epoch off-chain validator MPC keys (agreed frozen set)"
+                );
+                self.next_epoch_validator_mpc_keys = Some(keys);
             }
         }
 

@@ -111,12 +111,13 @@ pub(crate) struct ValidatorMpcKeysByPartyId {
 /// committee's 1-based `PartyID`, producing the form the crypto library
 /// consumes.
 ///
-/// `class_groups` is taken from `committee` (the bare mainnet-v1.1.8 key is the
-/// only validator MPC key on chain, so it is the authoritative source). The
-/// three per-curve PVSS HPKE keys and the Fast Schnorr (VSS) HPKE key come from
-/// `bundles` — the off-chain-assembled set delivered per-epoch to the manager,
-/// never from `Committee`. The VSS UC proofs are verified here (once), keyed by
-/// the committee's party ids, exactly as `Committee::new` used to do.
+/// All key material — class-groups + the three per-curve PVSS HPKE keys + the
+/// Fast Schnorr (VSS) HPKE key — comes from the single atomic off-chain
+/// `bundles` (the consensus-agreed set delivered per-epoch). `committee` is used
+/// only for the `AuthorityName → PartyID` mapping and to verify the VSS UC
+/// proofs (once). A validator absent from `bundles` (offline/withholding) is
+/// absent from every map — the DKG/reconfig then deal only to the parties that
+/// are present, and the committee stays full for consensus.
 pub(crate) fn get_validator_mpc_keys_by_party_id(
     committee: &Committee,
     bundles: &crate::validator_metadata::OffChainCommitteeBundles,
@@ -127,11 +128,12 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
     let mut ristretto_pvss = HashMap::new();
     for (name, _) in committee.voting_rights.iter() {
         let party_id = authority_name_to_party_id_from_committee(committee, name)?;
-        if let Some(k) = committee
-            .class_groups_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
+        // All four maps come from the same atomic off-chain bundle, so a
+        // validator that withheld its bundle is absent from ALL of them (rather
+        // than appearing in class_groups but not PVSS). This keeps the dealt set
+        // consistent across class-groups + PVSS + VSS — the DKG/reconfig deal to
+        // exactly the parties present in the agreed bundle.
+        if let Some(k) = bundles.class_groups.get(name).cloned() {
             class_groups.insert(party_id, k);
         }
         if let Some(k) = bundles.secp256k1_pvss.get(name).cloned() {
@@ -182,16 +184,6 @@ pub(crate) fn class_groups_keys_by_party_id(
         ristretto_pvss: HashMap::new(),
         vss_hpke_verified_party_encryption_key_values: HashMap::new(),
     })
-}
-
-impl ValidatorMpcKeysByPartyId {
-    /// Whether every per-curve PVSS map covers all `expected` committee members
-    /// — the readiness gate for running network DKG / reconfiguration.
-    pub(crate) fn is_complete(&self, expected: usize) -> bool {
-        self.secp256k1_pvss.len() == expected
-            && self.secp256r1_pvss.len() == expected
-            && self.ristretto_pvss.len() == expected
-    }
 }
 
 /// Convert a `committee` to a `WeightedThresholdAccessStructure` that is used by the cryptographic library.

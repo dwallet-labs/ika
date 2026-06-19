@@ -384,8 +384,16 @@ where
             // the next committee's keys. Runs before the next-committee check so
             // it still fires when Sui hasn't selected a next committee yet.
             let current_epoch = system_inner.epoch();
+            // Only deliver once the set is FROZEN — the frozen set is the
+            // consensus-agreed validator-key set (a stake-quorum of ready
+            // signals decided it). Delivering a pre-freeze assembly could ship a
+            // non-final subset that the manager would then ingest as the agreed
+            // set. `try_assemble_mpc_data` post-freeze returns exactly the frozen
+            // set (which may omit offline/withholding validators — that's fine,
+            // the DKG deals only to parties that have keys).
             if current_keys_sent_for_epoch != Some(current_epoch)
                 && let Some(source) = class_groups_source.load_full()
+                && source.is_frozen()
             {
                 let current_members: Vec<AuthorityName> = system_inner
                     .read_bls_committee(&system_inner.get_ika_active_committee())
@@ -401,7 +409,8 @@ where
                     current_keys_sent_for_epoch = Some(current_epoch);
                     info!(
                         current_epoch,
-                        "delivered current-epoch off-chain validator MPC keys to the manager"
+                        "delivered current-epoch off-chain validator MPC keys to the manager \
+                         (frozen agreed set)"
                     );
                 }
             }
@@ -513,10 +522,12 @@ where
             let committee_epoch = committee.epoch();
             // Deliver the next epoch's off-chain validator MPC keys alongside
             // its committee — network reconfiguration encrypts under the
-            // upcoming parties' PVSS keys. `None` only on the legacy chain
-            // fallback (no off-chain bundle), where reconfiguration runs the
-            // backward-compatible party that needs no PVSS.
-            if let Some(bundles) = next_epoch_bundles {
+            // upcoming parties' PVSS keys. Only once FROZEN, so the manager
+            // ingests the consensus-agreed next-epoch set (not a pre-freeze
+            // subset). `None` only on the legacy chain fallback (no off-chain
+            // bundle), where reconfiguration runs the backward-compatible party
+            // that needs no PVSS.
+            if frozen_at_assembly && let Some(bundles) = next_epoch_bundles {
                 let _ = next_epoch_mpc_keys_sender.send(Some((committee_epoch, bundles)));
             }
             if let Err(err) = next_epoch_committee_sender.send(committee) {

@@ -56,6 +56,105 @@ async fn test_network_dkg_full_flow() {
     create_network_key_test(&mut test_state).await;
 }
 
+/// Partial validator keys: the committee is full (4) but only 3 validators'
+/// off-chain key bundles are delivered — simulating one validator
+/// offline/withholding. The network DKG must deal only to the 3 that have keys
+/// and still complete (3 = quorum for n=4); the 4th stays a committee member,
+/// just undealt.
+///
+/// This is the regression test for the all-N gate that previously rejected a
+/// partial key set with `InvalidMPCPartyType` and wedged the network on a single
+/// missing validator. A completed DKG output here proves the readiness is the
+/// consensus freeze (agreed set), not all-N.
+#[tokio::test]
+#[cfg(test)]
+async fn test_network_dkg_completes_with_partial_validator_keys() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (committee, seeds, mut bundles) = utils::build_committee_with_random_seeds(4);
+
+    // Drop one validator's ENTIRE bundle (atomic — all five maps), so the agreed
+    // set covers 3 of the 4 committee members.
+    let dropped = committee
+        .voting_rights
+        .last()
+        .expect("committee has members")
+        .0;
+    bundles.class_groups.remove(&dropped);
+    bundles.secp256k1_pvss.remove(&dropped);
+    bundles.secp256r1_pvss.remove(&dropped);
+    bundles.ristretto_pvss.remove(&dropped);
+    bundles.vss_hpke.remove(&dropped);
+    assert_eq!(
+        bundles.secp256k1_pvss.len(),
+        3,
+        "exactly 3 of 4 validators should have keys"
+    );
+
+    let (
+        dwallet_mpc_services,
+        sui_data_senders,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
+        committee.clone(),
+        seeds,
+        bundles,
+    );
+    let mut test_state = utils::IntegrationTestState {
+        dwallet_mpc_services,
+        sent_consensus_messages_collectors,
+        epoch_stores,
+        notify_services,
+        crypto_round: 1,
+        consensus_round: 1,
+        committee,
+        sui_data_senders,
+        network_owned_address_sign_request_senders,
+        network_owned_address_sign_output_receivers,
+    };
+
+    for service in &mut test_state.dwallet_mpc_services {
+        service
+            .dwallet_mpc_manager_mut()
+            .last_session_to_complete_in_current_epoch = 400;
+    }
+    let epoch_id = test_state
+        .dwallet_mpc_services
+        .first()
+        .expect("at least one service")
+        .epoch;
+    send_start_network_dkg_event_to_all_parties(epoch_id, &mut test_state).await;
+
+    // Drive only the 3 keyed validators (the 4th is offline — no keys, not run),
+    // and wait for THOSE 3 to complete. With the all-N gate in place this would
+    // never complete: every keyed party rejects on `InvalidMPCPartyType` (the
+    // key set is 3/4) and the request re-queues forever.
+    let (consensus_round, network_key_checkpoint) =
+        utils::advance_mpc_flow_until_completion_for_parties(&mut test_state, 1, &[0, 1, 2]).await;
+    assert!(
+        consensus_round >= 5,
+        "network DKG with 3/4 validator keys should complete (got round {consensus_round})"
+    );
+
+    let mut produced_key = false;
+    for message in network_key_checkpoint.messages() {
+        if let DWalletCheckpointMessageKind::RespondDWalletMPCNetworkDKGOutput(message) = message {
+            assert!(
+                !message.public_output.is_empty(),
+                "network DKG should produce a non-empty public output dealing to the 3-validator subset"
+            );
+            produced_key = true;
+        }
+    }
+    assert!(
+        produced_key,
+        "expected a RespondDWalletMPCNetworkDKGOutput from the partial-keys DKG"
+    );
+}
+
 #[tokio::test]
 #[cfg(test)]
 async fn test_network_key_reconfiguration() {

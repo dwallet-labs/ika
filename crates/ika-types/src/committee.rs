@@ -355,13 +355,15 @@ impl Committee {
         &self,
         raw: &HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
     ) -> HashMap<PartyID, curve25519::Value> {
-        verify_vss_hpke_keys_at_committee_construction(raw, &self.index_map)
+        verify_vss_hpke_keys_by_party_id(raw, &self.index_map)
     }
 }
 
-/// Verify per-validator VSS HPKE UC proofs once and return only the verified
-/// public key values, keyed by [`PartyID`] (1-based index into voting_rights).
-fn verify_vss_hpke_keys_at_committee_construction(
+/// Verify per-validator VSS HPKE UC proofs and return only the verified public
+/// key values, keyed by [`PartyID`] (1-based index into voting_rights). Run once
+/// per epoch when the off-chain validator MPC keys are ingested (no longer at
+/// committee construction).
+fn verify_vss_hpke_keys_by_party_id(
     raw: &HashMap<AuthorityName, VssHpkeEncryptionKeyAndProof>,
     index_map: &HashMap<AuthorityName, usize>,
 ) -> HashMap<PartyID, curve25519::Value> {

@@ -211,30 +211,13 @@ pub(crate) fn session_input_from_request(
             // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
-                // At `_version == 3` every committee member's off-chain bundle
-                // (class-groups + per-curve PVSS HPKE) must have been ingested
-                // into `validator_mpc_keys_by_party_id`. If the off-chain
-                // assembly hasn't completed yet, the maps are short — fail loudly
-                // (the request retries) rather than running DKG on a partial map.
-                let expected = committee.voting_rights.len();
-                let class_groups_count = validator_mpc_keys_by_party_id.class_groups.len();
-                let secp256k1_pvss_count = validator_mpc_keys_by_party_id.secp256k1_pvss.len();
-                let secp256r1_pvss_count = validator_mpc_keys_by_party_id.secp256r1_pvss.len();
-                let ristretto_pvss_count = validator_mpc_keys_by_party_id.ristretto_pvss.len();
-                if class_groups_count != expected
-                    || secp256k1_pvss_count != expected
-                    || secp256r1_pvss_count != expected
-                    || ristretto_pvss_count != expected
-                {
-                    return Err(DwalletMPCError::InvalidMPCPartyType(format!(
-                        "at network_encryption_key_version == 3 every committee member \
-                         must publish the post-PR-#1707 bundle shape, but only \
-                         {class_groups_count}/{expected} class-groups, \
-                         {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
-                         {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
-                         {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
-                    )));
-                }
+                // No all-committee completeness check: the off-chain key set is
+                // the consensus-frozen agreed set, which may legitimately omit
+                // offline/withholding validators. The DKG deals shares only to
+                // the parties that have keys (the rest stay active in consensus,
+                // just undealt). The freeze gate in `handle_mpc_request` already
+                // ensures the agreed set has been ingested before we get here, so
+                // these maps are the agreed quorum set, not a pre-freeze partial.
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
                     validator_mpc_keys_by_party_id.class_groups,

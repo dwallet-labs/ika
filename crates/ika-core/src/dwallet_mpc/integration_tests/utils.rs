@@ -1071,6 +1071,12 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
 /// which run in parallel and can be CPU-intensive.
 /// Overridable via `IKA_TEST_MAX_PARTY_ITERATIONS` (see
 /// `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` above for why).
+///
+/// These DKG tests each fan real crypto across all cores, so run them ONE TEST
+/// AT A TIME (`--test-threads=1`) — that limits cargo to one test *function* at
+/// a time while each test still uses every core internally. Running multiple of
+/// these tests concurrently oversubscribes the CPU and starves this wall-clock
+/// budget.
 const MAX_PARTY_ITERATIONS: usize = 600;
 
 fn max_party_iterations() -> usize {
@@ -1732,6 +1738,20 @@ pub(crate) async fn advance_mpc_flow_until_completion(
     test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
 ) -> (Round, PendingDWalletCheckpoint) {
+    let all_parties: Vec<usize> = (0..test_state.committee.voting_rights.len()).collect();
+    advance_mpc_flow_until_completion_for_parties(test_state, start_consensus_round, &all_parties)
+        .await
+}
+
+/// Like [`advance_mpc_flow_until_completion`] but advances/waits for only
+/// `parties_to_advance` — the rest are treated as offline (never run). Used to
+/// drive an MPC flow to completion with a sub-committee (e.g. when some
+/// validators withheld their keys and the protocol deals only to the rest).
+pub(crate) async fn advance_mpc_flow_until_completion_for_parties(
+    test_state: &mut IntegrationTestState,
+    start_consensus_round: Round,
+    parties_to_advance: &[usize],
+) -> (Round, PendingDWalletCheckpoint) {
     let mut consensus_round = start_consensus_round;
     let mut rounds_waited = 0u64;
     loop {
@@ -1744,12 +1764,13 @@ pub(crate) async fn advance_mpc_flow_until_completion(
             );
         }
 
-        if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
+        if let Some(pending_checkpoint) = advance_some_parties_and_wait_for_completions(
             &test_state.committee,
             &mut test_state.dwallet_mpc_services,
             &mut test_state.sent_consensus_messages_collectors,
             &test_state.epoch_stores,
             &test_state.notify_services,
+            parties_to_advance,
         )
         .await
         {
