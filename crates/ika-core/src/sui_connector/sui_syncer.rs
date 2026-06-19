@@ -97,7 +97,7 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
-        class_groups_source: Arc<
+        off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
@@ -129,7 +129,7 @@ where
                 chain_next_committee_sender.clone(),
                 current_epoch_mpc_keys_sender.clone(),
                 next_epoch_mpc_keys_sender.clone(),
-                class_groups_source.clone(),
+                off_chain_mpc_data_source.clone(),
                 self.metrics.clone(),
             ));
             info!("Starting end of publish sync task");
@@ -332,7 +332,7 @@ where
         next_epoch_mpc_keys_sender: Sender<
             Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
         >,
-        class_groups_source: Arc<
+        off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
@@ -392,7 +392,7 @@ where
             // set (which may omit offline/withholding validators — that's fine,
             // the DKG deals only to parties that have keys).
             if current_keys_sent_for_epoch != Some(current_epoch)
-                && let Some(source) = class_groups_source.load_full()
+                && let Some(source) = off_chain_mpc_data_source.load_full()
                 && source.is_frozen()
             {
                 let current_members: Vec<AuthorityName> = system_inner
@@ -468,8 +468,8 @@ where
             // assembly read the SAME per-epoch store: the freeze flag is
             // monotonic within a store, so `is_frozen == true` here
             // guarantees the assembly below used the frozen pairs.
-            let class_groups_snapshot = class_groups_source.load_full();
-            let frozen_at_assembly = class_groups_snapshot
+            let off_chain_mpc_data_snapshot = off_chain_mpc_data_source.load_full();
+            let frozen_at_assembly = off_chain_mpc_data_snapshot
                 .as_ref()
                 .is_some_and(|source| source.is_frozen());
             let (committee, next_epoch_bundles) = match Self::new_committee(
@@ -479,7 +479,7 @@ where
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
                 true,
-                class_groups_snapshot,
+                off_chain_mpc_data_snapshot,
                 off_chain_on,
                 frozen_at_assembly,
                 &mut assembly_log_state,
@@ -565,7 +565,7 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
-        class_groups_source: Option<
+        off_chain_mpc_data_source: Option<
             Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
         off_chain_on: bool,
@@ -587,7 +587,7 @@ where
         // Under legacy mode (`off_chain_on == false`) we fall
         // through to the chain read below so existing clusters
         // keep working.
-        if let Some(source) = class_groups_source {
+        if let Some(source) = off_chain_mpc_data_source {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {

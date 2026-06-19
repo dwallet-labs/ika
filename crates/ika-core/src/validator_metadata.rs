@@ -981,16 +981,26 @@ where
             missing.push(authority);
             continue;
         };
-        let inner_bytes = versioned.mpc_data_bytes();
-        // Off-chain blobs are always the full v1 `ValidatorEncryptionKeysAndProofs`
-        // bundle (class-groups + 3 PVSS + the Fast Schnorr VSS HPKE key); the bare
-        // class-groups-only shape lives on chain, never here. Decode strictly — a
-        // wrong-shape blob leaves the validator missing so assembly stays
-        // `Incomplete` and retries rather than building a `Committee` without a
-        // complete PVSS / VSS key set.
-        let Ok(bundle) = bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(&inner_bytes) else {
-            missing.push(authority);
-            continue;
+        // Decode the inner key bundle per wrapper version. Matching on the
+        // `VersionedMPCData` variant — rather than the variant-agnostic
+        // `mpc_data_bytes()` — makes a future variant a COMPILE error here,
+        // forcing a deliberate decode for the new shape instead of silently
+        // dropping the validator to `missing`. Off-chain blobs carry the full
+        // bundle (class-groups + 3 PVSS + the Fast Schnorr VSS HPKE key); the
+        // bare class-groups-only shape lives on chain, never here. Decode
+        // strictly — a wrong-shape blob leaves the validator missing so assembly
+        // stays `Incomplete` and retries rather than building a `Committee`
+        // without a complete PVSS / VSS key set.
+        let bundle = match &versioned {
+            VersionedMPCData::V1(v1) => {
+                match bcs::from_bytes::<ValidatorEncryptionKeysAndProofs>(&v1.mpc_data_bytes()) {
+                    Ok(bundle) => bundle,
+                    Err(_) => {
+                        missing.push(authority);
+                        continue;
+                    }
+                }
+            }
         };
         class_groups.insert(authority, bundle.class_groups);
         secp256k1_pvss.insert(authority, bundle.secp256k1_pvss);
