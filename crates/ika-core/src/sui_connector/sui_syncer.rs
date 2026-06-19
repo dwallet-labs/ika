@@ -11,7 +11,7 @@ use ika_config::node::NodeMode;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
 use ika_sui_client::{SuiClient, SuiClientInner, retry_with_max_elapsed_time};
 use ika_types::committee::{
-    Committee, CommitteeMembership, EpochId, StakeUnit, decode_validator_encryption_keys,
+    ClassGroupsEncryptionKeyAndProof, Committee, CommitteeMembership, EpochId, StakeUnit,
 };
 use ika_types::crypto::AuthorityName;
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
@@ -77,6 +77,12 @@ where
         query_interval: Duration,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
+        current_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        next_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
         mode: NodeMode,
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         dwallet_coordinator_object_receiver: Receiver<
@@ -91,7 +97,7 @@ where
         network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         >,
-        class_groups_source: Arc<
+        off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
@@ -121,7 +127,9 @@ where
                 system_object_receiver.clone(),
                 next_epoch_committee_sender.clone(),
                 chain_next_committee_sender.clone(),
-                class_groups_source.clone(),
+                current_epoch_mpc_keys_sender.clone(),
+                next_epoch_mpc_keys_sender.clone(),
+                off_chain_mpc_data_source.clone(),
                 self.metrics.clone(),
             ));
             info!("Starting end of publish sync task");
@@ -318,7 +326,13 @@ where
         system_object_receiver: Receiver<Option<(System, SystemInner)>>,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
-        class_groups_source: Arc<
+        current_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        next_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
@@ -342,6 +356,10 @@ where
         // pre-freeze window re-sends every tick, so intermediate
         // re-sends demote to debug.
         let mut last_logged_committee_send: Option<(EpochId, bool)> = None;
+        // Epoch whose CURRENT-committee off-chain keys we've already delivered;
+        // the keys are deterministic and the current committee is fixed within
+        // an epoch, so one successful send per epoch is enough.
+        let mut current_keys_sent_for_epoch: Option<EpochId> = None;
         loop {
             time::sleep(poll_interval).await;
             let Some((_, system_inner)) = system_object_receiver.borrow().as_ref().cloned() else {
@@ -356,6 +374,47 @@ where
                 Duration::from_secs(10),
             );
             let SystemInner::V1(system_inner) = system_inner;
+
+            // Deliver the CURRENT epoch's off-chain validator MPC keys (3 PVSS +
+            // VSS HPKE) to the MPC manager. The within-epoch network DKG needs
+            // them, and at genesis they were never assembled as a prior epoch's
+            // "next". Current committee members self-announce for the current
+            // epoch, so the live (current-epoch) source's frozen set covers them
+            // — assemble directly for the current committee, not by borrowing
+            // the next committee's keys. Runs before the next-committee check so
+            // it still fires when Sui hasn't selected a next committee yet.
+            let current_epoch = system_inner.epoch();
+            // Only deliver once the set is FROZEN — the frozen set is the
+            // consensus-agreed validator-key set (a stake-quorum of ready
+            // signals decided it). Delivering a pre-freeze assembly could ship a
+            // non-final subset that the manager would then ingest as the agreed
+            // set. `try_assemble_mpc_data` post-freeze returns exactly the frozen
+            // set (which may omit offline/withholding validators — that's fine,
+            // the DKG deals only to parties that have keys).
+            if current_keys_sent_for_epoch != Some(current_epoch)
+                && let Some(source) = off_chain_mpc_data_source.load_full()
+                && source.is_frozen()
+            {
+                let current_members: Vec<AuthorityName> = system_inner
+                    .read_bls_committee(&system_inner.get_ika_active_committee())
+                    .into_iter()
+                    .map(|(_, (name, _))| name)
+                    .collect();
+                if let crate::validator_metadata::OffChainMpcDataAssembly::Complete(bundles) =
+                    source.try_assemble_mpc_data(&current_members)
+                    && current_epoch_mpc_keys_sender
+                        .send(Some((current_epoch, bundles)))
+                        .is_ok()
+                {
+                    current_keys_sent_for_epoch = Some(current_epoch);
+                    info!(
+                        current_epoch,
+                        "delivered current-epoch off-chain validator MPC keys to the manager \
+                         (frozen agreed set)"
+                    );
+                }
+            }
+
             let Some(new_next_bls_committee) = system_inner.get_ika_next_epoch_committee() else {
                 debug!("ika next epoch active committee not found, retrying...");
                 continue;
@@ -409,18 +468,18 @@ where
             // assembly read the SAME per-epoch store: the freeze flag is
             // monotonic within a store, so `is_frozen == true` here
             // guarantees the assembly below used the frozen pairs.
-            let class_groups_snapshot = class_groups_source.load_full();
-            let frozen_at_assembly = class_groups_snapshot
+            let off_chain_mpc_data_snapshot = off_chain_mpc_data_source.load_full();
+            let frozen_at_assembly = off_chain_mpc_data_snapshot
                 .as_ref()
                 .is_some_and(|source| source.is_frozen());
-            let committee = match Self::new_committee(
+            let (committee, next_epoch_bundles) = match Self::new_committee(
                 sui_client.clone(),
                 new_next_committee.clone(),
                 next_epoch,
                 new_next_bls_committee.quorum_threshold,
                 new_next_bls_committee.validity_threshold,
                 true,
-                class_groups_snapshot,
+                off_chain_mpc_data_snapshot,
                 off_chain_on,
                 frozen_at_assembly,
                 &mut assembly_log_state,
@@ -428,9 +487,9 @@ where
             )
             .await
             {
-                Ok(committee) => {
+                Ok(committee_and_bundles) => {
                     consecutive_incomplete_ticks = 0;
-                    committee
+                    committee_and_bundles
                 }
                 Err(e @ DwalletMPCError::OffChainAssemblyIncomplete { .. }) => {
                     // Expected per-tick retry while the off-chain pipeline
@@ -461,6 +520,16 @@ where
                 }
             };
             let committee_epoch = committee.epoch();
+            // Deliver the next epoch's off-chain validator MPC keys alongside
+            // its committee — network reconfiguration encrypts under the
+            // upcoming parties' PVSS keys. Only once FROZEN, so the manager
+            // ingests the consensus-agreed next-epoch set (not a pre-freeze
+            // subset). `None` only on the legacy chain fallback (no off-chain
+            // bundle), where reconfiguration runs the backward-compatible party
+            // that needs no PVSS.
+            if frozen_at_assembly && let Some(bundles) = next_epoch_bundles {
+                let _ = next_epoch_mpc_keys_sender.send(Some((committee_epoch, bundles)));
+            }
             if let Err(err) = next_epoch_committee_sender.send(committee) {
                 error!(error=?err, committee_epoch=?committee_epoch, "failed to send the next epoch committee to the channel");
             } else {
@@ -496,14 +565,17 @@ where
         quorum_threshold: u64,
         validity_threshold: u64,
         read_next_epoch_class_groups_keys: bool,
-        class_groups_source: Option<
+        off_chain_mpc_data_source: Option<
             Arc<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
         >,
         off_chain_on: bool,
         frozen_at_assembly: bool,
         log_state: &mut AssemblyLogState,
         metrics: &SuiConnectorMetrics,
-    ) -> DwalletMPCResult<Committee> {
+    ) -> DwalletMPCResult<(
+        Committee,
+        Option<crate::validator_metadata::OffChainCommitteeBundles>,
+    )> {
         // Try the off-chain assembly first. The strict
         // `Complete`/`Incomplete` gate inside the source means we
         // only use the off-chain map when every (non-excluded)
@@ -515,7 +587,7 @@ where
         // Under legacy mode (`off_chain_on == false`) we fall
         // through to the chain read below so existing clusters
         // keep working.
-        if let Some(source) = class_groups_source {
+        if let Some(source) = off_chain_mpc_data_source {
             let authorities: Vec<AuthorityName> =
                 committee.iter().map(|(_, (name, _))| *name).collect();
             match source.try_assemble_mpc_data(&authorities) {
@@ -553,20 +625,21 @@ where
                             "re-assembled identical committee mpc_data off-chain"
                         );
                     }
-                    return Ok(Committee::new(
+                    // class_groups stays on `Committee` (the bare on-chain key).
+                    // The PVSS + VSS HPKE keys travel out-of-band: return the
+                    // full bundle so the caller delivers them to the MPC manager
+                    // via the off-chain key channels, never on `Committee`.
+                    let committee = Committee::new(
                         epoch,
                         committee
                             .iter()
                             .map(|(_, (name, stake))| (*name, *stake))
                             .collect(),
-                        bundles.class_groups,
-                        bundles.secp256k1_pvss,
-                        bundles.secp256r1_pvss,
-                        bundles.ristretto_pvss,
-                        bundles.vss_hpke,
+                        bundles.class_groups.clone(),
                         quorum_threshold,
                         validity_threshold,
-                    ));
+                    );
+                    return Ok((committee, Some(bundles)));
                 }
                 crate::validator_metadata::OffChainMpcDataAssembly::Incomplete { missing } => {
                     if off_chain_on {
@@ -662,71 +735,51 @@ where
             .await
             .map_err(DwalletMPCError::IkaError)?;
 
-        // Chain reads are shape-tolerant: a validator's Move-side
-        // `MPCDataV1::mpc_data_bytes` is either the bare mainnet-v1.1.8
-        // `ClassGroupsEncryptionKeyAndProof` or the full version-3
-        // `ValidatorEncryptionKeysAndProofs` bundle — the `become-candidate` /
-        // `set-next-epoch-mpc-data` CLI publishes the bundle unless
-        // `--legacy-class-groups-only` is set. Decode whichever shape is present
-        // and populate every key map from it (PVSS + VSS HPKE are absent for the
-        // bare shape). When the off-chain validator-metadata pipeline (PR #1721)
-        // is available it overlays the full bundle above and we never reach
-        // here; this chain read is the fallback and must not silently drop a
-        // bundle-shape validator from the load-bearing class-groups map.
-        let decoded_per_validator: Vec<_> = committee
+        // Chain reads are the mainnet-v1.1.8 shape always: the Move-side
+        // `MPCDataV1::mpc_data_bytes` field stores bare
+        // `ClassGroupsEncryptionKeyAndProof`. The full bundle (PVSS + VSS HPKE)
+        // arrives via the off-chain validator-metadata pipeline (see PR #1721)
+        // and is overlaid onto Committee through a separate path. No
+        // try-then-fallback decode — one shape per path.
+        let class_group_encryption_keys_and_proofs: HashMap<_, _> = committee
             .iter()
             .filter_map(|(id, (name, _))| {
-                let mpc_data = committee_mpc_data.get(id)?;
-                let decoded = decode_validator_encryption_keys(&mpc_data.mpc_data_bytes());
-                if decoded.is_none() {
-                    error!(
-                        authority = ?name,
-                        "Failed to decode validator encryption keys from chain mpc_data \
-                         (neither bare class-groups nor version-3 bundle shape)"
-                    );
-                }
-                decoded.map(|decoded| (*name, decoded))
-            })
-            .collect();
-        let class_group_encryption_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .map(|(name, decoded)| (*name, decoded.class_groups.clone()))
-            .collect();
-        let secp256k1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(name, decoded)| decoded.secp256k1_pvss.clone().map(|key| (*name, key)))
-            .collect();
-        let secp256r1_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(name, decoded)| decoded.secp256r1_pvss.clone().map(|key| (*name, key)))
-            .collect();
-        let ristretto_pvss_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(name, decoded)| decoded.ristretto_pvss.clone().map(|key| (*name, key)))
-            .collect();
-        let vss_hpke_public_keys_and_proofs: HashMap<_, _> = decoded_per_validator
-            .iter()
-            .filter_map(|(name, decoded)| {
-                decoded
-                    .vss_hpke_public_key_and_proof
-                    .clone()
-                    .map(|key| (*name, key))
+                let mpc_data = committee_mpc_data.get(id);
+
+                mpc_data.and_then(|mpc_data| {
+                    let class_groups_public_key_and_proof =
+                        bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(
+                            &mpc_data.mpc_data_bytes(),
+                        );
+
+                    match class_groups_public_key_and_proof {
+                        Ok(key_and_proof) => Some((*name, key_and_proof)),
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize class groups public key and proof: {}",
+                                e
+                            );
+                            None
+                        }
+                    }
+                })
             })
             .collect();
 
-        Ok(Committee::new(
-            epoch,
-            committee
-                .iter()
-                .map(|(_, (name, stake))| (*name, *stake))
-                .collect(),
-            class_group_encryption_keys_and_proofs,
-            secp256k1_pvss_public_keys_and_proofs,
-            secp256r1_pvss_public_keys_and_proofs,
-            ristretto_pvss_public_keys_and_proofs,
-            vss_hpke_public_keys_and_proofs,
-            quorum_threshold,
-            validity_threshold,
+        // Chain fallback (legacy mode): only the bare class-groups key is on
+        // chain, so there are no off-chain PVSS/VSS bundles to deliver.
+        Ok((
+            Committee::new(
+                epoch,
+                committee
+                    .iter()
+                    .map(|(_, (name, stake))| (*name, *stake))
+                    .collect(),
+                class_group_encryption_keys_and_proofs,
+                quorum_threshold,
+                validity_threshold,
+            ),
+            None,
         ))
     }
 

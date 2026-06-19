@@ -4,7 +4,7 @@ use dwallet_mpc_types::dwallet_mpc::{
 use dwallet_mpc_types::mpc_protocol_configuration::{
     try_into_curve, try_into_hash_scheme, try_into_signature_algorithm,
 };
-use group::HashScheme;
+use group::{HashContext, HashScheme};
 use ika_types::dwallet_mpc_error::DwalletMPCResult;
 use ika_types::messages_dwallet_mpc::{
     DWalletDKGRequestEvent, DWalletEncryptionKeyReconfigurationRequestEvent,
@@ -50,6 +50,7 @@ pub struct DWalletDKGAndSignData {
     pub presign: Vec<u8>,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
+    pub hash_context: HashContext,
     pub message: Vec<u8>,
     pub message_centralized_signature: Vec<u8>,
     pub sign_id: ObjectID,
@@ -75,6 +76,7 @@ pub struct SignData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
+    pub hash_context: HashContext,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
@@ -83,6 +85,7 @@ pub struct NetworkOwnedAddressSignData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
+    pub hash_context: HashContext,
 }
 
 impl From<&NetworkOwnedAddressSignData> for SignData {
@@ -91,6 +94,7 @@ impl From<&NetworkOwnedAddressSignData> for SignData {
             curve: internal.curve,
             signature_algorithm: internal.signature_algorithm,
             hash_scheme: internal.hash_scheme,
+            hash_context: internal.hash_context.clone(),
         }
     }
 }
@@ -118,6 +122,7 @@ pub struct PartialSignatureVerificationData {
     pub curve: DWalletCurve,
     pub signature_algorithm: DWalletSignatureAlgorithm,
     pub hash_scheme: HashScheme,
+    pub hash_context: HashContext,
     pub message: Vec<u8>,
     pub dwallet_decentralized_output: SerializedWrappedMPCPublicOutput,
     pub presign: SerializedWrappedMPCPublicOutput,
@@ -243,12 +248,12 @@ impl ProtocolData {
                     DWalletSignatureAlgorithm::ECDSASecp256r1 => dwallet_public_output.is_none(),
                     DWalletSignatureAlgorithm::EdDSA => true,
                     DWalletSignatureAlgorithm::Taproot => true,
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrate => true,
+                    DWalletSignatureAlgorithm::Schnorrkel => true,
                     // VSS (Fast Schnorr) variants are global-presign Schnorr,
                     // DKG-created keys only (never imported).
                     DWalletSignatureAlgorithm::TaprootVSS => true,
                     DWalletSignatureAlgorithm::EdDSAVSS => true,
-                    DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => true,
+                    DWalletSignatureAlgorithm::SchnorrkelVSS => true,
                 };
 
                 if is_global_presign {
@@ -337,6 +342,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
                 sign_during_dkg_request.signature_algorithm,
                 sign_during_dkg_request.hash_scheme,
             )?,
+            hash_context: signature_algorithm.hash_context(),
             message: sign_during_dkg_request.message.clone(),
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature
@@ -375,6 +381,7 @@ pub fn network_owned_address_sign_protocol_data(
             curve,
             signature_algorithm,
             hash_scheme,
+            hash_context: signature_algorithm.hash_context(),
         },
         dwallet_network_encryption_key_id,
         message,
@@ -401,18 +408,21 @@ pub fn presign_protocol_data(
 }
 
 pub fn sign_protocol_data(request_event_data: SignRequestEvent) -> DwalletMPCResult<ProtocolData> {
+    let signature_algorithm = try_into_signature_algorithm(
+        request_event_data.curve,
+        request_event_data.signature_algorithm,
+    )?;
+    let hash_context = signature_algorithm.hash_context();
     Ok(ProtocolData::Sign {
         data: SignData {
             curve: try_into_curve(request_event_data.curve)?,
-            signature_algorithm: try_into_signature_algorithm(
-                request_event_data.curve,
-                request_event_data.signature_algorithm,
-            )?,
+            signature_algorithm,
             hash_scheme: try_into_hash_scheme(
                 request_event_data.curve,
                 request_event_data.signature_algorithm,
                 request_event_data.hash_scheme,
             )?,
+            hash_context,
         },
         dwallet_id: request_event_data.dwallet_id,
         sign_id: request_event_data.sign_id,
@@ -463,18 +473,21 @@ pub fn encrypted_share_verification_protocol_data(
 pub fn partial_signature_verification_protocol_data(
     request_event_data: FutureSignRequestEvent,
 ) -> DwalletMPCResult<ProtocolData> {
+    let signature_algorithm = try_into_signature_algorithm(
+        request_event_data.curve,
+        request_event_data.signature_algorithm,
+    )?;
+    let hash_context = signature_algorithm.hash_context();
     Ok(ProtocolData::PartialSignatureVerification {
         data: PartialSignatureVerificationData {
             curve: try_into_curve(request_event_data.curve)?,
-            signature_algorithm: try_into_signature_algorithm(
-                request_event_data.curve,
-                request_event_data.signature_algorithm,
-            )?,
+            signature_algorithm,
             hash_scheme: try_into_hash_scheme(
                 request_event_data.curve,
                 request_event_data.signature_algorithm,
                 request_event_data.hash_scheme,
             )?,
+            hash_context,
             message: request_event_data.message,
             dwallet_decentralized_output: request_event_data.dkg_output,
             presign: request_event_data.presign,

@@ -36,6 +36,11 @@ them has a bug — determine which before changing either.
 - [`specs/epoch-close-session-lock.md`](specs/epoch-close-session-lock.md)
   — the frozen session-completion target, the strict-equality close
   predicate, the gate-consensus-submission rule, batch-processing rules.
+- [`specs/cross-binary-upgrade.md`](specs/cross-binary-upgrade.md) —
+  the in-place protocol-version upgrade contract: the stake-weighted
+  version vote, the wire/on-disk compatibility invariants for mixed
+  committees, the session-completion wedge, and when a rolling swap is
+  valid vs. when the crypto boundary forces an atomic restart.
 
 ### playbooks/ — how to run and debug this system
 - [`playbooks/ci-suites.md`](playbooks/ci-suites.md) — running the heavy

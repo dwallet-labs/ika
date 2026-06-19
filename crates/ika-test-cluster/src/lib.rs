@@ -16,7 +16,7 @@ use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
 use ika_config::local_ip_utils;
 use ika_node::IkaNodeHandle;
-use ika_protocol_config::ProtocolVersion;
+use ika_protocol_config::{Chain, ProtocolVersion};
 use ika_sui_client::SuiConnectorClient;
 use ika_sui_client::ika_dwallet_transactions::{
     PaymentCoinArgs, register_encryption_key, request_dwallet_dkg,
@@ -48,8 +48,6 @@ use sui_types::base_types::{ObjectID, SuiAddress};
 use sui_types::crypto::SignatureScheme;
 use test_cluster::{TestCluster, TestClusterBuilder};
 
-#[cfg(not(msim))]
-use ika_protocol_config::Chain;
 #[cfg(not(msim))]
 use ika_swarm_config::sui_client::setup_contract_paths;
 
@@ -255,6 +253,9 @@ impl IkaTestCluster {
             .sign_and_execute_transaction(&tx_data)
             .await;
 
+        // On this branch the on-chain `mpc_data` is always the bare class-groups
+        // shape (the bundle travels off-chain), so the joiner publish shape is
+        // fixed regardless of protocol version.
         let metadata = joiner_init.to_validator_info();
         let (validator_id, validator_cap_id) = retry_on_object_contention!(
             "request_add_validator_candidate",

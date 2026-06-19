@@ -52,6 +52,50 @@ gh run watch <run-id>
 gh run download <run-id> -n <artifact>   # localnet-logs / cluster-tests-log-<attempt> / rust-tests-log
 ```
 
+## Upgrade test (run-when-needed, not in the nightly fan-out)
+
+`.github/workflows/upgrade-test.yaml` runs the out-of-process cross-binary
+upgrade harness (`crates/ika-upgrade-test/`) — real, separately-compiled
+`ika-validator` child processes against an external `sui` localnet, swapped
+across epochs. It is `workflow_dispatch`-only and deliberately NOT part of
+`scheduled-all-suites.yaml`: it is a pre-mainnet-upgrade rehearsal and a
+check for changes to versioning / serialization / the epoch boundary, not a
+per-push gate. The contract it verifies is
+[`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
+
+```bash
+# Pick one scenario via `test`. smoke/workload need only the current build;
+# cross_binary/v118_upgrade also build an OLD binary from `old_ref` in a
+# worktree (at that ref's own toolchain) and run --test-threads=1.
+
+# Plumbing go/no-go (fastest): 4 same-binary processes reach epoch 2.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke
+
+# v3 -> v4 upgrade then a full user DKG -> Presign -> Sign on-chain.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=workload
+
+# Rolling swap + committee churn between two wire-compatible builds (the
+# default scenario). Defaults build the OLD binary from THIS branch with
+# MAX_PROTOCOL_VERSION pinned to 3 — current toolchain, no dependency on an
+# old tag still building.
+gh workflow run upgrade-test.yaml --ref <branch> -f test=cross_binary
+#   override the old side, e.g. a specific commit kept at v3:
+#   -f old_ref=<sha-or-branch> -f old_max_protocol_version=3 -f old_bin_name=ika-validator
+
+# Atomic mainnet rehearsal: boot the literal mainnet-v1.1.8 binary, swap all
+# to the current build, confirm v4 and continued serving. Pick it explicitly
+# before a mainnet upgrade (builds the tag at its own old toolchain).
+gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
+#   override the old tag:  -f old_ref=tag-or-sha  (defaults to mainnet-v1.1.8)
+
+# Loaded runner slack: bump epochs for the upgrade scenarios.
+#   -f epoch_duration_ms=600000
+
+# Artifacts: upgrade-test-log-<test>-<attempt> (test stdout),
+# upgrade-test-node-logs-<test>-<attempt> (per-validator *.log),
+# cpu-sampler-<test>-<attempt>.
+```
+
 ## Facts that save debugging time
 
 - **Concurrency groups cancel in-flight runs**: re-dispatching a workflow

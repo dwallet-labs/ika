@@ -105,3 +105,10 @@ class_groups = { workspace = true, features = ["threshold", "parallel"] }
 [features]
 test-utils = []
 enforce-minimum-cpu = []
+# TEST-ONLY: enables test-testing fault injection — code that deliberately
+# misbehaves so a test can prove it would catch the real failure (e.g. corrupts
+# this validator's outgoing reconfiguration message for the cross-binary
+# malicious-detection harness). General-purpose: new fault hooks gate on this
+# same feature. Never enable in a real build — every hook is compiled out unless
+# this feature is explicitly set.
+test-testing = []

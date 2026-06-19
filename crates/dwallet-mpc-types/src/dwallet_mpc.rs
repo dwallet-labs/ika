@@ -5,6 +5,7 @@ use crate::mpc_protocol_configuration::try_into_curve;
 use class_groups::CiphertextSpaceValue;
 use crypto_bigint::{Encoding, Uint};
 use enum_dispatch::enum_dispatch;
+use group::HashContext;
 use group::secp256k1;
 use k256::elliptic_curve::group::GroupEncoding;
 use serde::{Deserialize, Serialize};
@@ -207,17 +208,17 @@ pub enum DWalletSignatureAlgorithm {
     Taproot,
     #[strum(to_string = "EdDSA")]
     EdDSA,
-    #[strum(to_string = "SchnorrkelSubstrate")]
-    SchnorrkelSubstrate,
+    #[strum(to_string = "Schnorrkel")]
+    Schnorrkel,
     /// Fast Schnorr (VSS) variant of Taproot on secp256k1. DKG-created keys only.
     #[strum(to_string = "TaprootVSS")]
     TaprootVSS,
     /// Fast Schnorr (VSS) variant of EdDSA on curve25519. DKG-created keys only.
     #[strum(to_string = "EdDSAVSS")]
     EdDSAVSS,
-    /// Fast Schnorr (VSS) variant of SchnorrkelSubstrate on ristretto. DKG-created keys only.
-    #[strum(to_string = "SchnorrkelSubstrateVSS")]
-    SchnorrkelSubstrateVSS,
+    /// Fast Schnorr (VSS) variant of Schnorrkel on ristretto. DKG-created keys only.
+    #[strum(to_string = "SchnorrkelVSS")]
+    SchnorrkelVSS,
 }
 
 impl DWalletSignatureAlgorithm {
@@ -230,8 +231,36 @@ impl DWalletSignatureAlgorithm {
             self,
             DWalletSignatureAlgorithm::TaprootVSS
                 | DWalletSignatureAlgorithm::EdDSAVSS
-                | DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS
+                | DWalletSignatureAlgorithm::SchnorrkelVSS
         )
+    }
+
+    /// Returns the [`HashContext`] that pairs with this algorithm under cryptography-private
+    /// PR 547's domain-separation matrix.
+    ///
+    /// TODO(domain-separation): Schnorrkel currently hard-codes `b"substrate"` as the
+    /// signing-context bytes. Once the per-chain plumbing lands (PR 547 Part 2 / ika-private
+    /// wiring), the context should be sourced from `SignRequestEvent` so each chain can
+    /// supply its own. The byte literal here is byte-identical to what the crypto crate
+    /// previously hard-coded inside the Schnorrkel sign path and matches the already-deployed
+    /// schnorrkel domain separator — do not change without a coordinated upgrade.
+    ///
+    /// The VSS variants only change how the signature is computed, not its domain
+    /// separation, so each pairs with the same context as its AHE sibling on the same curve.
+    pub fn hash_context(&self) -> HashContext {
+        match self {
+            DWalletSignatureAlgorithm::Schnorrkel | DWalletSignatureAlgorithm::SchnorrkelVSS => {
+                HashContext::Schnorrkel {
+                    signing_context: b"substrate".to_vec(),
+                }
+            }
+            DWalletSignatureAlgorithm::ECDSASecp256k1
+            | DWalletSignatureAlgorithm::ECDSASecp256r1
+            | DWalletSignatureAlgorithm::Taproot
+            | DWalletSignatureAlgorithm::EdDSA
+            | DWalletSignatureAlgorithm::TaprootVSS
+            | DWalletSignatureAlgorithm::EdDSAVSS => HashContext::None,
+        }
     }
 }
 
@@ -261,6 +290,13 @@ pub enum DWalletHashScheme {
     SHA512,
     #[strum(to_string = "Merlin")]
     Merlin,
+    // Appended at the end so existing variant discriminants (0..=4) — which are
+    // what bcs/bincode persists for this Serialize-derived enum — stay stable.
+    // No current ika protocol maps to Blake2b256 in `try_into_hash_scheme`; it
+    // exists here only so the bidirectional From conversions to `group::HashScheme`
+    // remain total after cryptography-private PR 547.
+    #[strum(to_string = "Blake2b256")]
+    Blake2b256,
 }
 
 impl From<DWalletHashScheme> for group::HashScheme {
@@ -271,6 +307,7 @@ impl From<DWalletHashScheme> for group::HashScheme {
             DWalletHashScheme::DoubleSHA256 => group::HashScheme::DoubleSHA256,
             DWalletHashScheme::SHA512 => group::HashScheme::SHA512,
             DWalletHashScheme::Merlin => group::HashScheme::Merlin,
+            DWalletHashScheme::Blake2b256 => group::HashScheme::Blake2b256,
         }
     }
 }
@@ -283,6 +320,7 @@ impl From<group::HashScheme> for DWalletHashScheme {
             group::HashScheme::DoubleSHA256 => DWalletHashScheme::DoubleSHA256,
             group::HashScheme::SHA512 => DWalletHashScheme::SHA512,
             group::HashScheme::Merlin => DWalletHashScheme::Merlin,
+            group::HashScheme::Blake2b256 => DWalletHashScheme::Blake2b256,
         }
     }
 }

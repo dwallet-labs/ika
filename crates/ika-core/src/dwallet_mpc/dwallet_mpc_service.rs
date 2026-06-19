@@ -37,7 +37,7 @@ use fastcrypto::hash::HashFunction;
 use fastcrypto::traits::KeyPair;
 use ika_config::NodeConfig;
 use ika_protocol_config::ProtocolConfig;
-use ika_types::committee::{Committee, EpochId, decode_validator_encryption_keys};
+use ika_types::committee::{ClassGroupsEncryptionKeyAndProof, Committee, EpochId};
 use ika_types::crypto::{AuthorityName, DefaultHash};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::error::IkaError;
@@ -477,6 +477,20 @@ impl DWalletMPCService {
         newly_instantiated_network_key_ids: Vec<ObjectID>,
     ) -> Vec<ObjectID> {
         debug!("Running DWalletMPCService loop");
+
+        // Ingest the per-epoch off-chain validator MPC keys (3 PVSS + VSS HPKE)
+        // FIRST, before any request handling builds an MPC session input this
+        // iteration — those inputs read `validator_mpc_keys_by_party_id` /
+        // `next_epoch_validator_mpc_keys`, so the keys must be in place before
+        // the within-epoch network DKG / reconfiguration session is constructed.
+        // The off-chain-only keys aren't on `Committee`; they're assembled
+        // per-epoch and delivered on the current/next-epoch key channels (at
+        // genesis the current-epoch set was never assembled as a prior epoch's
+        // "next"). No-op once each set is complete.
+        if let Err(e) = self.dwallet_mpc_manager.ingest_offchain_mpc_keys() {
+            error!(error = ?e, "failed to ingest off-chain validator MPC keys");
+        }
+
         self.sync_last_session_to_complete_in_current_epoch().await;
 
         // Process any pending network-owned-address sign requests.
@@ -2439,23 +2453,22 @@ impl DWalletMPCService {
         // is the same seed we used at setup to create the encryption key, and thus it
         // assures we will generate the same decryption key too.
         //
-        // The on-chain bytes are shape-versioned: mainnet-v1.1.8 publishes the
-        // bare `ClassGroupsEncryptionKeyAndProof`, while the full
+        // The on-chain `mpc_data_bytes` is always the bare
+        // `ClassGroupsEncryptionKeyAndProof`; the full
         // `ValidatorEncryptionKeysAndProofs` bundle (class groups + per-curve
         // PVSS + the Fast Schnorr VSS HPKE key) travels off-chain via validator
-        // P2P. During the upgrade window the on-chain record is always the bare
-        // shape, so this boot-time identity check must be shape-tolerant: decode
-        // whatever shape is on-chain and compare only the class-groups component
-        // — the part both shapes carry and the only part that identifies the
-        // seed. (PVSS / VSS keys are verified off-chain on the assembly path in
-        // `assemble_committee_mpc_data_off_chain`.)
+        // P2P. Decode the bare shape and compare the class-groups component —
+        // the part that identifies the seed. (PVSS / VSS keys are verified
+        // off-chain on the assembly path in `assemble_committee_mpc_data_off_chain`.)
         let onchain_bytes = onchain_validator.get_mpc_data().unwrap().mpc_data_bytes();
-        let Some(onchain_keys) = decode_validator_encryption_keys(&onchain_bytes) else {
+        let Ok(onchain_class_groups) =
+            bcs::from_bytes::<ClassGroupsEncryptionKeyAndProof>(&onchain_bytes)
+        else {
             return Err(DwalletMPCError::MPCManagerError(
                 "could not decode the validator's class-groups key stored in the system state object".to_string(),
             ));
         };
-        if onchain_keys.class_groups != validator_encryption_keys_and_proofs.class_groups {
+        if onchain_class_groups != validator_encryption_keys_and_proofs.class_groups {
             return Err(DwalletMPCError::MPCManagerError(
                 "validator's class-groups key does not match the one stored in the system state object".to_string(),
             ));

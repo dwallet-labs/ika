@@ -310,6 +310,7 @@ pub(crate) fn send_start_sign_event(
                         curve,
                         hash_scheme,
                         signature_algorithm,
+                        hash_context: signature_algorithm.hash_context(),
                     },
                     dwallet_id,
                     sign_id,
@@ -361,6 +362,7 @@ pub(crate) fn send_start_future_sign_event(
                         curve,
                         hash_scheme,
                         signature_algorithm,
+                        hash_context: signature_algorithm.hash_context(),
                     },
                     dwallet_id,
                     sign_id,
@@ -413,6 +415,7 @@ pub(crate) fn send_start_partial_signature_verification_event(
                         message: message.clone(),
                         hash_scheme,
                         signature_algorithm,
+                        hash_context: signature_algorithm.hash_context(),
                         dwallet_decentralized_output: dwallet_public_output.clone(),
                         presign: presign.clone(),
                         partially_signed_message: message_centralized_signature.clone(),
@@ -645,7 +648,7 @@ async fn global_presign_request_uses_correct_metadata_test() {
 /// This exercises external/global VSS presign and the user-driven VSS sign path,
 /// complementing the NOA VSS tests (which cover the emulated-centralized-party path).
 /// `signature_algorithm_index` is the per-curve algorithm index the centralized party
-/// expects (TaprootVSS=2, EdDSAVSS=1, SchnorrkelSubstrateVSS=1); each VSS algorithm
+/// expects (TaprootVSS=2, EdDSAVSS=1, SchnorrkelVSS=1); each VSS algorithm
 /// has a single hash at index 0.
 async fn external_vss_sign_flow(
     curve: DWalletCurve,
@@ -801,12 +804,12 @@ async fn test_external_vss_sign_taproot() {
     .await;
 }
 
-// NOTE: external (user-driven) SchnorrkelSubstrateVSS sign is intentionally NOT
+// NOTE: external (user-driven) SchnorrkelVSS sign is intentionally NOT
 // tested here. It needs a *user* Ristretto dWallet, but the create-dWallet test
 // helper's encrypted-user-share path fails for Ristretto
 // (`encrypt_secret_key_share_and_prove_v2` returns a group error at
 // `create_dwallet.rs:368`) — a pre-existing harness/curve limitation unrelated to
 // Fast Schnorr (the existing create-dWallet tests only ever use Secp256k1).
-// SchnorrkelSubstrateVSS sign is covered by
+// SchnorrkelVSS sign is covered by
 // `test_network_owned_address_sign_schnorrkel_substrate_vss` (the NOA path, which
 // uses the emulated threshold DKG and encrypts no user share).

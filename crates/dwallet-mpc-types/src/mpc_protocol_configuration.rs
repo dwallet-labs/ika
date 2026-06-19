@@ -7,7 +7,7 @@ use crate::dwallet_mpc::{DWalletCurve, DWalletSignatureAlgorithm, DwalletNetwork
 use group::HashScheme;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Protocol flags for DKG and signing operations
 #[repr(u32)]
@@ -41,8 +41,17 @@ pub const DWALLET_DKG_PROTOCOL_FLAG: u32 = 9;
 pub const DWALLET_DKG_WITH_SIGN_PROTOCOL_FLAG: u32 = 10;
 
 lazy_static! {
-    /// Supported curves to signature algorithms to hash schemes
-    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: HashMap<u32, HashMap<u32, Vec<u32>>> = {
+    /// Supported curves to signature algorithms to hash schemes.
+    ///
+    /// MUST be an ordered map (`BTreeMap`), at both nesting levels. Validators
+    /// iterate this map to instantiate internal presign sessions, assigning each
+    /// session a sequence number from a single shared counter in iteration order;
+    /// the sequence number is bound into the session identifier transcript. With
+    /// `HashMap`'s per-process random iteration order, each validator derived
+    /// *different* session identifiers for the same (curve, algorithm) work, so
+    /// those sessions could never reach quorum and the presign pools starved for
+    /// the whole epoch (wedging epoch advance once a user presign request locked).
+    pub static ref SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES: BTreeMap<u32, BTreeMap<u32, Vec<u32>>> = {
         vec![
             (
                 0, // Curve: Secp256k1
@@ -93,7 +102,7 @@ lazy_static! {
                 3, // Curve: Ristretto
                 vec![
                     (
-                        0, // Signature Algorithm: SchnorrkelSubstrate
+                        0, // Signature Algorithm: Schnorrkel
                         vec![
                             0, // Hash: Merlin
                         ],
@@ -122,7 +131,7 @@ lazy_static! {
         config.insert(0, vec![0, 1]); // Secp256k1: ECDSA, Taproot
         config.insert(1, vec![0]); // Secp256r1: ECDSA
         config.insert(2, vec![0]); // Curve25519: EdDSA
-        config.insert(3, vec![0]); // Ristretto: SchnorrkelSubstrate
+        config.insert(3, vec![0]); // Ristretto: Schnorrkel
         config
     };
 
@@ -138,7 +147,7 @@ lazy_static! {
         config.insert(0, vec![1]); // Secp256k1: Taproot (ECDSA not supported for imported keys)
         // Secp256r1 (1): ECDSA not supported for imported keys
         config.insert(2, vec![0]); // Curve25519: EdDSA
-        config.insert(3, vec![0]); // Ristretto: SchnorrkelSubstrate
+        config.insert(3, vec![0]); // Ristretto: Schnorrkel
         config
     };
 
@@ -212,7 +221,7 @@ pub fn network_presign_pool_algorithms(
         (DWalletCurve::Curve25519, DWalletSignatureAlgorithm::EdDSA),
         (
             DWalletCurve::Ristretto,
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+            DWalletSignatureAlgorithm::Schnorrkel,
         ),
     ];
     if fast_schnorr_supported {
@@ -227,7 +236,7 @@ pub fn network_presign_pool_algorithms(
             ),
             (
                 DWalletCurve::Ristretto,
-                DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS,
+                DWalletSignatureAlgorithm::SchnorrkelVSS,
             ),
         ]);
     }
@@ -283,8 +292,8 @@ pub fn try_into_signature_algorithm(
                         },
                         3 => match signature_algorithm {
                             // Ristretto
-                            0 => Some(DWalletSignatureAlgorithm::SchnorrkelSubstrate),
-                            1 => Some(DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS),
+                            0 => Some(DWalletSignatureAlgorithm::Schnorrkel),
+                            1 => Some(DWalletSignatureAlgorithm::SchnorrkelVSS),
                             _ => None,
                         },
                         _ => None,
@@ -371,14 +380,14 @@ pub fn try_into_hash_scheme(
                             3 => match signature_algorithm {
                                 // Ristretto
                                 0 => {
-                                    // SchnorrkelSubstrate},
+                                    // Schnorrkel},
                                     match hash_scheme {
                                         0 => Some(HashScheme::Merlin),
                                         _ => None,
                                     }
                                 }
                                 1 => {
-                                    // SchnorrkelSubstrateVSS (Fast Schnorr)
+                                    // SchnorrkelVSS (Fast Schnorr)
                                     match hash_scheme {
                                         0 => Some(HashScheme::Merlin),
                                         _ => None,
@@ -510,22 +519,22 @@ mod tests {
             .get(&3)
             .expect("Ristretto entry should exist");
 
-        // Validate Ristretto curve / SchnorrkelSubstrate signature algorithm
+        // Validate Ristretto curve / Schnorrkel signature algorithm
         let schnorrkel_entry = ristretto_entry
             .get(&0)
-            .expect("SchnorrkelSubstrate entry should exist for Ristretto");
+            .expect("Schnorrkel entry should exist for Ristretto");
 
         assert_eq!(
             schnorrkel_entry,
             &vec![0],
-            "Ristretto SchnorrkelSubstrate should support Merlin"
+            "Ristretto Schnorrkel should support Merlin"
         );
 
-        // SchnorrkelSubstrateVSS (Fast Schnorr) is intentionally NOT in the
+        // SchnorrkelVSS (Fast Schnorr) is intentionally NOT in the
         // externally-supported map — it is internal-only (NOA sign).
         assert!(
             ristretto_entry.get(&1).is_none(),
-            "SchnorrkelSubstrateVSS must NOT be in the externally-supported map",
+            "SchnorrkelVSS must NOT be in the externally-supported map",
         );
 
         // Validate Ristretto curve / no invalid signature algorithm
@@ -535,7 +544,7 @@ mod tests {
         assert_eq!(
             all_ristretto_signature_algorithm_keys,
             vec![0],
-            "Ristretto has only SchnorrkelSubstrate signature algorithm externally"
+            "Ristretto has only Schnorrkel signature algorithm externally"
         );
     }
 
@@ -557,7 +566,7 @@ mod tests {
         );
         assert!(
             super::try_into_signature_algorithm(3, 1).is_err(),
-            "SchnorrkelSubstrateVSS (Ristretto, 1) must NOT decode externally",
+            "SchnorrkelVSS (Ristretto, 1) must NOT decode externally",
         );
 
         // Same for hash-scheme decoding.

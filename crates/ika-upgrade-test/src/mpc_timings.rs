@@ -98,6 +98,46 @@ pub async fn record_snapshot(
     Ok(snapshot)
 }
 
+/// Scrape every running validator's `ika_dwallet_mpc_malicious_actors_count` gauge
+/// and return the maximum across the cluster. Used by the cross-binary
+/// malicious-detection test to assert programmatically that at least one honest
+/// validator recorded a malicious actor — instead of grepping node logs. A
+/// stopped/unreachable validator is skipped (it can't report, and the faulty
+/// one we want excluded anyway).
+pub async fn max_malicious_actors_count(cluster: &ClusterOfProcesses) -> Result<u64> {
+    let http = reqwest::Client::new();
+    let mut max_count = 0u64;
+    for proc in cluster.validators.iter().filter(|p| p.is_running()) {
+        let url = format!("http://127.0.0.1:{}/metrics", proc.metrics_port());
+        let body = match http.get(&url).send().await {
+            Ok(resp) => resp.text().await.context("read metrics body")?,
+            Err(e) => {
+                tracing::warn!(index = proc.index, error = %e, "metrics scrape failed; skipping validator");
+                continue;
+            }
+        };
+        if let Some(count) = parse_unlabeled_gauge(&body, "ika_dwallet_mpc_malicious_actors_count")
+        {
+            tracing::info!(index = proc.index, count, "scraped malicious-actors gauge");
+            max_count = max_count.max(count);
+        }
+    }
+    Ok(max_count)
+}
+
+/// Parse a single unlabeled gauge line (`<metric> <value>`) from Prometheus
+/// text-format exposition, ignoring `# HELP` / `# TYPE` comment lines.
+fn parse_unlabeled_gauge(body: &str, metric: &str) -> Option<u64> {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let rest = line.strip_prefix(metric)?;
+            // Reject labeled samples (`metric{...}`) — this gauge has no labels.
+            let value = rest.strip_prefix(' ')?.trim();
+            value.parse::<f64>().ok().map(|v| v as u64)
+        })
+}
+
 /// Render one snapshot as a fixed-width table.
 pub fn render_snapshot(snapshot: &TimingSnapshot) -> String {
     let mut out = String::new();

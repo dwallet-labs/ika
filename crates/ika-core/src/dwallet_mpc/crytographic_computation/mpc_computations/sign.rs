@@ -18,14 +18,14 @@ use dwallet_mpc_types::dwallet_mpc::{
     VersionedUserSignedMessage, public_key_from_decentralized_dkg_output_by_curve_v2,
 };
 use group::CsRng;
-use group::{HashScheme, OsCsRng, PartyID};
+use group::{HashContext, HashScheme, OsCsRng, PartyID};
 use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use ika_types::messages_dwallet_mpc::{
     Curve25519AsyncDKGProtocol, Curve25519EdDSAProtocol, Curve25519EdDSAVSSProtocol,
-    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelSubstrateProtocol,
-    RistrettoSchnorrkelSubstrateVSSProtocol, Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol,
-    Secp256k1TaprootProtocol, Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol,
-    Secp256r1ECDSAProtocol, SessionIdentifier,
+    RistrettoAsyncDKGProtocol, RistrettoSchnorrkelProtocol, RistrettoSchnorrkelVSSProtocol,
+    Secp256k1AsyncDKGProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
+    Secp256k1TaprootVSSProtocol, Secp256r1AsyncDKGProtocol, Secp256r1ECDSAProtocol,
+    SessionIdentifier,
 };
 use mpc::guaranteed_output_delivery::AdvanceRequest;
 use mpc::{AsynchronouslyAdvanceable, GuaranteesOutputDelivery};
@@ -51,16 +51,14 @@ pub(crate) enum SignPublicInputByProtocol {
     Secp256r1(<SignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<SignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate")]
-    Ristretto(<SignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: Schnorrkel")]
+    Ristretto(<SignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Secp256k1, protocol: TaprootVSS")]
     TaprootVSS(<SignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "Sign Public Input - curve: Curve25519, protocol: EdDSAVSS")]
     EdDSAVSS(<SignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput),
-    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrateVSS")]
-    SchnorrkelSubstrateVSS(
-        <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput,
-    ),
+    #[strum(to_string = "Sign Public Input - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(<SignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::PublicInput),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, strum_macros::Display)]
@@ -74,20 +72,14 @@ pub(crate) enum DKGAndSignPublicInputByProtocol {
     Secp256r1(<DKGAndSignParty<Secp256r1ECDSAProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "DKG and Sign Public Input - curve: Curve25519, protocol: EdDSA")]
     Curve25519(<DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::PublicInput),
-    #[strum(
-        to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrate"
-    )]
-    Ristretto(<DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::PublicInput),
+    #[strum(to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: Schnorrkel")]
+    Ristretto(<DKGAndSignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "DKG and Sign Public Input - curve: Secp256k1, protocol: TaprootVSS")]
     TaprootVSS(<DKGAndSignParty<Secp256k1TaprootVSSProtocol> as mpc::Party>::PublicInput),
     #[strum(to_string = "DKG and Sign Public Input - curve: Curve25519, protocol: EdDSAVSS")]
     EdDSAVSS(<DKGAndSignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::PublicInput),
-    #[strum(
-        to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
-    )]
-    SchnorrkelSubstrateVSS(
-        <DKGAndSignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::PublicInput,
-    ),
+    #[strum(to_string = "DKG and Sign Public Input - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(<DKGAndSignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::PublicInput),
 }
 
 #[derive(strum_macros::Display)]
@@ -116,10 +108,10 @@ pub(crate) enum SignAdvanceRequestByProtocol {
             <SignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate")]
+    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: Schnorrkel")]
     Ristretto(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <SignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
+            <SignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::Message,
         >,
     ),
     #[strum(to_string = "Sign Advance Request - curve: Secp256k1, protocol: TaprootVSS")]
@@ -134,12 +126,10 @@ pub(crate) enum SignAdvanceRequestByProtocol {
             <SignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(
-        to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
-    )]
-    SchnorrkelSubstrateVSS(
+    #[strum(to_string = "Sign Advance Request - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::Message,
+            <SignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::Message,
         >,
     ),
 }
@@ -170,12 +160,10 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
             <DKGAndSignParty<Curve25519EdDSAProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(
-        to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrate"
-    )]
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: Schnorrkel")]
     Ristretto(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as mpc::Party>::Message,
+            <DKGAndSignParty<RistrettoSchnorrkelProtocol> as mpc::Party>::Message,
         >,
     ),
     #[strum(to_string = "DKG and Sign Advance Request - curve: Secp256k1, protocol: TaprootVSS")]
@@ -190,12 +178,10 @@ pub(crate) enum DWalletDKGAndSignAdvanceRequestByProtocol {
             <DKGAndSignParty<Curve25519EdDSAVSSProtocol> as mpc::Party>::Message,
         >,
     ),
-    #[strum(
-        to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: SchnorrkelSubstrateVSS"
-    )]
-    SchnorrkelSubstrateVSS(
+    #[strum(to_string = "DKG and Sign Advance Request - curve: Ristretto, protocol: SchnorrkelVSS")]
+    SchnorrkelVSS(
         mpc::guaranteed_output_delivery::AdvanceRequest<
-            <DKGAndSignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as mpc::Party>::Message,
+            <DKGAndSignParty<RistrettoSchnorrkelVSSProtocol> as mpc::Party>::Message,
         >,
     ),
 }
@@ -265,9 +251,9 @@ impl SignAdvanceRequestByProtocol {
 
                 advance_request.map(SignAdvanceRequestByProtocol::Secp256k1Taproot)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    SignParty<RistrettoSchnorrkelSubstrateProtocol>,
+                    SignParty<RistrettoSchnorrkelProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -328,9 +314,9 @@ impl SignAdvanceRequestByProtocol {
 
                 advance_request.map(SignAdvanceRequestByProtocol::EdDSAVSS)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    SignParty<RistrettoSchnorrkelSubstrateVSSProtocol>,
+                    SignParty<RistrettoSchnorrkelVSSProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -339,7 +325,7 @@ impl SignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(SignAdvanceRequestByProtocol::SchnorrkelSubstrateVSS)
+                advance_request.map(SignAdvanceRequestByProtocol::SchnorrkelVSS)
             }
         };
 
@@ -382,9 +368,9 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                 advance_request.map(Self::Secp256k1Taproot)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol>,
+                    DKGAndSignParty<RistrettoSchnorrkelProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -451,9 +437,9 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
 
                 advance_request.map(Self::EdDSAVSS)
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
                 let advance_request = mpc_computations::try_ready_to_advance::<
-                    DKGAndSignParty<RistrettoSchnorrkelSubstrateVSSProtocol>,
+                    DKGAndSignParty<RistrettoSchnorrkelVSSProtocol>,
                 >(
                     party_id,
                     access_structure,
@@ -462,7 +448,7 @@ impl DWalletDKGAndSignAdvanceRequestByProtocol {
                     &serialized_messages_by_consensus_round,
                 )?;
 
-                advance_request.map(Self::SchnorrkelSubstrateVSS)
+                advance_request.map(Self::SchnorrkelVSS)
             }
         };
 
@@ -478,6 +464,7 @@ impl SignPublicInputByProtocol {
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
+        hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         // Pre-derived VSS Shamir-share + commitments cache for this network
@@ -498,6 +485,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?),
             ),
@@ -509,20 +497,22 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => Ok(
-                SignPublicInputByProtocol::Ristretto(build_ristretto_schnorrkel_sign_public_input(
+            DWalletSignatureAlgorithm::Schnorrkel => Ok(SignPublicInputByProtocol::Ristretto(
+                build_ristretto_schnorrkel_sign_public_input(
                     expected_decrypters,
                     dwallet_decentralized_public_output,
                     message,
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
-                )?),
-            ),
+                )?,
+            )),
             DWalletSignatureAlgorithm::EdDSA => Ok(SignPublicInputByProtocol::Curve25519(
                 build_curve25519_eddsa_sign_public_input(
                     expected_decrypters,
@@ -531,6 +521,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -542,6 +533,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                 )?,
             )),
@@ -556,6 +548,7 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                     vss_shamir_cache,
                 )?,
@@ -567,18 +560,20 @@ impl SignPublicInputByProtocol {
                     presign,
                     message_centralized_signature,
                     hash_scheme,
+                    hash_context,
                     network_encryption_key_public_data,
                     vss_shamir_cache,
                 )?,
             )),
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
-                Ok(SignPublicInputByProtocol::SchnorrkelSubstrateVSS(
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
+                Ok(SignPublicInputByProtocol::SchnorrkelVSS(
                     build_ristretto_schnorrkel_vss_sign_public_input(
                         dwallet_decentralized_public_output,
                         message,
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                         vss_shamir_cache,
                     )?,
@@ -628,9 +623,9 @@ pub(crate) fn vss_public_presign_identity(
             .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?;
             Ok((presign.session_id, presign.presign_blending_index))
         }
-        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+        DWalletSignatureAlgorithm::SchnorrkelVSS => {
             let presign = bcs::from_bytes::<
-                <RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
+                <RistrettoSchnorrkelVSSProtocol as twopc_mpc::presign::Protocol>::Presign,
             >(&inner)
             .map_err(|e| DwalletMPCError::BcsError(bcs::Error::Custom(e.to_string())))?;
             Ok((presign.session_id, presign.presign_blending_index))
@@ -685,8 +680,8 @@ pub(crate) fn split_vss_presign_private_outputs(
             ))
         })
         .collect(),
-        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => bcs::from_bytes::<
-            <<RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput,
+        DWalletSignatureAlgorithm::SchnorrkelVSS => bcs::from_bytes::<
+            <<RistrettoSchnorrkelVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput,
         >(private_output)
         .map_err(blended_vss_private_output_bcs_error)?
         .into_iter()
@@ -802,12 +797,12 @@ pub(crate) fn build_ristretto_schnorrkel_vss_sign_private_input(
     presign_session_id: commitment::CommitmentSizedNumber,
     presign_blending_index: u16,
 ) -> DwalletMPCResult<
-    <SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
+    <SignParty<RistrettoSchnorrkelVSSProtocol> as AsynchronouslyAdvanceable>::PrivateInput,
 > {
     let curve_cache = &vss_shamir_cache.ristretto;
 
     let entry = vss_presign_private_output::<
-        <<<RistrettoSchnorrkelSubstrateVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
+        <<<RistrettoSchnorrkelVSSProtocol as twopc_mpc::presign::Protocol>::PresignParty as Party>::PrivateOutput as IntoIterator>::Item,
     >(presign_private_output, presign_session_id, presign_blending_index)?;
 
     Ok(
@@ -832,6 +827,7 @@ fn build_secp256k1_taproot_vss_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
 ) -> DwalletMPCResult<<SignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput> {
@@ -849,6 +845,7 @@ fn build_secp256k1_taproot_vss_sign_public_input(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -869,6 +866,7 @@ fn build_curve25519_eddsa_vss_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
 ) -> DwalletMPCResult<<SignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput> {
@@ -886,6 +884,7 @@ fn build_curve25519_eddsa_vss_sign_public_input(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -906,24 +905,25 @@ fn build_ristretto_schnorrkel_vss_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
-) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as Party>::PublicInput> {
+) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelVSSProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
     let (dkg_output, presign_value) = decode_schnorr_vss_dkg_and_presign::<
         RistrettoAsyncDKGProtocol,
-        RistrettoSchnorrkelSubstrateVSSProtocol,
+        RistrettoSchnorrkelVSSProtocol,
     >(dwallet_decentralized_public_output, presign)?;
-    let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
-        message_centralized_signature,
-    )?;
+    let sign_data =
+        decode_schnorr_sign_data::<RistrettoSchnorrkelVSSProtocol>(message_centralized_signature)?;
     let curve_cache = &vss_shamir_cache.ristretto;
 
     Ok(
         twopc_mpc::schnorr::vss::sign::decentralized_party::PublicInput {
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -945,6 +945,7 @@ fn build_secp256k1_ecdsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -994,6 +995,7 @@ fn build_secp256k1_ecdsa_sign_public_input(
         expected_decrypters,
         message,
         hash_type: hash_scheme,
+        hash_context,
         dkg_output,
         presign: presign_value,
         sign_message: sign_data,
@@ -1009,6 +1011,7 @@ fn build_secp256r1_ecdsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256r1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1026,6 +1029,7 @@ fn build_secp256r1_ecdsa_sign_public_input(
         expected_decrypters,
         message,
         hash_type: hash_scheme,
+        hash_context,
         dkg_output,
         presign: presign_value,
         sign_message: sign_data,
@@ -1041,6 +1045,7 @@ fn build_secp256k1_taproot_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Secp256k1TaprootProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1059,6 +1064,7 @@ fn build_secp256k1_taproot_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1075,6 +1081,7 @@ fn build_curve25519_eddsa_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<SignParty<Curve25519EdDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1093,6 +1100,7 @@ fn build_curve25519_eddsa_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1109,25 +1117,26 @@ fn build_ristretto_schnorrkel_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelSubstrateProtocol> as Party>::PublicInput> {
+) -> DwalletMPCResult<<SignParty<RistrettoSchnorrkelProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.ristretto_decryption_key_share_public_parameters();
     let (dkg_output, presign_value) = decode_schnorr_ahe_dkg_and_presign::<
         RistrettoAsyncDKGProtocol,
-        RistrettoSchnorrkelSubstrateProtocol,
+        RistrettoSchnorrkelProtocol,
     >(dwallet_decentralized_public_output, presign)?;
-    let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateProtocol>(
-        message_centralized_signature,
-    )?;
+    let sign_data =
+        decode_schnorr_sign_data::<RistrettoSchnorrkelProtocol>(message_centralized_signature)?;
 
     Ok(
         twopc_mpc::schnorr::ahe::sign::decentralized_party::PublicInput {
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_output,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1320,6 +1329,7 @@ impl DKGAndSignPublicInputByProtocol {
         presign: &SerializedWrappedMPCPublicOutput,
         message_centralized_signature: &SerializedWrappedMPCPublicOutput,
         hash_scheme: HashScheme,
+        hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
         vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
@@ -1342,6 +1352,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -1360,11 +1371,12 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrate => {
+            DWalletSignatureAlgorithm::Schnorrkel => {
                 let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(dkg_public_input) =
                     dwallet_dkg_public_input
                 else {
@@ -1378,6 +1390,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -1396,6 +1409,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -1414,6 +1428,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                     )?,
                 ))
@@ -1431,6 +1446,7 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                         vss_shamir_cache,
                     )?,
@@ -1449,24 +1465,26 @@ impl DKGAndSignPublicInputByProtocol {
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                         vss_shamir_cache,
                     )?,
                 ))
             }
-            DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS => {
+            DWalletSignatureAlgorithm::SchnorrkelVSS => {
                 let DWalletDKGPublicInputByCurve::RistrettoDWalletDKG(dkg_public_input) =
                     dwallet_dkg_public_input
                 else {
                     unreachable!("Curve and DKG public input type mismatch");
                 };
-                Ok(DKGAndSignPublicInputByProtocol::SchnorrkelSubstrateVSS(
+                Ok(DKGAndSignPublicInputByProtocol::SchnorrkelVSS(
                     build_ristretto_schnorrkel_vss_dkg_and_sign_public_input(
                         dkg_public_input,
                         message,
                         presign,
                         message_centralized_signature,
                         hash_scheme,
+                        hash_context,
                         network_encryption_key_public_data,
                         vss_shamir_cache,
                     )?,
@@ -1488,6 +1506,7 @@ fn build_secp256k1_ecdsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1503,6 +1522,7 @@ fn build_secp256k1_ecdsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_type: hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             sign_message: sign_data,
@@ -1519,6 +1539,7 @@ fn build_secp256r1_ecdsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256r1ECDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1534,6 +1555,7 @@ fn build_secp256r1_ecdsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_type: hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             sign_message: sign_data,
@@ -1550,6 +1572,7 @@ fn build_secp256k1_taproot_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1TaprootProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1565,6 +1588,7 @@ fn build_secp256k1_taproot_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1581,6 +1605,7 @@ fn build_curve25519_eddsa_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
 ) -> DwalletMPCResult<<DKGAndSignParty<Curve25519EdDSAProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
@@ -1596,6 +1621,7 @@ fn build_curve25519_eddsa_dkg_and_sign_public_input(
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1612,23 +1638,23 @@ fn build_ristretto_schnorrkel_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-) -> DwalletMPCResult<<DKGAndSignParty<RistrettoSchnorrkelSubstrateProtocol> as Party>::PublicInput>
-{
+) -> DwalletMPCResult<<DKGAndSignParty<RistrettoSchnorrkelProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
     let decryption_key_share_public_parameters =
         network_encryption_key_public_data.ristretto_decryption_key_share_public_parameters();
-    let presign_value = decode_presign_v2::<RistrettoSchnorrkelSubstrateProtocol>(presign)?;
-    let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateProtocol>(
-        message_centralized_signature,
-    )?;
+    let presign_value = decode_presign_v2::<RistrettoSchnorrkelProtocol>(presign)?;
+    let sign_data =
+        decode_schnorr_sign_data::<RistrettoSchnorrkelProtocol>(message_centralized_signature)?;
 
     Ok(
         twopc_mpc::schnorr::ahe::sign::decentralized_party::DKGSignPublicInput {
             expected_decrypters,
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1655,6 +1681,7 @@ fn build_secp256k1_taproot_vss_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput> {
@@ -1670,6 +1697,7 @@ fn build_secp256k1_taproot_vss_dkg_and_sign_public_input(
             expected_signers: HashSet::new(),
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1691,6 +1719,7 @@ fn build_curve25519_eddsa_vss_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
 ) -> DwalletMPCResult<<DKGAndSignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput> {
@@ -1706,6 +1735,7 @@ fn build_curve25519_eddsa_vss_dkg_and_sign_public_input(
             expected_signers: HashSet::new(),
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1727,17 +1757,15 @@ fn build_ristretto_schnorrkel_vss_dkg_and_sign_public_input(
     presign: &SerializedWrappedMPCPublicOutput,
     message_centralized_signature: &SerializedWrappedMPCPublicOutput,
     hash_scheme: HashScheme,
+    hash_context: HashContext,
     network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
     vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
-) -> DwalletMPCResult<
-    <DKGAndSignParty<RistrettoSchnorrkelSubstrateVSSProtocol> as Party>::PublicInput,
-> {
+) -> DwalletMPCResult<<DKGAndSignParty<RistrettoSchnorrkelVSSProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
-    let presign_value = decode_presign_v2::<RistrettoSchnorrkelSubstrateVSSProtocol>(presign)?;
-    let sign_data = decode_schnorr_sign_data::<RistrettoSchnorrkelSubstrateVSSProtocol>(
-        message_centralized_signature,
-    )?;
+    let presign_value = decode_presign_v2::<RistrettoSchnorrkelVSSProtocol>(presign)?;
+    let sign_data =
+        decode_schnorr_sign_data::<RistrettoSchnorrkelVSSProtocol>(message_centralized_signature)?;
     let curve_cache = &vss_shamir_cache.ristretto;
 
     Ok(
@@ -1745,6 +1773,7 @@ fn build_ristretto_schnorrkel_vss_dkg_and_sign_public_input(
             expected_signers: HashSet::new(),
             message,
             hash_scheme,
+            hash_context,
             dkg_public_input,
             presign: presign_value,
             centralized_party_partial_signature: sign_data,
@@ -1821,6 +1850,7 @@ pub(crate) fn update_expected_decrypters_metrics(
 pub(crate) fn verify_partial_signature<P, D>(
     message: &[u8],
     hash_scheme: &HashScheme,
+    hash_context: &HashContext,
     dwallet_decentralized_output: &SerializedWrappedMPCPublicOutput,
     presign: &SerializedWrappedMPCPublicOutput,
     partially_signed_message: &SerializedWrappedMPCPublicOutput,
@@ -1863,6 +1893,7 @@ where
     <P as sign::Protocol>::verify_centralized_party_partial_signature(
         message,
         *hash_scheme,
+        hash_context,
         decentralized_dkg_output,
         presign,
         partial,

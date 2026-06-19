@@ -184,6 +184,18 @@ covers the change; escalate to the full suite before merge):
 - `contracts/**` → `sui move build` per touched package
 - `ika-protocol-config` → `cargo test -p ika-protocol-config` (snapshot tests)
 
+**Test-test meaningful features.** When you add or rely on a test that
+guards a hard-to-trigger, high-stakes property — serialized-MPC-data /
+state continuity across an upgrade, cross-binary wire compat,
+malicious-party detection, reconfiguration/epoch-boundary invariants — a
+green run is not enough on its own: prove the test would actually react if
+the property broke. Inject a minimal fault that should trip it, confirm the
+*expected evidence appears in the logs* (the exit code is not the
+assertion — the catch is often recoverable and the test still passes), then
+revert. Run the `test-testing` skill (`.claude/skills/test-testing/`); do
+not invent the methodology ad hoc. Skip this only for trivial/mechanical
+tests where vacuous-pass isn't a risk.
+
 ## Cryptography Notes
 
 - 2PC-MPC: Two-party computation where one party is emulated by n-party MPC

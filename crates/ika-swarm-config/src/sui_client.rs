@@ -456,6 +456,10 @@ pub async fn initialize_ika_system(
         let validator_address: SuiAddress =
             (&validator_initialization_config.account_key_pair.public()).into();
 
+        // On this branch the on-chain `mpc_data` is always the bare class-groups
+        // shape; the full bundle (PVSS + VSS HPKE) travels off-chain via the
+        // validator-metadata pipeline, so the genesis publish shape is fixed and
+        // not gated on the protocol version.
         let validator_initialization_metadata = validator_initialization_config.to_validator_info();
         let (validator_id, validator_cap_id) = request_add_validator_candidate(
             validator_address,

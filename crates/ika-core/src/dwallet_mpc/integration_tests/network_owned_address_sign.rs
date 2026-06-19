@@ -51,7 +51,7 @@ const ALL_SIGNATURE_CONFIGURATIONS: &[(
     ),
     (
         DWalletCurve::Ristretto,
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        DWalletSignatureAlgorithm::Schnorrkel,
         DWalletHashScheme::Merlin,
     ),
     (
@@ -287,7 +287,7 @@ async fn test_network_owned_address_sign_eddsa() {
 async fn test_network_owned_address_sign_schnorrkel_substrate() {
     network_owned_address_sign_flow(
         DWalletCurve::Ristretto,
-        DWalletSignatureAlgorithm::SchnorrkelSubstrate,
+        DWalletSignatureAlgorithm::Schnorrkel,
         DWalletHashScheme::Merlin,
     )
     .await;
@@ -705,7 +705,7 @@ async fn test_network_owned_address_sign_eddsa_vss() {
 async fn test_network_owned_address_sign_schnorrkel_substrate_vss() {
     network_owned_address_vss_sign_flow(
         DWalletCurve::Ristretto,
-        DWalletSignatureAlgorithm::SchnorrkelSubstrateVSS,
+        DWalletSignatureAlgorithm::SchnorrkelVSS,
         DWalletHashScheme::Merlin,
     )
     .await;
