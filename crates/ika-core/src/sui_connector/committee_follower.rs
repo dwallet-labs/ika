@@ -216,4 +216,58 @@ mod tests {
             "drain should stop at the stream error, before the post-error boundary"
         );
     }
+
+    /// A `capture` whose install fails (here: the end-of-epoch summary of the
+    /// head epoch carries a quorum signature from a *different* committee, so
+    /// the BLS check against `committee[head]` rejects it) is best-effort: it
+    /// logs a warning and leaves the boundary to the ratchet — it must not
+    /// panic, must not advance the head, and must not tear down the stream. The
+    /// drain keeps going, and once the genuine, correctly-signed boundary
+    /// arrives it installs `committee[E+1]` exactly once; replaying it is then a
+    /// no-op (idempotent), so the ratchet and the follower can't double-install.
+    #[tokio::test]
+    async fn capture_failure_is_benign_and_recovers_on_replay() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let committees = committee_store(&committee);
+        assert_eq!(committees.head_epoch(), 0);
+
+        // A foreign committee at the same epoch (0): its members sign a
+        // well-formed end-of-epoch summary that the head committee can't verify.
+        let (foreign, foreign_keys) = Committee::new_simple_test_committee();
+        let bad_boundary = signed_summary(&foreign, &foreign_keys, 7, true);
+
+        // The genuine end-of-epoch summary of epoch 0, signed by the real head
+        // committee — the boundary the bad one impersonated.
+        let good_boundary = signed_summary(&committee, &keys, 42, true);
+
+        // Stream: a mid-epoch summary (skipped), the un-verifiable boundary
+        // (warns, no advance), then more mid-epoch traffic, then the genuine
+        // boundary. The bad capture must NOT stop the drain — the genuine
+        // boundary after it still installs.
+        let stream: CheckpointSummaryStream = Box::pin(futures::stream::iter(vec![
+            Ok(signed_summary(&committee, &keys, 5, false)),
+            Ok(bad_boundary),
+            Ok(signed_summary(&committee, &keys, 9, false)),
+            Ok(good_boundary.clone()),
+        ]));
+
+        CommitteeFollower::consume(&committees, stream).await;
+
+        // The bad boundary did not advance or panic; the genuine one installed
+        // committee[1] exactly once.
+        assert_eq!(
+            committees.head_epoch(),
+            1,
+            "the genuine boundary installs committee[1]; the bad one is benign"
+        );
+
+        // Replaying the genuine boundary now that the head is past epoch 0 is a
+        // head-guarded no-op — no second install, head unchanged.
+        CommitteeFollower::capture(&committees, &good_boundary);
+        assert_eq!(
+            committees.head_epoch(),
+            1,
+            "replaying an already-installed boundary must not advance the head again"
+        );
+    }
 }

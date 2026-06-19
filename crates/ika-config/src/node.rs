@@ -1217,4 +1217,141 @@ mod tests {
             }
         }
     }
+
+    // ---- `SuiDataSource` serde shape (kebab-case wire format) ----
+
+    /// The on-disk node config is YAML and every key is kebab-case. The
+    /// `SuiDataSource` enum is internally tagged on `kind`, and
+    /// `rename_all_fields = "kebab-case"` is what makes the *fields inside*
+    /// struct variants kebab-case too. This test pins the whole wire contract:
+    ///
+    /// - `kind: sui-state-mirrored` + `fallback-grpc-url: ...` deserializes into
+    ///   `SuiStateMirrored { fallback_grpc_url: Some(..) }`.
+    /// - `kind: sui-state-direct` + `serve-mirror: false` deserializes into
+    ///   `SuiStateDirect { serve_mirror: false }`.
+    /// - Serializing back round-trips to the kebab-case keys (`kind`,
+    ///   `fallback-grpc-url`, `serve-mirror`), not snake_case.
+    /// - The silent-default risk: a *snake_case* `fallback_grpc_url` key is an
+    ///   unknown field to the kebab-case-renamed variant, so it is dropped and
+    ///   the field stays `None` — exactly the misconfig the `rename_all_fields`
+    ///   comment in the production code warns about (a mirrored validator
+    ///   silently flips to peer-only). `SuiDataSource` has no
+    ///   `deny_unknown_fields`, and serde does not support it on internally
+    ///   tagged enum variants, so the parse *succeeds* with the field unset
+    ///   rather than erroring — this test documents that behavior.
+    #[test]
+    fn sui_data_source_deserializes_kebab_case_fields() {
+        // sui-state-mirrored with a kebab-case fallback-grpc-url populates the field.
+        let mirrored: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-mirrored\nfallback-grpc-url: http://fallback:9000\n",
+        )
+        .expect("kebab-case mirrored config must deserialize");
+        assert!(
+            matches!(
+                &mirrored,
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: Some(url),
+                } if url == "http://fallback:9000"
+            ),
+            "expected SuiStateMirrored with the fallback set, got {mirrored:?}"
+        );
+
+        // sui-state-direct with serve-mirror: false parses serve_mirror = false
+        // (and the kebab-case `url` field).
+        let direct_no_mirror: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-direct\nurl: http://direct:9000\nserve-mirror: false\n",
+        )
+        .expect("kebab-case direct config must deserialize");
+        assert!(
+            matches!(
+                &direct_no_mirror,
+                SuiDataSource::SuiStateDirect {
+                    url,
+                    serve_mirror: false,
+                } if url == "http://direct:9000"
+            ),
+            "expected SuiStateDirect {{ serve_mirror: false }}, got {direct_no_mirror:?}"
+        );
+
+        // Serialize back: keys must be kebab-case, not snake_case.
+        let mirrored_yaml =
+            serde_yaml::to_string(&mirrored).expect("serialize mirrored back to yaml");
+        assert!(
+            mirrored_yaml.contains("kind: sui-state-mirrored"),
+            "serialized tag must be kebab-case: {mirrored_yaml}"
+        );
+        assert!(
+            mirrored_yaml.contains("fallback-grpc-url:"),
+            "serialized field must round-trip to kebab-case: {mirrored_yaml}"
+        );
+        assert!(
+            !mirrored_yaml.contains("fallback_grpc_url"),
+            "serialized field must NOT be snake_case: {mirrored_yaml}"
+        );
+
+        let direct_yaml =
+            serde_yaml::to_string(&direct_no_mirror).expect("serialize direct back to yaml");
+        assert!(
+            direct_yaml.contains("kind: sui-state-direct") && direct_yaml.contains("serve-mirror:"),
+            "serialized direct must use kebab-case keys: {direct_yaml}"
+        );
+        assert!(
+            !direct_yaml.contains("serve_mirror"),
+            "serialized field must NOT be snake_case: {direct_yaml}"
+        );
+
+        // Full structural round-trip: re-parsing the serialized form yields the
+        // same variant + field values.
+        let mirrored_round: SuiDataSource =
+            serde_yaml::from_str(&mirrored_yaml).expect("re-parse serialized mirrored");
+        assert!(matches!(
+            mirrored_round,
+            SuiDataSource::SuiStateMirrored {
+                fallback_grpc_url: Some(url),
+            } if url == "http://fallback:9000"
+        ));
+
+        // Silent-default risk: a snake_case `fallback_grpc_url` key does NOT
+        // populate the field. The variant's fields are kebab-case-renamed, so
+        // `fallback_grpc_url` is an unrecognized key; with no
+        // `deny_unknown_fields` (unsupported on internally tagged enums) the
+        // parse succeeds and the field stays None — flipping a would-be
+        // mirrored-with-fallback validator into peer-only.
+        let snake: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-mirrored\nfallback_grpc_url: http://fallback:9000\n",
+        )
+        .expect("snake_case key is silently ignored, not an error");
+        assert!(
+            matches!(
+                snake,
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                }
+            ),
+            "snake_case `fallback_grpc_url` must be dropped, leaving the field None \
+             (documents the silent-default misconfig risk)"
+        );
+    }
+
+    /// An old-style config (no `sui-data-source`) that nonetheless carries a Sui
+    /// trust anchor is a misconfiguration: the anchor enables the OCS path, which
+    /// runs over gRPC and therefore requires a `sui-data-source` section. With
+    /// `sui-rpc-url` present (so we get past the no-endpoint check) and
+    /// `has_anchor = true`, `select_sui_transport` rejects this for *every* role
+    /// with a message that names the anchor-without-data-source mismatch.
+    #[test]
+    fn old_style_config_with_anchor_is_rejected_message() {
+        for mode in ALL_MODES {
+            let err = select_sui_transport(None, true, true, mode)
+                .expect_err("anchor without sui-data-source must be rejected");
+            assert!(
+                err.contains("trust anchor is configured but `sui-data-source` is not"),
+                "mode={mode}: error must flag the anchor-without-data-source misconfig, got: {err}"
+            );
+            assert!(
+                err.contains("OCS"),
+                "mode={mode}: error should mention the OCS path, got: {err}"
+            );
+        }
+    }
 }

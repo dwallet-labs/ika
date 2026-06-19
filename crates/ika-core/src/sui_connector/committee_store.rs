@@ -372,3 +372,315 @@ impl CommitteeStore {
         Ok(CommitteeTransition::Installed(head + 1))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::Barrier;
+
+    use sui_types::committee::{Committee, ProtocolVersion};
+    use sui_types::crypto::AuthorityKeyPair;
+    use sui_types::gas::GasCostSummary;
+    use sui_types::messages_checkpoint::{
+        CheckpointContents, CheckpointSequenceNumber, CheckpointSummary, EndOfEpochData,
+    };
+    use typed_store::traits::Map;
+
+    /// The same validator set, re-stamped at `epoch`. The keypairs never change
+    /// across epochs (only the committee's epoch number does), so a summary
+    /// signed by `committee_at(E)` carries `voting_rights` that derive into
+    /// `committee_at(E + 1)` — exactly the on-chain committee-transition chain.
+    fn committee_at(base: &Committee, epoch: u64) -> Committee {
+        Committee::new(epoch, base.voting_rights.iter().cloned().collect())
+    }
+
+    /// An end-of-epoch summary for `committee`'s epoch, committing to the same
+    /// validator set as the next epoch's committee so `install_next_*` can
+    /// BLS-verify it against `committee` and derive `committee[epoch + 1]`.
+    fn signed_end_of_epoch(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+    ) -> CertifiedCheckpointSummary {
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![],
+            end_of_epoch_data: Some(EndOfEpochData {
+                next_epoch_committee: committee.voting_rights.clone(),
+                next_epoch_protocol_version: ProtocolVersion::MIN,
+                epoch_commitments: vec![],
+            }),
+            version_specific_data: Vec::new(),
+        };
+        CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee)
+    }
+
+    /// A fresh store bootstrapped at `committee[0]` over its own temp perpetual
+    /// tables. The returned `TempDir` guard must be held for as long as the
+    /// store is used (dropping it deletes the backing RocksDB directory).
+    fn open_store(committee: &Committee) -> (tempfile::TempDir, Arc<CommitteeStore>) {
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let store = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        (dir, store)
+    }
+
+    fn voting_rights_bytes(committee: &SuiCommittee) -> Vec<u8> {
+        bcs::to_bytes(&committee.voting_rights).unwrap()
+    }
+
+    /// Driving the chain far past the 256-entry cache cap evicts the oldest
+    /// committees, but `committee(1)` is still re-derived byte-identically from
+    /// the epoch-0 end-of-epoch summary via the cache-miss `resolve_committee`
+    /// path. The cache is a pure optimization; correctness must not depend on a
+    /// committee still being resident.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn committee_derivation_after_cache_eviction() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = open_store(&base);
+        assert_eq!(store.head_epoch(), 0);
+
+        // Install committee[1..=257] from the signed end-of-epoch summary of
+        // each preceding epoch. 257 boundaries past head 0 forces eviction
+        // well beyond COMMITTEE_CACHE_CAP (= 256).
+        for epoch in 0..=COMMITTEE_CACHE_CAP as u64 {
+            let committee_e = committee_at(&base, epoch);
+            let summary = signed_end_of_epoch(&committee_e, &keys, epoch);
+            let installed = store.install_next_from_summary(&summary).unwrap();
+            assert!(
+                matches!(installed, CommitteeTransition::Installed(e) if e == epoch + 1),
+                "epoch {epoch} should install committee[{}]",
+                epoch + 1
+            );
+            assert_eq!(store.head_epoch(), epoch + 1);
+        }
+
+        // The store advanced past the cap.
+        assert_eq!(store.head_epoch(), COMMITTEE_CACHE_CAP as u64 + 1);
+
+        // committee[1] was evicted (head and the most-recent 256 epochs are
+        // hot; epoch 1 is the oldest installed and long gone).
+        assert!(
+            store.cache.read().unwrap().get(&1).is_none(),
+            "committee[1] should have been evicted past the cache cap"
+        );
+
+        // Re-deriving it from the stored epoch-0 summary (the cache-miss path)
+        // yields the originally-installed committee, byte-identically. The
+        // oracle is the committee carried by the persisted epoch-0 summary
+        // itself (the exact value the original install used), so we never have
+        // to regenerate the random validator keys.
+        let derived = store.committee(1).expect("committee[1] must re-derive");
+        assert_eq!(derived.epoch, 1);
+
+        // Cross-check against the committee carried by the persisted epoch-0
+        // summary directly (the same value the original install used).
+        let summary_zero = store
+            .tables
+            .get_sui_committee_summary(0)
+            .unwrap()
+            .expect("epoch-0 summary must be persisted");
+        let oracle = extract_new_committee_info(&summary_zero).unwrap();
+        assert_eq!(
+            derived, oracle,
+            "re-derived committee[1] must equal the oracle"
+        );
+        assert_eq!(
+            voting_rights_bytes(&derived),
+            voting_rights_bytes(&oracle),
+            "re-derived committee[1] must be byte-identical to the install-time committee"
+        );
+
+        // The miss re-derived epoch 1 without disturbing the hot head: the most
+        // recent committee stays resident (the cache keeps the highest epochs;
+        // epoch 1, being the oldest, is re-evicted on insert — bounded RAM holds).
+        assert!(
+            store
+                .cache
+                .read()
+                .unwrap()
+                .get(&(COMMITTEE_CACHE_CAP as u64 + 1))
+                .is_some(),
+            "the head committee must stay cached across an old-epoch miss"
+        );
+        assert!(
+            store.cache.read().unwrap().len() <= COMMITTEE_CACHE_CAP,
+            "the cache must never exceed COMMITTEE_CACHE_CAP"
+        );
+    }
+
+    /// Two threads racing the *same* end-of-epoch summary of head epoch `E`
+    /// converge to a single committee[E+1] and a head of exactly E+1. The
+    /// head guard is a check-then-act (load `head`, then later `store` it), not
+    /// a critical section, so under a genuine race both threads may pass the
+    /// guard and re-install the *identical* derived committee — that is benign
+    /// (same summary, same `committee[E+1]`, head still lands on E+1). The
+    /// guarantee the follower and the ratchet rely on is therefore eventual-
+    /// state idempotency, deterministic regardless of the interleaving: no
+    /// error, no foreign epoch, head advances to exactly E+1 once and never
+    /// past it, and committee[E+1] is the single deterministic value.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_install_same_boundary_is_idempotent() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = open_store(&base);
+        let committee_zero = committee_at(&base, 0);
+        let summary = signed_end_of_epoch(&committee_zero, &keys, 0);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let store = store.clone();
+                let summary = summary.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.install_next_from_summary(&summary).unwrap()
+                })
+            })
+            .collect();
+
+        let outcomes: Vec<CommitteeTransition> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // Each call is one of the only two legal outcomes — it either installs
+        // *this* boundary (E+1 == 1) or no-ops; never an error, never a foreign
+        // epoch. At least one must have installed it.
+        assert!(
+            outcomes.iter().all(|o| matches!(
+                o,
+                CommitteeTransition::Installed(1) | CommitteeTransition::NotNextTransition
+            )),
+            "every racing call must install boundary 1 or be a clean no-op: {outcomes:?}"
+        );
+        assert!(
+            outcomes
+                .iter()
+                .any(|o| matches!(o, CommitteeTransition::Installed(1))),
+            "at least one call must install the boundary"
+        );
+
+        // Head advanced to exactly E+1 (never skipped past it) and committee[1]
+        // is the single deterministic value, whichever thread(s) wrote it.
+        assert_eq!(store.head_epoch(), 1);
+        let resolved = store.committee(1).expect("committee[1] resolves");
+        assert_eq!(resolved.epoch, 1);
+        let oracle = extract_new_committee_info(&summary).unwrap();
+        assert_eq!(resolved, oracle);
+        assert_eq!(voting_rights_bytes(&resolved), voting_rights_bytes(&oracle));
+    }
+
+    /// Reopening over perpetual tables resumes from the recorded head and
+    /// resolves its committee. A head whose backing summary is absent
+    /// (corrupt/truncated store) fails `open` fast, not at first read.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn open_resumes_from_perpetual_head_or_errors_on_unresolvable_head() {
+        let (base, keys) = Committee::new_simple_test_committee();
+
+        // -- Resume path: install a couple of boundaries, drop the store, reopen.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.keep();
+        let tables = Arc::new(AuthorityPerpetualTables::open(&path, None));
+        {
+            let store = CommitteeStore::open(
+                tables.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(base.clone())),
+            )
+            .unwrap();
+            for epoch in 0..=1u64 {
+                let committee_e = committee_at(&base, epoch);
+                store
+                    .install_next_from_summary(&signed_end_of_epoch(&committee_e, &keys, epoch))
+                    .unwrap();
+            }
+            assert_eq!(store.head_epoch(), 2);
+        }
+
+        // Reopen over the same tables with NO bootstrap: it must resume from the
+        // persisted head (2) and resolve committee[2] from the epoch-1 summary.
+        let reopened = CommitteeStore::open(tables.clone(), None)
+            .expect("reopen must resume from the persisted head");
+        assert_eq!(reopened.head_epoch(), 2);
+        let head_committee = reopened
+            .committee(2)
+            .expect("head committee resolves on resume");
+        assert_eq!(head_committee.epoch, 2);
+        drop(reopened);
+
+        // -- Fail-fast path: point the head at an epoch with no backing summary
+        // and no directly-stored committee. `open` must error, not defer to the
+        // first read.
+        tables.sui_committee_head.insert(&(), &99).unwrap();
+        // `CommitteeStore` isn't `Debug`, so match the result directly rather
+        // than `expect_err`.
+        let msg = match CommitteeStore::open(tables.clone(), None) {
+            Ok(_) => panic!("an unresolvable head must fail open fast"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            msg.contains("99") && msg.contains("cannot be"),
+            "error must name the unresolvable head: {msg}"
+        );
+    }
+
+    /// The follower installing ahead (boundaries E, E+1) and a ratchet driving
+    /// the same boundaries concurrently must converge: head advances
+    /// monotonically, each boundary installs exactly once, no skip, every call
+    /// returns Ok. The head-guarded idempotent install is the join point.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn follower_ahead_then_ratchet_catches_up_no_double_install() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = open_store(&base);
+
+        let boundary_zero = signed_end_of_epoch(&committee_at(&base, 0), &keys, 0);
+        let boundary_one = signed_end_of_epoch(&committee_at(&base, 1), &keys, 1);
+
+        // "Follower" runs ahead and installs both boundaries.
+        let first = store.install_next_from_summary(&boundary_zero).unwrap();
+        assert!(matches!(first, CommitteeTransition::Installed(1)));
+        assert_eq!(store.head_epoch(), 1);
+        let second = store.install_next_from_summary(&boundary_one).unwrap();
+        assert!(matches!(second, CommitteeTransition::Installed(2)));
+        assert_eq!(store.head_epoch(), 2);
+
+        // "Ratchet" (slower path) replays the same boundaries. Both are now
+        // already installed, so each is a clean NotNextTransition no-op — no
+        // double install, no skip, and Ok throughout.
+        let replay_zero = store.install_next_from_summary(&boundary_zero).unwrap();
+        let replay_one = store.install_next_from_summary(&boundary_one).unwrap();
+        assert!(matches!(
+            replay_zero,
+            CommitteeTransition::NotNextTransition
+        ));
+        assert!(matches!(replay_one, CommitteeTransition::NotNextTransition));
+
+        // Head never regressed and never skipped past 2.
+        assert_eq!(store.head_epoch(), 2);
+        assert_eq!(store.committee(1).unwrap().epoch, 1);
+        assert_eq!(store.committee(2).unwrap().epoch, 2);
+
+        // The reverse interleaving (ratchet for E while the follower is still at
+        // E, then the follower replays) converges to the same single install.
+        let (base, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = open_store(&base);
+        let boundary_zero = signed_end_of_epoch(&committee_at(&base, 0), &keys, 0);
+        let ratchet = store.install_next_from_summary(&boundary_zero).unwrap();
+        let follower = store.install_next_from_summary(&boundary_zero).unwrap();
+        assert!(matches!(ratchet, CommitteeTransition::Installed(1)));
+        assert!(matches!(follower, CommitteeTransition::NotNextTransition));
+        assert_eq!(store.head_epoch(), 1);
+    }
+}

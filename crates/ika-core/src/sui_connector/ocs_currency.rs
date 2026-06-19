@@ -834,4 +834,199 @@ mod tests {
         );
         assert_eq!(idx.currency(id(0xA1), 10), CurrencyVerdict::Unknown);
     }
+
+    /// Re-key `keys` into a committee at `epoch` (the test constructors hardcode
+    /// epoch 0). Lets a test sign a summary for a *future* epoch whose committee
+    /// the store hasn't installed.
+    fn committee_at_epoch(epoch: u64, keys: &[AuthorityKeyPair]) -> Committee {
+        use fastcrypto::traits::KeyPair;
+        use sui_types::base_types::AuthorityName;
+        Committee::new_for_testing_with_normalized_voting_power(
+            epoch,
+            keys.iter()
+                .map(|key| (AuthorityName::from(key.public()), 1))
+                .collect(),
+        )
+    }
+
+    /// Out-of-order absorb with large gaps grows `pending` unbounded — there is
+    /// no cap on the queue. Seqs 10/100/1000 absorbed out of order: 100 and 1000
+    /// queue (gaps before them), the frontier stays at 10, and nothing ever
+    /// drains them because the gaps are never filled. Documents the no-cap
+    /// behaviour the design flags as a follow-up (a byzantine relay streaming
+    /// far-future seqs would accumulate them).
+    #[test]
+    fn pending_queue_grows_unbounded_on_large_gaps() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let mut idx = ChangesetIndex::new();
+
+        let s10 = states([modified(0xA1, 1)]);
+        let s100 = states([modified(0xA2, 1)]);
+        let s1000 = states([modified(0xA3, 1)]);
+        // Each is signed with *some* valid previous_digest; the seqs are not
+        // adjacent, so previous-chaining never matters — they only queue.
+        let (c10, _d10) = signed_changeset(&committee, &keys, 10, None, &s10);
+        let (c1000, _d1000) = signed_changeset(
+            &committee,
+            &keys,
+            1000,
+            Some(CheckpointDigest::new([0x99; 32])),
+            &s1000,
+        );
+        let (c100, _d100) = signed_changeset(
+            &committee,
+            &keys,
+            100,
+            Some(CheckpointDigest::new([0x88; 32])),
+            &s100,
+        );
+
+        assert_eq!(
+            idx.absorb(&c10, s10).unwrap(),
+            AbsorbOutcome::Advanced { new_head: 10 }
+        );
+        // Out of order: 1000 then 100. Both queue behind the gap at 11.
+        assert_eq!(idx.absorb(&c1000, s1000).unwrap(), AbsorbOutcome::Queued);
+        assert_eq!(idx.absorb(&c100, s100).unwrap(), AbsorbOutcome::Queued);
+
+        // Frontier is still 10; the queue holds both far-future seqs with no cap.
+        assert_eq!(idx.highest_contiguous_seq(), Some(10));
+        assert_eq!(
+            idx.pending.len(),
+            2,
+            "no cap: both gap-creating seqs retained"
+        );
+        assert!(idx.pending.contains_key(&100) && idx.pending.contains_key(&1000));
+        assert_eq!(idx.highest_seen_seq(), Some(1000));
+
+        // The gap at 11 is never filled, so the queue never drains — currency
+        // for the queued ids stays Unknown (frontier never reaches them).
+        assert_eq!(idx.currency(id(0xA2), 100), CurrencyVerdict::Unknown);
+        assert_eq!(idx.currency(id(0xA3), 1000), CurrencyVerdict::Unknown);
+        assert_eq!(idx.pending.len(), 2);
+    }
+
+    /// A queued successor whose `previous_digest` does not chain onto its
+    /// predecessor is dropped at the gap when the gap fills, and the drain stops
+    /// there — a relay can't smuggle a forked branch in through the pending queue.
+    #[test]
+    fn a_queued_non_chaining_successor_is_dropped_at_the_gap() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let mut idx = ChangesetIndex::new();
+
+        let s10 = states([modified(0xA1, 1)]);
+        let s11 = states([modified(0xB2, 1)]);
+        let s12 = states([modified(0xC3, 1)]);
+        let (c10, d10) = signed_changeset(&committee, &keys, 10, None, &s10);
+        let (c11, _d11) = signed_changeset(&committee, &keys, 11, Some(d10), &s11);
+        // 12's previous_digest is a fork — it does NOT chain onto 11's digest.
+        let forked_previous = CheckpointDigest::new([0x77; 32]);
+        let (c12, _d12) = signed_changeset(&committee, &keys, 12, Some(forked_previous), &s12);
+
+        idx.absorb(&c10, s10).unwrap();
+        // 12 queues (gap at 11).
+        assert_eq!(idx.absorb(&c12, s12).unwrap(), AbsorbOutcome::Queued);
+        assert_eq!(idx.pending.len(), 1);
+
+        // 11 arrives, advances to 11, then drain_pending finds queued 12 whose
+        // previous_digest doesn't match 11's digest → drops it and stops.
+        assert_eq!(
+            idx.absorb(&c11, s11).unwrap(),
+            AbsorbOutcome::Advanced { new_head: 11 }
+        );
+        assert_eq!(
+            idx.highest_contiguous_seq(),
+            Some(11),
+            "drain stops at the forked gap"
+        );
+        assert_eq!(
+            idx.pending.len(),
+            0,
+            "the forked successor is dropped, not retained"
+        );
+        // 12's id never folded.
+        assert_eq!(idx.currency(id(0xC3), 12), CurrencyVerdict::Unknown);
+    }
+
+    /// The retain-window floor (`oldest_folded`) is monotone non-decreasing as
+    /// the head advances, and an id that became `Current` stays consistent with
+    /// the rising floor: `Current` while still in window, `Unknown` once the
+    /// floor passes its anchor — never silently wrong.
+    #[test]
+    fn retain_window_floor_is_monotone_and_never_reverts_current() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let mut idx = ChangesetIndex::new().with_retain_window(Some(5));
+
+        let mut previous = None;
+        let mut last_floor = 0u64;
+        for seq in 10u64..=20 {
+            // Each checkpoint modifies a distinct id keyed by its seq byte.
+            let object_states = states([modified(seq as u8, 1)]);
+            let (cert, digest) = signed_changeset(&committee, &keys, seq, previous, &object_states);
+            idx.absorb(&cert, object_states).unwrap();
+            previous = Some(digest);
+
+            // Floor is monotone non-decreasing.
+            let floor = idx.oldest_folded.expect("folded at least one checkpoint");
+            assert!(
+                floor >= last_floor,
+                "oldest_folded reverted: {floor} < {last_floor} at head {seq}"
+            );
+            last_floor = floor;
+
+            // The id modified at this very seq is Current right now (it's the
+            // head, always within window).
+            assert_eq!(
+                idx.currency(id(seq as u8), seq),
+                CurrencyVerdict::Current,
+                "head id must be Current at head {seq}"
+            );
+        }
+
+        // After folding 10..=20 with window 5: head 20, floor 15. An id last
+        // modified at 16 is still in window → Current; one at 12 has aged out
+        // below the floor → Unknown (fallback), never a wrong Current/Stale.
+        assert_eq!(idx.oldest_folded, Some(15));
+        assert_eq!(idx.currency(id(16), 16), CurrencyVerdict::Current);
+        assert_eq!(idx.currency(id(12), 12), CurrencyVerdict::Unknown);
+    }
+
+    /// Integration: a verified-absorb path with a committee store whose head is
+    /// epoch E folds a changeset signed by `committee[E]`, but rejects one signed
+    /// by `committee[E+2]` — a committee the store has not installed. The reject
+    /// is `Unverified` (the store can't resolve the future committee), the
+    /// changeset is not folded, and the contiguous frontier does not advance.
+    #[tokio::test]
+    async fn pump_rejects_a_changeset_signed_by_an_uninstalled_future_committee() {
+        // Store head sits at epoch 0 (E); committee[E+2] is never installed.
+        let (committee_e, keys) = Committee::new_simple_test_committee();
+        let committee_future = committee_at_epoch(2, &keys);
+        let (_dir, store) = committee_store(committee_e.clone());
+        let mut idx = ChangesetIndex::new();
+
+        // seq 10 signed by committee[E] folds.
+        let s10 = states([modified(0xA1, 1)]);
+        let (c10, d10) = signed_changeset(&committee_e, &keys, 10, None, &s10);
+        assert_eq!(
+            idx.absorb_verified(&store, &c10, s10).unwrap(),
+            AbsorbOutcome::Advanced { new_head: 10 }
+        );
+
+        // seq 11 chains correctly but is signed by the *future*, uninstalled
+        // committee[E+2]. The BLS gate can't resolve that committee → rejected
+        // before any fold.
+        let s11 = states([modified(0xB2, 1)]);
+        let (c11, _d11) = signed_changeset(&committee_future, &keys, 11, Some(d10), &s11);
+        assert!(
+            matches!(
+                idx.absorb_verified(&store, &c11, s11),
+                Err(ChangesetError::Unverified(_))
+            ),
+            "a changeset signed by an uninstalled future committee must be Unverified"
+        );
+
+        // Not folded: frontier stays at 10, the future id is Unknown.
+        assert_eq!(idx.highest_contiguous_seq(), Some(10));
+        assert_eq!(idx.currency(id(0xB2), 11), CurrencyVerdict::Unknown);
+    }
 }

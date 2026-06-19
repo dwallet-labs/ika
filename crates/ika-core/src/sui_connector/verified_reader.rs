@@ -2195,4 +2195,364 @@ mod tests {
         assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
         assert_eq!(failure_count(&metrics, "bag_entry", "not_current"), 1);
     }
+
+    // ===== Regression tests for the verified-read failure modes =====
+
+    /// The `NotFound → cache_fallback` branch of `verified_object` (not the
+    /// `verified_anchor_object` short-circuit) is forward-only. After a newer
+    /// version has been served (mark at 10), the cache still holding an older v5
+    /// must not be served by the fallback: `cache_fallback` re-runs the
+    /// high-water check (`record_high_water(_, v5)` fails since 5 < 10) and
+    /// returns `None`, so the read surfaces the upstream `NotFound` rather than
+    /// the stale v5. This is the `verified_object` analogue of
+    /// `anchor_fallback_rejects_a_cached_version_below_high_water`.
+    #[tokio::test]
+    async fn cache_fallback_on_notfound_rejects_below_high_water() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+        let reader = OcsVerifiedReader::new(
+            Arc::new(PrunedProvider), // network reach-back fails NotFound
+            committees,
+            metrics.clone(),
+            None,
+            Arc::new(VerifiedStateCache::new()),
+            true, // cache_first (sui-state-direct) — enables the NotFound fallback
+            None, // no staleness tripwire: isolate the cache_fallback high-water gate
+        );
+
+        // Cache holds id@v5 at seq 42.
+        let id = ObjectID::from_single_byte(0x55);
+        let stale = test_object(id, 5, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        let entry = VerifiedObjectEntry {
+            object: stale,
+            checkpoint_seq: 42,
+            proof,
+            dynamic_field_name_type: String::new(),
+            dynamic_field_name_bcs: Vec::new(),
+        };
+        reader.cache.absorb_entries(&summary, &[entry]);
+
+        // A newer version (10) was already served: the mark is ahead of the cached v5.
+        reader
+            .record_high_water(id, SequenceNumber::from(10u64))
+            .unwrap();
+
+        // verified_object: the provider answers NotFound, so we hit the
+        // NotFound→cache_fallback branch. cache_fallback consults high-water,
+        // which rejects v5 (< 10) and returns None — so the read surfaces the
+        // original NotFound, never the stale v5.
+        let err = reader.verified_object(id).await.unwrap_err();
+        assert!(
+            matches!(err, ReaderError::Transport(TransportError::NotFound(_))),
+            "fallback must reject the below-high-water v5 and surface NotFound; got {err:?}"
+        );
+
+        // Nothing was served from the cache for this id.
+        assert_eq!(
+            metrics
+                .cache_read_total
+                .with_label_values(&["fallback"])
+                .get(),
+            0,
+            "the NotFound fallback must not have served the stale snapshot"
+        );
+
+        // The mark is untouched at 10: re-asserting 10 succeeds, v5 still fails.
+        reader
+            .record_high_water(id, SequenceNumber::from(10u64))
+            .unwrap();
+        assert!(matches!(
+            reader.record_high_water(id, SequenceNumber::from(5u64)),
+            Err(ReaderError::StaleVersion { .. })
+        ));
+    }
+
+    /// The cache-first staleness tripwire in `try_cache_hit` is
+    /// `upstream.saturating_sub(cache_head) > bound`, with the `cache_first_stale_total`
+    /// counter moving iff the tripwire fires. Three regimes, with an empty cache
+    /// (so a non-tripped read still misses on absence, never serving state — the
+    /// counter is the sole signal of whether the tripwire itself fired):
+    ///   (a) bound 0: gap 0 (upstream == cache_head) passes; any positive gap trips.
+    ///   (b) gap exactly == bound passes; gap == bound + 1 trips.
+    ///   (c) cache_head > upstream saturates the gap to 0, which never trips.
+    #[tokio::test]
+    async fn staleness_tripwire_boundary_and_saturation() {
+        let id = ObjectID::from_single_byte(0x07);
+
+        // (a) bound == 0: only a zero gap (cache fully caught up) passes.
+        let (_dir, reader) = test_reader_cache_first(0);
+        reader.note_upstream_head(500);
+        reader.cache.note_processed(500); // gap 0 == bound 0 → no trip
+        let before = reader.metrics.cache_first_stale_total.get();
+        assert!(
+            reader.try_cache_hit(id).is_none(),
+            "empty cache → plain miss"
+        );
+        assert_eq!(
+            reader.metrics.cache_first_stale_total.get(),
+            before,
+            "bound 0, gap 0 (upstream == cache_head): tripwire must stay closed"
+        );
+        // Now make the cache lag by one: gap 1 > bound 0 → trips.
+        reader.note_upstream_head(501);
+        assert!(reader.try_cache_hit(id).is_none());
+        assert_eq!(
+            reader.metrics.cache_first_stale_total.get(),
+            before + 1,
+            "bound 0, gap 1: tripwire must fire exactly once"
+        );
+
+        // (b) gap exactly == bound passes; gap == bound + 1 trips.
+        let bound = 100u64;
+        let (_dir2, reader2) = test_reader_cache_first(bound);
+        reader2.note_upstream_head(1000);
+        reader2.cache.note_processed(1000 - bound); // gap == bound → no trip
+        let before2 = reader2.metrics.cache_first_stale_total.get();
+        assert!(reader2.try_cache_hit(id).is_none());
+        assert_eq!(
+            reader2.metrics.cache_first_stale_total.get(),
+            before2,
+            "gap == bound is the boundary, still fresh: tripwire must stay closed"
+        );
+        // One checkpoint further behind: gap == bound + 1 → trips.
+        reader2.cache.note_processed(1000 - bound); // monotonic; stays at 900
+        reader2.note_upstream_head(1001); // gap now 101 == bound + 1
+        assert!(reader2.try_cache_hit(id).is_none());
+        assert_eq!(
+            reader2.metrics.cache_first_stale_total.get(),
+            before2 + 1,
+            "gap == bound + 1 is the first stale: tripwire must fire exactly once"
+        );
+
+        // (c) cache_head > upstream: the gap saturates to 0 and never trips,
+        // even though the cache head is "ahead" of the observed head.
+        let (_dir3, reader3) = test_reader_cache_first(0);
+        reader3.note_upstream_head(50);
+        reader3.cache.note_processed(200); // cache_head 200 > upstream 50
+        let before3 = reader3.metrics.cache_first_stale_total.get();
+        assert!(reader3.try_cache_hit(id).is_none());
+        assert_eq!(
+            reader3.metrics.cache_first_stale_total.get(),
+            before3,
+            "cache_head > upstream saturates to 0: tripwire must not fire"
+        );
+    }
+
+    /// A batch read is all-or-nothing per the contract that requested ids must
+    /// exist: one bad entry fails the whole `verified_objects` call with `Err`
+    /// and yields no partial `Vec`, while the per-entry failure counter moves.
+    /// Two failure modes:
+    ///   - a rolled-back entry (currency `Stale`) → `NotCurrent`;
+    ///   - a batch slot carrying a *different* object id than requested →
+    ///     `InvalidProof` (the id-binding check), before any proof verify.
+    #[tokio::test]
+    async fn batch_fails_on_first_bad_entry_and_serves_no_partial_results() {
+        // --- a rolled-back second entry fails the batch (no partial Vec) ---
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id_a = ObjectID::from_single_byte(0x21);
+        let id_b = ObjectID::from_single_byte(0x22);
+
+        // Both objects are proven at the same checkpoint 100 (one shared
+        // summary committing to both leaves, so each entry's own inclusion proof
+        // verifies against it). The index folds 100 = {a@v7, b@v7} then 101 =
+        // {b@v8}: so `a`'s last modification is its anchor 100 (`Current`),
+        // while `b` was modified again at 101 — a rollback the relay is replaying
+        // (`Stale`). `a` is processed first and passes; `b` then fails the batch.
+        let a_v7 = test_object(id_a, 7, address_owner(0xAA));
+        let b_v7 = test_object(id_b, 7, address_owner(0xBB));
+        let (summary100, proof_a) = sign_inclusion(&committee, &keys, 100, &[&a_v7, &b_v7], &a_v7);
+        let proof_b = ModifiedObjectTree::new(&CheckpointArtifacts::from_object_states(
+            object_states_of(&[&a_v7, &b_v7]),
+        ))
+        .expect("modified object tree")
+        .get_inclusion_proof(b_v7.compute_object_reference())
+        .expect("inclusion proof for b");
+
+        let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
+        let digest100 = summary100.data().digest();
+        // Fold 100 = {a@v7, b@v7}: a's last_seq becomes 100, b's becomes 100.
+        index
+            .write()
+            .absorb(&summary100, object_states_of(&[&a_v7, &b_v7]))
+            .unwrap();
+        // Fold 101 = {b@v8}: bumps b's last_seq to 101 (a stays at 100).
+        let b_v8 = test_object(id_b, 8, address_owner(0xBB));
+        let states101 = object_states_of(&[&b_v8]);
+        let summary101 = chained_summary(&committee, &keys, 101, Some(digest100), &states101);
+        index.write().absorb(&summary101, states101).unwrap();
+
+        let entry_a = bag_entry(a_v7, proof_a, 100, "", vec![]);
+        let entry_b = bag_entry(b_v7, proof_b, 100, "", vec![]);
+        let resp = BatchVerifiedObjectsResponse {
+            summaries: BTreeMap::from([(100, summary100)]),
+            results: vec![Some(entry_a), Some(entry_b)],
+            claimed_latest_checkpoint_seq: 101,
+        };
+        let provider = StagedProvider::batch(resp);
+        let (_dir, reader, metrics) = reader_with(provider, committee.clone(), None);
+        let reader = reader.with_changeset_index(Some(index));
+
+        let result = reader.verified_objects(&[id_a, id_b]).await;
+        let err = result.expect_err("a rolled-back entry must fail the whole batch");
+        assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
+        assert_eq!(failure_count(&metrics, "batch_objects", "not_current"), 1);
+
+        // --- a slot carrying the wrong object id fails the batch ---
+        let (committee2, keys2) = SuiCommittee::new_simple_test_committee();
+        let requested = ObjectID::from_single_byte(0x31);
+        let wrong = ObjectID::from_single_byte(0x32);
+        let wrong_obj = test_object(wrong, 1, address_owner(0xAA));
+        let (summary2, proof2) =
+            sign_inclusion(&committee2, &keys2, 100, &[&wrong_obj], &wrong_obj);
+        let resp2 = batch_response(summary2, bag_entry(wrong_obj, proof2, 100, "", vec![]), 100);
+        let provider2 = StagedProvider::batch(resp2);
+        let (_dir2, reader2, metrics2) = reader_with(provider2, committee2, None);
+
+        let err2 = reader2
+            .verified_objects(&[requested])
+            .await
+            .expect_err("a slot carrying a foreign object id must fail the batch");
+        assert!(matches!(err2, ReaderError::InvalidProof(_)), "got {err2:?}");
+        assert_eq!(
+            failure_count(&metrics2, "batch_objects", "invalid_proof"),
+            1
+        );
+    }
+
+    /// A batch response whose `summaries` map omits the seq an entry references
+    /// is a `Decode` failure: the entry can't be checked against any verified
+    /// summary, so the whole batch fails (no entry served) and the decode
+    /// failure counter moves.
+    #[tokio::test]
+    async fn batch_missing_summary_for_an_entry_is_a_decode_error() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let object = test_object(id, 7, address_owner(0xAA));
+        // The entry references seq 100, but the summaries map is keyed at 999.
+        let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&object], &object);
+        let resp = BatchVerifiedObjectsResponse {
+            summaries: BTreeMap::from([(999u64, summary)]),
+            results: vec![Some(bag_entry(object, proof, 100, "", vec![]))],
+            claimed_latest_checkpoint_seq: 100,
+        };
+        let provider = StagedProvider::batch(resp);
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader
+            .verified_objects(&[id])
+            .await
+            .expect_err("a missing summary for the entry's seq must fail the batch");
+        match err {
+            ReaderError::Decode(msg) => assert!(
+                msg.contains("missing summary"),
+                "expected the missing-summary decode error, got {msg:?}"
+            ),
+            other => panic!("expected Decode, got {other:?}"),
+        }
+        assert_eq!(failure_count(&metrics, "batch_objects", "decode"), 1);
+    }
+
+    /// The bag-membership binding derives the `Field<Wrapper<K>, ID>` wrapper id
+    /// from the entry's `dynamic_field_name_type`. A malformed type string fails
+    /// to parse as a `TypeTag`, so `derive_object_field_wrapper_id` returns
+    /// `None` and the wrapper branch can't match; with the entry object-owned by
+    /// a non-bag id, the binding fails with `BagMembership` and the failure
+    /// counter moves.
+    #[tokio::test]
+    async fn bag_binding_rejects_a_malformed_dynamic_field_key_type() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let bag_id = ObjectID::from_single_byte(0x55);
+        let entry_id = ObjectID::from_single_byte(0x56);
+        // Object-owned by a non-bag id: the direct `owner_id == bag_id` branch
+        // fails, so the binding falls through to the wrapper-id derivation.
+        let foreign_id = ObjectID::from_single_byte(0x77);
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(foreign_id.into()));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&object], &object);
+
+        // A malformed name type: `TypeTag::from_str` fails → derivation None.
+        let bad_type = "not a valid type";
+        assert!(
+            derive_object_field_wrapper_id(bag_id, bad_type, &bcs::to_bytes(&7u64).unwrap())
+                .is_none(),
+            "the malformed type must make the wrapper-id derivation return None"
+        );
+        let provider = StagedProvider::bag(bag_response(
+            summary,
+            bag_entry(object, proof, 100, bad_type, bcs::to_bytes(&7u64).unwrap()),
+            100,
+        ));
+        let (_dir, reader, metrics) = reader_with(provider, committee, None);
+
+        let err = reader
+            .verified_bag_page(bag_id, None, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ReaderError::BagMembership { .. }),
+            "got {err:?}"
+        );
+        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+    }
+
+    /// `clone_inclusion_proof` is a bcs round-trip: the cloned proof must
+    /// serialize byte-for-byte identically to the original, and a cloned proof
+    /// must still verify against its committee-signed summary — so the cache
+    /// stores a faithful copy of exactly the proof the verifier accepted.
+    #[tokio::test]
+    async fn clone_inclusion_proof_round_trips_identically() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let id = ObjectID::from_single_byte(0x21);
+        let object = test_object(id, 7, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&object], &object);
+
+        let clone = clone_inclusion_proof(&proof).expect("a valid proof must clone");
+        assert_eq!(
+            bcs::to_bytes(&clone).unwrap(),
+            bcs::to_bytes(&proof).unwrap(),
+            "the clone must serialize byte-for-byte identically to the original"
+        );
+
+        // The cloned proof still verifies against the same committee + summary.
+        let (_dir, reader, _metrics) = reader_with(Arc::new(UnusedProvider), committee, None);
+        reader
+            .verify_proof_inner(&object, clone, summary)
+            .expect("the cloned proof must still verify");
+    }
+
+    /// `forget_high_water` (currently unused in prod) clears an id's mark so a
+    /// previously-rejected older version is accepted again. Records v5, confirms
+    /// v3 is a `StaleVersion` rollback, forgets the id, then confirms v3 is
+    /// accepted — documenting the intended semantics.
+    #[tokio::test]
+    async fn forget_high_water_re_enables_acceptance() {
+        let (_dir, reader) = test_reader(None);
+        let id = ObjectID::from_single_byte(0x07);
+
+        reader
+            .record_high_water(id, SequenceNumber::from(5u64))
+            .unwrap();
+        // v3 < mark 5: a rollback, rejected.
+        assert!(matches!(
+            reader.record_high_water(id, SequenceNumber::from(3u64)),
+            Err(ReaderError::StaleVersion { .. })
+        ));
+
+        // Forget the id: the mark is cleared.
+        reader.forget_high_water(&id);
+
+        // v3 is now first-sight again → accepted.
+        reader
+            .record_high_water(id, SequenceNumber::from(3u64))
+            .expect("after forgetting, the previously-rejected v3 must be accepted");
+    }
 }
