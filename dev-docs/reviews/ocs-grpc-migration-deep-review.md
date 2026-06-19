@@ -95,7 +95,8 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    are written in two separate `DBBatch`es; a crash between them leaves a dangling
    mapping. Low impact — both serve a mirrored peer's ratchet and degrade to the
    fullnode / re-anchor. **Fix:** one method writing both in a single batch.
-   RESOLUTION: open.
+   RESOLUTION: fixed in `5fd6b16ff8` — new `put_sui_end_of_epoch` writes the
+   seq index + CheckpointData in one batch.
 
 5. **[LOW] `get_uncompleted_events` skips bag-membership binding (latent footgun,
    currently dead).** `grpc_backend.rs:236`. It walks an untrusted
@@ -106,7 +107,8 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    JSON-RPC backend, not this gRPC one; OCS nodes use the `BagEventPump`
    (`verified_bag_page`, binding enforced). **Fix:** make it return `Err(...)`
    like the `query_events` stub, so an accidental future re-wiring fails loudly
-   instead of accepting unbound entries. RESOLUTION: open.
+   instead of accepting unbound entries. RESOLUTION: fixed in `5fd6b16ff8` —
+   the gRPC `get_uncompleted_events` is now an `Err` stub mirroring `query_events`.
 
 6. **[LOW] `ChangesetIndex.pending` has no size cap.** `ocs_currency.rs:159`.
    `absorb` queues gap-creating changesets unbounded; `prune`/`retain_window`
@@ -116,7 +118,9 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
    requires the relay to simultaneously stall currency (a visible liveness
    symptom; reads fall back to `Unknown` — no safety break). **Fix:** cap
    `pending` (e.g. 256) + drop-oldest-or-alert, validate the returned seq window,
-   add a depth metric. RESOLUTION: open.
+   add a depth metric. RESOLUTION: fixed in `5fd6b16ff8` — `pending` is capped at
+   `MAX_PENDING_CHANGESETS=256`; at the cap a new out-of-order entry is dropped
+   (re-pulled later; ids read a safe `Unknown` meanwhile) with a `warn!`.
 
 7. **[TEST — 5 confirmed coverage gaps, guards present & correct, untested].**
    - `committee-002`: the unverified-fallback epoch-mismatch guard
@@ -132,7 +136,10 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
      (`committee_store.rs` has no `mod tests`).
    - `committee-006`: follower capture-failure is benign and the ratchet recovers
      (`committee_follower.rs:87-107`) — the `capture()` `Err` arm is untested.
-   RESOLUTION: open — covered by the P0 unit tests below.
+   RESOLUTION: fixed — the P0 unit tests are landed (`407faa49e5`, `fefa972d26`),
+   incl. `unverified_fallback_rejects_epoch_mismatch`, the anchor digest/EoE gates,
+   `perpetual_state_overrides_reconfigured_anchor`, and committee derivation /
+   follower-recovery (P1, `bd9040505e`).
 
    **INFO (not a defect):** the leaf structs `DWalletCoordinatorInnerV1` /
    `DWalletNetworkEncryptionKey` are non-tagged, so a *same-version* Move
