@@ -345,7 +345,8 @@ impl OcsVerifiedReader {
                     dynamic_field_name_type: String::new(),
                     dynamic_field_name_bcs: Vec::new(),
                 };
-                self.cache.absorb_entries(&cache_summary, &[cache_entry]);
+                self.cache
+                    .absorb_shadow_entries(&cache_summary, &[cache_entry]);
             }
             out.push(VerifiedObject {
                 object: entry.object,
@@ -575,7 +576,8 @@ impl OcsVerifiedReader {
                     dynamic_field_name_type: String::new(),
                     dynamic_field_name_bcs: Vec::new(),
                 };
-                self.cache.absorb_entries(&cache_summary, &[cache_entry]);
+                self.cache
+                    .absorb_shadow_entries(&cache_summary, &[cache_entry]);
             }
             verified.push(VerifiedObject {
                 object: entry.object,
@@ -767,7 +769,7 @@ impl OcsVerifiedReader {
                 dynamic_field_name_type: String::new(),
                 dynamic_field_name_bcs: Vec::new(),
             };
-            self.cache.absorb_entries(&cache_summary, &[entry]);
+            self.cache.absorb_shadow_entries(&cache_summary, &[entry]);
         }
         Ok(VerifiedObject {
             object: resp.object,

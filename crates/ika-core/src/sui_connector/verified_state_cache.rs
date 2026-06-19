@@ -215,15 +215,41 @@ impl VerifiedStateCache {
         self.objects.read().is_empty()
     }
 
-    /// Fold every `(object, proof)` from one checkpoint into the cache.
-    /// Updates the parent→children index from each object's owner and bumps
-    /// `head_seq` to the summary's sequence (monotonically). The caller
-    /// (direct pusher, or the reader after a per-read verify) is responsible
-    /// for having verified each entry against `summary` first.
+    /// Fold every `(object, proof)` from one checkpoint into the cache, as the
+    /// in-order **pusher**: persists the folded snapshots through to DB. Updates
+    /// the parent→children index from each object's owner and bumps `head_seq`
+    /// to the summary's sequence (monotonically). The caller is responsible for
+    /// having verified each entry against `summary` first.
     pub fn absorb_entries(
         &self,
         summary: &CertifiedCheckpointSummary,
         entries: &[VerifiedObjectEntry],
+    ) {
+        self.absorb_entries_inner(summary, entries, true);
+    }
+
+    /// Like [`Self::absorb_entries`] but for a reader's out-of-band "shadow"
+    /// cache-write of a network-verified object: it does NOT persist. On a direct
+    /// node the single-threaded, in-order pusher owns persistence; a reader folds
+    /// objects it just read at arbitrary (possibly newer-than-the-pusher)
+    /// checkpoints, so letting it persist would race the pusher and could write
+    /// the cache head ahead of the durably-folded objects (see [`Self::persist`]).
+    /// The pusher re-folds and persists the object in order anyway. On a mirrored
+    /// node persistence is off (`perpetual` is `None`), so this is identical to
+    /// `absorb_entries` there.
+    pub fn absorb_shadow_entries(
+        &self,
+        summary: &CertifiedCheckpointSummary,
+        entries: &[VerifiedObjectEntry],
+    ) {
+        self.absorb_entries_inner(summary, entries, false);
+    }
+
+    fn absorb_entries_inner(
+        &self,
+        summary: &CertifiedCheckpointSummary,
+        entries: &[VerifiedObjectEntry],
+        persist: bool,
     ) {
         let source_seq = *summary.sequence_number();
         let mut inserted_ids = Vec::new();
@@ -237,7 +263,12 @@ impl VerifiedStateCache {
         // processed_head >= fold head even without a separate worker callback
         // (e.g. the reader's own network-read folds, and direct-cache tests).
         self.note_processed(source_seq);
-        self.persist(&inserted_ids);
+        if persist {
+            // Persist `source_seq` (this fold's own seq), never the shared
+            // `head_seq()`: a concurrent reader shadow-write can bump `head_seq`
+            // past what is durably folded.
+            self.persist(&inserted_ids, source_seq);
+        }
         self.maybe_prune();
     }
 
@@ -327,16 +358,26 @@ impl VerifiedStateCache {
         );
     }
 
-    /// Write the just-folded snapshots (and the head) through to the perpetual
-    /// `verified_object_cache` column in one batch, so the cache survives a
-    /// restart. No-op for an in-memory-only cache. Best-effort: a DB error is
-    /// logged, not propagated — the in-memory cache stays authoritative for the
-    /// running process and the next absorb re-persists.
-    fn persist(&self, inserted_ids: &[ObjectID]) {
+    /// Write the just-folded snapshots through to the perpetual
+    /// `verified_object_cache` column in one batch, with the cache head set to
+    /// `head`, so the cache survives a restart. No-op for an in-memory-only
+    /// cache. Best-effort: a DB error is logged, not propagated — the in-memory
+    /// cache stays authoritative for the running process and the next absorb
+    /// re-persists.
+    ///
+    /// `head` MUST be the caller's own in-order fold seq (the pusher's
+    /// `source_seq`), NOT the shared `head_seq()` atomic. A concurrent reader
+    /// shadow-write can bump `head_seq` to an object it just read at a
+    /// newer-than-the-pusher checkpoint; persisting that here would write a head
+    /// ahead of the objects actually durably folded, so a crash at that instant
+    /// would leave the restored cache claiming a freshness it doesn't have (the
+    /// staleness tripwire then under-fires). Only the single-threaded, in-order
+    /// pusher persists (reader shadow-writes use `absorb_shadow_entries`), so a
+    /// per-call `source_seq` is contiguous and never overstates.
+    fn persist(&self, inserted_ids: &[ObjectID], head: CheckpointSequenceNumber) {
         let Some(perpetual) = &self.perpetual else {
             return;
         };
-        let head = self.head_seq();
         let snapshots: Vec<(ObjectID, VerifiedSnapshot)> = {
             let objects = self.objects.read();
             inserted_ids
@@ -574,6 +615,48 @@ mod tests {
         assert_eq!(snap.object.version(), SequenceNumber::from(3u64));
         assert_eq!(snap.source_checkpoint_seq, 42);
         assert_eq!(reopened.children_of(parent), vec![child]);
+    }
+
+    #[tokio::test]
+    async fn reader_shadow_write_does_not_persist_a_head_ahead_of_the_pusher() {
+        let dir = tempfile::tempdir().unwrap();
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let cache = VerifiedStateCache::open(perpetual.clone()).unwrap();
+        let obj = |byte: u8| {
+            Object::with_id_owner_version_for_testing(
+                ObjectID::from_single_byte(byte),
+                SequenceNumber::from(1u64),
+                Owner::AddressOwner(ObjectID::from_single_byte(0xEE).into()),
+            )
+        };
+
+        // The in-order pusher folds checkpoint 5 → persists head 5.
+        let (sum5, e5) = signed_entry(&committee, &keys, 5, &obj(0x01));
+        cache.absorb_entries(&sum5, &[e5]);
+        assert_eq!(perpetual.get_verified_object_cache_head().unwrap(), Some(5));
+
+        // A reader shadow-writes an object it just read at checkpoint 10 — newer
+        // than the pusher. It must NOT advance the *persisted* head past 5: the
+        // pusher hasn't durably folded everything through 10, so a crash here must
+        // not leave the restored cache claiming freshness to 10 (the N2 race).
+        let (sum10, e10) = signed_entry(&committee, &keys, 10, &obj(0x02));
+        cache.absorb_shadow_entries(&sum10, &[e10]);
+        assert_eq!(
+            perpetual.get_verified_object_cache_head().unwrap(),
+            Some(5),
+            "a reader shadow-write must not persist a head ahead of the in-order pusher"
+        );
+        // The shadow object is still cached in-memory for the running process.
+        assert!(cache.get(ObjectID::from_single_byte(0x02)).is_some());
+
+        // The next in-order pusher fold advances the persisted head normally.
+        let (sum11, e11) = signed_entry(&committee, &keys, 11, &obj(0x03));
+        cache.absorb_entries(&sum11, &[e11]);
+        assert_eq!(
+            perpetual.get_verified_object_cache_head().unwrap(),
+            Some(11)
+        );
     }
 
     #[tokio::test]
