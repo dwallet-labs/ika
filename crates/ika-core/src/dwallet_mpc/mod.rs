@@ -157,6 +157,21 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
     })
 }
 
+impl ValidatorMpcKeysByPartyId {
+    /// An empty key set — the manager's starting point at network key version 3,
+    /// where every key (class_groups included) is supplied by the off-chain
+    /// consensus-agreed set via `ingest_offchain_mpc_keys`, never from Sui.
+    pub(crate) fn empty() -> Self {
+        Self {
+            class_groups: HashMap::new(),
+            secp256k1_pvss: HashMap::new(),
+            secp256r1_pvss: HashMap::new(),
+            ristretto_pvss: HashMap::new(),
+            vss_hpke_verified_party_encryption_key_values: HashMap::new(),
+        }
+    }
+}
+
 /// Build the manager's key set from the committee's on-chain `class_groups`
 /// alone, with empty PVSS / VSS maps. This is the manager's starting point each
 /// epoch: `class_groups` is on `Committee` in every mode (it's the bare on-chain

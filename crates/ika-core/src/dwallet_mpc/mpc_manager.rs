@@ -397,11 +397,20 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            // class_groups is on `committee` in every mode (the bare on-chain
-            // key) — seed it now so the backward-compatible network DKG works
-            // without the off-chain pipeline. The off-chain-only PVSS / VSS keys
-            // are ingested per-epoch from the off-chain key channels.
-            validator_mpc_keys_by_party_id: class_groups_keys_by_party_id(&committee)?,
+            // Take keys from Sui (the chain-derived committee) ONLY at network
+            // key version 2 (mainnet-v1.1.8 / backward-compat): there the DKG
+            // needs the bare on-chain class_groups and there is no off-chain
+            // pipeline. At version 3 ALL keys — class_groups included — come from
+            // the off-chain consensus-agreed set, so start empty and let the
+            // ingest fill them in (seeding from Sui here would be the full N-party
+            // class_groups, the wrong source/shape for the v3 agreed subset).
+            validator_mpc_keys_by_party_id: if protocol_config
+                .is_network_encryption_key_version_v3()
+            {
+                ValidatorMpcKeysByPartyId::empty()
+            } else {
+                class_groups_keys_by_party_id(&committee)?
+            },
             current_epoch_keys_ingested: false,
             next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
