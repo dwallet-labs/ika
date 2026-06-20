@@ -64,7 +64,7 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
         // `enable_v3`: hardcoded `false` to match upstream exactly. At the
-        // pinned mainnet-v1.72.3, Sui's own `to_consensus_protocol_config` also
+        // pinned mainnet-v1.73.2, Sui's own `to_consensus_protocol_config` also
         // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
         // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
         // getter to source it from. When Sui gates it behind the protocol config
@@ -73,6 +73,14 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         // protocol config and source it here — do NOT just flip this constant,
         // since an un-gated change would fork consensus mid-epoch.
         false,
+        // `leader_schedule_window_size` / `leader_schedule_update_interval`:
+        // hardcoded to match upstream's `to_consensus_protocol_config` at the
+        // pinned mainnet-v1.73.2 (300 / 12). These only take effect under the
+        // Mysticeti v3 leader schedule, which is gated off above (`enable_v3 =
+        // false`), so they are inert today; mirror upstream exactly so enabling
+        // v3 later (via a version-gated getter) does not silently fork.
+        300,
+        12,
     )
 }
 
@@ -171,7 +179,7 @@ impl ConsensusManager {
 
         let own_protocol_key = self.protocol_keypair.public();
         // `own_index` is no longer passed to `ConsensusAuthority::start`
-        // (dropped in mainnet-v1.72.3), but we keep this lookup for its
+        // (dropped in mainnet-v1.73.2), but we keep this lookup for its
         // side-effect: asserting our authority is in the committee.
         let (_own_index, _) = committee
             .authorities()
@@ -228,7 +236,7 @@ impl ConsensusManager {
             NetworkType::Tonic,
             epoch_store.epoch_start_config().epoch_start_timestamp_ms(),
             // `own_index` was dropped from `ConsensusAuthority::start` in
-            // mainnet-v1.72.3 (the node derives it from the committee +
+            // mainnet-v1.73.2 (the node derives it from the committee +
             // protocol keypair). `protocol_keypair` is now optional
             // (observer nodes pass `None`); validators pass `Some`.
             committee.clone(),
