@@ -5205,10 +5205,14 @@ impl From<LockDetails> for LockDetailsWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::dwallet_checkpoints::DWalletCheckpointService;
+    use crate::handoff_cert::{
+        StaticConsensusPubkeyProvider, build_handoff_attestation, sign_handoff_attestation,
+    };
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
-    use fastcrypto::ed25519::Ed25519Signature;
-    use fastcrypto::traits::ToFromBytes;
+    use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
+    use fastcrypto::traits::{KeyPair, ToFromBytes};
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
     use prometheus::Registry;
     use sui_types::base_types::ObjectID;
@@ -5417,6 +5421,241 @@ mod tests {
                 .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
             "#1736: the close must emit the EndOfPublish close message once both \
              conditions hold"
+        );
+    }
+
+    /// #1736 LIVENESS BACKSTOP (wiring): EndOfPublish-ready but the handoff-cert
+    /// quorum never forms (handoff_signatures stays 2/4). The close must still
+    /// FIRE at the backstop (rounds_since_quorum == grace * 4) so a genuinely
+    /// non-signing validator cannot wedge the epoch open forever. Drives the
+    /// real `process_consensus_transactions` path, not the pure decision.
+    ///
+    /// Regression guard, not a fix/base discriminator (base also closes in this
+    /// window, earlier at `grace`): it fails loudly if the backstop is removed
+    /// or its multiplier changed — either of which would turn a permanently
+    /// missing cert quorum into an indefinite epoch hang.
+    #[tokio::test]
+    async fn v4_epoch_close_backstop_fires_without_handoff_cert_quorum() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        assert!(
+            epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled(),
+            "off-chain-metadata gate must be on (protocol >= 4)"
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(
+            grace > 0,
+            "grace must be positive for this test to be meaningful"
+        );
+
+        // EndOfPublish at quorum but not all-voted (3 of 4): readiness hinges on
+        // the grace. Seed the in-memory aggregator directly.
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(
+                end_of_publish.has_quorum(),
+                "EndOfPublish at quorum (3 of 4)"
+            );
+            assert_eq!(end_of_publish.keys().count(), 3, "not all-voted (3 < 4)");
+        }
+
+        let anchor = 100u64;
+        epoch_store
+            .tables()
+            .unwrap()
+            .end_of_publish_quorum_round
+            .insert(&0u64, &anchor)
+            .unwrap();
+
+        // Handoff signatures SUB-quorum (2 of 4) — and they STAY there: the
+        // quorum never forms in this test.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(2) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures stay sub-quorum (2 of 4) for the whole test"
+        );
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // One round BEFORE the backstop boundary (which is at
+        // rounds_since_quorum == grace*4, inclusive): must still DEFER.
+        let pre_backstop_round = anchor + grace * 4 - 1;
+        let commit_info = ConsensusCommitInfo::new_for_test(pre_backstop_round, 0, true);
+        let mut output = ConsensusCommitOutput::new(pre_backstop_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "one round before the backstop the close must still DEFER"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "no EndOfPublish may be emitted before the backstop"
+        );
+
+        // AT the backstop (anchor + grace*4): the close must FIRE even though
+        // the handoff-cert quorum is permanently missing (a close at sub-quorum
+        // is necessarily the backstop close).
+        let backstop_round = anchor + grace * 4;
+        let commit_info = ConsensusCommitInfo::new_for_test(backstop_round, 0, true);
+        let mut output = ConsensusCommitOutput::new(backstop_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !epoch_store.should_accept_tx(),
+            "#1736 backstop: with the handoff-cert quorum permanently missing the \
+             close must FIRE at rounds_since_quorum == grace*4 (liveness)"
+        );
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736 backstop: the backstop close must emit the EndOfPublish message"
+        );
+    }
+
+    /// #1736 (cert persistence): `install_expected_handoff_attestation` rebuilds
+    /// the aggregator from the persisted `handoff_signatures` table on install.
+    /// When that replay crosses quorum it mints the cert WITHOUT going through
+    /// `record_handoff_signature`'s `Certified` arm (the only other persist
+    /// path), so the install path must itself persist the replay-minted cert —
+    /// otherwise a validator that crossed quorum via replay holds the cert in
+    /// memory only and a later restart / joiner read misses it.
+    ///
+    /// Discriminates the fix from base: pre-fix the cert was minted in memory on
+    /// this path but never persisted, so the perpetual read below returned None.
+    #[tokio::test]
+    async fn install_expected_handoff_attestation_persists_replay_minted_cert() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        // Deterministic Ed25519 consensus keypairs (seeded — avoids the
+        // multiple-rand-version conflict that bites direct generate() in
+        // ika-core tests), one per validator, mapped to the committee names so
+        // the replay's signature re-verification accepts them.
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let provider = StaticConsensusPubkeyProvider::from_iter(
+            names
+                .iter()
+                .zip(&consensus_keypairs)
+                .map(|(name, keypair)| (*name, keypair.public().clone())),
+        );
+        epoch_store.install_consensus_pubkey_provider(Box::new(provider));
+
+        // Perpetual tables in their own tempdir, installed the way node startup
+        // does — without this the replay-mint persist is a silent no-op.
+        let perpetual_dir = tempfile::tempdir().unwrap();
+        let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+        epoch_store.install_perpetual_tables_for_handoff(perpetual_tables.clone());
+
+        // The attestation this validator expects to certify (empty items: only
+        // the persistence round-trip is under test).
+        let epoch = 0u64;
+        let attestation = build_handoff_attestation(epoch, [0xABu8; 32], vec![]).unwrap();
+
+        // Persist a quorum (3 of 4) of REAL handoff signatures over it. install
+        // replays these into a fresh aggregator; at the 3rd it crosses quorum and
+        // mints the cert during replay.
+        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
+            let message = sign_handoff_attestation(attestation.clone(), *name, keypair);
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &message.signature)
+                .unwrap();
+        }
+
+        assert!(
+            perpetual_tables
+                .get_certified_handoff_attestation(epoch)
+                .unwrap()
+                .is_none(),
+            "no cert should be persisted before install"
+        );
+
+        epoch_store
+            .install_expected_handoff_attestation(attestation)
+            .unwrap();
+
+        assert!(
+            perpetual_tables
+                .get_certified_handoff_attestation(epoch)
+                .unwrap()
+                .is_some(),
+            "#1736: install_expected_handoff_attestation must persist the cert it \
+             mints during signature replay (pre-fix it stayed in memory only)"
         );
     }
 
