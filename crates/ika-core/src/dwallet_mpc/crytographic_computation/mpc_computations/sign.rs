@@ -467,10 +467,10 @@ impl SignPublicInputByProtocol {
         hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-        // Pre-derived VSS Shamir-share + commitments cache for this network
-        // key. Empty (all-`None`) for non-VSS callers; required (and per-curve
-        // populated) for the three VSS protocols.
-        vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
+        // Pre-derived VSS Shamir cache. `None` for non-VSS callers (they never
+        // use it and must NOT wait on it — it only exists for V3 keys); `Some`
+        // for the three VSS protocols, unwrapped via `require_vss_cache`.
+        vss_shamir_cache: Option<&crate::dwallet_mpc::network_dkg::VssShamirCachePerKey>,
         protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
@@ -550,7 +550,7 @@ impl SignPublicInputByProtocol {
                     hash_scheme,
                     hash_context,
                     network_encryption_key_public_data,
-                    vss_shamir_cache,
+                    require_vss_cache(vss_shamir_cache)?,
                 )?,
             )),
             DWalletSignatureAlgorithm::EdDSAVSS => Ok(SignPublicInputByProtocol::EdDSAVSS(
@@ -562,7 +562,7 @@ impl SignPublicInputByProtocol {
                     hash_scheme,
                     hash_context,
                     network_encryption_key_public_data,
-                    vss_shamir_cache,
+                    require_vss_cache(vss_shamir_cache)?,
                 )?,
             )),
             DWalletSignatureAlgorithm::SchnorrkelVSS => {
@@ -575,12 +575,27 @@ impl SignPublicInputByProtocol {
                         hash_scheme,
                         hash_context,
                         network_encryption_key_public_data,
-                        vss_shamir_cache,
+                        require_vss_cache(vss_shamir_cache)?,
                     )?,
                 ))
             }
         }
     }
+}
+
+/// Unwraps the optional VSS Shamir cache at a VSS sign builder's point of use.
+/// Callers in `session_input_from_request` pass `Some` only for the three VSS
+/// protocols (and only fetch it for them), so `None` here means an internal
+/// inconsistency — never the transient `WaitingForNetworkKey` that the non-VSS
+/// path must never hit.
+fn require_vss_cache(
+    vss_shamir_cache: Option<&crate::dwallet_mpc::network_dkg::VssShamirCachePerKey>,
+) -> DwalletMPCResult<&crate::dwallet_mpc::network_dkg::VssShamirCachePerKey> {
+    vss_shamir_cache.ok_or_else(|| {
+        DwalletMPCError::InvalidInput(
+            "Fast Schnorr (VSS) sign requires the VSS Shamir cache".to_string(),
+        )
+    })
 }
 
 // Per-curve concrete sign-public-input builders. Each pulls its
@@ -1332,7 +1347,11 @@ impl DKGAndSignPublicInputByProtocol {
         hash_context: HashContext,
         access_structure: &WeightedThresholdAccessStructure,
         network_encryption_key_public_data: &NetworkEncryptionKeyPublicData,
-        vss_shamir_cache: &crate::dwallet_mpc::network_dkg::VssShamirCachePerKey,
+        // `None` for non-VSS; `Some` for VSS protocols (unwrapped via
+        // `require_vss_cache`). The combined DKG-and-sign path is never VSS,
+        // so in practice this is always `None` here — but kept symmetric with
+        // the sign-only `try_new`.
+        vss_shamir_cache: Option<&crate::dwallet_mpc::network_dkg::VssShamirCachePerKey>,
         protocol: DWalletSignatureAlgorithm,
     ) -> DwalletMPCResult<Self> {
         let expected_decrypters =
@@ -1448,7 +1467,7 @@ impl DKGAndSignPublicInputByProtocol {
                         hash_scheme,
                         hash_context,
                         network_encryption_key_public_data,
-                        vss_shamir_cache,
+                        require_vss_cache(vss_shamir_cache)?,
                     )?,
                 ))
             }
@@ -1467,7 +1486,7 @@ impl DKGAndSignPublicInputByProtocol {
                         hash_scheme,
                         hash_context,
                         network_encryption_key_public_data,
-                        vss_shamir_cache,
+                        require_vss_cache(vss_shamir_cache)?,
                     )?,
                 ))
             }
@@ -1486,7 +1505,7 @@ impl DKGAndSignPublicInputByProtocol {
                         hash_scheme,
                         hash_context,
                         network_encryption_key_public_data,
-                        vss_shamir_cache,
+                        require_vss_cache(vss_shamir_cache)?,
                     )?,
                 ))
             }
