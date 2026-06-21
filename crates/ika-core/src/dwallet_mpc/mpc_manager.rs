@@ -2360,6 +2360,19 @@ impl DWalletMPCManager {
                                         "failed to cache DKG output digest from adopted data"
                                     );
                                 }
+                                // Surface the canonical DKG-output version for
+                                // observability of the V2->V3 migration: it
+                                // reads 3 once this validator mirrors the
+                                // reconstructed full output.
+                                let canonical_version: i64 =
+                                    if key.reconstructed_full_network_dkg_output().is_some() {
+                                        3
+                                    } else {
+                                        key.network_dkg_output().version() as i64
+                                    };
+                                self.dwallet_mpc_metrics
+                                    .network_encryption_key_canonical_dkg_output_version
+                                    .set(canonical_version);
                             }
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a

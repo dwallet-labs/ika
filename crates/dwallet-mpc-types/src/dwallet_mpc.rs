@@ -501,6 +501,15 @@ impl VersionedNetworkDkgOutput {
             Self::V1(bytes) | Self::V2(bytes) | Self::V3(bytes) => bytes,
         }
     }
+
+    /// The wire version tag (1, 2, or 3).
+    pub fn version(&self) -> u64 {
+        match self {
+            Self::V1(_) => 1,
+            Self::V2(_) => 2,
+            Self::V3(_) => 3,
+        }
+    }
 }
 
 /// Wire-tagged decentralized-reconfiguration public output.

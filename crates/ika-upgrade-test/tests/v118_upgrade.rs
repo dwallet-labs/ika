@@ -207,6 +207,14 @@ async fn v118_atomic_upgrade_to_local_build() {
         // protocol). The snapshot's *window* vs `local-v4` isolates that
         // v4-math reshare from the cumulative averages.
         .wait_for_epoch(4)
+        // The deployed (1.1.8-created) network key's DKG output migrates V2->V3
+        // here. Epoch 2->3 reshared under v3 (V2 reconfiguration output); epoch
+        // 3->4 is the first reshare at v4 (`reconfiguration_message_version = 3`),
+        // producing the V3 reconfiguration output that lets each validator
+        // reconstruct the full V3 DKG output and mirror it into the off-chain
+        // handoff. Assert the migration actually happened (the on-chain copy
+        // stays V2 — this reads the validators' canonical-version metric).
+        .expect_network_dkg_output_version_at_least(3)
         .record_mpc_timings("v4-reshare")
         // Settled v4 lifecycle: pools were filled during epoch 3, the
         // boundary work is done, so this window prices v4 DKG / pool-served

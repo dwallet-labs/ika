@@ -131,6 +131,14 @@ pub struct DWalletMPCMetrics {
     /// rayon pool.
     pub(crate) network_key_instantiations_in_flight: IntGauge,
 
+    /// Version (2 or 3) of the canonical network DKG output this validator most
+    /// recently mirrored into the off-chain handoff. Migrates 2 -> 3 once, when
+    /// a deployed key's cert-pinned reconfiguration output becomes V3 (protocol
+    /// v4) and the validator reconstructs the full V3 output. `0` until the
+    /// first off-chain instantiation. (With one network key this reflects that
+    /// key; with several it reflects the most recently instantiated.)
+    pub(crate) network_encryption_key_canonical_dkg_output_version: IntGauge,
+
     /// Network-key instantiation failures by reason (`channel_closed`,
     /// `epoch_mismatch`, `decrypt_failed`, `instantiate_failed`). Note
     /// `decrypt_failed` is an expected transient for recently-joined
@@ -294,6 +302,12 @@ impl DWalletMPCMetrics {
             network_key_instantiations_in_flight: register_int_gauge_with_registry!(
                 "dwallet_mpc_network_key_instantiations_in_flight",
                 "Network-key instantiations currently in flight on the rayon pool",
+                registry
+            )
+            .unwrap(),
+            network_encryption_key_canonical_dkg_output_version: register_int_gauge_with_registry!(
+                "ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version",
+                "Version (2 or 3) of the canonical network DKG output mirrored into the off-chain handoff; migrates 2 -> 3 at the V2->V3 anchor migration",
                 registry
             )
             .unwrap(),

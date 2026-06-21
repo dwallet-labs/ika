@@ -47,6 +47,11 @@ pub enum Step {
         buffer_bps: u64,
     },
     ExpectProtocolVersionAtLeast(u64),
+    /// Poll until every running validator reports a canonical network DKG
+    /// output version `>= at_least` (via its `/metrics`), or time out. Confirms
+    /// the off-chain handoff migrated the DKG output (e.g. 2 -> 3 after the v4
+    /// reconfiguration); the on-chain copy stays V2, so this is metric-based.
+    ExpectNetworkDkgOutputVersionAtLeast(u64),
     /// Register a brand-new validator on chain (candidate → stake → join) and
     /// spawn its process on the given binary. It enters the active committee
     /// at the next epoch boundary.
@@ -104,6 +109,9 @@ impl std::fmt::Display for Step {
             Step::SetBufferStake { buffer_bps } => write!(f, "set_buffer_stake({buffer_bps})"),
             Step::ExpectProtocolVersionAtLeast(v) => {
                 write!(f, "expect_protocol_version_at_least({v})")
+            }
+            Step::ExpectNetworkDkgOutputVersionAtLeast(v) => {
+                write!(f, "expect_network_dkg_output_version_at_least({v})")
             }
             Step::JoinValidator(spec) => write!(f, "join_validator({})", spec.label()),
             Step::JoinValidatorMirrored(spec) => {
@@ -236,6 +244,14 @@ impl Scenario {
 
     pub fn expect_protocol_version_at_least(mut self, version: u64) -> Self {
         self.steps.push(Step::ExpectProtocolVersionAtLeast(version));
+        self
+    }
+
+    /// Assert the off-chain handoff migrated the network DKG output to at least
+    /// `version` (polled across all running validators' metrics).
+    pub fn expect_network_dkg_output_version_at_least(mut self, version: u64) -> Self {
+        self.steps
+            .push(Step::ExpectNetworkDkgOutputVersionAtLeast(version));
         self
     }
 
@@ -443,6 +459,31 @@ impl Scenario {
                         expected = *version,
                         "protocol version assertion passed"
                     );
+                }
+                Step::ExpectNetworkDkgOutputVersionAtLeast(at_least) => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectNetworkDkgOutputVersionAtLeast before StartAll")?;
+                    let deadline = tokio::time::Instant::now() + self.epoch_timeout;
+                    loop {
+                        let got = c.min_canonical_network_dkg_output_version().await;
+                        if got >= *at_least {
+                            tracing::info!(
+                                got,
+                                expected = *at_least,
+                                "network DKG output version assertion passed \
+                                 (off-chain handoff migrated)"
+                            );
+                            break;
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            bail!(
+                                "min canonical network DKG output version {got} < expected \
+                                 {at_least} after timeout — the off-chain handoff did not migrate"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
                 }
                 Step::JoinValidator(spec) => {
                     let binary = resolve(&resolver, spec).await?;
