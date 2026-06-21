@@ -109,6 +109,33 @@ pub struct NetworkEncryptionKeyPublicData {
     /// The public output of the `NetworkDKG` process (the first and only one).
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
+
+    /// Forward-looking full-shape (V3) network DKG output, reconstructed in
+    /// memory from [`Self::network_dkg_output`] and the latest reconfiguration
+    /// output.
+    ///
+    /// The deployed network key's DKG output is a V2 (backward-compatible)
+    /// `PublicOutputCore`, which lacks the trailing
+    /// `threshold_encryption_to_sharing_output` that the full V3
+    /// `decentralized_party::dkg::PublicOutput` carries. That field is produced
+    /// only by the threshold-encryption-to-sharing sub-protocol, which the
+    /// backward-compatible reconfiguration predates. Once a reconfiguration
+    /// produces a full V3 reconfiguration output, the field becomes available
+    /// and the full V3 DKG output is reconstructed by combining the V2 output's
+    /// reconfiguration-invariant class-group DKG output with the V3
+    /// reconfiguration output.
+    ///
+    /// `Some` only when [`Self::network_dkg_output`] is V2 AND a V3
+    /// reconfiguration output is available; `None` otherwise (a natively-V3 DKG
+    /// output needs no reconstruction, and a V2-only reconfiguration output
+    /// lacks the trailing field).
+    ///
+    /// In-memory-only and NOT a consensus anchor: [`Self::network_dkg_output`]
+    /// feeds the internal-presign / sign session identifiers and the
+    /// cross-epoch handoff digest and MUST stay the V2 bytes. This
+    /// reconstruction exists for a future network-owned-address Shamir-sharing
+    /// consumer.
+    pub reconstructed_full_network_dkg_output: Option<VersionedNetworkDkgOutput>,
     pub secp256k1_protocol_public_parameters:
         Arc<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters>,
     /// The public parameters of the decryption key shares,
@@ -567,6 +594,16 @@ impl NetworkEncryptionKeyPublicData {
     pub fn network_dkg_output(&self) -> &VersionedNetworkDkgOutput {
         &self.network_dkg_output
     }
+
+    /// The forward-looking full-shape (V3) network DKG output reconstructed in
+    /// memory, or `None` when no reconstruction was possible this epoch. See
+    /// [`Self::reconstructed_full_network_dkg_output`] — this is NOT the
+    /// consensus anchor; use [`Self::network_dkg_output`] for session
+    /// identifiers and handoff digests.
+    pub fn reconstructed_full_network_dkg_output(&self) -> Option<&VersionedNetworkDkgOutput> {
+        self.reconstructed_full_network_dkg_output.as_ref()
+    }
+
     pub fn state(&self) -> &NetworkDecryptionKeyPublicOutputType {
         &self.state
     }

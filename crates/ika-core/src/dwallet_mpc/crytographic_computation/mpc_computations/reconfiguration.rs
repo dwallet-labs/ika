@@ -496,23 +496,21 @@ pub(crate) fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_re
                 )
             })?;
 
-            Ok::<NetworkEncryptionKeyPublicData, DwalletMPCError>(
-                build_network_encryption_key_public_data(
-                    epoch,
-                    dkg_at_epoch,
-                    NetworkDecryptionKeyPublicOutputType::Reconfiguration,
-                    Some(mpc_public_output.clone()),
-                    bcs::from_bytes(network_dkg_public_output)?,
-                    secp256k1_protocol_public_parameters,
-                    secp256k1_decryption_key_share_public_parameters,
-                    secp256r1_protocol_public_parameters,
-                    secp256r1_decryption_key_share_public_parameters,
-                    ristretto_protocol_public_parameters,
-                    ristretto_decryption_key_share_public_parameters,
-                    curve25519_protocol_public_parameters,
-                    curve25519_decryption_key_share_public_parameters,
-                    &noa_dkg_data,
-                ),
+            build_network_encryption_key_public_data(
+                epoch,
+                dkg_at_epoch,
+                NetworkDecryptionKeyPublicOutputType::Reconfiguration,
+                Some(mpc_public_output.clone()),
+                bcs::from_bytes(network_dkg_public_output)?,
+                secp256k1_protocol_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
+                secp256r1_protocol_public_parameters,
+                secp256r1_decryption_key_share_public_parameters,
+                ristretto_protocol_public_parameters,
+                ristretto_decryption_key_share_public_parameters,
+                curve25519_protocol_public_parameters,
+                curve25519_decryption_key_share_public_parameters,
+                &noa_dkg_data,
             )
         }};
     }
