@@ -2545,12 +2545,28 @@ impl IkaNode {
                                     );
                                     let _ = fail_closed_shutdown.send(None);
                                 }
-                                // Benign: no peer served a cert within the
-                                // attempt budget (propagation lag) — already
-                                // logged inside `run()`; the anchor is merely
-                                // unconfirmed, not contradicted.
+                                // The attempt budget was exhausted with no peer
+                                // serving a cert. Usually propagation lag (the
+                                // anchor is merely unconfirmed, not
+                                // contradicted) — but it is ALSO the visible
+                                // symptom of #1736: if the epoch closed without a
+                                // handoff-cert quorum the cert was minted on NO
+                                // validator and will never become available, so
+                                // this epoch stalls at the prepare-then-start
+                                // barrier. Surface it loudly (alertable) instead
+                                // of silently benign so an operator can tell lag
+                                // from a missing cert.
                                 BootstrapOutcome::Unavailable => {
                                     bootstrap_outcomes.with_label_values(&["unavailable"]).inc();
+                                    warn!(
+                                        prior_epoch,
+                                        "cross-epoch bootstrap obtained no handoff cert from any \
+                                         peer within the attempt budget — likely propagation lag, \
+                                         but if it persists the cert may have been minted on no \
+                                         validator (epoch closed without a handoff-cert quorum, \
+                                         #1736) and this epoch will stall at the prepare-then-start \
+                                         barrier"
+                                    );
                                 }
                             }
                         }))

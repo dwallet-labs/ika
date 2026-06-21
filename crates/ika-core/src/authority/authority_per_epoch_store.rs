@@ -2327,7 +2327,11 @@ impl AuthorityPerEpochStore {
         }
         let aggregator_signer_count = aggregator.signer_count();
         let aggregator_stake = aggregator.accumulated_stake();
-        let replay_certified_epoch = aggregator.certified().map(|cert| cert.attestation.epoch);
+        // Capture the full cert (not just the epoch) BEFORE the aggregator
+        // moves into the guard, so a cert re-minted during replay can be
+        // persisted below — it did not go through `record_handoff_signature`'s
+        // `Certified` arm, which is otherwise the only persist path.
+        let replay_cert = aggregator.certified().cloned();
         *guard = Some(aggregator);
         drop(guard);
         // Positive baseline record of what this validator attested to —
@@ -2348,14 +2352,29 @@ impl AuthorityPerEpochStore {
         self.metrics
             .dwallet_handoff_signatures_stake
             .set(aggregator_stake as i64);
-        // A restart past quorum re-mints the cert in memory during the
-        // replay above without going through `record_handoff_signature`'s
-        // `Certified` arm — re-seed the gauge here so a restart doesn't
-        // false-fire the cert-lag alert.
-        if let Some(cert_epoch) = replay_certified_epoch {
+        // A restart (or buffered-quorum) past quorum re-mints the cert in
+        // memory during the replay above without going through
+        // `record_handoff_signature`'s `Certified` arm. Re-seed the gauge so a
+        // restart doesn't false-fire the cert-lag alert AND persist the cert: it
+        // was minted here, not via the only other persist path, so without this
+        // a validator that crossed quorum via replay holds the cert in memory
+        // only, and a later restart or joiner-bootstrap read misses it (#1736:
+        // persist on every mint path).
+        if let Some(cert) = &replay_cert {
             self.metrics
                 .dwallet_handoff_cert_epoch
-                .set(cert_epoch as i64);
+                .set(cert.attestation.epoch as i64);
+            if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+                if let Err(e) =
+                    perpetual.insert_certified_handoff_attestation(cert.attestation.epoch, cert)
+                {
+                    warn!(
+                        error = ?e,
+                        epoch = cert.attestation.epoch,
+                        "failed to persist replay-minted handoff cert — cert remains in-memory only"
+                    );
+                }
+            }
         }
         // Drain peer V2 signatures that arrived before this
         // attestation was installed. Each goes through
@@ -3053,6 +3072,40 @@ impl AuthorityPerEpochStore {
             .map(|(signer, _)| committee.weight(&signer))
             .sum();
         Ok(stake >= committee.quorum_threshold())
+    }
+
+    /// Pure v4 epoch-close decision (#1736), factored out so the handoff-cert
+    /// coupling is unit-tested independently of the consensus machinery.
+    /// Returns `None` to keep waiting, `Some(false)` for a normal close
+    /// (handoff-cert quorum reached), `Some(true)` for a liveness-backstop close
+    /// (the quorum could not form within the bounded backstop window).
+    ///
+    /// The close requires the existing EndOfPublish readiness (`eop_ready` = all
+    /// voted, or the grace elapsed) AND a handoff-cert quorum — EXCEPT after the
+    /// backstop (a small multiple of the EndOfPublish grace), which closes
+    /// regardless to preserve liveness against a genuinely non-signing
+    /// validator. The close never fires before EndOfPublish readiness.
+    fn decide_v4_epoch_close(
+        eop_ready: bool,
+        handoff_cert_quorum: bool,
+        rounds_since_quorum: u64,
+        end_of_publish_grace_rounds: u64,
+    ) -> Option<bool> {
+        /// How many EndOfPublish-grace windows to wait for the handoff-cert
+        /// quorum before closing on the liveness backstop.
+        const HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER: u64 = 4;
+        if !eop_ready {
+            return None;
+        }
+        if handoff_cert_quorum {
+            Some(false)
+        } else if rounds_since_quorum
+            >= end_of_publish_grace_rounds.saturating_mul(HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER)
+        {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// Records an `EpochMpcDataReadySignal`. A signer's signal may
@@ -4023,22 +4076,16 @@ impl AuthorityPerEpochStore {
                 // same round.
                 let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
 
-                // Liveness backstop: if the handoff quorum genuinely cannot form
-                // (a real byzantine / permanently-dead validator keeps the valid
-                // handoff stake below quorum), don't hang the chain forever —
-                // after a bounded multiple of the EndOfPublish grace, close
-                // anyway with a loud warn so the operator knows the next epoch
-                // may stall on the missing cert and can investigate the
-                // non-signing validators.
-                const HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER: u64 = 4;
-                let backstop_elapsed = rounds_since_quorum
-                    >= self
-                        .protocol_config()
-                        .end_of_publish_grace_rounds()
-                        .saturating_mul(HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER);
-
-                if (eop_ready && handoff_cert_quorum) || backstop_elapsed {
-                    let backstop_close = backstop_elapsed && !handoff_cert_quorum;
+                // The close decision (and the liveness backstop for a genuinely
+                // non-signing validator) is the pure, unit-tested
+                // `decide_v4_epoch_close`: `Some(on_backstop)` closes, `None`
+                // keeps waiting for the handoff-cert quorum.
+                if let Some(backstop_close) = Self::decide_v4_epoch_close(
+                    eop_ready,
+                    handoff_cert_quorum,
+                    rounds_since_quorum,
+                    self.protocol_config().end_of_publish_grace_rounds(),
+                ) {
                     let (dwallet_close_messages, system_close_messages) =
                         self.build_epoch_close_checkpoint_messages()?;
                     for message in dwallet_close_messages {
@@ -5165,6 +5212,43 @@ mod tests {
     fn create_tables() -> AuthorityEpochTables {
         let dir = tempfile::tempdir().unwrap();
         AuthorityEpochTables::open(0, dir.path(), None)
+    }
+
+    /// #1736: the v4 epoch close must require a handoff-cert quorum (not just
+    /// EndOfPublish readiness), with a bounded liveness backstop.
+    #[test]
+    fn v4_epoch_close_requires_handoff_cert_quorum() {
+        let grace = 50u64;
+        let backstop = grace * 4; // HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER
+        let decide = AuthorityPerEpochStore::decide_v4_epoch_close;
+
+        // Not EndOfPublish-ready: never close, regardless of the cert quorum or
+        // how many rounds have passed.
+        assert_eq!(decide(false, false, 0, grace), None);
+        assert_eq!(decide(false, true, backstop, grace), None);
+
+        // EndOfPublish-ready AND handoff-cert quorum: normal close.
+        assert_eq!(decide(true, true, 0, grace), Some(false));
+        assert_eq!(decide(true, true, grace, grace), Some(false));
+
+        // THE #1736 GUARANTEE: EndOfPublish-ready but NO handoff-cert quorum —
+        // do NOT close before the backstop, however long the EndOfPublish grace
+        // alone has elapsed. (Pre-fix this closed at `grace`, with no cert.)
+        assert_eq!(decide(true, false, grace, grace), None);
+        assert_eq!(decide(true, false, backstop - 1, grace), None);
+
+        // Backstop reached without a handoff-cert quorum: close on the backstop
+        // (liveness), flagged as a backstop close.
+        assert_eq!(decide(true, false, backstop, grace), Some(true));
+        assert_eq!(decide(true, false, backstop + 100, grace), Some(true));
+
+        // Quorum arriving exactly at the backstop round is a normal close, not a
+        // backstop close.
+        assert_eq!(decide(true, true, backstop, grace), Some(false));
+
+        // Degenerate zero-grace config collapses the backstop to 0: close as
+        // soon as EndOfPublish-ready, never blocking.
+        assert_eq!(decide(true, false, 0, 0), Some(true));
     }
 
     fn make_session_id(preimage: [u8; 32]) -> SessionIdentifier {
