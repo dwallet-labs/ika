@@ -123,7 +123,6 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
         .add_joiner_validator()
         .await
         .expect("add_joiner_validator failed");
-    let joiner_name = joiner.authority_name();
 
     cluster.wait_for_epoch(2).await;
     // Fail fast instead of hanging: an excluded joiner never enters the
@@ -139,6 +138,8 @@ async fn test_joiner_lands_in_next_committee_class_groups() {
         "joiner did not reach epoch 2 within 60s of the cluster — \
          likely excluded from the freeze (its mpc_data never propagated)",
     );
+
+    let joiner_name = joiner.authority_name();
 
     // Read the epoch-2 committee from the joiner's own node and assert
     // its class-groups material is present — i.e. the freeze captured

@@ -88,7 +88,20 @@ pub struct Committee {
         HashMap<AuthorityName, ClassGroupsEncryptionKeyAndProof>,
     pub quorum_threshold: u64,
     pub validity_threshold: u64,
+    /// `AuthorityName -> BLS protocol pubkey`, for BLS aggregate-certificate
+    /// verification. The name is the BLS key, so this is decoded from it (a
+    /// cache).
+    // TODO(consensus-key-certs): once the network is fully on v4 and BLS
+    // aggregate certs are replaced by consensus-key-signed certs, drop
+    // `expanded_keys` / `public_key()` and the validators' BLS key entirely —
+    // `AuthorityName` can then become the consensus key.
     expanded_keys: HashMap<AuthorityName, AuthorityPublicKey>,
+    /// `AuthorityName -> consensus Ed25519 pubkey`, for verifying
+    /// consensus-key-signed messages (handoff certs today, more certs later).
+    /// Supplied at construction from chain — the BLS-derived name can't
+    /// recover it. May be empty for committees that never verify such
+    /// messages (e.g. legacy/test committees).
+    consensus_keys: HashMap<AuthorityName, NetworkPublicKey>,
     /// AuthorityName -> to PartyID (from 0).
     index_map: HashMap<AuthorityName, usize>,
 }
@@ -101,6 +114,7 @@ impl Committee {
             AuthorityName,
             ClassGroupsEncryptionKeyAndProof,
         >,
+        consensus_keys: HashMap<AuthorityName, NetworkPublicKey>,
         quorum_threshold: u64,
         validity_threshold: u64,
     ) -> Self {
@@ -114,6 +128,7 @@ impl Committee {
             voting_rights,
             class_groups_public_keys_and_proofs,
             expanded_keys,
+            consensus_keys,
             index_map,
             quorum_threshold,
             validity_threshold,
@@ -149,12 +164,17 @@ impl Committee {
             epoch,
             voting_weights.into_iter().collect(),
             HashMap::new(),
+            HashMap::new(),
             quorum_threshold,
             validity_threshold,
         )
     }
 
     // We call this if these have not yet been computed
+    /// Builds the `expanded_keys` (`AuthorityName -> BLS protocol pubkey`,
+    /// for aggregate-cert verification) and `index_map`
+    /// (`AuthorityName -> position`) caches. The name IS the BLS key, so
+    /// `expanded_keys` is decoded directly from `voting_rights`.
     pub fn load_inner(
         voting_rights: &[(AuthorityName, StakeUnit)],
     ) -> (
@@ -203,6 +223,14 @@ impl Committee {
                 self.expanded_keys.len()
             ))),
         }
+    }
+
+    /// The signer's consensus Ed25519 pubkey, if this committee carries it.
+    /// Used to verify consensus-key-signed messages (handoff certs today).
+    /// `None` means the committee wasn't built with this signer's consensus
+    /// key, so the caller treats the signature as unverifiable and drops it.
+    pub fn consensus_key(&self, authority: &AuthorityName) -> Option<&NetworkPublicKey> {
+        self.consensus_keys.get(authority)
     }
 
     /// Return a `HashMap` from **1-based** `PartyID` to `AuthorityName`.

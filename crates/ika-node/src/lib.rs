@@ -708,7 +708,7 @@ impl IkaNode {
         let dwallet_mpc_metrics = DWalletMPCMetrics::new(&registry_service.default_registry());
 
         let epoch_store = AuthorityPerEpochStore::new(
-            config.protocol_public_key(),
+            config.authority_name(),
             committee_arc.clone(),
             &config.db_path().join("store"),
             Some(epoch_options.options),
@@ -2009,7 +2009,7 @@ impl IkaNode {
             Box::new(SubmitDWalletCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config.protocol_public_key(),
+                authority: config.authority_name(),
                 metrics: checkpoint_metrics.clone(),
             });
 
@@ -2065,7 +2065,7 @@ impl IkaNode {
             Box::new(SubmitSystemCheckpointToConsensus {
                 sender: consensus_adapter,
                 signer: state.secret.clone(),
-                authority: config.protocol_public_key(),
+                authority: config.authority_name(),
                 metrics: system_checkpoint_metrics.clone(),
             });
 
@@ -2302,16 +2302,11 @@ impl IkaNode {
                     BootstrapOutcome, BootstrapRetryConfig, CertVerifier, JoinerBootstrapVerifier,
                     P2pHandoffCertSource, warn_bootstrap_inputs_unavailable,
                 };
-                use ika_core::sui_connector::pubkey_provider_updater::{
-                    fetch_previous_committee, fetch_previous_committee_consensus_pubkeys,
-                };
+                use ika_core::sui_connector::pubkey_provider_updater::fetch_previous_committee;
                 use ika_core::validator_metadata::{
-                    StaticConsensusPubkeyProvider, next_committee_pubkey_set,
-                    verify_joiner_bootstrap_cert,
+                    next_committee_pubkey_set, verify_joiner_bootstrap_cert,
                 };
-                use ika_types::sui::epoch_start_system::{
-                    EpochStartSystemTrait, EpochStartValidatorInfoTrait,
-                };
+                use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
                 let current_epoch = cur_epoch_store.epoch();
                 let prior_epoch = current_epoch - 1;
                 let self_name = cur_epoch_store.name;
@@ -2369,17 +2364,6 @@ impl IkaNode {
                 match prior_committee {
                     Some(prior_committee) => {
                         let is_joiner = !prior_committee.authority_exists(&self_name);
-                        // Consensus pubkeys are fixed at registration, so
-                        // the current epoch's active-validator set supplies
-                        // the continuing prior-committee signers' keys.
-                        // Members that have since departed the active set
-                        // are resolved from chain inside the task below.
-                        let current_consensus_pubkeys: Vec<_> = cur_epoch_store
-                            .epoch_start_state()
-                            .get_ika_validators()
-                            .into_iter()
-                            .map(|v| (v.authority_name(), v.get_consensus_pubkey()))
-                            .collect();
                         let expected_next = next_committee_pubkey_set(cur_epoch_store.committee());
                         let peer_ids: Vec<anemo::PeerId> = cur_epoch_store
                             .epoch_start_state()
@@ -2408,40 +2392,21 @@ impl IkaNode {
                         let fetch_store = cur_epoch_store.clone();
                         let cert_perpetual = perpetual.clone();
                         let fail_closed_shutdown = self.shutdown_channel_tx.clone();
-                        let bootstrap_sui_client = sui_client.clone();
                         let bootstrap_outcomes =
                             self.metrics.joiner_bootstrap_outcomes_total.clone();
                         Some(tokio::spawn(async move {
-                            // Resolve the prior committee's consensus
-                            // pubkeys for cert verification. Continuing
-                            // members come from the current active set
-                            // (already in hand); members that departed the
-                            // active set since signing are chain-read by
-                            // object id (their StakingPool persists), so a
-                            // valid cert isn't wrongly Rejected under churn.
-                            // Best-effort: on RPC failure proceed with the
-                            // current set and let the retry loop re-attempt.
-                            let mut consensus_pubkeys = current_consensus_pubkeys;
-                            match fetch_previous_committee_consensus_pubkeys(&bootstrap_sui_client)
-                                .await
-                            {
-                                Ok(prior) => consensus_pubkeys.extend(prior),
-                                Err(e) => warn!(
-                                    error = ?e,
-                                    prior_epoch,
-                                    "failed to chain-read prior-committee consensus pubkeys; \
-                                     proceeding with the current active set only"
-                                ),
-                            }
-                            let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(
-                                consensus_pubkeys,
-                            ));
+                            // The prior committee carries every member's
+                            // consensus key — continuing members and ones
+                            // that departed the active set since signing
+                            // (chain-read by object id when the committee was
+                            // built) — so it serves as the cert verifier's
+                            // consensus-pubkey provider directly.
                             let verify: CertVerifier = Arc::new(move |cert| {
                                 verify_joiner_bootstrap_cert(
                                     cert,
                                     prior_epoch,
                                     &prior_committee,
-                                    provider.as_ref(),
+                                    prior_committee.as_ref(),
                                     expected_next.iter().copied(),
                                 )
                             });
@@ -2674,25 +2639,6 @@ impl IkaNode {
                 }
             }
 
-            // Installs a `ConsensusPubkeyProvider` from the current
-            // committee's on-chain `consensus_pubkey_bytes` so the
-            // per-epoch store can verify incoming
-            // `HandoffSignatureMessage`s (otherwise every one drops
-            // as `UnknownSigner`).
-            let consensus_pubkey_updater_handle = if off_chain_metadata_enabled {
-                let updater = ika_core::sui_connector::pubkey_provider_updater::PubkeyProviderUpdater::new_for_active_committee(
-                        Arc::downgrade(&cur_epoch_store),
-                        cur_epoch_store.epoch(),
-                        sui_client.clone(),
-                    );
-                let updater = Arc::new(updater);
-                Some(tokio::spawn(async move {
-                    updater.run().await;
-                }))
-            } else {
-                None
-            };
-
             let stop_condition = self
                 .sui_connector_service
                 .run_epoch(cur_epoch_store.epoch(), run_with_range)
@@ -2735,10 +2681,6 @@ impl IkaNode {
                 Some(())
             });
             joiner_bootstrap_handle.map(|handle| {
-                handle.abort();
-                Some(())
-            });
-            consensus_pubkey_updater_handle.map(|handle| {
                 handle.abort();
                 Some(())
             });
@@ -3054,11 +2996,9 @@ impl IkaNode {
             P2pHandoffCertSource,
         };
         use ika_core::validator_metadata::{
-            StaticConsensusPubkeyProvider, next_committee_pubkey_set, verify_joiner_bootstrap_cert,
+            next_committee_pubkey_set, verify_joiner_bootstrap_cert,
         };
-        use ika_types::sui::epoch_start_system::{
-            EpochStartSystemTrait, EpochStartValidatorInfoTrait,
-        };
+        use ika_types::sui::epoch_start_system::EpochStartSystemTrait;
 
         // Build the verification closure FIRST so it can re-verify a
         // persisted cert as well as back the fetch path. The signing
@@ -3067,12 +3007,6 @@ impl IkaNode {
         // committee. Its members' consensus pubkeys are fixed at
         // registration and are in the current active validator set.
         let signing_committee = cur_epoch_store.committee().as_ref().clone();
-        let consensus_pubkeys: Vec<_> = cur_epoch_store
-            .epoch_start_state()
-            .get_ika_validators()
-            .into_iter()
-            .map(|v| (v.authority_name(), v.get_consensus_pubkey()))
-            .collect();
         // The cert pins the hash of the committee being handed into —
         // the epoch we are entering, whose committee is `new_epoch_store`'s.
         let expected_next = next_committee_pubkey_set(new_epoch_store.committee());
@@ -3082,13 +3016,14 @@ impl IkaNode {
             .into_values()
             .collect();
 
-        let provider = Arc::new(StaticConsensusPubkeyProvider::from_iter(consensus_pubkeys));
+        // The signing committee carries its members' consensus keys, so it
+        // serves as the cert verifier's consensus-pubkey provider directly.
         let verify: CertVerifier = Arc::new(move |cert| {
             verify_joiner_bootstrap_cert(
                 cert,
                 anchor_epoch,
                 &signing_committee,
-                provider.as_ref(),
+                &signing_committee,
                 expected_next.iter().copied(),
             )
         });
@@ -3537,7 +3472,7 @@ fn send_trusted_peer_change(
 ) -> Result<(), watch::error::SendError<TrustedPeerChangeEvent>> {
     sender
         .send(TrustedPeerChangeEvent {
-            new_peers: epoch_state_state.get_validator_as_p2p_peers(config.protocol_public_key()),
+            new_peers: epoch_state_state.get_validator_as_p2p_peers(config.authority_name()),
         })
         .tap_err(|err| {
             warn!(

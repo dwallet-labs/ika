@@ -31,13 +31,13 @@ use crate::dwallet_checkpoints::{
     PendingDWalletCheckpoint,
 };
 use crate::validator_metadata::{
-    ConsensusPubkeyProvider, HandoffAggregator, HandoffSignatureRecordOutcome,
-    HandoffSignatureVerdict, JoinerAnnouncementVerdict, JoinerPubkeyProvider,
-    MAX_PENDING_RELAYED_JOINER_ANNOUNCEMENTS, NetworkKeyBlobSource,
-    PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL, PendingRelayedJoinerAnnouncement,
-    build_handoff_attestation, hash_next_committee_pubkey_set, process_handoff_signature,
-    push_buffered_joiner_announcement, reevaluate_buffered_joiner_announcements,
-    sign_handoff_attestation, verify_handoff_signature, verify_joiner_announcement,
+    HandoffAggregator, HandoffSignatureRecordOutcome, HandoffSignatureVerdict,
+    JoinerAnnouncementVerdict, JoinerPubkeyProvider, MAX_PENDING_RELAYED_JOINER_ANNOUNCEMENTS,
+    NetworkKeyBlobSource, PENDING_RELAYED_JOINER_ANNOUNCEMENT_TTL,
+    PendingRelayedJoinerAnnouncement, build_handoff_attestation, hash_next_committee_pubkey_set,
+    process_handoff_signature, push_buffered_joiner_announcement,
+    reevaluate_buffered_joiner_announcements, sign_handoff_attestation, verify_handoff_signature,
+    verify_joiner_announcement,
 };
 
 use crate::consensus_handler::{
@@ -888,12 +888,6 @@ pub struct AuthorityPerEpochStore {
     /// which case every next-epoch joiner announcement is dropped.
     /// Current-epoch announcements are unaffected.
     joiner_pubkey_provider: ArcSwapOption<Box<dyn JoinerPubkeyProvider>>,
-
-    /// Consensus-key (Ed25519) lookup for handoff signatures; the
-    /// sui_syncer populates it from current committee + pending-set
-    /// staking-pool `consensus_pubkey_bytes`. Empty until the syncer
-    /// runs, in which case incoming handoff signatures drop.
-    consensus_pubkey_provider: ArcSwapOption<Box<dyn ConsensusPubkeyProvider>>,
 
     /// This validator's locally-computed handoff attestation for the
     /// epoch — the value every honest validator must arrive at by
@@ -1790,7 +1784,6 @@ impl AuthorityPerEpochStore {
             }),
             end_of_publish: Mutex::new(end_of_publish),
             joiner_pubkey_provider: ArcSwapOption::empty(),
-            consensus_pubkey_provider: ArcSwapOption::empty(),
             expected_handoff_attestation: ArcSwapOption::empty(),
             pending_handoff_signatures: parking_lot::Mutex::new(Vec::new()),
             pending_relayed_joiner_announcements: parking_lot::Mutex::new(Vec::new()),
@@ -1876,10 +1869,22 @@ impl AuthorityPerEpochStore {
 
     pub fn new_at_next_epoch_for_testing(&self) -> IkaResult<Arc<Self>> {
         let next_epoch = self.epoch() + 1;
+        // Carry the committee's consensus keys forward so the fabricated
+        // next committee can still verify consensus-key-signed messages.
+        let consensus_keys = self
+            .committee
+            .names()
+            .filter_map(|name| {
+                self.committee
+                    .consensus_key(name)
+                    .map(|key| (*name, key.clone()))
+            })
+            .collect();
         let next_committee = Committee::new(
             next_epoch,
             self.committee.voting_rights.to_vec(),
             self.committee.class_groups_public_keys_and_proofs.clone(),
+            consensus_keys,
             self.committee.quorum_threshold,
             self.committee.validity_threshold,
         );
@@ -2341,39 +2346,6 @@ impl AuthorityPerEpochStore {
         self.joiner_pubkey_provider.load_full()
     }
 
-    /// Install the consensus-key (Ed25519) lookup used for handoff
-    /// signature verification. Re-installable across epoch
-    /// boundaries; safe to call from non-consensus tasks.
-    pub fn install_consensus_pubkey_provider(&self, provider: Box<dyn ConsensusPubkeyProvider>) {
-        self.consensus_pubkey_provider
-            .store(Some(Arc::new(provider)));
-        // Signatures that arrived after the expected attestation installed
-        // but before this provider did were re-buffered (verification was
-        // impossible without consensus pubkeys). Replay them now that it is.
-        // If the expected attestation is still absent they simply re-buffer;
-        // each runs through full verification otherwise.
-        let drained: Vec<_> = std::mem::take(&mut *self.pending_handoff_signatures.lock());
-        if !drained.is_empty() {
-            info!(
-                pending = drained.len(),
-                epoch = self.epoch(),
-                "replaying buffered handoff signatures after consensus-pubkey provider install"
-            );
-            for msg in drained {
-                if let Err(e) = self.record_handoff_signature(&msg) {
-                    warn!(
-                        error = ?e,
-                        signer = ?msg.signer,
-                        "failed to replay buffered handoff signature after provider install"
-                    );
-                }
-            }
-            self.metrics
-                .dwallet_handoff_signatures_buffered
-                .set(self.pending_handoff_signatures.lock().len() as i64);
-        }
-    }
-
     /// Install the locally-computed expected handoff attestation
     /// for the epoch. Rebuilds the in-memory `HandoffAggregator`
     /// from any signatures already persisted in
@@ -2407,32 +2379,30 @@ impl AuthorityPerEpochStore {
         // items), those rows endorse the old bytes and must not count
         // toward the new cert. Re-verification keeps the restart path
         // correct (same attestation ⇒ rows re-verify and are kept)
-        // while dropping stale rows on a mid-epoch change. If no
-        // consensus-pubkey provider is installed yet (early startup)
-        // fall back to trusting the persist-time verification. Order
-        // doesn't matter — the aggregator is stake-weighted.
-        let provider = self.consensus_pubkey_provider.load_full();
+        // while dropping stale rows on a mid-epoch change. The committee
+        // carries every member's consensus key, so verification is always
+        // possible (no early-startup fallback needed). Order doesn't
+        // matter — the aggregator is stake-weighted.
+        let committee = self.committee();
         let tables = self.tables()?;
         let mut replayed_signatures: usize = 0;
         for entry in tables.handoff_signatures.safe_iter() {
             let (signer, signature) = entry?;
-            if let Some(provider) = provider.as_ref() {
-                let msg = ika_types::handoff::HandoffSignatureMessage {
-                    attestation: attestation.clone(),
-                    signer,
-                    signature: signature.clone(),
-                };
-                if verify_handoff_signature(&msg, &attestation, provider.as_ref().as_ref())
-                    != HandoffSignatureVerdict::Accept
-                {
-                    warn!(
-                        signer = ?signer,
-                        epoch = attestation.epoch,
-                        "persisted handoff signature no longer verifies against the \
-                         installed attestation — dropping on replay"
-                    );
-                    continue;
-                }
+            let msg = ika_types::handoff::HandoffSignatureMessage {
+                attestation: attestation.clone(),
+                signer,
+                signature: signature.clone(),
+            };
+            if verify_handoff_signature(&msg, &attestation, committee.as_ref())
+                != HandoffSignatureVerdict::Accept
+            {
+                warn!(
+                    signer = ?signer,
+                    epoch = attestation.epoch,
+                    "persisted handoff signature no longer verifies against the \
+                     installed attestation — dropping on replay"
+                );
+                continue;
             }
             aggregator.insert_verified(signer, signature);
             replayed_signatures += 1;
@@ -2875,34 +2845,6 @@ impl AuthorityPerEpochStore {
             }
             return Ok(());
         };
-        let Some(provider) = self.consensus_pubkey_provider.load_full() else {
-            // The provider installs asynchronously (a chain-fetch task), and
-            // after a restart consensus replay can deliver the committee's
-            // signatures before its first fetch completes. Dropping here
-            // would lose them permanently — peers stop re-submitting once
-            // their own vote is durable — so re-buffer instead;
-            // `install_consensus_pubkey_provider` re-drains the buffer once
-            // verification becomes possible. Same committee-membership bound
-            // as the pre-install buffer (resistance to byzantine spam).
-            if self.committee.weight(&msg.signer) == 0 {
-                debug!(
-                    signer = ?msg.signer,
-                    "non-committee handoff signature — dropping before buffer insert"
-                );
-                return Ok(());
-            }
-            debug!(
-                signer = ?msg.signer,
-                "no consensus pubkey provider installed yet — buffering handoff signature"
-            );
-            let mut pending = self.pending_handoff_signatures.lock();
-            pending.retain(|m| m.signer != msg.signer);
-            pending.push(msg.clone());
-            self.metrics
-                .dwallet_handoff_signatures_buffered
-                .set(pending.len() as i64);
-            return Ok(());
-        };
         let mut guard = self.handoff_aggregator.lock();
         let Some(aggregator) = guard.as_mut() else {
             // Aggregator wasn't initialized — should be impossible
@@ -2914,7 +2856,7 @@ impl AuthorityPerEpochStore {
         let outcome = process_handoff_signature(
             msg,
             expected.as_ref(),
-            provider.as_ref().as_ref(),
+            self.committee().as_ref(),
             aggregator,
         );
         let aggregator_signer_count = aggregator.signer_count();
@@ -5327,9 +5269,7 @@ mod tests {
     use super::*;
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::dwallet_checkpoints::DWalletCheckpointService;
-    use crate::handoff_cert::{
-        StaticConsensusPubkeyProvider, build_handoff_attestation, sign_handoff_attestation,
-    };
+    use crate::handoff_cert::{build_handoff_attestation, sign_handoff_attestation};
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
     use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
     use fastcrypto::traits::{KeyPair, ToFromBytes};
@@ -5695,9 +5635,34 @@ mod tests {
     /// this path but never persisted, so the perpetual read below returned None.
     #[tokio::test]
     async fn install_expected_handoff_attestation_persists_replay_minted_cert() {
-        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
-        let committee = Arc::new(committee);
-        let names: Vec<AuthorityName> = committee.names().copied().collect();
+        let (base_committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let names: Vec<AuthorityName> = base_committee.names().copied().collect();
+
+        // Deterministic Ed25519 consensus keypairs (seeded — avoids the
+        // multiple-rand-version conflict that bites direct generate() in
+        // ika-core tests), one per validator, carried ON THE COMMITTEE so the
+        // replay's signature re-verification (now committee-based, no side
+        // provider) accepts them.
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let consensus_keys: HashMap<_, _> = names
+            .iter()
+            .copied()
+            .zip(consensus_keypairs.iter().map(|kp| kp.public().clone()))
+            .collect();
+        let committee = Arc::new(Committee::new(
+            base_committee.epoch,
+            base_committee.voting_rights.clone(),
+            HashMap::new(),
+            consensus_keys,
+            base_committee.quorum_threshold,
+            base_committee.validity_threshold,
+        ));
 
         let dir = tempfile::tempdir().unwrap();
         let epoch_start_configuration =
@@ -5713,25 +5678,6 @@ mod tests {
             IkaNetworkConfig::new_for_testing(),
         )
         .unwrap();
-
-        // Deterministic Ed25519 consensus keypairs (seeded — avoids the
-        // multiple-rand-version conflict that bites direct generate() in
-        // ika-core tests), one per validator, mapped to the committee names so
-        // the replay's signature re-verification accepts them.
-        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
-            .map(|i| {
-                let mut seed = [0u8; 32];
-                seed[0] = (i + 1) as u8;
-                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
-            })
-            .collect();
-        let provider = StaticConsensusPubkeyProvider::from_iter(
-            names
-                .iter()
-                .zip(&consensus_keypairs)
-                .map(|(name, keypair)| (*name, keypair.public().clone())),
-        );
-        epoch_store.install_consensus_pubkey_provider(Box::new(provider));
 
         // Perpetual tables in their own tempdir, installed the way node startup
         // does — without this the replay-mint persist is a silent no-op.
