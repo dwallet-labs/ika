@@ -5,6 +5,12 @@ self-hosted runners (80 vCPU; measured at full per-thread parity with an
 M3 Max). Prefer these over hours-long local runs — they parallelize,
 don't tie up a laptop, and upload logs as artifacts for post-mortem.
 
+See also: a green run is not proof on its own. Before trusting one on a
+high-stakes, hard-to-trigger property (cross-binary state continuity,
+malicious-party detection, epoch-boundary invariants), confirm the test
+isn't passing vacuously — [`test-testing.md`](test-testing.md) (the exit
+code is not the assertion; the log is).
+
 ## Nightly orchestrator
 
 `.github/workflows/scheduled-all-suites.yaml` runs every night at 03:00

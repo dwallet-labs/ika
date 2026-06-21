@@ -215,7 +215,7 @@ pub(crate) fn session_input_from_request(
             // protocol_version. At `_version == 2` (mainnet-v1.1.8 era) peers
             // publish bare `ClassGroupsEncryptionKeyAndProof` and the
             // bwd-compat DKG `PublicInput::new` takes only the class-groups
-            // CRT map. At `_version == 3` (post-PR-#1707) we have per-curve
+            // CRT map. At `_version == 3` we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
                 // No all-committee completeness check: the off-chain key set is

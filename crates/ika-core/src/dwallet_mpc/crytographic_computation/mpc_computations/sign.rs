@@ -1268,7 +1268,20 @@ where
     P: twopc_mpc::presign::Protocol,
 {
     let dkg_output = decode_ecdsa_dkg::<D>(dwallet_decentralized_public_output)?;
+    let presign_value = decode_vss_presign_v3::<P>(presign)?;
+    Ok((dkg_output, presign_value))
+}
 
+/// Decode a Fast Schnorr (VSS) presign, which is always wrapped as
+/// [`VersionedPresignOutput::V3`]. Shared by the VSS sign path and the combined
+/// DKG-and-sign builders so both reject a non-V3 presign identically (the V2
+/// decoder would wrongly reject every VSS presign).
+fn decode_vss_presign_v3<P>(
+    presign: &SerializedWrappedMPCPublicOutput,
+) -> DwalletMPCResult<<P as twopc_mpc::presign::Protocol>::Presign>
+where
+    P: twopc_mpc::presign::Protocol,
+{
     let presign_versioned: VersionedPresignOutput = bcs::from_bytes(presign).map_err(|e| {
         DwalletMPCError::BcsError(bcs::Error::Custom(format!(
             "Failed to deserialize VSS presign output: {e}"
@@ -1279,13 +1292,11 @@ where
             "Fast Schnorr (VSS) sign requires a V3 presign".to_string(),
         ));
     };
-    let presign_value: <P as twopc_mpc::presign::Protocol>::Presign =
-        bcs::from_bytes(&presign_bytes).map_err(|e| {
-            DwalletMPCError::BcsError(bcs::Error::Custom(format!(
-                "Failed to deserialize VSS presign V3 inner: {e}"
-            )))
-        })?;
-    Ok((dkg_output, presign_value))
+    bcs::from_bytes(&presign_bytes).map_err(|e| {
+        DwalletMPCError::BcsError(bcs::Error::Custom(format!(
+            "Failed to deserialize VSS presign V3 inner: {e}"
+        )))
+    })
 }
 
 fn decode_ecdsa_sign_data<P>(
@@ -1706,7 +1717,7 @@ fn build_secp256k1_taproot_vss_dkg_and_sign_public_input(
 ) -> DwalletMPCResult<<DKGAndSignParty<Secp256k1TaprootVSSProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.secp256k1_protocol_public_parameters();
-    let presign_value = decode_presign_v2::<Secp256k1TaprootVSSProtocol>(presign)?;
+    let presign_value = decode_vss_presign_v3::<Secp256k1TaprootVSSProtocol>(presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Secp256k1TaprootVSSProtocol>(message_centralized_signature)?;
     let curve_cache = &vss_shamir_cache.secp256k1;
@@ -1744,7 +1755,7 @@ fn build_curve25519_eddsa_vss_dkg_and_sign_public_input(
 ) -> DwalletMPCResult<<DKGAndSignParty<Curve25519EdDSAVSSProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.curve25519_protocol_public_parameters();
-    let presign_value = decode_presign_v2::<Curve25519EdDSAVSSProtocol>(presign)?;
+    let presign_value = decode_vss_presign_v3::<Curve25519EdDSAVSSProtocol>(presign)?;
     let sign_data =
         decode_schnorr_sign_data::<Curve25519EdDSAVSSProtocol>(message_centralized_signature)?;
     let curve_cache = &vss_shamir_cache.curve25519;
@@ -1782,7 +1793,7 @@ fn build_ristretto_schnorrkel_vss_dkg_and_sign_public_input(
 ) -> DwalletMPCResult<<DKGAndSignParty<RistrettoSchnorrkelVSSProtocol> as Party>::PublicInput> {
     let protocol_public_parameters =
         network_encryption_key_public_data.ristretto_protocol_public_parameters();
-    let presign_value = decode_presign_v2::<RistrettoSchnorrkelVSSProtocol>(presign)?;
+    let presign_value = decode_vss_presign_v3::<RistrettoSchnorrkelVSSProtocol>(presign)?;
     let sign_data =
         decode_schnorr_sign_data::<RistrettoSchnorrkelVSSProtocol>(message_centralized_signature)?;
     let curve_cache = &vss_shamir_cache.ristretto;
