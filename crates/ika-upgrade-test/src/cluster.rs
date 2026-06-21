@@ -20,6 +20,7 @@ use anyhow::{Context, Result, bail};
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::NodeConfig;
 use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
+use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
@@ -35,7 +36,6 @@ use ika_swarm_config::validator_initialization_config::{
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::SystemInner;
 use rand::rngs::OsRng;
-use sui_sdk::SuiClient as SuiSdkClient;
 use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
@@ -53,7 +53,7 @@ pub struct ClusterOfProcesses {
     pub validators: Vec<ValidatorProcess>,
     pub notifier: ValidatorProcess,
     network_config: IkaNetworkConfig,
-    ika_client: IkaClient<SuiSdkClient>,
+    ika_client: IkaClient<SuiBackend>,
     rpc_url: String,
     /// The genesis publisher's Sui key — funded with SUI + the initial IKA
     /// supply. The workload driver reuses it as the user paying session fees.
@@ -474,7 +474,7 @@ impl ClusterOfProcesses {
         &self.publisher_keypair
     }
 
-    pub fn ika_client(&self) -> &IkaClient<SuiSdkClient> {
+    pub fn ika_client(&self) -> &IkaClient<SuiBackend> {
         &self.ika_client
     }
 

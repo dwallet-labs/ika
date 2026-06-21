@@ -39,7 +39,7 @@ pub(crate) trait ConsensusCommitAPI: Display {
 impl ConsensusCommitAPI for consensus_core::CommittedSubDag {
     fn reputation_score_sorted_desc(&self) -> Option<Vec<(AuthorityIndex, u64)>> {
         // Sui consensus removed per-commit reputation scores from
-        // `CommittedSubDag` in mainnet-v1.72.3; scoring now lives inside
+        // `CommittedSubDag` in mainnet-v1.73.2; scoring now lives inside
         // consensus_core itself. With no reputation input surfaced on the
         // commit, ika's low-scoring-authorities update safely no-ops
         // (`scoring_decision::update_low_scoring_authorities` returns early
