@@ -40,6 +40,10 @@ test-cluster.workspace = true
 sui-simulator.workspace = true
 
 [dev-dependencies]
+# Required by the `#[sim_test]` macro expansion (sui-proc-macros
+# init_static_initializers), which references these crates under the msim cfg.
+prometheus.workspace = true
 sui-macros.workspace = true
+sui-protocol-config.workspace = true
 telemetry-subscribers.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
