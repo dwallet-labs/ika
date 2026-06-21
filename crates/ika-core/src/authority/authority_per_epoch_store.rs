@@ -5205,8 +5205,12 @@ impl From<LockDetails> for LockDetailsWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dwallet_checkpoints::DWalletCheckpointService;
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+    use fastcrypto::ed25519::Ed25519Signature;
+    use fastcrypto::traits::ToFromBytes;
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+    use prometheus::Registry;
     use sui_types::base_types::ObjectID;
 
     fn create_tables() -> AuthorityEpochTables {
@@ -5249,6 +5253,171 @@ mod tests {
         // Degenerate zero-grace config collapses the backstop to 0: close as
         // soon as EndOfPublish-ready, never blocking.
         assert_eq!(decide(true, false, 0, 0), Some(true));
+    }
+
+    /// #1736 WIRING test: drives the REAL v4 epoch-close path through
+    /// `process_consensus_transactions` (not the pure decision in isolation).
+    /// With EndOfPublish at quorum and the grace elapsed — but NOT all-voted —
+    /// the close must DEFER while `handoff_signatures` is sub-quorum, and FIRE
+    /// once the handoff-cert quorum forms. This proves the close is coupled to
+    /// the handoff-cert quorum, not EndOfPublish readiness alone.
+    ///
+    /// This DISCRIMINATES the fix from base: base closes on
+    /// `all_voted || grace_elapsed` with no handoff-cert gate, so it would close
+    /// at STEP 1 (reconfig flips to `RejectAllTx`, an `EndOfPublish` close
+    /// message is emitted) and FAIL the STEP 1 assertions.
+    #[tokio::test]
+    async fn v4_epoch_close_wiring_defers_until_handoff_cert_quorum() {
+        // Four equal-weight validators: quorum_threshold = 3, validity = 2.
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        // The tempdir must outlive the store (RocksDB needs the path live).
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        // The whole close block is gated on this protocol flag; assert it so a
+        // protocol-version drift fails loudly here, not silently.
+        assert!(
+            epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled(),
+            "off-chain-metadata gate must be on (protocol >= 4), else the close \
+             block is never reached"
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(
+            grace > 0,
+            "grace must be positive for this test to be meaningful"
+        );
+
+        // EndOfPublish at quorum but NOT all-voted (3 of 4): the close block
+        // reads the in-memory aggregator, which `record_end_of_publish_vote`
+        // does not populate, so seed it directly. 3 < 4 ⇒ all_voted = false, so
+        // EndOfPublish readiness hinges purely on the grace.
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(
+                end_of_publish.has_quorum(),
+                "EndOfPublish at quorum (3 of 4)"
+            );
+            assert_eq!(end_of_publish.keys().count(), 3, "not all-voted (3 < 4)");
+        }
+
+        // Anchor the grace countdown so the commit we drive is exactly
+        // grace-elapsed (rounds_since_quorum == grace ⇒ grace_elapsed) but below
+        // the backstop (grace < 4*grace) — the precise window where base closes
+        // and the fix defers.
+        let anchor = 100u64;
+        epoch_store
+            .tables()
+            .unwrap()
+            .end_of_publish_quorum_round
+            .insert(&0u64, &anchor)
+            .unwrap();
+        let close_window_round = anchor + grace;
+        let commit_info = ConsensusCommitInfo::new_for_test(close_window_round, 0, true);
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // Handoff signatures SUB-quorum (2 of 4 = validity threshold, < quorum
+        // 3). Only the signer KEYS are summed by weight, so the signature value
+        // is irrelevant to `handoff_signatures_meet_quorum`.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(2) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures must start sub-quorum (2 of 4)"
+        );
+
+        // STEP 1: EndOfPublish-ready (grace elapsed) + handoff sub-quorum.
+        // Fix: decide_v4_epoch_close(true, false, grace, grace) == None ⇒ defer.
+        // Base: `all_voted || grace_elapsed` == true ⇒ close (fails here).
+        let mut output = ConsensusCommitOutput::new(close_window_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "#1736: with the handoff-cert quorum missing the close must DEFER — \
+             reconfig must remain open (base closes here)"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736: no EndOfPublish close message may be emitted while the close \
+             is deferred (base emits one here)"
+        );
+
+        // STEP 2: bring the handoff signatures to quorum (the 3rd signer).
+        epoch_store
+            .tables()
+            .unwrap()
+            .handoff_signatures
+            .insert(&names[2], &dummy_signature)
+            .unwrap();
+        assert!(
+            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures now at quorum (3 of 4)"
+        );
+
+        // Fix: decide_v4_epoch_close(true, true, grace, grace) == Some(false) ⇒
+        // close. A fresh output per commit (the output is a per-commit batch).
+        let mut output = ConsensusCommitOutput::new(close_window_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !epoch_store.should_accept_tx(),
+            "#1736: once EndOfPublish-ready AND the handoff-cert quorum holds, \
+             the close must fire — reconfig flips to RejectAllTx"
+        );
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736: the close must emit the EndOfPublish close message once both \
+             conditions hold"
+        );
     }
 
     fn make_session_id(preimage: [u8; 32]) -> SessionIdentifier {
