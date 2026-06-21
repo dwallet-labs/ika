@@ -3034,6 +3034,27 @@ impl AuthorityPerEpochStore {
         Ok(stake >= committee.quorum_threshold())
     }
 
+    /// Deterministic, consensus-sequenced check that a stake quorum of valid
+    /// handoff signatures has been recorded this epoch — i.e. a certified
+    /// handoff attestation can be minted. Sums the `handoff_signatures` table
+    /// (written only for signatures that validated against the expected
+    /// attestation) the same way `local_blob_coverage_meets_quorum` sums blob
+    /// coverage, so every validator evaluates the same value at the same
+    /// commit. Gates the epoch close (#1736): closing before this holds lets
+    /// the epoch close while no validator can mint the cert the next epoch's
+    /// prepare-then-start barrier requires.
+    pub fn handoff_signatures_meet_quorum(&self) -> IkaResult<bool> {
+        let committee = self.committee();
+        let stake: u64 = self
+            .tables()?
+            .handoff_signatures
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(signer, _)| committee.weight(&signer))
+            .sum();
+        Ok(stake >= committee.quorum_threshold())
+    }
+
     /// Records an `EpochMpcDataReadySignal`. A signer's signal may
     /// be re-emitted within the same epoch when their local
     /// `validated_peers` set grows (see
@@ -3982,9 +4003,42 @@ impl AuthorityPerEpochStore {
                 // fixed +1 per commit — rounds skip when a leader is not
                 // committed — so the grace is measured as the leader-round
                 // DELTA since quorum (robust to skips), not a commit count.
-                let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
-                    >= self.protocol_config().end_of_publish_grace_rounds();
-                if all_voted || grace_elapsed {
+                let rounds_since_quorum = consensus_commit_info.round.saturating_sub(quorum_round);
+                let grace_elapsed =
+                    rounds_since_quorum >= self.protocol_config().end_of_publish_grace_rounds();
+                let eop_ready = all_voted || grace_elapsed;
+
+                // #1736: the next epoch's prepare-then-start barrier (ika-node)
+                // blocks until it holds a certified handoff attestation — a
+                // stake quorum of valid handoff signatures, carried in the
+                // sequenced `EndOfPublishV2` bundles and recorded in
+                // `handoff_signatures`. The EndOfPublish *vote* is counted even
+                // when a validator's bundled handoff signature is REJECTED, so
+                // closing on the EndOfPublish grace alone can close the epoch
+                // while the handoff cert is born on NO validator — every
+                // validator then blocks at the barrier and the chain wedges.
+                // Require the handoff-cert quorum before closing; it is a
+                // deterministic function of the consensus-sequenced
+                // `handoff_signatures` table, so every validator closes at the
+                // same round.
+                let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
+
+                // Liveness backstop: if the handoff quorum genuinely cannot form
+                // (a real byzantine / permanently-dead validator keeps the valid
+                // handoff stake below quorum), don't hang the chain forever —
+                // after a bounded multiple of the EndOfPublish grace, close
+                // anyway with a loud warn so the operator knows the next epoch
+                // may stall on the missing cert and can investigate the
+                // non-signing validators.
+                const HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER: u64 = 4;
+                let backstop_elapsed = rounds_since_quorum
+                    >= self
+                        .protocol_config()
+                        .end_of_publish_grace_rounds()
+                        .saturating_mul(HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER);
+
+                if (eop_ready && handoff_cert_quorum) || backstop_elapsed {
+                    let backstop_close = backstop_elapsed && !handoff_cert_quorum;
                     let (dwallet_close_messages, system_close_messages) =
                         self.build_epoch_close_checkpoint_messages()?;
                     for message in dwallet_close_messages {
@@ -3997,13 +4051,25 @@ impl AuthorityPerEpochStore {
                     // restart cannot re-emit the close set at a later commit.
                     output.set_epoch_close_emitted();
                     self.reconfig_state.write().status = ReconfigCertStatus::RejectAllTx;
-                    info!(
-                        validator = ?self.name,
-                        quorum_round,
-                        close_round = consensus_commit_info.round,
-                        all_voted,
-                        "EndOfPublish grace elapsed — closing the epoch",
-                    );
+                    if backstop_close {
+                        warn!(
+                            validator = ?self.name,
+                            quorum_round,
+                            close_round = consensus_commit_info.round,
+                            "closing the epoch on the handoff-cert liveness backstop WITHOUT a \
+                             handoff-cert quorum — the next epoch may stall at the \
+                             prepare-then-start barrier; investigate validators that did not \
+                             contribute a valid handoff signature",
+                        );
+                    } else {
+                        info!(
+                            validator = ?self.name,
+                            quorum_round,
+                            close_round = consensus_commit_info.round,
+                            all_voted,
+                            "EndOfPublish + handoff-cert quorum reached — closing the epoch",
+                        );
+                    }
                 }
             }
         }
