@@ -132,16 +132,23 @@ pub(crate) fn session_input_from_request(
                 &data.centralized_public_key_share_and_proof,
                 BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
-            // Mirror the AHE "no decryption key shares" wait path: a missing
-            // cache means the network key hasn't been ingested yet (the cache
-            // is populated atomically with the AHE shares in
-            // `decrypt_and_store_secret_key_shares`). Propagate the
-            // `WaitingForNetworkKey` error so the session isn't processed
-            // until the key arrives — same shape as
-            // `get_network_encryption_key_public_data` above.
-            let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)?
-                .clone();
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -153,7 +160,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_context.clone(),
                     access_structure,
                     encryption_key_public_data,
-                    &vss_shamir_cache,
+                    vss_shamir_cache.as_ref(),
                     data.signature_algorithm,
                 )?),
                 None,
@@ -342,16 +349,23 @@ pub(crate) fn session_input_from_request(
             message_centralized_signature,
             ..
         } => {
-            // Mirror the AHE "no decryption key shares" wait path: a missing
-            // cache means the network key hasn't been ingested yet (the cache
-            // is populated atomically with the AHE shares in
-            // `decrypt_and_store_secret_key_shares`). Propagate the
-            // `WaitingForNetworkKey` error so the session isn't processed
-            // until the key arrives — same shape as
-            // `get_network_encryption_key_public_data` above.
-            let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)?
-                .clone();
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -365,7 +379,7 @@ pub(crate) fn session_input_from_request(
                     network_keys.get_network_encryption_key_public_data(
                         dwallet_network_encryption_key_id,
                     )?,
-                    &vss_shamir_cache,
+                    vss_shamir_cache.as_ref(),
                     data.signature_algorithm,
                 )?),
                 None,
@@ -388,16 +402,23 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
             let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
-            // Mirror the AHE "no decryption key shares" wait path: a missing
-            // cache means the network key hasn't been ingested yet (the cache
-            // is populated atomically with the AHE shares in
-            // `decrypt_and_store_secret_key_shares`). Propagate the
-            // `WaitingForNetworkKey` error so the session isn't processed
-            // until the key arrives — same shape as
-            // `get_network_encryption_key_public_data` above.
-            let vss_shamir_cache = network_keys
-                .vss_shamir_cache(dwallet_network_encryption_key_id)?
-                .clone();
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -409,7 +430,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_context.clone(),
                     access_structure,
                     encryption_key_public_data,
-                    &vss_shamir_cache,
+                    vss_shamir_cache.as_ref(),
                     data.signature_algorithm,
                 )?),
                 None,
