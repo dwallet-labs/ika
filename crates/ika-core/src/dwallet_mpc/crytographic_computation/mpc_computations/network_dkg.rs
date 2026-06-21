@@ -553,7 +553,7 @@ impl DwalletMPCNetworkKeys {
 /// (`twopc_mpc::decentralized_party_backward_compatible::dkg::Party`).
 ///
 /// Used when the active `ProtocolConfig` reports
-/// `network_encryption_key_version() == 2` (protocol_version ≤ 4), i.e. when
+/// `network_encryption_key_version() == 2` (protocol_version < 4), i.e. when
 /// any peer in the committee may still be publishing the bare
 /// `ClassGroupsEncryptionKeyAndProof` shape and therefore lacks PVSS HPKE
 /// keys required by the main-shape DKG. The finalized public output is

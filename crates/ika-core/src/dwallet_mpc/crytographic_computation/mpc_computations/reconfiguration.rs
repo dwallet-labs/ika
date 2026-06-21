@@ -250,7 +250,7 @@ impl ReconfigurationPartyPublicInputGenerator for ReconfigurationParty {
 /// reconfig predates the threshold-encryption-to-sharing sub-protocol).
 ///
 /// Used at `ProtocolConfig::is_reconfiguration_message_version_v3() == false`
-/// (protocol_version ≤ 4); paired with [`advance_network_reconfiguration_bwd_compat`].
+/// (protocol_version < 4); paired with [`advance_network_reconfiguration_bwd_compat`].
 pub(crate) fn reconfiguration_bwd_compat_public_input(
     current_committee: &Committee,
     upcoming_committee: Committee,
@@ -327,7 +327,7 @@ pub(crate) fn reconfiguration_bwd_compat_public_input(
 /// (`twopc_mpc::decentralized_party_backward_compatible::reconfiguration::Party`).
 ///
 /// Used when the active `ProtocolConfig` reports
-/// `reconfiguration_message_version() == 2` (protocol_version ≤ 4). The
+/// `reconfiguration_message_version() == 2` (protocol_version < 4). The
 /// finalized public output is wrapped as
 /// `VersionedDecryptionKeyReconfigurationOutput::V2`; bytes are wire-compatible
 /// with mainnet-v1.1.8 peers per audit §4 (reconfig `PublicOutput` wire-stable).
