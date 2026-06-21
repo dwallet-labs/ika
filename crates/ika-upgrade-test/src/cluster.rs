@@ -264,6 +264,15 @@ impl ClusterBuilder {
             })
             .collect();
 
+        // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
+        // set refuses to boot without a Sui trust anchor. Seed every validator
+        // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
+        // anchor (the private-net path), mirroring IkaTestClusterBuilder. Harmless
+        // pre-v4 (the field is unused on the JSON-RPC path).
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}"))?;
+
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
         let mut validators = Vec::with_capacity(self.num_validators);
         for (i, init) in validator_init_configs.iter().enumerate() {
@@ -271,6 +280,7 @@ impl ClusterBuilder {
             std::fs::create_dir_all(&data_dir)?;
             let node_config = ValidatorConfigBuilder::new()
                 .with_config_directory(data_dir.clone())
+                .with_unsafe_genesis_committee(genesis_committee.clone())
                 .build(
                     init,
                     rpc_url.clone(),
@@ -570,8 +580,16 @@ impl ClusterOfProcesses {
 
         let data_dir = self.base.join(format!("validator-{index}"));
         std::fs::create_dir_all(&data_dir)?;
+        // Same OCS v4 trust anchor as the genesis validators (see `build`): the
+        // epoch-0 committee is immutable, so re-fetch it for the joiner.
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&self.rpc_url)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("fetch Sui genesis committee for joiner OCS anchor: {e}")
+            })?;
         let node_config = ValidatorConfigBuilder::new()
             .with_config_directory(data_dir.clone())
+            .with_unsafe_genesis_committee(genesis_committee)
             .build(
                 &init,
                 self.rpc_url.clone(),
