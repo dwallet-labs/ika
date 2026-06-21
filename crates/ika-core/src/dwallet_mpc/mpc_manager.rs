@@ -1605,11 +1605,18 @@ impl DWalletMPCManager {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) {
-        let network_dkg_output_bytes = match self
+        let network_key_identity_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
         {
-            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            // Use the key's flip-invariant NetworkKeyId as the session-identifier
+            // basis; fall back to the network DKG output bytes only for a
+            // malformed key with no derivable id (deterministic, so still
+            // committee-uniform).
+            Ok(key_data) => key_data
+                .network_key_id()
+                .map(|id| id.0.to_vec())
+                .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
@@ -1632,7 +1639,7 @@ impl DWalletMPCManager {
             curve,
             signature_algorithm,
             dwallet_network_encryption_key_id,
-            &network_dkg_output_bytes,
+            &network_key_identity_bytes,
         );
 
         let session_identifier = request.session_identifier;
@@ -1680,11 +1687,15 @@ impl DWalletMPCManager {
             return false;
         };
         let hash_scheme_group: group::HashScheme = hash_scheme.into();
-        let network_dkg_output_bytes = match self
+        let network_key_identity_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
         {
-            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            // Flip-invariant NetworkKeyId basis (see `instantiate_internal_presign_session`).
+            Ok(key_data) => key_data
+                .network_key_id()
+                .map(|id| id.0.to_vec())
+                .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
@@ -1778,7 +1789,7 @@ impl DWalletMPCManager {
             signature_algorithm,
             hash_scheme_group,
             dwallet_network_encryption_key_id,
-            &network_dkg_output_bytes,
+            &network_key_identity_bytes,
             message.clone(),
             wrapped_presign,
         );
