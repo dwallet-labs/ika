@@ -192,9 +192,10 @@ green run is not enough on its own: prove the test would actually react if
 the property broke. Inject a minimal fault that should trip it, confirm the
 *expected evidence appears in the logs* (the exit code is not the
 assertion — the catch is often recoverable and the test still passes), then
-revert. Run the `test-testing` skill (`.claude/skills/test-testing/`); do
-not invent the methodology ad hoc. Skip this only for trivial/mechanical
-tests where vacuous-pass isn't a risk.
+revert. The methodology (outcome shapes, the loop, worked examples) is in
+`dev-docs/playbooks/test-testing.md` — run the `/test-testing` skill or
+follow the playbook; don't invent it ad hoc. Skip this only for
+trivial/mechanical tests where vacuous-pass isn't a risk.
 
 ## Cryptography Notes
 
