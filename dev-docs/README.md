@@ -41,6 +41,12 @@ them has a bug — determine which before changing either.
   version vote, the wire/on-disk compatibility invariants for mixed
   committees, the session-completion wedge, and when a rolling swap is
   valid vs. when the crypto boundary forces an atomic restart.
+- [`specs/fast-schnorr-vss.md`](specs/fast-schnorr-vss.md) — the Fast
+  Schnorr (VSS) signing feature: the three VSS algorithms and their
+  curve/algorithm numbering, the version-3 PVSS key bundle and its
+  off-chain transport, the V3 presign/sign flow, the
+  `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
+  still-gated external path.
 
 ### playbooks/ — how to run and debug this system
 - [`playbooks/ci-suites.md`](playbooks/ci-suites.md) — running the heavy
