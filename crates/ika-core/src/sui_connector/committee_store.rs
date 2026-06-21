@@ -117,8 +117,17 @@ pub struct CommitteeStore {
     /// sparse `sui_committees` table for committees with no backing summary).
     cache: RwLock<BTreeMap<u64, SuiCommittee>>,
     /// Highest Sui epoch we hold a (derivable) committee for. Tracked here so
-    /// `head_epoch` doesn't depend on the bounded cache's contents.
+    /// `head_epoch` doesn't depend on the bounded cache's contents. Advanced
+    /// with `fetch_max` (never a plain store on the install paths) so a
+    /// staggered lower install can never regress it.
     head: AtomicU64,
+    /// Serializes the install paths (ratchet, committee follower, checkpoint
+    /// pusher all install through this store) so the read-current-then-write-max
+    /// of the persisted `sui_committee_head` is atomic. Without it two
+    /// concurrent installs could both read the same persisted head and the
+    /// lower one could win the write, regressing the persisted head across a
+    /// restart.
+    install_lock: std::sync::Mutex<()>,
 }
 
 impl CommitteeStore {
@@ -130,6 +139,7 @@ impl CommitteeStore {
             tables,
             cache: RwLock::new(BTreeMap::new()),
             head: AtomicU64::new(0),
+            install_lock: std::sync::Mutex::new(()),
         };
         match store.tables.highest_sui_committee_epoch()? {
             Some(head_epoch) => {
@@ -183,9 +193,16 @@ impl CommitteeStore {
         })?;
         let summary_epoch = summary.epoch();
         let head_epoch = summary_epoch + 1;
-        // Records the summary AND advances head to summary.epoch()+1.
+        // Records the summary AND advances head to summary.epoch()+1. The
+        // install lock makes the persisted-head read-max-write atomic vs the
+        // other concurrent installers; `fetch_max` keeps the in-memory head
+        // monotonic so a staggered lower install can never regress it.
+        let _install = self
+            .install_lock
+            .lock()
+            .expect("committee install lock poisoned");
         self.tables.record_sui_committee_transition(summary)?;
-        self.head.store(head_epoch, Ordering::Relaxed);
+        self.head.fetch_max(head_epoch, Ordering::Relaxed);
         self.cache_committee(head_epoch, next_committee);
         info!(
             anchor_epoch = summary_epoch,
@@ -281,11 +298,21 @@ impl CommitteeStore {
         source_summary: Option<&CertifiedCheckpointSummary>,
     ) -> IkaResult<()> {
         let epoch = committee.epoch;
+        // Serialize vs the other installers and keep the head monotonic: a
+        // ratchet that derived this committee at an earlier head and was
+        // preempted while a follower advanced past it must not regress the head
+        // (in memory or persisted) — that regression survives restart and can
+        // force a network re-walk that ProofChainBroken-wedges if the boundary
+        // checkpoint was pruned upstream.
+        let _install = self
+            .install_lock
+            .lock()
+            .expect("committee install lock poisoned");
         match source_summary {
             Some(summary) => self.tables.record_sui_committee_transition(summary)?,
             None => self.tables.install_sui_committee(&committee)?,
         }
-        self.head.store(epoch, Ordering::Relaxed);
+        self.head.fetch_max(epoch, Ordering::Relaxed);
         self.cache_committee(epoch, committee);
         Ok(())
     }
@@ -682,5 +709,48 @@ mod tests {
         assert!(matches!(ratchet, CommitteeTransition::Installed(1)));
         assert!(matches!(follower, CommitteeTransition::NotNextTransition));
         assert_eq!(store.head_epoch(), 1);
+    }
+
+    /// A staggered LOWER install must never regress the head. The public
+    /// `install_next_from_summary` guards on `epoch == head`, but that read and
+    /// the `install_next` head write are not atomic: a ratchet can derive
+    /// `committee[E+1]` while head is `E`, be preempted while a follower advances
+    /// head to `E+2`, then perform the raw `install_next(committee[E+1], ..)`.
+    /// `fetch_max` (in memory) and the non-regressing persisted-head write must
+    /// keep both heads at `E+2`. Exercises the path the existing tests miss
+    /// (they only replay an *already-installed* boundary, a clean no-op).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn staggered_lower_install_does_not_regress_head() {
+        let (base, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = open_store(&base);
+
+        let boundary_zero = signed_end_of_epoch(&committee_at(&base, 0), &keys, 0);
+        let boundary_one = signed_end_of_epoch(&committee_at(&base, 1), &keys, 1);
+
+        // Advance the head to 2.
+        store.install_next_from_summary(&boundary_zero).unwrap();
+        store.install_next_from_summary(&boundary_one).unwrap();
+        assert_eq!(store.head_epoch(), 2);
+        assert_eq!(store.tables.highest_sui_committee_epoch().unwrap(), Some(2));
+
+        // The raw lower install a preempted ratchet would perform: it derived
+        // committee[1] from boundary[0] back when the head was 1, and only now
+        // gets to write it.
+        let committee_one = extract_new_committee_info(&boundary_zero).unwrap();
+        store
+            .install_next(committee_one, Some(&boundary_zero))
+            .unwrap();
+
+        // Neither the in-memory nor the persisted head regressed.
+        assert_eq!(
+            store.head_epoch(),
+            2,
+            "in-memory head must not regress on a staggered lower install"
+        );
+        assert_eq!(
+            store.tables.highest_sui_committee_epoch().unwrap(),
+            Some(2),
+            "persisted head must not regress on a staggered lower install"
+        );
     }
 }

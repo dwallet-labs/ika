@@ -436,7 +436,18 @@ impl AuthorityPerpetualTables {
         let epoch = committee.epoch;
         let mut wb = self.sui_committees.batch();
         wb.insert_batch(&self.sui_committees, [(epoch, committee.clone())])?;
-        wb.insert_batch(&self.sui_committee_head, [((), epoch)])?;
+        // Non-regressing head: a staggered lower install must not clobber a
+        // higher persisted head (it would survive restart and force a network
+        // re-walk that can ProofChainBroken if the boundary checkpoint was
+        // pruned). `CommitteeStore` serializes installs so this read-max-write
+        // is atomic.
+        if self
+            .sui_committee_head
+            .get(&())?
+            .is_none_or(|cur| epoch > cur)
+        {
+            wb.insert_batch(&self.sui_committee_head, [((), epoch)])?;
+        }
         wb.write()?;
         Ok(())
     }
@@ -456,7 +467,14 @@ impl AuthorityPerpetualTables {
             &self.sui_committee_summaries,
             [(summary.epoch(), summary.clone())],
         )?;
-        wb.insert_batch(&self.sui_committee_head, [((), next_epoch)])?;
+        // Non-regressing head (see `install_sui_committee`).
+        if self
+            .sui_committee_head
+            .get(&())?
+            .is_none_or(|cur| next_epoch > cur)
+        {
+            wb.insert_batch(&self.sui_committee_head, [((), next_epoch)])?;
+        }
         wb.write()?;
         Ok(())
     }
