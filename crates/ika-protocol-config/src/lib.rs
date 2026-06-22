@@ -485,8 +485,14 @@ thread_local! {
     static POISON_VERSION_METHODS: AtomicBool = AtomicBool::new(false);
 }
 
-/// Set once by `enable_small_presign_pools_for_local_swarm` so a single host
-/// running the whole validator set keeps its presign pools fillable.
+/// Process-global switch, set by the local in-memory swarm / `ika start`, to
+/// shrink both the internal and network-owned-address presign pools so a single
+/// host running the whole validator set can keep them filled. The production
+/// pool sizes (thousands of presigns per curve) peg the CPU there and stall
+/// epoch advance. Unlike the thread-local `CONFIG_OVERRIDE` (which only the
+/// calling thread sees), this is honored by `get_for_version_impl` on every
+/// thread and every epoch. Off by default — only the local swarm turns it on,
+/// so testnet/mainnet binaries keep the production sizes.
 static SHRINK_PRESIGN_POOLS_FOR_LOCAL_SWARM: AtomicBool = AtomicBool::new(false);
 
 // Instantiations for each protocol version.
@@ -780,7 +786,9 @@ impl ProtocolConfig {
     /// validator set can keep both the internal and network-owned-address
     /// presign pools filled instead of pegging the CPU and stalling epoch
     /// advance. No-op (production sizes retained) when the
-    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set.
+    /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set, so a local network can
+    /// still exercise production-scale pools. Validator binaries never call it,
+    /// so testnet/mainnet are unaffected.
     pub fn enable_small_presign_pools_for_local_swarm() {
         if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
             info!(
