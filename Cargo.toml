@@ -81,9 +81,9 @@ crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = 
 
 mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["threshold", "parallel"] }
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["threshold"] }
 commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["parallel"]}
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "32a27aa"}
 homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 
