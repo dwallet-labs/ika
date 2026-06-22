@@ -1516,8 +1516,8 @@ impl DWalletMPCManager {
                 } else {
                     "other"
                 };
-                let curve_label = format!("{curve:?}");
-                let signature_algorithm_label = format!("{signature_algorithm:?}");
+                let curve_label = curve.to_string();
+                let signature_algorithm_label = signature_algorithm.to_string();
                 self.dwallet_mpc_metrics
                     .internal_presign_pool_size
                     .with_label_values(&[
