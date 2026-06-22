@@ -231,6 +231,10 @@ tap = "1.0.1"
 tempfile = "3.20.0"
 test-fuzz = "7.2.0"
 thiserror = "2.0.12"
+# Pinned exact: simtest patches `tokio` (and `futures-timer`) to mysten-sim's
+# msim-tokio, which ships this exact version. The mysten-sim rev that ships it
+# lives in scripts/simtest/cargo-simtest and tracks the Sui tag — when bumping
+# Sui, update that rev too (and keep this version matching its msim-tokio).
 tokio = "=1.52.1"
 toml_edit = "0.22"
 tokio-retry = "0.3"
