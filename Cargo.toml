@@ -81,9 +81,14 @@ crypto-bigint = { version = "0.7.0-pre.9", default-features = false, features = 
 
 mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 proof = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
-class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["threshold", "parallel"] }
+# NOTE: the `parallel` (rayon) feature on class_groups/twopc_mpc is enabled per
+# crate under `[target.'cfg(not(msim))'.dependencies]` (see dwallet-classgroups-types
+# and ika-core), NOT here — workspace-dependency features are inherited regardless of
+# cfg, so enabling `parallel` here would leak rayon into `cargo simtest` (cfg msim),
+# whose rayon workers have no msim node context and break determinism / panic.
+class_groups = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["threshold"] }
 commitment = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa" }
-twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa", features = ["parallel"]}
+twopc_mpc = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 group = { git = "https://github.com/dwallet-labs/cryptography-private", features = ["os_rng"], rev = "32a27aa"}
 homomorphic_encryption = { git = "https://github.com/dwallet-labs/cryptography-private", rev = "32a27aa"}
 
