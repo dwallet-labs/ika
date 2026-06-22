@@ -755,9 +755,15 @@ where
                     match class_groups_public_key_and_proof {
                         Ok(key_and_proof) => Some((*name, key_and_proof)),
                         Err(e) => {
-                            error!(
-                                "Failed to deserialize class groups public key and proof: {}",
-                                e
+                            // Handled, recoverable anomaly: this validator is
+                            // dropped from the committee and construction
+                            // proceeds, so this is `warn!`, not `error!` — and
+                            // it re-runs every poll tick in legacy mode.
+                            warn!(
+                                authority = ?name,
+                                error = ?e,
+                                "failed to decode on-chain class-groups encryption key and proof; \
+                                 dropping this validator from the committee",
                             );
                             None
                         }

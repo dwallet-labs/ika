@@ -78,6 +78,16 @@ them has a bug — determine which before changing either.
   auditing/removing unused Rust: why the compiler can't see unused `pub`
   items, how to classify candidates in a Sui fork, and gating dependency
   removals on a build (with that build's blind spots).
+- [`conventions/metrics.md`](conventions/metrics.md) — the Prometheus
+  metric-name ratchet (`ika_` prefix, CI-enforced via
+  `scripts/check-metric-names.sh`), the counter `_total` / gauge / label
+  conventions (new protocols auto-instrument through the exhaustive
+  `[curve, signature_algorithm, key_role]` labels), and a generated name
+  inventory.
+- [`conventions/logging.md`](conventions/logging.md) — the `tracing`
+  log-level discipline: hot MPC paths are `debug!`, once-per-epoch
+  lifecycle events are `info!`; why an `info!` on the per-computation
+  path makes validator logs unreadable under load.
 
 ### learnings/ — pitfalls that cost real debugging time
 - [`learnings/pitfalls.md`](learnings/pitfalls.md) — non-obvious failure
