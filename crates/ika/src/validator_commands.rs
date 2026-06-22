@@ -14,7 +14,7 @@ use sui_types::{base_types::SuiAddress, multiaddr::Multiaddr};
 use crate::{IkaPackagesConfigFile, read_ika_sui_config_yaml};
 use clap::*;
 use colored::Colorize;
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
@@ -66,20 +66,6 @@ pub enum IkaValidatorCommand {
         host_name: String,
         gas_price: u64,
         sender_sui_address: SuiAddress,
-        /// Publish the mainnet-v1.1.8-shape MPC data (bare
-        /// `ClassGroupsEncryptionKeyAndProof`) in the resulting `ValidatorInfo`
-        /// file. Use during the v3→v4 protocol upgrade window so the validator
-        /// can interop with mainnet-v1.1.8 peers. See the same flag on
-        /// `set-next-epoch-mpc-data`.
-        ///
-        /// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
-        /// bare-class-groups key shape to the version-3 bundle
-        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707). Delete this
-        /// flag (and the legacy publication branch in the command
-        /// implementation) once the network has settled at
-        /// `network_encryption_key_version == 3`.
-        #[clap(long)]
-        legacy_class_groups_only: bool,
     },
     #[clap(name = "config-env")]
     ConfigEnv {
@@ -328,25 +314,6 @@ pub enum IkaValidatorCommand {
         validator_operation_cap_id: ObjectID,
         #[clap(name = "ika-sui-config", long)]
         ika_sui_config: Option<PathBuf>,
-        /// Publish the mainnet-v1.1.8-shape MPC data (bare
-        /// `ClassGroupsEncryptionKeyAndProof`, no per-curve PVSS HPKE keys)
-        /// instead of the default version-3 bundle
-        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707).
-        ///
-        /// Set this flag while the network is still at `protocol_version <= 3`
-        /// so mainnet-v1.1.8 peers can decode this validator's published bytes.
-        /// Drop the flag once the network upgrades to `protocol_version >= 4`
-        /// — at that point all validators run the new binary and consume the
-        /// new shape.
-        ///
-        /// TEMPORARY: only exists for the transition from the mainnet-v1.1.8
-        /// bare-class-groups key shape to the version-3 bundle
-        /// (`ValidatorEncryptionKeysAndProofs`, added in #1707). Delete this
-        /// flag (and the legacy publication branch in the command
-        /// implementation) once the network has settled at
-        /// `network_encryption_key_version == 3`.
-        #[clap(long)]
-        legacy_class_groups_only: bool,
     },
     #[clap(name = "verify-validator-cap")]
     VerifyValidatorCap {
@@ -442,7 +409,6 @@ impl IkaValidatorCommand {
                 host_name,
                 gas_price,
                 sender_sui_address,
-                legacy_class_groups_only,
             } => {
                 let dir = std::env::current_dir()?;
                 let protocol_key_file_name = dir.join("protocol.key");
@@ -460,26 +426,20 @@ impl IkaValidatorCommand {
                     read_network_keypair_from_file(network_key_file_name)?;
                 let pop = generate_proof_of_possession(&keypair, sender_sui_address);
 
-                let class_groups_public_key_and_proof =
+                let (validator_mpc_secrets, validator_encryption_keys_and_proofs) =
                     read_or_generate_root_seed(dir.join("root-seed.key"))?;
-                // Publication shape is version-gated: set `legacy_class_groups_only`
-                // during the v3→v4 protocol upgrade window so mainnet-v1.1.8 peers
-                // can decode this validator's bytes. Reading is shape-tolerant
-                // on either side via `decode_validator_encryption_keys`.
-                let mpc_data_bytes = if legacy_class_groups_only {
-                    bcs::to_bytes(
-                        &class_groups_public_key_and_proof
-                            .class_groups
-                            .encryption_key_and_proof(),
-                    )?
-                } else {
-                    bcs::to_bytes(
-                        &class_groups_public_key_and_proof.validator_encryption_keys_and_proofs(),
-                    )?
-                };
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: mpc_data_bytes,
-                });
+                // The Move-side `mpc_data_bytes` carries the bare
+                // `ClassGroupsEncryptionKeyAndProof`; chain readers decode that
+                // shape directly. The full `ValidatorEncryptionKeysAndProofs`
+                // bundle (PVSS + VSS HPKE) is propagated by the off-chain
+                // validator-metadata pipeline (PR #1721), not by this field.
+                // `validator_mpc_secrets` is held locally;
+                // `validator_encryption_keys_and_proofs` is the public payload —
+                // only its class-groups slice is published on chain.
+                let _ = validator_mpc_secrets;
+                let mpc_data_bytes =
+                    bcs::to_bytes(&validator_encryption_keys_and_proofs.class_groups)?;
+                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
 
                 let validator_info = ValidatorInfo {
                     name,
@@ -988,32 +948,25 @@ impl IkaValidatorCommand {
                 gas_budget,
                 validator_operation_cap_id,
                 ika_sui_config,
-                legacy_class_groups_only,
             } => {
                 let gas_budget = gas_budget.unwrap_or(DEFAULT_GAS_BUDGET);
                 let config_path = ika_sui_config.unwrap_or(ika_config_dir()?.join(IKA_SUI_CONFIG));
                 let config = read_ika_sui_config_yaml(context, &config_path)?;
 
-                // Build the publication payload. The Move-side `mpc_data_bytes`
-                // field is opaque `vector<u8>`; the contents are version-gated:
-                // pre-upgrade (mainnet-v1.1.8 peers in the committee) we publish
-                // bare `ClassGroupsEncryptionKeyAndProof` so old binaries can
-                // decode; post-upgrade we publish the full
-                // `ValidatorEncryptionKeysAndProofs` bundle. Reading is shape-
-                // tolerant on either side via `decode_validator_encryption_keys`.
+                // The Move-side `mpc_data_bytes` carries the bare
+                // `ClassGroupsEncryptionKeyAndProof` (mainnet-v1.1.8 shape);
+                // chain readers decode that shape directly. The full
+                // `ValidatorEncryptionKeysAndProofs` bundle (PVSS + VSS HPKE) is
+                // propagated by the off-chain validator-metadata pipeline (PR
+                // #1721), not by this field.
                 let mpc_root_seed = RootSeed::random_seed();
-                let new_validator_keys =
-                    ClassGroupsAndPvssKeyPairAndProof::from_seed(&mpc_root_seed);
+                let (new_validator_secrets, new_validator_publics) =
+                    ValidatorMPCSecrets::from_seed(&mpc_root_seed);
 
-                let mpc_data_bytes = if legacy_class_groups_only {
-                    bcs::to_bytes(&new_validator_keys.class_groups.encryption_key_and_proof())?
-                } else {
-                    bcs::to_bytes(&new_validator_keys.validator_encryption_keys_and_proofs())?
-                };
+                let _ = new_validator_secrets;
+                let mpc_data_bytes = bcs::to_bytes(&new_validator_publics.class_groups)?;
 
-                let mpc_data = VersionedMPCData::V1(MPCDataV1 {
-                    class_groups_public_key_and_proof: mpc_data_bytes,
-                });
+                let mpc_data = VersionedMPCData::V1(MPCDataV1 { mpc_data_bytes });
 
                 let response = set_next_epoch_mpc_data_bytes(
                     context,
@@ -1268,11 +1221,16 @@ fn make_key_files(
     Ok(())
 }
 
-/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE)
-/// from a seed file if it exists, otherwise generates and saves the seed.
+/// Generates the validator's complete MPC key material (class groups + per-curve PVSS HPKE
+/// + VSS HPKE) from a seed file if it exists, otherwise generates and saves the seed.
+/// Returns both the secrets (held locally) and the public encryption-keys-and-proofs payload
+/// (published in the on-chain validator record).
 fn read_or_generate_root_seed(
     seed_path: PathBuf,
-) -> Result<Box<ClassGroupsAndPvssKeyPairAndProof>> {
+) -> Result<(
+    ValidatorMPCSecrets,
+    ika_types::committee::ValidatorEncryptionKeysAndProofs,
+)> {
     let seed = match RootSeed::from_file(seed_path.clone()) {
         Ok(seed) => {
             println!("Use existing seed: {seed_path:?}.",);
@@ -1286,9 +1244,7 @@ fn read_or_generate_root_seed(
         }
     };
 
-    Ok(Box::new(ClassGroupsAndPvssKeyPairAndProof::from_seed(
-        &seed,
-    )))
+    Ok(ValidatorMPCSecrets::from_seed(&seed))
 }
 
 pub fn write_transaction_response(

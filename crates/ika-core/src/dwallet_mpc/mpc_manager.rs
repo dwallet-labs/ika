@@ -15,16 +15,16 @@ use crate::dwallet_mpc::network_dkg::spawn_network_encryption_key_public_data_in
 use crate::dwallet_mpc::network_dkg::{DwalletMPCNetworkKeys, ValidatorPrivateDecryptionKeyData};
 use crate::dwallet_mpc::{
     ValidatorMpcKeysByPartyId, authority_name_to_party_id_from_committee,
-    generate_access_structure_from_committee, get_validator_mpc_keys_by_party_id,
-    party_id_to_authority_name,
+    class_groups_keys_by_party_id, generate_access_structure_from_committee,
+    get_validator_mpc_keys_by_party_id, party_id_to_authority_name,
 };
 use crate::dwallet_session_request::{DWalletSessionRequest, DWalletSessionRequestMetricData};
-use dwallet_classgroups_types::ClassGroupsKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::{
     DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm, NetworkEncryptionKeyPublicData,
     VersionedPresignOutput,
 };
-use dwallet_mpc_types::mpc_protocol_configuration::supported_curve_to_signature_algorithms;
+use dwallet_mpc_types::mpc_protocol_configuration::network_presign_pool_algorithms;
 use dwallet_rng::RootSeed;
 use fastcrypto::hash::HashFunction;
 use group::PartyID;
@@ -39,10 +39,12 @@ use ika_types::handoff::HandoffItemKey;
 use ika_types::message::DWalletCheckpointMessageKind;
 use ika_types::messages_dwallet_mpc::{
     ConsensusGlobalPresignRequest, ConsensusNOAObservation, Curve25519EdDSAProtocol,
-    DWalletInternalMPCOutputKind, DWalletMPCMessage, DWalletMPCOutputKind, DWalletMPCOutputReport,
-    DWalletNetworkEncryptionKeyData, GlobalPresignRequest, IdleStatusUpdate,
-    RistrettoSchnorrkelProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
-    Secp256r1ECDSAProtocol, SessionIdentifier, SessionType, SuiChainObservationUpdate,
+    Curve25519EdDSAVSSProtocol, DWalletInternalMPCOutputKind, DWalletMPCMessage,
+    DWalletMPCOutputKind, DWalletMPCOutputReport, DWalletNetworkEncryptionKeyData,
+    GlobalPresignRequest, IdleStatusUpdate, RistrettoSchnorrkelProtocol,
+    RistrettoSchnorrkelVSSProtocol, Secp256k1ECDSAProtocol, Secp256k1TaprootProtocol,
+    Secp256k1TaprootVSSProtocol, Secp256r1ECDSAProtocol, SessionIdentifier, SessionType,
+    SuiChainObservationUpdate,
 };
 use ika_types::noa_checkpoint::CounterpartyChainKind;
 use mpc::{MajorityVote, WeightedThresholdAccessStructure};
@@ -106,12 +108,27 @@ pub(crate) struct DWalletMPCManager {
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
-    /// All four per-validator on-chain public-key payloads (class groups + 3
-    /// PVSS HPKE) keyed by party id. Built once at MPC manager init from the
-    /// committee's 4 sibling HashMaps; passed to `session_input_from_request`
-    /// per session-input construction. See `ValidatorMpcKeysByPartyId`
-    /// for the bundle's contents.
+    /// The CURRENT epoch's per-validator MPC keys (class groups + 3 PVSS HPKE +
+    /// verified VSS), keyed by party id. At network-key-version 2 (no off-chain
+    /// pipeline) this is initialized at construction by re-keying
+    /// `class_groups` straight off the on-chain committee (the bare key Sui
+    /// already carries), with empty PVSS/VSS — all the backward-compatible DKG
+    /// needs. At version 3 it starts empty and the whole set (class_groups
+    /// included) is read from the `current_epoch_mpc_keys` channel by
+    /// `ingest_offchain_mpc_keys` once the consensus freeze decides the agreed
+    /// set. That agreed set may legitimately omit offline/withholding validators
+    /// — the DKG deals only to the parties that have keys. Passed to
+    /// `session_input_from_request` per session-input construction.
     pub(crate) validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    /// Set once the current epoch's off-chain key set has been ingested (the
+    /// consensus-frozen agreed set). Gates session initiation so the DKG never
+    /// runs before the agreed keys are in, and makes the ingest run exactly once.
+    pub(crate) current_epoch_keys_ingested: bool,
+    /// The NEXT epoch's per-validator MPC keys, ingested from the
+    /// `next_epoch_mpc_keys` channel. Consumed by network reconfiguration (the
+    /// dealers encrypt under the upcoming parties' PVSS keys). `None` until the
+    /// next-epoch agreed set is delivered.
+    pub(crate) next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     pub(crate) cryptographic_computations_orchestrator: CryptographicComputationsOrchestrator,
 
     /// The set of malicious actors that were agreed upon by a quorum of validators.
@@ -345,12 +362,33 @@ impl DWalletMPCManager {
             CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
-        let class_groups_key_pair_and_proof = ClassGroupsKeyPairAndProof::from_seed(&root_seed);
+        // Derive ALL of this validator's MPC key material once from the seed:
+        // class-groups secret (AHE) + per-curve PVSS decryption keys (used by
+        // VSS Shamir-share pre-derivation at network-key ingestion). The
+        // matching public encryption keys come from the same derivation and
+        // feed the publics struct so VSS shamir pre-derivation has both
+        // halves without re-running `from_seed` per network key. Secrets and
+        // publics are deliberately split into separate structs so the secret
+        // type never shares a struct with public material.
+        let (validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&root_seed);
+        let validator_pvss_secrets_for_vss =
+            crate::dwallet_mpc::network_dkg::ValidatorPvssSecretsForVss {
+                secp256k1_decryption_key: validator_mpc_secrets.secp256k1_pvss_decryption_key,
+                ristretto_decryption_key: validator_mpc_secrets.ristretto_pvss_decryption_key,
+            };
+        let validator_pvss_publics_for_vss =
+            crate::dwallet_mpc::network_dkg::ValidatorPvssEncryptionKeysForVss {
+                secp256k1_encryption_key: validator_publics.secp256k1_pvss.0.clone(),
+                ristretto_encryption_key: validator_publics.ristretto_pvss.0.clone(),
+            };
 
         let validator_private_data = ValidatorPrivateDecryptionKeyData {
             party_id,
-            class_groups_decryption_key: class_groups_key_pair_and_proof.decryption_key(),
+            class_groups_decryption_key: validator_mpc_secrets.class_groups.decryption_key,
+            validator_pvss_secrets_for_vss,
+            validator_pvss_publics_for_vss,
             validator_decryption_key_shares: HashMap::new(),
+            validator_vss_shamir_cache: HashMap::new(),
         };
         let dwallet_network_keys = DwalletMPCNetworkKeys::new(validator_private_data);
 
@@ -361,7 +399,23 @@ impl DWalletMPCManager {
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
-            validator_mpc_keys_by_party_id: get_validator_mpc_keys_by_party_id(&committee)?,
+            // Take class_groups straight off the on-chain committee (the bare key
+            // Sui already carries) ONLY at network key version 2 (mainnet-v1.1.8 /
+            // backward-compat): there the DKG needs the on-chain class_groups and
+            // there is no off-chain pipeline. At version 3 ALL keys — class_groups
+            // included — come from the off-chain consensus-agreed set, so start
+            // empty and let the ingest fill them in (taking them from Sui here
+            // would be the full N-party class_groups, the wrong source/shape for
+            // the v3 agreed subset).
+            validator_mpc_keys_by_party_id: if protocol_config
+                .is_network_encryption_key_version_v3()
+            {
+                ValidatorMpcKeysByPartyId::empty()
+            } else {
+                class_groups_keys_by_party_id(&committee)?
+            },
+            current_epoch_keys_ingested: false,
+            next_epoch_validator_mpc_keys: None,
             cryptographic_computations_orchestrator: mpc_computations_orchestrator,
             malicious_actors: HashSet::new(),
             last_session_to_complete_in_current_epoch: 0,
@@ -705,6 +759,70 @@ impl DWalletMPCManager {
         }
 
         agreed_presign_requests
+    }
+
+    /// Ingest the per-epoch off-chain validator MPC keys (3 PVSS HPKE + VSS
+    /// HPKE) delivered on the `current_epoch_mpc_keys` / `next_epoch_mpc_keys`
+    /// channels into `validator_mpc_keys_by_party_id` (current) and
+    /// `next_epoch_validator_mpc_keys` (next).
+    ///
+    /// The producer only delivers a bundle once the per-epoch set is frozen by
+    /// consensus (a stake-quorum of `EpochMpcDataReadySignal`s), so the delivered
+    /// bundle IS the agreed set. We ingest it **once** and do NOT re-impose an
+    /// all-committee completeness check: the agreed set may legitimately omit
+    /// offline/withholding validators, and the DKG/reconfig deal only to the
+    /// parties that have keys (the rest stay active in consensus, just undealt).
+    /// `class_groups` still comes from the committee.
+    pub(crate) fn ingest_offchain_mpc_keys(&mut self) -> DwalletMPCResult<()> {
+        // Current epoch: fill the within-epoch network DKG key set, once.
+        if !self.current_epoch_keys_ingested {
+            let delivered = self
+                .sui_data_receivers
+                .current_epoch_mpc_keys_receiver
+                .borrow()
+                .clone();
+            if let Some((epoch, bundles)) = delivered
+                && epoch == self.epoch_id
+            {
+                self.validator_mpc_keys_by_party_id =
+                    get_validator_mpc_keys_by_party_id(&self.committee, &bundles)?;
+                self.current_epoch_keys_ingested = true;
+                info!(
+                    epoch = self.epoch_id,
+                    dealt = self.validator_mpc_keys_by_party_id.secp256k1_pvss.len(),
+                    committee = self.committee.voting_rights.len(),
+                    "ingested current-epoch off-chain validator MPC keys (agreed frozen set)"
+                );
+            }
+        }
+
+        // Next epoch: fill the reconfiguration key set, keyed by the next
+        // committee's party ids (so it must be assembled against that committee),
+        // once.
+        if self.next_epoch_validator_mpc_keys.is_none()
+            && let Some(next_committee) = self.next_active_committee.as_ref()
+        {
+            let delivered = self
+                .sui_data_receivers
+                .next_epoch_mpc_keys_receiver
+                .borrow()
+                .clone();
+            if let Some((epoch, bundles)) = delivered
+                && epoch == next_committee.epoch
+            {
+                let keys = get_validator_mpc_keys_by_party_id(next_committee, &bundles)?;
+                info!(
+                    epoch = self.epoch_id,
+                    next_epoch = next_committee.epoch,
+                    dealt = keys.secp256k1_pvss.len(),
+                    next_committee = next_committee.voting_rights.len(),
+                    "ingested next-epoch off-chain validator MPC keys (agreed frozen set)"
+                );
+                self.next_epoch_validator_mpc_keys = Some(keys);
+            }
+        }
+
+        Ok(())
     }
 
     /// Adopt this validator's locally-observed network-key outputs into
@@ -1283,6 +1401,7 @@ impl DWalletMPCManager {
             &self.network_keys,
             self.next_active_committee.clone(),
             self.validator_mpc_keys_by_party_id.clone(),
+            self.next_epoch_validator_mpc_keys.clone(),
             &self.protocol_config,
         ) {
             Ok((public_input, private_input)) => SessionStatus::Active {
@@ -1326,123 +1445,124 @@ impl DWalletMPCManager {
                 None => return,
             };
 
+        // Iterate the dedicated internal-pool driver — `network_presign_pool_algorithms`
+        // is decoupled from `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`
+        // (the externally-requestable list serialized into the on-chain
+        // `support_config`). VSS variants live ONLY here, gated on the feature
+        // flag: they feed NOA (network-owned-address) VSS sign but are not
+        // externally requestable on-chain.
+        let pool_algorithms =
+            network_presign_pool_algorithms(self.protocol_config.fast_schnorr_supported());
         // Ordered (`BTreeSet`) on purpose: the loop below assigns internal presign
         // session sequence numbers from a single shared counter in iteration order,
         // and the sequence number is bound into the session identifier. Every
-        // validator must iterate keys (and curves/algorithms — see
-        // `SUPPORTED_CURVES_TO_SIGNATURE_ALGORITHMS_TO_HASH_SCHEMES`) in the same
-        // order, or they derive different session identifiers for the same work
-        // and the sessions never reach quorum.
+        // validator must iterate keys in the same order (and `pool_algorithms` is
+        // already a deterministically-ordered list), or they derive different
+        // session identifiers for the same work and the sessions never reach quorum.
         let agreed_key_ids: BTreeSet<_> = self.adopted_network_key_data.keys().copied().collect();
         let mut pools_filled: Vec<String> = Vec::new();
         for key_id in agreed_key_ids {
-            for (curve, signature_algorithms) in supported_curve_to_signature_algorithms() {
-                for signature_algorithm in signature_algorithms {
-                    let is_network_owned_address_signing_presign =
-                        agreed_network_owned_address_signing_key_id == key_id;
+            for (curve, signature_algorithm) in pool_algorithms.iter().copied() {
+                let is_network_owned_address_signing_presign =
+                    agreed_network_owned_address_signing_key_id == key_id;
 
-                    let (
-                        minimal_pool_size,
-                        maximum_pool_size,
-                        consensus_round_delay,
-                        sessions_to_instantiate,
-                    ) = if is_network_owned_address_signing_presign {
-                        (
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_minimum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_pool_maximum_size(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_consensus_round_delay(
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_network_owned_address_presign_sessions_to_instantiate(
-                                    signature_algorithm,
-                                ),
-                        )
-                    } else {
-                        (
-                            self.protocol_config
-                                .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
-                            self.protocol_config
-                                .get_internal_presign_consensus_round_delay(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                            self.protocol_config
-                                .get_internal_presign_sessions_to_instantiate(
-                                    curve,
-                                    signature_algorithm,
-                                ),
-                        )
-                    };
-
-                    // Export the pool size BEFORE the in-flight skip below,
-                    // so a pool wedged behind never-completing sessions is
-                    // still observable. The key dimension is reduced to a
-                    // bounded `key_role` label — see the metric's docs.
-                    let current_pool_size =
-                        self.internal_presign_pool_size(key_id, curve, signature_algorithm);
-                    let key_role = if is_network_owned_address_signing_presign {
-                        "network_owned_address_signing"
-                    } else {
-                        "other"
-                    };
-                    let curve_label = format!("{curve:?}");
-                    let signature_algorithm_label = format!("{signature_algorithm:?}");
-                    self.dwallet_mpc_metrics
-                        .internal_presign_pool_size
-                        .with_label_values(&[
-                            curve_label.as_str(),
-                            signature_algorithm_label.as_str(),
-                            key_role,
-                        ])
-                        .set(current_pool_size as i64);
-
-                    // Skip instantiation if previous sessions for this (curve, algorithm)
-                    // haven't completed yet. Each session produces a variable number of
-                    // presigns (1 to n-t), so overlapping batches cause pool overshoot.
-                    let instantiated = self
-                        .instantiated_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    let completed = self
-                        .completed_internal_presign_sessions
-                        .get(&(curve, signature_algorithm))
-                        .copied()
-                        .unwrap_or(0);
-                    if instantiated != completed {
-                        continue;
-                    }
-
-                    if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
-                        && current_pool_size < minimal_pool_size)
-                        || (network_is_idle && current_pool_size < maximum_pool_size)
-                    {
-                        for _ in 1..=sessions_to_instantiate {
-                            self.instantiate_internal_presign_session(
-                                consensus_round,
-                                key_id,
+                let (
+                    minimal_pool_size,
+                    maximum_pool_size,
+                    consensus_round_delay,
+                    sessions_to_instantiate,
+                ) = if is_network_owned_address_signing_presign {
+                    (
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_minimum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_pool_maximum_size(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_consensus_round_delay(
+                                signature_algorithm,
+                            ),
+                        self.protocol_config
+                            .get_network_owned_address_presign_sessions_to_instantiate(
+                                signature_algorithm,
+                            ),
+                    )
+                } else {
+                    (
+                        self.protocol_config
+                            .get_internal_presign_pool_minimum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_pool_maximum_size(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_consensus_round_delay(curve, signature_algorithm),
+                        self.protocol_config
+                            .get_internal_presign_sessions_to_instantiate(
                                 curve,
                                 signature_algorithm,
-                            );
-                            *self
-                                .instantiated_internal_presign_sessions
-                                .entry((curve, signature_algorithm))
-                                .or_insert(0) += 1;
-                        }
-                        pools_filled.push(format!(
-                            "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
-                        ));
+                            ),
+                    )
+                };
+
+                // Export the pool size BEFORE the in-flight skip below, so a pool
+                // wedged behind never-completing sessions is still observable. The
+                // key dimension is reduced to a bounded `key_role` label.
+                let current_pool_size =
+                    self.internal_presign_pool_size(key_id, curve, signature_algorithm);
+                let key_role = if is_network_owned_address_signing_presign {
+                    "network_owned_address_signing"
+                } else {
+                    "other"
+                };
+                let curve_label = curve.to_string();
+                let signature_algorithm_label = signature_algorithm.to_string();
+                self.dwallet_mpc_metrics
+                    .internal_presign_pool_size
+                    .with_label_values(&[
+                        curve_label.as_str(),
+                        signature_algorithm_label.as_str(),
+                        key_role,
+                    ])
+                    .set(current_pool_size as i64);
+
+                // Skip instantiation if previous sessions for this (curve, algorithm)
+                // haven't completed yet. Each session produces a variable number of
+                // presigns (1 to n-t), so overlapping batches cause pool overshoot.
+                let instantiated = self
+                    .instantiated_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                let completed = self
+                    .completed_internal_presign_sessions
+                    .get(&(curve, signature_algorithm))
+                    .copied()
+                    .unwrap_or(0);
+                if instantiated != completed {
+                    continue;
+                }
+
+                if (number_of_consensus_rounds.is_multiple_of(consensus_round_delay)
+                    && current_pool_size < minimal_pool_size)
+                    || (network_is_idle && current_pool_size < maximum_pool_size)
+                {
+                    for _ in 1..=sessions_to_instantiate {
+                        self.instantiate_internal_presign_session(
+                            consensus_round,
+                            key_id,
+                            curve,
+                            signature_algorithm,
+                        );
+                        *self
+                            .instantiated_internal_presign_sessions
+                            .entry((curve, signature_algorithm))
+                            .or_insert(0) += 1;
                     }
+                    pools_filled.push(format!(
+                        "{curve:?}/{signature_algorithm:?}={current_pool_size}(min{minimal_pool_size})+{sessions_to_instantiate}"
+                    ));
                 }
             }
         }
@@ -1610,9 +1730,15 @@ impl DWalletMPCManager {
             return false;
         }
 
-        // Wrap the raw presign bytes in VersionedPresignOutput::V2 for consistency
-        // with the sign session input path, which expects this wrapping.
-        let wrapped_presign = match bcs::to_bytes(&VersionedPresignOutput::V2(presign)) {
+        // Wrap the raw presign bytes for consistency with the sign session
+        // input path, which expects a versioned wrapper. AHE presigns use V2;
+        // Fast Schnorr (VSS) presigns are a different shape and use V3.
+        let versioned = if signature_algorithm.is_vss() {
+            VersionedPresignOutput::V3(presign)
+        } else {
+            VersionedPresignOutput::V2(presign)
+        };
+        let wrapped_presign = match bcs::to_bytes(&versioned) {
             Ok(bytes) => bytes,
             Err(e) => {
                 error!(
@@ -2448,6 +2574,33 @@ impl DWalletMPCManager {
                             output,
                         );
                     }
+                    DWalletSignatureAlgorithm::TaprootVSS => {
+                        self.record_internal_presign_output::<Secp256k1TaprootVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::EdDSAVSS => {
+                        self.record_internal_presign_output::<Curve25519EdDSAVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
+                    DWalletSignatureAlgorithm::SchnorrkelVSS => {
+                        self.record_internal_presign_output::<RistrettoSchnorrkelVSSProtocol>(
+                            signature_algorithm,
+                            dwallet_network_encryption_key_id,
+                            session_sequence_number,
+                            session_identifier,
+                            output,
+                        );
+                    }
                 }
                 *self
                     .completed_internal_presign_sessions
@@ -2586,6 +2739,12 @@ impl DWalletMPCManager {
                 malicious_authorities =? authorities,
                 "malicious actors identified & recorded"
             );
+
+            // Scrapable signal that detection fired (the cross-binary
+            // malicious-detection test asserts on this instead of grepping logs).
+            self.dwallet_mpc_metrics
+                .malicious_actors_count
+                .set(self.malicious_actors.len() as i64);
         }
     }
 

@@ -199,7 +199,23 @@ impl<R: rand::RngCore + rand::CryptoRng> SwarmBuilder<R> {
         ika_protocol_config::ProtocolConfig::enable_small_presign_pools_for_local_swarm();
 
         const SIXTEEN_MEGA_BYTES: usize = 16 * 1024 * 1024;
+        // This in-memory swarm runs the whole validator set AND the sui localnet in
+        // ONE process, all sharing the single rayon global pool. With the `parallel`
+        // crypto feature, concurrent multi-validator MPC (network-key DKG /
+        // reconfiguration) on an unbounded all-cores pool pins every core and starves
+        // the same-process tokio runtime that drives the sui-client RPC — surfacing as
+        // `client error (Connect)` and missed chain events (e.g. a mid-epoch joiner
+        // never read into the next committee's `class_groups_public_keys_and_proofs`).
+        // A real validator runs one process per host and reserves cores for async
+        // (TOKIO_ALLOCATED_CORES, under `enforce-minimum-cpu`); the in-process build
+        // drops that feature, so reserve ~25% of the cores for the async runtime here.
+        // Crypto keeps the majority; `parallel` stays on. Override with
+        // `RAYON_NUM_THREADS` (cargo/rayon honor it when set before the pool is built).
+        let rayon_threads = std::thread::available_parallelism()
+            .map(|n| (usize::from(n) * 3 / 4).max(1))
+            .unwrap_or(1);
         if let Err(err) = rayon::ThreadPoolBuilder::new()
+            .num_threads(rayon_threads)
             .stack_size(SIXTEEN_MEGA_BYTES)
             .panic_handler(|err| error!("Rayon thread pool task panicked: {:?}", err))
             .build_global()

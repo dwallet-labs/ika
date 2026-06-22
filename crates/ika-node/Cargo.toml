@@ -80,3 +80,8 @@ enforce-minimum-cpu = ["ika-core/enforce-minimum-cpu"]
 # validators, and arch-independent (the Dockerfile previously attempted
 # this via an LD_PRELOAD that never actually persisted).
 jemalloc = ["tikv-jemallocator"]
+# TEST-ONLY: enables test-testing fault injection in the node (e.g. builds an
+# `ika-validator` that corrupts its outgoing reconfiguration message, for the
+# cross-binary malicious-detection harness). The harness builds the faulty
+# binary with `--features test-testing`; never enable it in a production build.
+test-testing = ["ika-core/test-testing"]

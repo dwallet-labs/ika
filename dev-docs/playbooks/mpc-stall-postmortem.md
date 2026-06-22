@@ -9,6 +9,11 @@ the check is. Run them against the localnet/validator log (debug-level
 `ika_core::dwallet_mpc=debug` gives the full picture; info-level still
 answers most of them).
 
+See also: if the stall is one you *induced* on purpose to confirm a guard
+fires (fault injection / validating a test) rather than an unexpected one
+to diagnose, you want [`test-testing.md`](test-testing.md) instead — same
+log-grepping, opposite goal.
+
 ## 0. Get the timeline anchors first
 
 ```bash

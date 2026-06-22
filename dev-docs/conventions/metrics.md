@@ -24,6 +24,40 @@ documented in the allowlist by hand — currently the epoch-store pruner
 family (`last_pruned_{consensus,authority}_db_epoch`,
 `successfully_pruned_*_dbs`, `error_pruning_*_dbs`).
 
+## Types, suffixes, and labels
+
+- **Counters** (monotonic) end in `_total` and register with
+  `register_int_counter*` — e.g. `dwallet_mpc_global_presigns_served_total`,
+  `dwallet_mpc_network_key_instantiation_failures_total`.
+- **Gauges** (a current value) are a plain noun, often `_count` / `_size`
+  / `_in_flight` — e.g. `dwallet_mpc_session_start_count`,
+  `dwallet_mpc_internal_presign_pool_size`,
+  `ika_dwallet_mpc_malicious_actors_count`. Never give a gauge `_total`.
+- **Per-protocol metrics are LABELLED, not duplicated per protocol.** The
+  MPC computation gauges are `*_vec` keyed by
+  `["curve", "signature_algorithm", "key_role"]`; the label values come
+  from `DWalletSessionRequestMetricData`
+  (`crates/ika-core/src/dwallet_session_request.rs`), whose
+  `From<&ProtocolData>` / `From<&ProtocolCryptographicData>` impls are
+  **exhaustive — no catch-all arm**. Consequence: a new signing protocol
+  that reuses the existing `ProtocolData` variants (e.g. the Fast Schnorr
+  VSS algorithms, which only add new `curve` / `signature_algorithm`
+  enum values) is instrumented **automatically** — provided its
+  curve/algorithm enum has a real `Display` so the label isn't `Unknown`.
+  Add a brand-new metric only for a genuinely new dimension (e.g.
+  `ika_dwallet_mpc_malicious_actors_count`, added by PR #1714 for a count
+  no existing label captures).
+
+## A metric vs. a log line
+
+For a signal a **test or alert** must assert on, prefer a scrapable
+metric over grepping logs (fragile, and it couples the test to a log
+string). `ika_dwallet_mpc_malicious_actors_count` — an `IntGauge` set in
+`mpc_manager.rs::record_malicious_actors` — exists precisely so the
+cross-binary malicious-detection test asserts exclusion programmatically
+instead of matching a log line. Log-level discipline itself lives in
+[`logging.md`](logging.md).
+
 ## Inventory (generated)
 
 Regenerate with: `./scripts/check-metric-names.sh --list`
@@ -139,6 +173,7 @@ highest_verified_system_checkpoint
 ika_binary_max_protocol_version
 ika_configured_max_protocol_version
 ika_current_protocol_version
+ika_dwallet_mpc_malicious_actors_count
 ika_handoff_prepare_duration_seconds
 ika_handoff_prepare_retries_total
 ika_handoff_prepare_waiting

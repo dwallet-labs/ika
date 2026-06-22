@@ -161,6 +161,8 @@ jobs:
           curl -L "https://github.com/MystenLabs/sui/releases/download/${SUI_TAG}/sui-${SUI_TAG}-ubuntu-x86_64.tgz" > sui.tgz
           tar -xzf sui.tgz
           cp ./sui "$HOME/.local/bin/sui"
+          chmod +x "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/sui" --version
 
       - name: Resolve test selection
@@ -282,11 +284,16 @@ jobs:
           # chdirs during publish, so --test-threads=1 is mandatory.
           time cargo test --release -p ika-upgrade-test --test "$TEST_NAME" \
             -- --nocapture --test-threads=1 2>&1 | tee upgrade-test.log
+          # The RUN_* gate makes the scenario #[ignore]d when unset, so a
+          # misconfigured gate (or a harness that leaves child processes and
+          # muddies cargo's exit code) could SKIP the test yet still exit 0 —
+          # a false green. Assert the gated test actually ran and passed.
+          grep -q "test result: ok. 1 passed" upgrade-test.log
 
       - name: Summarize results
         if: always()
         run: |
-          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked" upgrade-test.log | tail -60 || true
+          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
 
       - name: Stop CPU sampler
         if: always()
