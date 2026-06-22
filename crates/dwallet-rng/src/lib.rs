@@ -151,6 +151,28 @@ impl RootSeed {
         ChaCha20Rng::from_seed(self.pvss_ristretto_decryption_key_seed())
     }
 
+    fn vss_hpke_secret_key_seed(&self) -> [u8; Self::SEED_LENGTH] {
+        let mut transcript = Transcript::new(b"VSS HPKE Secret Key Seed (curve25519)");
+        transcript.append_message(b"root seed", &self.0);
+        let mut seed = [0u8; Self::SEED_LENGTH];
+        transcript.challenge_bytes(b"seed", &mut seed);
+        seed
+    }
+
+    /// Instantiates a deterministic secure pseudo-random generator (ChaCha20)
+    /// from which this validator's VSS HPKE *secret* key is sampled (the matching
+    /// public encryption key and UC-secure proof are then derived from it). It is
+    /// a single curve25519 keypair used as the threshold-encryption-to-sharing
+    /// transport for all VSS curves: the HPKE layer is curve25519 regardless of
+    /// the signing curve, so one keypair suffices.
+    ///
+    /// Domain-separated from `class_groups_decryption_key_rng` and the three
+    /// per-curve class-groups PVSS RNGs so the secret never coincides with any
+    /// of them.
+    pub fn vss_hpke_secret_key_rng(&self) -> ChaCha20Rng {
+        ChaCha20Rng::from_seed(self.vss_hpke_secret_key_seed())
+    }
+
     /// Instantiates a deterministic secure pseudo-random generator (using the ChaCha20 algorithm)
     /// with which to advance an MPC round.
     pub fn mpc_round_rng(

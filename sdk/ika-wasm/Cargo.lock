@@ -218,7 +218,7 @@ dependencies = [
 [[package]]
 name = "class_groups"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -232,6 +232,7 @@ dependencies = [
  "proof",
  "rand",
  "rand_chacha",
+ "rayon",
  "serde",
  "sha3",
  "thiserror 2.0.18",
@@ -240,7 +241,7 @@ dependencies = [
 [[package]]
 name = "commitment"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "crypto-bigint",
  "group 0.2.0",
@@ -285,6 +286,31 @@ name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crypto-bigint"
@@ -643,7 +669,7 @@ dependencies = [
 [[package]]
 name = "group"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "blake2b_simd",
  "crypto-bigint",
@@ -656,6 +682,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core 0.9.5",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.11.0-rc.3",
@@ -714,7 +741,7 @@ dependencies = [
 [[package]]
 name = "homomorphic_encryption"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "crypto-bigint",
  "group 0.2.0",
@@ -857,7 +884,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "maurer"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -891,7 +918,7 @@ dependencies = [
 [[package]]
 name = "mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "aead 0.5.2",
  "bcs",
@@ -910,6 +937,7 @@ dependencies = [
  "proof",
  "rand",
  "rand_chacha",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.11.0-rc.3",
@@ -1063,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "proof"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -1071,6 +1099,7 @@ dependencies = [
  "group 0.2.0",
  "itertools",
  "merlin",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1079,7 +1108,7 @@ dependencies = [
 [[package]]
 name = "proof_aggregation"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "commitment",
  "crypto-bigint",
@@ -1152,6 +1181,26 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rayon"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
+]
 
 [[package]]
 name = "rfc6979"
@@ -1528,7 +1577,7 @@ dependencies = [
 [[package]]
 name = "twopc_mpc"
 version = "0.2.0"
-source = "git+https://github.com/dwallet-labs/cryptography-private?rev=de3cddd#de3cddd82d4f6dfbce2dbd06de738137b562e77a"
+source = "git+https://github.com/dwallet-labs/cryptography-private?rev=32a27aa#32a27aa6f23612b0a7ccf892b7b22257f32b52e7"
 dependencies = [
  "class_groups",
  "commitment",

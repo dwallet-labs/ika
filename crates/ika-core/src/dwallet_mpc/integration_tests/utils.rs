@@ -7,7 +7,7 @@ use crate::dwallet_mpc::dwallet_mpc_service::DWalletMPCService;
 use crate::dwallet_mpc::{NetworkOwnedAddressSignOutput, NetworkOwnedAddressSignRequest};
 use crate::epoch::submit_to_consensus::DWalletMPCSubmitToConsensus;
 use crate::{SuiDataReceivers, SuiDataSenders};
-use dwallet_classgroups_types::ClassGroupsAndPvssKeyPairAndProof;
+use dwallet_classgroups_types::ValidatorMPCSecrets;
 use dwallet_mpc_types::dwallet_mpc::DWalletCurve;
 use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
 use dwallet_rng::RootSeed;
@@ -69,6 +69,9 @@ pub(crate) struct TestingAuthorityPerEpochStore {
     /// Keyed by (session_identifier, blending_index) to uniquely identify a single presign
     /// within the blended vector produced by a presign session.
     pub(crate) used_presigns: Arc<Mutex<HashMap<(SessionIdentifier, u16), ()>>>,
+    /// Fast Schnorr (VSS) presign private outputs, keyed by (presign session id, blending index).
+    pub(crate) presign_private_outputs:
+        Arc<Mutex<HashMap<(commitment::CommitmentSizedNumber, u16), Vec<u8>>>>,
     /// Assigned presigns keyed by (signature_algorithm, session_identifier, blending_index).
     pub(crate) assigned_presigns:
         Arc<Mutex<HashMap<(DWalletSignatureAlgorithm, SessionIdentifier, u16), AssignedPresign>>>,
@@ -140,6 +143,7 @@ impl TestingAuthorityPerEpochStore {
             round_to_noa_observations: Arc::new(Mutex::new(HashMap::from([(0, vec![])]))),
             presign_pools: Arc::new(Mutex::new(Default::default())),
             used_presigns: Arc::new(Mutex::new(HashMap::new())),
+            presign_private_outputs: Arc::new(Mutex::new(HashMap::new())),
             assigned_presigns: Arc::new(Mutex::new(HashMap::new())),
             certified_handoff_attestations: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -301,6 +305,32 @@ impl AuthorityPerEpochStoreTrait for TestingAuthorityPerEpochStore {
             .unwrap()
             .insert((presign_session_id, presign_blending_index), ());
         Ok(())
+    }
+
+    fn store_presign_private_output(
+        &self,
+        presign_session_id: commitment::CommitmentSizedNumber,
+        presign_blending_index: u16,
+        private_output: Vec<u8>,
+    ) -> IkaResult<()> {
+        self.presign_private_outputs
+            .lock()
+            .unwrap()
+            .insert((presign_session_id, presign_blending_index), private_output);
+        Ok(())
+    }
+
+    fn get_presign_private_output(
+        &self,
+        presign_session_id: commitment::CommitmentSizedNumber,
+        presign_blending_index: u16,
+    ) -> IkaResult<Option<Vec<u8>>> {
+        Ok(self
+            .presign_private_outputs
+            .lock()
+            .unwrap()
+            .get(&(presign_session_id, presign_blending_index))
+            .cloned())
     }
 
     fn is_presign_used(
@@ -580,45 +610,60 @@ pub fn create_dwallet_mpc_services(
     Vec<Sender<NetworkOwnedAddressSignRequest>>,
     Vec<Receiver<NetworkOwnedAddressSignOutput>>,
 ) {
-    let (committee, seeds) = build_committee_with_random_seeds(size);
-    create_dwallet_mpc_services_with_committee_and_seeds(committee, seeds)
+    let (committee, seeds, bundles) = build_committee_with_random_seeds(size);
+    create_dwallet_mpc_services_with_committee_and_seeds(committee, seeds, bundles)
 }
 
 /// Builds a fresh test committee with random seeds for every validator. Use this when the
 /// test does not need to share validator key material across multiple service-creation calls.
+///
+/// `class_groups` lives on the committee (the bare on-chain key). The off-chain-only PVSS /
+/// VSS keys are returned separately as an [`OffChainCommitteeBundles`] — the same shape the
+/// off-chain pipeline delivers in production — for the service helper to feed onto the
+/// current-epoch key channel, mirroring how the manager ingests them.
 pub fn build_committee_with_random_seeds(
     size: usize,
-) -> (Committee, HashMap<AuthorityName, RootSeed>) {
+) -> (
+    Committee,
+    HashMap<AuthorityName, RootSeed>,
+    crate::validator_metadata::OffChainCommitteeBundles,
+) {
     let (mut committee, _) = Committee::new_simple_test_committee_of_size(size);
     let mut seeds: HashMap<AuthorityName, RootSeed> = Default::default();
+    let mut bundles = crate::validator_metadata::OffChainCommitteeBundles {
+        class_groups: Default::default(),
+        secp256k1_pvss: Default::default(),
+        secp256r1_pvss: Default::default(),
+        ristretto_pvss: Default::default(),
+        vss_hpke: Default::default(),
+    };
     for (authority_name, _) in committee.voting_rights.iter() {
         let seed = RootSeed::random_seed();
         seeds.insert(*authority_name, seed.clone());
-        let class_groups_key_pair = ClassGroupsAndPvssKeyPairAndProof::from_seed(&seed);
-        committee.class_groups_public_keys_and_proofs.insert(
+        let (_validator_mpc_secrets, validator_publics) = ValidatorMPCSecrets::from_seed(&seed);
+        committee
+            .class_groups_public_keys_and_proofs
+            .insert(*authority_name, validator_publics.class_groups.clone());
+        // The off-chain bundle carries the full set (class-groups + 3 PVSS + raw VSS),
+        // exactly what `assemble_committee_mpc_data_off_chain` produces in production.
+        bundles
+            .class_groups
+            .insert(*authority_name, validator_publics.class_groups.clone());
+        bundles
+            .secp256k1_pvss
+            .insert(*authority_name, validator_publics.secp256k1_pvss.clone());
+        bundles
+            .secp256r1_pvss
+            .insert(*authority_name, validator_publics.secp256r1_pvss.clone());
+        bundles
+            .ristretto_pvss
+            .insert(*authority_name, validator_publics.ristretto_pvss.clone());
+        bundles.vss_hpke.insert(
             *authority_name,
-            class_groups_key_pair
-                .class_groups
-                .encryption_key_and_proof(),
-        );
-        // PVSS HPKE per-curve public keys + proofs (added at the cryptography-private @
-        // 9d35fa76 bump). The integration-test committee mirrors what `Committee::new`
-        // expects post-bump so `network_dkg_v2_public_input` and the reconfiguration
-        // PublicInput constructors get real per-curve maps instead of empty placeholders.
-        committee.secp256k1_pvss_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.secp256k1_pvss_encryption_key_and_proof(),
-        );
-        committee.secp256r1_pvss_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.secp256r1_pvss_encryption_key_and_proof(),
-        );
-        committee.ristretto_pvss_public_keys_and_proofs.insert(
-            *authority_name,
-            class_groups_key_pair.ristretto_pvss_encryption_key_and_proof(),
+            validator_publics.vss_hpke_public_key_and_proof.clone(),
         );
     }
-    (committee, seeds)
+    (committee, seeds, bundles)
 }
 
 /// Creates the same set of `DWalletMPCService`s as [`create_dwallet_mpc_services`] but
@@ -629,6 +674,7 @@ pub fn build_committee_with_random_seeds(
 pub fn create_dwallet_mpc_services_with_committee_and_seeds(
     committee: Committee,
     seeds: HashMap<AuthorityName, RootSeed>,
+    bundles: crate::validator_metadata::OffChainCommitteeBundles,
 ) -> (
     Vec<DWalletMPCService>,
     Vec<SuiDataSenders>,
@@ -645,6 +691,7 @@ pub fn create_dwallet_mpc_services_with_committee_and_seeds(
                 authority_name,
                 committee.clone(),
                 seeds.get(authority_name).unwrap().clone(),
+                bundles.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -689,6 +736,7 @@ fn create_dwallet_mpc_service(
     authority_name: &AuthorityName,
     committee: Committee,
     seed: RootSeed,
+    bundles: crate::validator_metadata::OffChainCommitteeBundles,
 ) -> (
     DWalletMPCService,
     SuiDataSenders,
@@ -712,6 +760,24 @@ fn create_dwallet_mpc_service(
         committee.clone(),
         sui_data_receivers.clone(),
     );
+    // Deliver this committee's off-chain validator MPC keys exactly as the sync
+    // loop does in production: the manager ingests them on its first
+    // `run_service_loop_iteration`. Keyed by the manager's epoch_id (the ingest
+    // gate compares against it; the test committee's own `epoch` field is not
+    // necessarily the manager epoch).
+    //
+    // Also pre-deliver the SAME bundles on the next-epoch channel keyed
+    // `epoch_id + 1`, so a reconfiguration to the SAME validators finds the
+    // upcoming committee's keys without per-test wiring. A reconfiguration to a
+    // DIFFERENT committee overrides this with an explicit later send (watch
+    // keeps the latest value).
+    let epoch_id = service.dwallet_mpc_manager().epoch_id;
+    let _ = sui_data_senders
+        .current_epoch_mpc_keys_sender
+        .send(Some((epoch_id, bundles.clone())));
+    let _ = sui_data_senders
+        .next_epoch_mpc_keys_sender
+        .send(Some((epoch_id + 1, bundles)));
     (
         service,
         sui_data_senders,
@@ -1005,6 +1071,12 @@ pub(crate) async fn advance_all_parties_and_wait_for_completions(
 /// which run in parallel and can be CPU-intensive.
 /// Overridable via `IKA_TEST_MAX_PARTY_ITERATIONS` (see
 /// `IKA_TEST_MAX_COMPUTATION_WAIT_ITERATIONS` above for why).
+///
+/// These DKG tests each fan real crypto across all cores, so run them ONE TEST
+/// AT A TIME (`--test-threads=1`) — that limits cargo to one test *function* at
+/// a time while each test still uses every core internally. Running multiple of
+/// these tests concurrently oversubscribes the CPU and starves this wall-clock
+/// budget.
 const MAX_PARTY_ITERATIONS: usize = 600;
 
 fn max_party_iterations() -> usize {
@@ -1666,6 +1738,20 @@ pub(crate) async fn advance_mpc_flow_until_completion(
     test_state: &mut IntegrationTestState,
     start_consensus_round: Round,
 ) -> (Round, PendingDWalletCheckpoint) {
+    let all_parties: Vec<usize> = (0..test_state.committee.voting_rights.len()).collect();
+    advance_mpc_flow_until_completion_for_parties(test_state, start_consensus_round, &all_parties)
+        .await
+}
+
+/// Like [`advance_mpc_flow_until_completion`] but advances/waits for only
+/// `parties_to_advance` — the rest are treated as offline (never run). Used to
+/// drive an MPC flow to completion with a sub-committee (e.g. when some
+/// validators withheld their keys and the protocol deals only to the rest).
+pub(crate) async fn advance_mpc_flow_until_completion_for_parties(
+    test_state: &mut IntegrationTestState,
+    start_consensus_round: Round,
+    parties_to_advance: &[usize],
+) -> (Round, PendingDWalletCheckpoint) {
     let mut consensus_round = start_consensus_round;
     let mut rounds_waited = 0u64;
     loop {
@@ -1678,12 +1764,13 @@ pub(crate) async fn advance_mpc_flow_until_completion(
             );
         }
 
-        if let Some(pending_checkpoint) = advance_all_parties_and_wait_for_completions(
+        if let Some(pending_checkpoint) = advance_some_parties_and_wait_for_completions(
             &test_state.committee,
             &mut test_state.dwallet_mpc_services,
             &mut test_state.sent_consensus_messages_collectors,
             &test_state.epoch_stores,
             &test_state.notify_services,
+            parties_to_advance,
         )
         .await
         {
