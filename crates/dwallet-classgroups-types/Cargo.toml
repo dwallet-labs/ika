@@ -19,6 +19,7 @@ twopc_mpc.workspace = true
 # `parallel` feature in that profile to force sequential iteration.
 [target.'cfg(not(msim))'.dependencies]
 class_groups = { workspace = true, features = ["parallel"] }
+twopc_mpc = { workspace = true, features = ["parallel"] }
 
 [dev-dependencies]
 bcs.workspace = true
