@@ -116,14 +116,20 @@ branch differing only in advertised protocol version, so they are
 MPC-wire-compatible and a *rolling* swap with mixed committees is valid.
 `v118_upgrade` can't do that — this branch single-pins `cryptography-private`,
 so a mixed 1.1.8/local committee can't exchange MPC messages; it must swap
-**atomically** (a coordinated full-network restart).
+**atomically** (a coordinated full-network restart). A *rolling* `cross_binary`
+from 1.1.8 is therefore invalid; to get churn from a real 1.1.8 origin you swap
+atomically first, then churn — which is exactly **`v118_churn`** (`v118_upgrade`
++ one post-swap joiner: the v4 reshare of the 1.1.8-origin network key then
+includes a party that never held it, with no mixed committee).
 
 **Which to use:** `v118_upgrade` is the pre-mainnet-upgrade rehearsal (real
-release, real on-disk + crypto continuity). `cross_binary` is the synthetic
-rolling-upgrade + **committee-churn** exercise — and the **only** scenario that
-adds a joiner validator, so it's the one that exercises the OCS
-joiner-anchor path (`add_joiner_validator`). It is also the **heaviest** (peaks
-at a 5-member committee + two full MPC lifecycles + joiners' class-groups keys).
+release, real on-disk + crypto continuity); `v118_churn` is the same plus one
+joiner. The OCS joiner-anchor path (`add_joiner_validator`) is exercised by two
+scenarios — `cross_binary` (synthetic, between two builds of this branch;
+**heaviest**: 5-member peak + two MPC lifecycles + multiple joiners) and
+`v118_churn` (a single join from a genuine 1.1.8 origin — lighter, and the more
+faithful test). All churn scenarios peak at ≥5 validators, so they hit the
+runner-resource ceiling below.
 
 ### CI runner resources & the `cross_binary` runner-death failure mode
 
@@ -152,9 +158,14 @@ oversubscription is not the killer**. The likely cause is **memory**: ~96 GiB
 shared across 5–6 class-groups validators ≈ 16 GiB each at the ceiling, with no
 swap → a hard cgroup OOM-kill. Two mitigations are in `ika-upgrade-test`: each
 spawned node's rayon pool is bounded (PR #1770), and that bound is sized by the
-CFS quota rather than host cores. **[Pending: run 28042389003 — record whether
-the quota-bounded run completes or still OOMs, and the harness-logged
-`available_parallelism` vs `cgroup cpu.max` values.]**
+CFS quota rather than host cores. **Neither resolves it** — with both in place
+the run still died the same way (runner death, 0 artifacts). That confirms
+**CPU oversubscription is not the cause; memory is** — the 96 GiB ceiling vs
+5–6 class-groups validators, not thread count. (The harness's
+`available_parallelism` value can't be captured from a dead run: the test-step
+log is lost on runner death and `gh run view --log` doesn't stream the
+in-progress step, so the surviving "Runner resources" numbers above are the
+reliable signal. Reproduced across ~8 runs on both this branch and `dev`.)
 
 **Running `cross_binary` on CI** therefore needs a bigger-memory pod (or a
 less-oversubscribed node), or a smaller committee. `v118_upgrade` (4 fixed

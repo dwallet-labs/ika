@@ -24,6 +24,11 @@ name: Upgrade Test
 #                  `mainnet-v1.1.8` binary, swap all to the current build,
 #                  confirm v4 and continued serving. Defaults to
 #                  old_ref=mainnet-v1.1.8, old_bin_name=ika-node.
+#   v118_churn   — v118_upgrade + post-upgrade committee churn: after the
+#                  atomic 1.1.8 -> local swap, join a brand-new local validator
+#                  so the v4 reshare of the 1.1.8-origin key includes a new
+#                  party (exercises the OCS joiner trust-anchor path from a real
+#                  1.1.8 origin). Same defaults as v118_upgrade.
 #
 # Each scenario binds the fixed Sui localnet ports (9000/9123) and chdirs the
 # process during publish, so only ONE runs per job — `--test-threads=1`, one
@@ -52,6 +57,7 @@ on:
           - workload
           - cross_binary
           - v118_upgrade
+          - v118_churn
       old_ref:
         description: "Git ref/tag/sha/branch for the OLD binary (cross_binary & v118_upgrade; empty = per-scenario default)"
         type: string
@@ -176,6 +182,7 @@ jobs:
             workload)     RUN_FLAG=RUN_WORKLOAD_TEST ;;
             cross_binary) RUN_FLAG=RUN_CROSS_BINARY ;;
             v118_upgrade) RUN_FLAG=RUN_V118_UPGRADE ;;
+            v118_churn)   RUN_FLAG=RUN_V118_CHURN ;;
             *) echo "unknown test: $TEST" >&2; exit 1 ;;
           esac
           # Per-scenario OLD-binary defaults; explicit inputs override (an
@@ -184,7 +191,7 @@ jobs:
           OLD_BIN_NAME="$IN_OLD_BIN_NAME"
           PATCH_MAX="$IN_PATCH_MAX"
           case "$TEST" in
-            v118_upgrade)
+            v118_upgrade | v118_churn)
               : "${OLD_REF:=mainnet-v1.1.8}"
               : "${OLD_BIN_NAME:=ika-node}"
               ;;
@@ -214,7 +221,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ inputs.test == 'cross_binary' || inputs.test == 'v118_upgrade' }}
+        if: ${{ inputs.test == 'cross_binary' || inputs.test == 'v118_upgrade' || inputs.test == 'v118_churn' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
