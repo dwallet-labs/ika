@@ -44,20 +44,15 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "Which upgrade scenario to run"
-        type: choice
+        description: "Scenarios: 'all', or a comma-separated subset e.g. 'smoke,cross_binary,v118_churn'. Each runs as its own job on its own runner, in parallel."
+        type: string
         required: true
-        # cross_binary is the most robust real upgrade test: its OLD binary is
-        # built from THIS branch (current toolchain, same crypto), so it does
-        # not depend on an old tag still building. v118_upgrade is the literal
-        # mainnet rehearsal — pick it explicitly before a mainnet upgrade.
-        default: "cross_binary"
-        options:
-          - smoke
-          - workload
-          - cross_binary
-          - v118_upgrade
-          - v118_churn
+        # Default 'all' = every scenario. Or a comma-separated subset. Each
+        # selected scenario is a separate matrix job (separate runner), with
+        # fail-fast disabled. Per-run overrides (old_ref/old_max_protocol_version)
+        # apply to EVERY selected scenario, so leave them empty unless running a
+        # single scenario (each scenario otherwise uses its own defaults).
+        default: "all"
       old_ref:
         description: "Git ref/tag/sha/branch for the OLD binary (cross_binary & v118_upgrade; empty = per-scenario default)"
         type: string
@@ -103,8 +98,46 @@ env:
   rust_stable: "1.94"
 
 jobs:
+  # Resolve `inputs.test` into the matrix of scenarios to run: 'all' fans every
+  # scenario out (each as its own job on its own runner); a single scenario
+  # runs just that one.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          TEST: ${{ inputs.test }}
+        run: |
+          set -euo pipefail
+          ALL="smoke workload cross_binary v118_upgrade v118_churn"
+          if [ "$TEST" = "all" ]; then
+            SELECTED="$ALL"
+          else
+            # Comma-separated subset -> space-separated, whitespace trimmed.
+            SELECTED=$(echo "$TEST" | tr ',' ' ' | xargs)
+          fi
+          json=""
+          for t in $SELECTED; do
+            case " $ALL " in
+              *" $t "*) ;;
+              *) echo "unknown scenario '$t' (valid: $ALL, or 'all')" >&2; exit 1 ;;
+            esac
+            json="$json\"$t\","
+          done
+          [ -n "$json" ] || { echo "no scenarios selected" >&2; exit 1; }
+          echo "matrix={\"test\":[${json%,}]}" >> "$GITHUB_OUTPUT"
+          echo "selected scenarios: $SELECTED"
+
   upgrade-test:
-    name: ${{ inputs.test }}
+    needs: setup
+    # One job per scenario, each on its own runner, in parallel. fail-fast off
+    # so one scenario's failure (or a runner death) doesn't cancel the others.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    name: ${{ matrix.test }}
     runs-on: ika-k8s-large
     # An upgrade scenario crosses several long epochs plus a cold build of
     # both the current binaries and the OLD ref; the ceiling covers that.
@@ -176,7 +209,7 @@ jobs:
 
       - name: Resolve test selection
         env:
-          TEST: ${{ inputs.test }}
+          TEST: ${{ matrix.test }}
           IN_OLD_REF: ${{ inputs.old_ref }}
           IN_OLD_BIN_NAME: ${{ inputs.old_bin_name }}
           IN_PATCH_MAX: ${{ inputs.old_max_protocol_version }}
@@ -226,7 +259,7 @@ jobs:
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
       - name: Build OLD binary from ${{ env.OLD_REF }}
-        if: ${{ inputs.test == 'cross_binary' || inputs.test == 'v118_upgrade' || inputs.test == 'v118_churn' }}
+        if: ${{ matrix.test == 'cross_binary' || matrix.test == 'v118_upgrade' || matrix.test == 'v118_churn' }}
         run: |
           set -euo pipefail
           WT="$GITHUB_WORKSPACE/old-build"
@@ -263,7 +296,7 @@ jobs:
           nohup bash -c 'prev=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); while true; do sleep 15; cur=$(grep usage_usec /sys/fs/cgroup/cpu.stat 2>/dev/null | awk "{print \$2}"); echo "$(date -u +%T) effective_cpus=$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 )) $(grep -E "nr_throttled|throttled_usec" /sys/fs/cgroup/cpu.stat 2>/dev/null | tr "\n" " ") load=$(cut -d" " -f1-3 /proc/loadavg)"; prev=$cur; done' > cpu-sampler.log 2>&1 &
           echo $! > cpu-sampler.pid
 
-      - name: Run ${{ inputs.test }}
+      - name: Run ${{ matrix.test }}
         env:
           # smoke/workload read IKA_VALIDATOR_BIN/IKA_NOTIFIER_BIN/IKA_BIN;
           # cross_binary/v118_upgrade read NEW_BIN/NOTIFIER_BIN/OLD_BIN/IKA_BIN.
@@ -311,7 +344,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-sampler-${{ inputs.test }}-${{ github.run_attempt }}
+          name: cpu-sampler-${{ matrix.test }}-${{ github.run_attempt }}
           path: cpu-sampler.log
           retention-days: 7
 
@@ -321,7 +354,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: upgrade-test-log-${{ inputs.test }}-${{ github.run_attempt }}
+          name: upgrade-test-log-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test.log
           retention-days: 7
 
@@ -330,7 +363,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # Logs only — the data dirs hold multi-GB RocksDB state.
-          name: upgrade-test-node-logs-${{ inputs.test }}-${{ github.run_attempt }}
+          name: upgrade-test-node-logs-${{ matrix.test }}-${{ github.run_attempt }}
           path: upgrade-test-data/**/*.log
           retention-days: 7
           if-no-files-found: ignore

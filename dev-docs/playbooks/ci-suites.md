@@ -64,9 +64,19 @@ per-push gate. The contract it verifies is
 [`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
 
 ```bash
-# Pick one scenario via `test`. smoke/workload need only the current build;
-# cross_binary/v118_upgrade also build an OLD binary from `old_ref` in a
-# worktree (at that ref's own toolchain) and run --test-threads=1.
+# `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
+# own matrix job on its own runner, in parallel (fail-fast off, so one
+# scenario's failure/runner-death doesn't cancel the others). Pass a
+# comma-separated subset to run several, or a single name to run one. Each
+# scenario's artifacts/logs are suffixed with its name. smoke/workload need
+# only the current build; cross_binary/v118_upgrade/v118_churn also build an OLD
+# binary from `old_ref` in a worktree (own toolchain) and run --test-threads=1.
+# NOTE: per-run overrides (old_ref/old_max_protocol_version) apply to EVERY
+# selected scenario — leave them empty unless you scope `test` to one scenario.
+
+# Everything in parallel (default), or a subset:
+gh workflow run upgrade-test.yaml --ref <branch>                       # = test=all
+gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke,cross_binary,v118_churn
 
 # Plumbing go/no-go (fastest): 4 same-binary processes reach epoch 2.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke
