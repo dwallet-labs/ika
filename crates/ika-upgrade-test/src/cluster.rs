@@ -740,8 +740,35 @@ async fn spawn_node(
 /// async/IO work across all the processes — the out-of-process analogue of the
 /// in-process swarm's core reserve.
 fn rayon_threads_per_node(node_count: usize) -> usize {
-    let cores = std::thread::available_parallelism()
+    // The pod's REAL CPU budget is the cgroup v2 CFS quota (`cpu.max` =
+    // "<quota> <period>"); on a throttled CI runner this is below the host core
+    // count that `available_parallelism()` reports, and sizing the per-node
+    // thread bound off host cores oversubscribes the pod. Prefer the quota.
+    let available = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(4);
-    ((cores * 3 / 4) / node_count.max(1)).max(1)
+    let cgroup_quota = std::fs::read_to_string("/sys/fs/cgroup/cpu.max")
+        .ok()
+        .and_then(|raw| {
+            let mut parts = raw.split_whitespace();
+            let quota = parts.next()?;
+            let period: usize = parts.next()?.parse().ok()?;
+            if quota == "max" || period == 0 {
+                return None;
+            }
+            Some((quota.parse::<usize>().ok()? / period).max(1))
+        });
+    let cores = cgroup_quota.map_or(available, |q| q.min(available));
+    let threads = ((cores * 3 / 4) / node_count.max(1)).max(1);
+    // Log both so the cores-vs-quota gap is visible in CI. Fires at cluster
+    // build (early), before the heavy crypto / any runner death.
+    tracing::warn!(
+        available_parallelism = available,
+        cgroup_cpu_quota = ?cgroup_quota,
+        effective_cores = cores,
+        node_count,
+        rayon_threads_per_node = threads,
+        "upgrade-test rayon budget: available_parallelism vs cgroup cpu.max"
+    );
+    threads
 }
