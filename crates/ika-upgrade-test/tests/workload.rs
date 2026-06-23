@@ -91,9 +91,14 @@ async fn workload_dkg_presign_sign() {
     // registration then blocks the upgrade forever. Drop the buffer to a bare
     // quorum (the realistic behavior on larger committees) so the v3->v4 vote
     // tallies at the next epoch boundary.
+    // current_epoch() reads the on-chain epoch counter, which advances at the
+    // epoch-closing checkpoint *before* each validator locally reconfigures.
+    // The admin handler validates the override against the node's local epoch,
+    // so POST it with a retry that waits out that reconfiguration lag rather
+    // than firing once the instant the counter ticks (which loses the race).
     let epoch = cluster.current_epoch().await.expect("read current epoch");
     for proc in &cluster.validators {
-        proc.set_buffer_stake(epoch, 0)
+        proc.set_buffer_stake_when_at_epoch(epoch, 0, Duration::from_secs(120))
             .await
             .unwrap_or_else(|e| panic!("set buffer stake on validator {}: {e}", proc.index));
     }

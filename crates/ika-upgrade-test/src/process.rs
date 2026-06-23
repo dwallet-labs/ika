@@ -185,6 +185,43 @@ impl ValidatorProcess {
         .await
     }
 
+    /// Like [`set_buffer_stake`], but tolerant of the validator's local epoch
+    /// lagging the on-chain epoch right after a boundary. The admin handler
+    /// checks the requested `epoch` against the node's *local* `epoch_store`
+    /// and returns a 500 `WrongEpoch` until the node has reconfigured into
+    /// `epoch` — but the on-chain counter (what callers read to pick `epoch`)
+    /// advances first, so a POST fired the instant the counter ticks races the
+    /// node's reconfiguration. Retry across that window until the override
+    /// lands, or `timeout` elapses. Only the wrong-epoch rejection is retried;
+    /// any other error returns immediately.
+    pub async fn set_buffer_stake_when_at_epoch(
+        &self,
+        epoch: u64,
+        buffer_bps: u64,
+        timeout: Duration,
+    ) -> Result<String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        loop {
+            match self.set_buffer_stake(epoch, buffer_bps).await {
+                Ok(body) => return Ok(body),
+                Err(error) => {
+                    let local_epoch_lagging = error.to_string().contains("wrong epoch");
+                    if !local_epoch_lagging || tokio::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    tracing::info!(
+                        index = self.index,
+                        target_epoch = epoch,
+                        "buffer-stake override rejected; local epoch still catching up, retrying",
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(2));
+                }
+            }
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         self.child.is_some()
     }

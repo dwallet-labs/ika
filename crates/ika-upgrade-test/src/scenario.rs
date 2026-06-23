@@ -297,14 +297,21 @@ impl Scenario {
                 }
                 Step::SetBufferStake { buffer_bps } => {
                     let c = cluster.as_ref().context("SetBufferStake before StartAll")?;
+                    // `current_epoch` is the on-chain counter, which ticks before
+                    // validators locally reconfigure; retry the override across
+                    // that lag so it isn't rejected for a stale local epoch.
                     let epoch = c.current_epoch().await?;
                     for proc in &c.validators {
                         if proc.is_running() {
-                            proc.set_buffer_stake(epoch, *buffer_bps)
-                                .await
-                                .with_context(|| {
-                                    format!("set buffer stake on validator {}", proc.index)
-                                })?;
+                            proc.set_buffer_stake_when_at_epoch(
+                                epoch,
+                                *buffer_bps,
+                                Duration::from_secs(120),
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("set buffer stake on validator {}", proc.index)
+                            })?;
                         }
                     }
                     tracing::info!(epoch, buffer_bps, "buffer stake override applied");
