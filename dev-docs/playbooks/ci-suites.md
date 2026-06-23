@@ -103,9 +103,8 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 
 # Artifacts: upgrade-test-log-<test>-<attempt> (test stdout),
 # upgrade-test-node-logs-<test>-<attempt> (per-validator *.log),
-# resource-sampler-<test>-<attempt> (15s CPU+memory samples). Plus, on a
-# runner death, the in-Run-step ::warning:: annotations (memory 90/95%,
-# oom_kill) survive on the job page when artifacts do not.
+# resource-sampler-<test>-<attempt> (15s CPU+memory samples; recovered only on
+# runs that FINISH — a runner death drops it like every other artifact).
 ```
 
 ### Scenario differences — `cross_binary` vs `v118_upgrade` (and the rest)
@@ -196,24 +195,42 @@ earlier confident claims here were wrong:**
   "the memory axis, complementary to #1770's CPU axis" was wrong — both act on
   CPU. Keep it as a cheap knob; don't rely on it to fix the death.
 
-**To actually diagnose the death:** the sampler is now memory-aware
-(`resource-sampler.log`): every 15 s it records `mem=current/max pct=… swap=…
-oom_kill=… top=[RSS by process]`, and — because it runs *inside* the Run step —
-raises `::warning::` annotations at 90 %/95 % of `memory.max` and on any cgroup
-`oom_kill`. Annotations reach the server as the run proceeds, so the last one
-before death **survives the "lost communication"** that erases everything else.
-Run `cross_binary` once and read the job's annotations: memory climbing to
-~96 GiB → OOM; flat memory while CPU pegs → starvation (already unlikely); both
-calm at the kill → external eviction. For a definitive answer, also have the
-infra owner pull the pod's **kubelet eviction events** and **`dmesg`
-OOM-killer** lines — those live on the node, not the (dead) pod.
+**What we measured, and the on-pod dead end (2026-06 follow-up):** the sampler
+is now memory-aware (`resource-sampler.log`: `mem=current/max pct=… swap=…
+oom_kill=… top=[RSS]` every 15 s). On a *surviving* `smoke` run it showed **each
+`ika-validator` ≈ 7.5–8 GB RSS** and 4 idle validators + overhead at **62 % of
+the 96 GiB pod, swap=0** — memory is the dominant resource, and `cross_binary`'s
+5–6 concurrently-resharing validators extrapolate past the ceiling, so
+**memory-OOM is the strongly-supported (but still unconfirmed) suspect**. Two
+attempts to capture it *on the pod* both failed, and the failures are the point:
 
-**Meanwhile, to get `cross_binary` green:** raise epochs for slack
-(`-f epoch_duration_ms=600000`); if memory is confirmed, use a bigger-memory
-pod or a smaller committee. `v118_upgrade`/`v118_churn` (no / one churn) and
-`smoke`/`workload` are lighter and pass. Note: artifacts **and** the live
-test-step log are lost on runner death — only the pre-test steps ("Runner
-resources", builds) and the in-Run-step `::warning::` annotations survive.
+- **Runner-emitted annotations do NOT survive a runner death.** A foreground
+  `::warning::` *is* parsed (a surviving `smoke` run shows the sampler's startup
+  line), but a death **wipes the job's runner-emitted annotations** — a dead
+  `cross_binary` run with the identical startup line shows none; only GitHub's
+  own backend-generated "lost communication" annotation remains. (Background
+  sampler commands aren't parsed at all.) So annotations, artifacts, and the job
+  log are **all** lost on death — there is **no on-pod channel** that survives.
+- **`max_mpc_computation_cores=1` + 10 min epochs still died** (run 28062374647,
+  0 artifacts). Minimizing concurrent MPC + epoch overlap should have cut any
+  *transient* MPC memory — it didn't help, which points at the **baseline
+  per-validator footprint × 5–6 validators**, not the computation transient, as
+  the pressure. The cap is the wrong lever.
+
+**So a direct read of the death needs an OFF-pod channel:** the infra owner pulls
+the pod's **kubelet events** (`OOMKilled` vs `Evicted` vs node loss) and **node
+`dmesg`** (OOM-killer line names the process + RSS) — definitive; or the sampler
+pushes samples off-pod mid-run via the runner `GITHUB_TOKEN` (e.g. to a throwaway
+branch) so they land before the death.
+
+**To get `cross_binary` green meanwhile:** the fix follows the evidence, not the
+mechanism — **a bigger-memory pod or a smaller peak committee**. The cap and
+longer epochs do *not* save it. `v118_churn` (one joiner from a real 1.1.8
+origin) already passes and covers the OCS joiner-anchor path, so `cross_binary`'s
+heavier synthetic coverage is the only thing blocked by the pod ceiling. Note:
+on a runner death, artifacts, the live step log, **and** runner-emitted
+annotations are all lost — only the pre-test step logs ("Runner resources",
+builds) survive.
 
 ## Facts that save debugging time
 
@@ -227,10 +244,12 @@ resources", builds) and the in-Run-step `::warning::` annotations survive.
   steps run when a job is cancelled (so cancelling a doomed run still
   yields artifacts), but a runner-pod death ("The self-hosted runner lost
   communication with the server", log cut off, zero artifacts) skips
-  everything — the live step log is lost too (the job-log blob 404s). The
-  only channels that survive a death are pre-test step logs and
-  **`::warning::` annotations emitted from inside the running step** (the
-  upgrade-test resource sampler exploits this for memory). That is also
+  everything — the live step log is lost too (the job-log blob 404s), and
+  even runner-emitted **`::warning::` annotations are wiped** (only GitHub's
+  own backend "lost communication" annotation remains; proven by a surviving
+  vs dead run emitting the identical startup warning). The **only** channels
+  that survive a death are pre-test step logs and anything pushed OFF the pod
+  before it dies (kubelet/dmesg on the node, or a token-push). That is also
   why failure replays stay inline in the cluster workflow.
 - **`exit code 100`** from the cluster job is nextest's tests-failed
   code (real failures, artifacts present) — distinct from runner death.

@@ -321,20 +321,24 @@ jobs:
           mkdir -p "$UPGRADE_TEST_DIR"
           echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"
           # Run the test in the BACKGROUND (output -> upgrade-test.log) and use
-          # THIS foreground shell as the resource sampler. The runner only
-          # reliably parses ::warning:: workflow commands from a step's
-          # FOREGROUND process (a backgrounded sampler's commands are dropped —
-          # observed: run 28057062769 emitted none), and those annotations are
-          # the sole channel that can outlive a "runner lost communication"
-          # death, which 404s the job log and drops all artifacts incl. the
-          # sampler file. CPU is already known comfortable (~13 of the 80-core
-          # quota, zero throttling); memory is the unmeasured suspect, so we
-          # emit an unconditional "sampler up" line + a memory heartbeat every
-          # ~6min + threshold/oom_kill warnings — a no-warning run is then
-          # unambiguous. One scenario, one process: the harness binds fixed Sui
-          # ports and chdirs during publish, so --test-threads=1 is mandatory.
-          # (Live test output goes to the artifact, not the step log; on a death
-          # nothing on the pod survives anyway.)
+          # THIS foreground shell as the resource sampler (CPU+MEMORY ->
+          # resource-sampler.log: mem current/max/pct, swap, cgroup oom_kill,
+          # top-RSS every 15s). It also emits ::warning:: annotations (startup +
+          # ~6min heartbeat + 90/95%/oom_kill); those parse only from a step's
+          # FOREGROUND (background commands are dropped) and show on runs that
+          # FINISH. CAVEAT (proven, runs 28057062769/28059893726): a "runner
+          # lost communication" death WIPES this job's runner-emitted
+          # annotations AND drops the artifacts + job log — a surviving smoke run
+          # shows the startup annotation; a dead cross_binary run with the
+          # identical line shows none. So NOTHING here survives the cross_binary
+          # death; capturing it needs an off-pod channel (kubelet/dmesg, or a
+          # token-push of samples). What the sampler DID establish on surviving
+          # runs: each ika-validator ~7.5-8 GB RSS, 4 idle validators = 62% of
+          # the 96 GiB pod, swap=0 -> memory is the dominant resource and the
+          # leading (still-unconfirmed) suspect for the cross_binary death. One
+          # scenario, one process: the harness binds fixed Sui ports and chdirs
+          # during publish, so --test-threads=1 is mandatory. (Live test output
+          # is in the artifact, not the step log.)
           cargo test --release -p ika-upgrade-test --test "$TEST_NAME" \
             -- --nocapture --test-threads=1 > upgrade-test.log 2>&1 &
           TEST_PID=$!
