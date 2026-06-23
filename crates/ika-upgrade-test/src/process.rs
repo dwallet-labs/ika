@@ -36,6 +36,15 @@ pub struct ValidatorProcess {
     metrics_port: u16,
     /// Per-validator log file (child stdout+stderr).
     log_path: PathBuf,
+    /// `RAYON_NUM_THREADS` for this child's crypto pool. The harness packs
+    /// several validator processes onto one host, each running the real node
+    /// binary built `--no-default-features` (so `enforce-minimum-cpu` is off and
+    /// the node's rayon pool would otherwise grab every core — see
+    /// `ika-core`'s `runtime.rs`). With the parallel crypto feature active, N
+    /// such processes oversubscribe the CPU N× and starve the async runtimes —
+    /// on CI hard enough to kill the runner agent. Bounded to a fair per-node
+    /// slice at construction.
+    rayon_threads: usize,
     child: Option<Child>,
     http: reqwest::Client,
 }
@@ -49,6 +58,7 @@ impl ValidatorProcess {
         admin_addr: SocketAddr,
         metrics_port: u16,
         log_path: PathBuf,
+        rayon_threads: usize,
     ) -> Self {
         Self {
             index,
@@ -58,6 +68,7 @@ impl ValidatorProcess {
             admin_addr,
             metrics_port,
             log_path,
+            rayon_threads,
             child: None,
             http: reqwest::Client::new(),
         }
@@ -85,6 +96,9 @@ impl ValidatorProcess {
         let child = Command::new(&self.binary)
             .arg("--config-path")
             .arg(&self.config_path)
+            // Bound this child's crypto rayon pool so co-located validator
+            // processes don't oversubscribe the host (see `rayon_threads`).
+            .env("RAYON_NUM_THREADS", self.rayon_threads.to_string())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true)

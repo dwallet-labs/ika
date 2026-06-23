@@ -274,6 +274,10 @@ impl ClusterBuilder {
             .map_err(|e| anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}"))?;
 
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
+        // Bound every co-located node's crypto rayon pool to a fair share of the
+        // host so the validators + notifier don't oversubscribe the CPU (see
+        // `rayon_threads_per_node`).
+        let rayon_threads = rayon_threads_per_node(self.num_validators + 1);
         let mut validators = Vec::with_capacity(self.num_validators);
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
@@ -296,6 +300,7 @@ impl ClusterBuilder {
                 self.validator_binary.clone(),
                 &node_config,
                 data_dir.clone(),
+                rayon_threads,
             )
             .await?;
             validators.push(proc);
@@ -326,6 +331,7 @@ impl ClusterBuilder {
             self.notifier_binary.clone(),
             &notifier_config,
             notifier_dir,
+            rayon_threads,
         )
         .await?;
 
@@ -600,7 +606,15 @@ impl ClusterOfProcesses {
                 self.system.ika_system_object_id,
                 self.system.ika_dwallet_coordinator_object_id,
             );
-        let proc = spawn_node(index, binary, &node_config, data_dir).await?;
+        let proc = spawn_node(
+            index,
+            binary,
+            &node_config,
+            data_dir,
+            // existing validators (`index`) + this joiner + the notifier.
+            rayon_threads_per_node(index + 2),
+        )
+        .await?;
         self.validators.push(proc);
         self.committee.push(ValidatorSlot {
             address: joiner_address,
@@ -689,6 +703,7 @@ async fn spawn_node(
     binary: PathBuf,
     node_config: &NodeConfig,
     data_dir: PathBuf,
+    rayon_threads: usize,
 ) -> Result<ValidatorProcess> {
     let config_path = data_dir.join("node-config.yaml");
     let yaml = serde_yaml::to_string(node_config).context("serialize NodeConfig")?;
@@ -708,7 +723,25 @@ async fn spawn_node(
         admin_addr,
         node_config.metrics_address.port(),
         log_path,
+        rayon_threads,
     );
     proc.start().await?;
     Ok(proc)
+}
+
+/// `RAYON_NUM_THREADS` budget for each spawned node, given how many node
+/// processes will share this host. The harness co-locates every validator
+/// (plus the notifier) on one machine, each running the real node binary built
+/// `--no-default-features` — so each one's rayon pool otherwise defaults to ALL
+/// cores (`ika-core`'s `runtime.rs`). With the parallel crypto feature active
+/// that oversubscribes the CPU by the node count, starving the async runtimes
+/// (and, on CI, the runner agent itself → "runner lost communication"). Hand
+/// each node a fair slice of ~75% of the cores, reserving the rest for the
+/// async/IO work across all the processes — the out-of-process analogue of the
+/// in-process swarm's core reserve.
+fn rayon_threads_per_node(node_count: usize) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4);
+    ((cores * 3 / 4) / node_count.max(1)).max(1)
 }
