@@ -103,7 +103,9 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 
 # Artifacts: upgrade-test-log-<test>-<attempt> (test stdout),
 # upgrade-test-node-logs-<test>-<attempt> (per-validator *.log),
-# cpu-sampler-<test>-<attempt>.
+# resource-sampler-<test>-<attempt> (15s CPU+memory samples). Plus, on a
+# runner death, the in-Run-step ::warning:: annotations (memory 90/95%,
+# oom_kill) survive on the job page when artifacts do not.
 ```
 
 ### Scenario differences — `cross_binary` vs `v118_upgrade` (and the rest)
@@ -145,12 +147,12 @@ runner-resource ceiling below.
 
 `cross_binary` co-locates 5–6 `ika-validator` processes (4 → 5 with the joiner,
 + notifier), each doing class-groups DKG/presign, on one self-hosted pod — by
-far the heaviest upgrade-test. On the current `ika-k8s-large` pods this
-**starves the runner and it "loses communication"**: the job fails with **0
-artifacts** and `Run cross_binary` + all `if: always()` steps **blank**
-(distinct from a real nextest failure, which leaves artifacts + exit 100). The
-*same* death reproduces on a clean `dev` checkout, so it is the **pod, not any
-branch's code**.
+far the heaviest upgrade-test. On the current `ika-k8s-large` pods the
+**runner "loses communication" and dies**: the job fails with **0 artifacts**
+and `Run cross_binary` + all `if: always()` steps **blank** (distinct from a
+real nextest failure, which leaves artifacts + exit 100). The *same* death
+reproduces on a clean `dev` checkout, so it is the **pod, not any branch's
+code**. The mechanism is not yet proven (see the forensic findings below).
 
 What the surviving **"Runner resources"** step reports on these pods (it runs
 *before* the test, so its log survives the death):
@@ -162,39 +164,56 @@ What the surviving **"Runner resources"** step reports on these pods (it runs
 | `cgroup memory.max` | **96 GiB** |
 | swap | **0** |
 
-Host cores (96) and the CPU quota (80) differ only modestly, and
-`rayon_threads_per_node` already bounds well under 80 — so **CPU
-oversubscription is not the killer**. The likely cause is **memory**: ~96 GiB
-shared across 5–6 class-groups validators ≈ 16 GiB each at the ceiling, with no
-swap → a hard cgroup OOM-kill. Two mitigations are in `ika-upgrade-test`: each
-spawned node's rayon pool is bounded (PR #1770), and that bound is sized by the
-CFS quota rather than host cores. **Neither resolves it** — with both in place
-the run still died the same way (runner death, 0 artifacts). That confirms
-**CPU oversubscription is not the cause; memory is** — the 96 GiB ceiling vs
-5–6 class-groups validators, not thread count. (The harness's
-`available_parallelism` value can't be captured from a dead run: the test-step
-log is lost on runner death and `gh run view --log` doesn't stream the
-in-progress step, so the surviving "Runner resources" numbers above are the
-reliable signal. Reproduced across ~8 runs on both this branch and `dev`.)
+**What a 2026-06 forensic pass (run 28048024508 + 12 prior `cross_binary`
+jobs) actually established — read this before "fixing" it again. Several
+earlier confident claims here were wrong:**
 
-**Running `cross_binary` on CI** — the direct fix for the memory ceiling is
-`-f max_mpc_computation_cores=N` (e.g. 2–4): it caps each validator's
-*concurrent* dwallet-MPC computations (`NodeConfig.max_mpc_computation_cores`,
-which sizes the orchestrator's slot count — `currently_running < available`,
-orchestrator.rs). Each in-flight class-groups computation is what holds the RAM,
-so a low N bounds peak memory across the co-located validators. This is
-**complementary to** PR #1770's per-node rayon-pool bound (`RAYON_NUM_THREADS`,
-set per child in `process.rs`): the two cap **different axes** — #1770 caps the
-rayon *worker-thread pool* (CPU oversubscription / throttling), while
-`max_mpc_computation_cores` caps *concurrent computations* (peak memory, the
-actual OOM). Neither subsumes the other — compute is `rayon::spawn_fifo`'d onto
-the global pool, so the slot count doesn't shrink the pool and the pool size
-doesn't limit how many computations queue up — keep both. Failing that: a
-bigger-memory pod, or a smaller committee. `v118_upgrade` (4 fixed validators,
-no churn) is lighter; `smoke`/`workload` lighter still. Note: artifacts **and**
-the live test-step log are lost on runner death — only the pre-test steps
-("Runner resources", builds, "Start CPU sampler") survive, so put any diagnostic
-you need where it runs before the test.
+- **The death is a deterministic test phase, not an external timer.** Build /
+  setup time varies between jobs, yet the death lands at a near-constant
+  **~29 min into the *Run* step** (≈1760 s). One job with +108 s longer setup
+  still died at the same *run-relative* time — i.e. +108 s later in pod
+  wall-clock — so it tracks the scenario, not pod age. ~29 min is the
+  peak-concurrency phase (final 5→4 reshare / second MPC lifecycle, 5 resident
+  validators). This rules out a runner max-lifetime / kubelet-eviction timer.
+- **CPU starvation is refuted.** The sampler shows the heavy scenarios peak at
+  **~13 of the 80-CPU quota** with **zero in-window CFS throttling**
+  (`nr_throttled` flat). The runner agent always had schedulable CPU;
+  `rayon_threads_per_node` (#1770) already keeps threads well under quota.
+- **Memory-OOM is the leading suspect but UNPROVEN.** Until 2026-06 *nothing
+  measured memory* — the old sampler recorded CPU only, and a runner death
+  404s the job log + drops all artifacts, so no dead `cross_binary` pod's
+  memory was ever observed. 96 GiB / no swap across 5–6 class-groups
+  validators makes OOM plausible, but it is inference, not data. Don't restate
+  it as fact.
+- **`max_mpc_computation_cores` is NOT a proven fix, and is a CPU lever, not a
+  memory one.** It caps *concurrent* dwallet-MPC computations
+  (`currently_running < available`, orchestrator.rs) — but each computation
+  already fans out across the whole rayon pool (the `parallel` crypto
+  feature), so the cap bounds concurrent pool-saturating fan-outs (CPU
+  contention), not memory directly. Empirically it changes nothing observable:
+  **`v118_upgrade` passes with the cap unset (run 27954982236) and set (run
+  28048024508), and `cross_binary` dies either way.** Its earlier billing as
+  "the memory axis, complementary to #1770's CPU axis" was wrong — both act on
+  CPU. Keep it as a cheap knob; don't rely on it to fix the death.
+
+**To actually diagnose the death:** the sampler is now memory-aware
+(`resource-sampler.log`): every 15 s it records `mem=current/max pct=… swap=…
+oom_kill=… top=[RSS by process]`, and — because it runs *inside* the Run step —
+raises `::warning::` annotations at 90 %/95 % of `memory.max` and on any cgroup
+`oom_kill`. Annotations reach the server as the run proceeds, so the last one
+before death **survives the "lost communication"** that erases everything else.
+Run `cross_binary` once and read the job's annotations: memory climbing to
+~96 GiB → OOM; flat memory while CPU pegs → starvation (already unlikely); both
+calm at the kill → external eviction. For a definitive answer, also have the
+infra owner pull the pod's **kubelet eviction events** and **`dmesg`
+OOM-killer** lines — those live on the node, not the (dead) pod.
+
+**Meanwhile, to get `cross_binary` green:** raise epochs for slack
+(`-f epoch_duration_ms=600000`); if memory is confirmed, use a bigger-memory
+pod or a smaller committee. `v118_upgrade`/`v118_churn` (no / one churn) and
+`smoke`/`workload` are lighter and pass. Note: artifacts **and** the live
+test-step log are lost on runner death — only the pre-test steps ("Runner
+resources", builds) and the in-Run-step `::warning::` annotations survive.
 
 ## Facts that save debugging time
 
@@ -208,7 +227,10 @@ you need where it runs before the test.
   steps run when a job is cancelled (so cancelling a doomed run still
   yields artifacts), but a runner-pod death ("The self-hosted runner lost
   communication with the server", log cut off, zero artifacts) skips
-  everything — the live step log is the only surviving evidence. That is
+  everything — the live step log is lost too (the job-log blob 404s). The
+  only channels that survive a death are pre-test step logs and
+  **`::warning::` annotations emitted from inside the running step** (the
+  upgrade-test resource sampler exploits this for memory). That is also
   why failure replays stay inline in the cluster workflow.
 - **`exit code 100`** from the cluster job is nextest's tests-failed
   code (real failures, artifacts present) — distinct from runner death.
