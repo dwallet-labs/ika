@@ -96,6 +96,73 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 # cpu-sampler-<test>-<attempt>.
 ```
 
+### Scenario differences — `cross_binary` vs `v118_upgrade` (and the rest)
+
+All four scenarios genesis at **protocol v3** (a v4 *genesis* DKG is rejected
+forever — the network must upgrade *into* v4) with one notifier + a validator
+committee. They differ in the OLD binary, how it is swapped, and what
+continuity they prove:
+
+| | `smoke` | `workload` | `cross_binary` | `v118_upgrade` |
+|---|---|---|---|---|
+| OLD binary | current build | current build | **this branch pinned to `MAX_PROTOCOL_VERSION=3`** (one-line patch, current toolchain) | **the literal `mainnet-v1.1.8` `ika-node`** from the tag (old toolchain, `--no-default-features`) |
+| Binary swap | none | none | **rolling** — one at a time; mixed-binary committees exchange consensus + MPC mid-epoch | **atomic** — all validators at once |
+| Committee churn | no | no | **yes** — 4 → 3 → 5 → 4 across epochs (remove, join 2 brand-new validators, remove); a real reshare to a different party set at every boundary | **no** — fixed 4 |
+| `GlobalPresignConfig` | n/a | full | **empty** (harness arrangement → routes presign per-dWallet; exercises targeted-presign) | **populated** (mainnet-faithful → global presign; exercises the pre-activation fallback / upgrade-window deadlock guard) |
+| Proves | 4 validators reach epoch 2 | one full DKG→Presign→Sign lifecycle | wire-compat + on-disk compat + reshare/churn **between two builds of the same branch** | the **real mainnet 1.1.8 → current upgrade**: local boots against RocksDB **written by 1.1.8**, reshares a key whose DKG bytes were **produced by 1.1.8's crypto**, 1.1.8 dWallets stay usable, global-presign pre-activation fallback (no deadlock) |
+
+**Why the swap style differs:** `cross_binary`'s two binaries are the same
+branch differing only in advertised protocol version, so they are
+MPC-wire-compatible and a *rolling* swap with mixed committees is valid.
+`v118_upgrade` can't do that — this branch single-pins `cryptography-private`,
+so a mixed 1.1.8/local committee can't exchange MPC messages; it must swap
+**atomically** (a coordinated full-network restart).
+
+**Which to use:** `v118_upgrade` is the pre-mainnet-upgrade rehearsal (real
+release, real on-disk + crypto continuity). `cross_binary` is the synthetic
+rolling-upgrade + **committee-churn** exercise — and the **only** scenario that
+adds a joiner validator, so it's the one that exercises the OCS
+joiner-anchor path (`add_joiner_validator`). It is also the **heaviest** (peaks
+at a 5-member committee + two full MPC lifecycles + joiners' class-groups keys).
+
+### CI runner resources & the `cross_binary` runner-death failure mode
+
+`cross_binary` co-locates 5–6 `ika-validator` processes (4 → 5 with the joiner,
++ notifier), each doing class-groups DKG/presign, on one self-hosted pod — by
+far the heaviest upgrade-test. On the current `ika-k8s-large` pods this
+**starves the runner and it "loses communication"**: the job fails with **0
+artifacts** and `Run cross_binary` + all `if: always()` steps **blank**
+(distinct from a real nextest failure, which leaves artifacts + exit 100). The
+*same* death reproduces on a clean `dev` checkout, so it is the **pod, not any
+branch's code**.
+
+What the surviving **"Runner resources"** step reports on these pods (it runs
+*before* the test, so its log survives the death):
+
+| | value |
+|---|---|
+| `nproc` (host cores) | **96** |
+| `cgroup cpu.max` (CFS quota) | `8000000 100000` → **80 effective CPUs** |
+| `cgroup memory.max` | **96 GiB** |
+| swap | **0** |
+
+Host cores (96) and the CPU quota (80) differ only modestly, and
+`rayon_threads_per_node` already bounds well under 80 — so **CPU
+oversubscription is not the killer**. The likely cause is **memory**: ~96 GiB
+shared across 5–6 class-groups validators ≈ 16 GiB each at the ceiling, with no
+swap → a hard cgroup OOM-kill. Two mitigations are in `ika-upgrade-test`: each
+spawned node's rayon pool is bounded (PR #1770), and that bound is sized by the
+CFS quota rather than host cores. **[Pending: run 28042389003 — record whether
+the quota-bounded run completes or still OOMs, and the harness-logged
+`available_parallelism` vs `cgroup cpu.max` values.]**
+
+**Running `cross_binary` on CI** therefore needs a bigger-memory pod (or a
+less-oversubscribed node), or a smaller committee. `v118_upgrade` (4 fixed
+validators, no churn) is lighter; `smoke`/`workload` lighter still. Note:
+artifacts **and** the live test-step log are lost on runner death — only the
+pre-test steps ("Runner resources", builds, "Start CPU sampler") survive, so
+put any diagnostic you need where it runs before the test.
+
 ## Facts that save debugging time
 
 - **Concurrency groups cancel in-flight runs**: re-dispatching a workflow
