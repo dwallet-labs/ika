@@ -167,12 +167,24 @@ log is lost on runner death and `gh run view --log` doesn't stream the
 in-progress step, so the surviving "Runner resources" numbers above are the
 reliable signal. Reproduced across ~8 runs on both this branch and `dev`.)
 
-**Running `cross_binary` on CI** therefore needs a bigger-memory pod (or a
-less-oversubscribed node), or a smaller committee. `v118_upgrade` (4 fixed
-validators, no churn) is lighter; `smoke`/`workload` lighter still. Note:
-artifacts **and** the live test-step log are lost on runner death — only the
-pre-test steps ("Runner resources", builds, "Start CPU sampler") survive, so
-put any diagnostic you need where it runs before the test.
+**Running `cross_binary` on CI** — the direct fix for the memory ceiling is
+`-f max_mpc_computation_cores=N` (e.g. 2–4): it caps each validator's
+*concurrent* dwallet-MPC computations (`NodeConfig.max_mpc_computation_cores`,
+which sizes the orchestrator's slot count — `currently_running < available`,
+orchestrator.rs). Each in-flight class-groups computation is what holds the RAM,
+so a low N bounds peak memory across the co-located validators. This is
+**complementary to** PR #1770's per-node rayon-pool bound (`RAYON_NUM_THREADS`,
+set per child in `process.rs`): the two cap **different axes** — #1770 caps the
+rayon *worker-thread pool* (CPU oversubscription / throttling), while
+`max_mpc_computation_cores` caps *concurrent computations* (peak memory, the
+actual OOM). Neither subsumes the other — compute is `rayon::spawn_fifo`'d onto
+the global pool, so the slot count doesn't shrink the pool and the pool size
+doesn't limit how many computations queue up — keep both. Failing that: a
+bigger-memory pod, or a smaller committee. `v118_upgrade` (4 fixed validators,
+no churn) is lighter; `smoke`/`workload` lighter still. Note: artifacts **and**
+the live test-step log are lost on runner death — only the pre-test steps
+("Runner resources", builds, "Start CPU sampler") survive, so put any diagnostic
+you need where it runs before the test.
 
 ## Facts that save debugging time
 

@@ -582,6 +582,14 @@ pub struct NodeConfig {
     /// one hour when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authority_db_pruner_period_secs: Option<u64>,
+
+    /// Cap on the number of concurrent dwallet-MPC cryptographic computations
+    /// (the orchestrator's core budget). `None` (default) uses the host core
+    /// count. Set this low to bound a validator's CPU + peak memory when many
+    /// validators are co-located on one machine — e.g. CI test clusters, where
+    /// each unbounded validator's class-groups crypto otherwise starves the pod.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_mpc_computation_cores: Option<usize>,
 }
 
 /// Keep the current epoch plus this many prior per-epoch authority store

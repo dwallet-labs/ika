@@ -74,7 +74,12 @@ on:
         required: false
         default: ""
       epoch_duration_ms:
-        description: "Override ika genesis epoch duration in ms (only cross_binary/v118_upgrade honor it; empty = scenario default)"
+        description: "Override ika genesis epoch duration in ms (only cross_binary/v118_upgrade/v118_churn honor it; empty = scenario default)"
+        type: string
+        required: false
+        default: ""
+      max_mpc_computation_cores:
+        description: "Cap each validator's concurrent dwallet-MPC computations (bounds peak memory for co-located test validators; empty = node default = host cores)"
         type: string
         required: false
         default: ""
@@ -279,6 +284,9 @@ jobs:
           # Empty string fails to parse and the test falls back to its own
           # default, so this is safe to pass unconditionally.
           EPOCH_DURATION_MS: ${{ inputs.epoch_duration_ms }}
+          # Cap concurrent dwallet-MPC computations per validator (bounds peak
+          # memory for co-located test validators). Empty -> node default.
+          MAX_MPC_COMPUTATION_CORES: ${{ inputs.max_mpc_computation_cores }}
         run: |
           set -euo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"

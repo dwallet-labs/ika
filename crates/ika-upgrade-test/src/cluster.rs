@@ -278,23 +278,34 @@ impl ClusterBuilder {
         // host so the validators + notifier don't oversubscribe the CPU (see
         // `rayon_threads_per_node`).
         let rayon_threads = rayon_threads_per_node(self.num_validators + 1);
+        // Optional cap on each validator's concurrent dwallet-MPC computations
+        // (NodeConfig.max_mpc_computation_cores). Set MAX_MPC_COMPUTATION_CORES
+        // low to bound peak MEMORY when many validators are co-located on one CI
+        // pod — the class-groups crypto state of concurrent computations, not
+        // the thread count, is what OOMs the runner. Unset = node default.
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
         let mut validators = Vec::with_capacity(self.num_validators);
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
-            let node_config = ValidatorConfigBuilder::new()
+            let mut builder = ValidatorConfigBuilder::new()
                 .with_config_directory(data_dir.clone())
-                .with_unsafe_genesis_committee(genesis_committee.clone())
-                .build(
-                    init,
-                    rpc_url.clone(),
-                    ika_package_id,
-                    ika_common_package_id,
-                    ika_dwallet_2pc_mpc_package_id,
-                    ika_system_package_id,
-                    ika_system_object_id,
-                    ika_dwallet_coordinator_object_id,
-                );
+                .with_unsafe_genesis_committee(genesis_committee.clone());
+            if let Some(cores) = max_mpc_computation_cores {
+                builder = builder.with_max_mpc_computation_cores(cores);
+            }
+            let node_config = builder.build(
+                init,
+                rpc_url.clone(),
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
+                ika_system_package_id,
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
+            );
             let proc = spawn_node(
                 i,
                 self.validator_binary.clone(),
@@ -593,19 +604,26 @@ impl ClusterOfProcesses {
             .map_err(|e| {
                 anyhow::anyhow!("fetch Sui genesis committee for joiner OCS anchor: {e}")
             })?;
-        let node_config = ValidatorConfigBuilder::new()
+        // Same MPC-computation-core cap as the genesis validators (see `build`).
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
+        let mut builder = ValidatorConfigBuilder::new()
             .with_config_directory(data_dir.clone())
-            .with_unsafe_genesis_committee(genesis_committee)
-            .build(
-                &init,
-                self.rpc_url.clone(),
-                self.packages.ika_package_id,
-                self.packages.ika_common_package_id,
-                self.packages.ika_dwallet_2pc_mpc_package_id,
-                self.packages.ika_system_package_id,
-                self.system.ika_system_object_id,
-                self.system.ika_dwallet_coordinator_object_id,
-            );
+            .with_unsafe_genesis_committee(genesis_committee);
+        if let Some(cores) = max_mpc_computation_cores {
+            builder = builder.with_max_mpc_computation_cores(cores);
+        }
+        let node_config = builder.build(
+            &init,
+            self.rpc_url.clone(),
+            self.packages.ika_package_id,
+            self.packages.ika_common_package_id,
+            self.packages.ika_dwallet_2pc_mpc_package_id,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.ika_dwallet_coordinator_object_id,
+        );
         let proc = spawn_node(
             index,
             binary,
