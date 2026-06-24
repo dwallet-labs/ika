@@ -14,7 +14,8 @@
 //! class-groups keys, 0/4 PVSS). The supported path is genesis v3 → upgrade
 //! into v4, which is also the path mainnet takes.
 //!
-//! Opt-in via `RUN_WORKLOAD_TEST=1`:
+//! Opt-in via `RUN_WORKLOAD_TEST=1` (set `HOLD_CLUSTER=1` to hold the cluster
+//! up at the workload step for manual `ika dwallet` driving instead):
 //!
 //! ```bash
 //! RUN_WORKLOAD_TEST=1 \
@@ -28,9 +29,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use ika_protocol_config::ProtocolVersion;
-use ika_upgrade_test::cluster::ClusterBuilder;
-use ika_upgrade_test::workload::WorkloadDriver;
+use ika_upgrade_test::binary::BinarySpec;
+use ika_upgrade_test::scenario::Scenario;
 
 fn bin_from_env(var: &str, default: &str) -> PathBuf {
     PathBuf::from(std::env::var(var).unwrap_or_else(|_| default.to_string()))
@@ -47,154 +47,54 @@ async fn workload_dkg_presign_sign() {
         .with_env()
         .init();
 
-    let validator = bin_from_env("IKA_VALIDATOR_BIN", "target/release/ika-validator");
+    let validator = BinarySpec::Path(bin_from_env(
+        "IKA_VALIDATOR_BIN",
+        "target/release/ika-validator",
+    ));
     let notifier = bin_from_env("IKA_NOTIFIER_BIN", "target/release/ika-notifier");
     let ika_cli = bin_from_env("IKA_BIN", "target/release/ika");
     let sui = bin_from_env("SUI_BIN", "sui");
+    // Only used to resolve git-ref binaries; this test uses a path binary, so
+    // it's never built from — point it at the workspace root like the others.
+    let repo = std::env::current_dir()
+        .expect("cwd")
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
     let base = PathBuf::from(
         std::env::var("UPGRADE_TEST_DIR")
             .unwrap_or_else(|_| "/mnt/nvme0n1p1/tmp/ika-workload-test".to_string()),
     );
     let _ = std::fs::remove_dir_all(&base);
 
-    tracing::info!("[flow 1/7] >>> cluster_bring_up");
-    let phase_start = std::time::Instant::now();
-    let cluster = ClusterBuilder::new(validator, notifier, sui)
-        .with_num_validators(4)
-        // Genesis at v3 (MIN), never v4 — see module docs. The binary supports
-        // v3..=v4 and advertises v4 capability from the start, so the vote
-        // advances the version at an epoch boundary once the buffer-stake
-        // override below lets it tally at bare quorum.
-        .with_genesis_protocol_version(ProtocolVersion::MIN)
-        // 3-minute epoch: at v3 the genesis network DKG is not gated on the
-        // off-chain mpc_data freeze (that gating is v4-only), so the epoch
-        // only needs to clear validator bring-up + announcement recording
-        // (~90s) plus the DKG itself; the dWallet lifecycle must fit inside
-        // a post-upgrade epoch before its own reconfiguration window.
-        .with_epoch_duration_ms(180_000)
+    // Genesis v3 → upgrade into v4 (the mainnet path), then a full
+    // DKG → Presign → Sign lifecycle, via the Scenario DSL:
+    // - wait_for_epoch(2): epoch 1 is genesis (reached *before* the network
+    //   DKG runs), so the counter advancing to 2 is itself the signal that the
+    //   genesis DKG finished and the v3 network key is readable on-chain.
+    // - set_buffer_stake(0): with n=4 the default 50% buffer rounds the
+    //   capability-vote threshold up to all four validators; drop it to a bare
+    //   quorum so the v3→v4 vote tallies at the next boundary (the realistic
+    //   behavior on larger committees). Retries across the reconfiguration lag.
+    // - wait_for_epoch(3): crosses the v3→v4 upgrade boundary.
+    // - run_workload: builds a driver and drives the lifecycle, asserting a
+    //   signature is produced. With HOLD_CLUSTER set it holds the cluster up
+    //   here (config paths printed) for manual driving instead.
+    // Epochs are 3 minutes so the lifecycle fits inside a post-upgrade epoch
+    // before its own reconfiguration window.
+    Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
-        .build()
+        .with_epoch_duration_ms(180_000)
+        .with_epoch_timeout(Duration::from_secs(900))
+        .with_ika_cli(ika_cli)
+        .start_all(validator)
+        .wait_for_epoch(2)
+        .set_buffer_stake(0)
+        .wait_for_epoch(3)
+        .expect_protocol_version_at_least(4)
+        .run_workload("dkg-presign-sign")
+        .run()
         .await
-        .expect("cluster bring-up");
-    tracing::info!(
-        "[flow 1/7] <<< cluster_bring_up done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    // Wait for epoch 2, not 1. Epoch 1 is genesis and is reached immediately,
-    // *before* the network DKG runs — so the DKG output isn't on-chain yet and
-    // the CLI can't derive protocol parameters. The epoch counter advancing to
-    // 2 is itself the completion signal: reconfiguration into epoch 2 reshares
-    // the genesis key, which can't happen until the genesis DKG finished. So
-    // reaching epoch 2 guarantees the v3 network key is readable.
-    tracing::info!("[flow 2/7] >>> wait_for_epoch(2)");
-    let phase_start = std::time::Instant::now();
-    cluster
-        .wait_for_epoch(2, Duration::from_secs(900))
-        .await
-        .expect("reach epoch 2 (genesis network DKG + reshare done at v3)");
-    tracing::info!(
-        "[flow 2/7] <<< wait_for_epoch(2) done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    // With n=4 the default 50% buffer stake rounds the capability-vote
-    // threshold up to all four validators; a single lagging capability
-    // registration then blocks the upgrade forever. Drop the buffer to a bare
-    // quorum (the realistic behavior on larger committees) so the v3->v4 vote
-    // tallies at the next epoch boundary.
-    // current_epoch() reads the on-chain epoch counter, which advances at the
-    // epoch-closing checkpoint *before* each validator locally reconfigures.
-    // The admin handler validates the override against the node's local epoch,
-    // so POST it with a retry that waits out that reconfiguration lag rather
-    // than firing once the instant the counter ticks (which loses the race).
-    tracing::info!("[flow 3/7] >>> set_buffer_stake");
-    let phase_start = std::time::Instant::now();
-    let epoch = cluster.current_epoch().await.expect("read current epoch");
-    for proc in &cluster.validators {
-        proc.set_buffer_stake_when_at_epoch(epoch, 0, Duration::from_secs(120))
-            .await
-            .unwrap_or_else(|e| panic!("set buffer stake on validator {}: {e}", proc.index));
-    }
-    tracing::info!(
-        "[flow 3/7] <<< set_buffer_stake done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    tracing::info!("[flow 4/7] >>> wait_for_epoch(3)");
-    let phase_start = std::time::Instant::now();
-    cluster
-        .wait_for_epoch(3, Duration::from_secs(600))
-        .await
-        .expect("reach epoch 3 (crossing the v3->v4 upgrade boundary)");
-    tracing::info!(
-        "[flow 4/7] <<< wait_for_epoch(3) done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    tracing::info!("[flow 5/7] >>> assert_protocol_version");
-    let phase_start = std::time::Instant::now();
-    let protocol_version = cluster
-        .current_protocol_version()
-        .await
-        .expect("read protocol version");
-    assert!(
-        protocol_version >= 4,
-        "expected protocol v4 after the upgrade boundary, got v{protocol_version}"
-    );
-    tracing::info!(
-        "[flow 5/7] <<< assert_protocol_version done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    tracing::info!("[flow 6/7] >>> build_workload_driver");
-    let phase_start = std::time::Instant::now();
-    let driver = WorkloadDriver::new(
-        ika_cli,
-        cluster.rpc_url().to_string(),
-        cluster.faucet_url().to_string(),
-        cluster.network_config().clone(),
-        cluster.publisher_keypair().copy(),
-    )
-    .await
-    .expect("build workload driver");
-    tracing::info!(
-        "[flow 6/7] <<< build_workload_driver done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-
-    // Debug aid: hold the cluster up and print config paths so `ika dwallet`
-    // can be driven manually (fast iteration vs. ~6-min test cycles).
-    if std::env::var("HOLD_CLUSTER").is_ok() {
-        eprintln!("HOLD_CLUSTER: cluster up. Run e.g.:");
-        eprintln!(
-            "  ika --json --client.config {} --ika-config {} dwallet create --curve secp256k1 --output-secret /tmp/s.bin",
-            driver.client_config_path().display(),
-            driver.ika_config_path().display(),
-        );
-        eprintln!("user_address={}", driver.user_address());
-        tokio::time::sleep(Duration::from_secs(3600)).await;
-        return;
-    }
-
-    tracing::info!("[flow 7/7] >>> run_dwallet_lifecycle");
-    let phase_start = std::time::Instant::now();
-    let outcome = driver
-        .run_dwallet_lifecycle()
-        .await
-        .expect("DKG -> Presign -> Sign lifecycle completes on-chain");
-
-    assert!(
-        !outcome.sign_digest.is_empty(),
-        "sign produced a transaction digest"
-    );
-    tracing::info!(
-        "[flow 7/7] <<< run_dwallet_lifecycle done in {:.1}s",
-        phase_start.elapsed().as_secs_f64()
-    );
-    tracing::info!(
-        dwallet_id = %outcome.dwallet_id,
-        sign_digest = %outcome.sign_digest,
-        "workload PASSED: DKG -> Presign -> Sign completed on-chain"
-    );
+        .expect("workload: DKG → Presign → Sign lifecycle completes on-chain");
 }
