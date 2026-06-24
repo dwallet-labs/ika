@@ -314,18 +314,14 @@ jobs:
           # directly, and is NOT proven to prevent the cross_binary runner
           # death — v118 passes with or without it. Empty -> node default.
           MAX_MPC_COMPUTATION_CORES: ${{ inputs.max_mpc_computation_cores }}
-          # Return freed memory to the OS after the transient MPC workload. The
-          # validators use jemalloc (tikv-jemallocator) which, with default
-          # config (background_thread off, lazy demand-driven decay) across many
-          # rayon arenas, keeps the freed class-groups crypto buffers as resident
-          # dirty pages — RSS plateaus at ~2.5x idle and never falls, which is
-          # what parks the 5-validator pod at the 96 GiB OOM ceiling. NOTE: the
-          # var is PREFIXED `_RJEM_` (this build doesn't enable jemalloc's
-          # unprefixed feature, so plain MALLOC_CONF is a silent no-op); spawned
-          # ika-validator children inherit it. abort_conf:true makes jemalloc
-          # abort at boot if the string was misnamed/unparsed — so a clean boot
-          # proves the knob was actually read.
-          _RJEM_MALLOC_CONF: "background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000,abort_conf:true"
+          # Shrink the per-curve presign pools (production maxima 30k-150k each x
+          # 10 pools, RocksDB-backed) for the out-of-process test validators —
+          # they otherwise fill GiB-scale pools the test never uses (a Sign needs
+          # a handful of presigns). The node honors this env via
+          # ProtocolConfig::enable_small_presign_pools_for_local_swarm; mainnet
+          # never sets it. This is the other half of the per-validator RSS that
+          # parks the 5-validator pod at the 96 GiB ceiling.
+          IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
         run: |
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
