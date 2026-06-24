@@ -336,10 +336,13 @@ jobs:
           IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
           # heap_profile: turn on jemalloc heap profiling (the `profiling`
           # feature is compiled in). PREFIXED var (_RJEM_); each validator dumps
-          # a `.heap` per pid to the workspace data dir every ~2 GiB allocated;
-          # the "Heap profile" step below symbolizes the latest with jeprof.
+          # a `.heap` per pid to the workspace data dir every ~256 MiB allocated
+          # (lg_prof_interval:28); the "Heap profile" step below symbolizes the
+          # latest with jeprof. A coarser 2 GiB interval (lg=31) produced zero
+          # dumps on a light scenario — no process crossed the threshold before
+          # SIGTERM teardown (no prof_final / explicit dump to flush at exit).
           # Empty when off (the compiled background_thread:true still applies).
-          _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:31', github.workspace) || '' }}
+          _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
         run: |
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
