@@ -181,6 +181,14 @@ impl ClusterBuilder {
     }
 
     pub async fn build(self) -> Result<ClusterOfProcesses> {
+        let genesis_version = self
+            .genesis_protocol_version
+            .unwrap_or(ProtocolVersion::MIN);
+        tracing::info!(
+            "[flow] bringing up {} validators (genesis v{})",
+            self.num_validators,
+            genesis_version.as_u64()
+        );
         let base_dir = match &self.base_dir {
             Some(p) => {
                 std::fs::create_dir_all(p)?;
@@ -459,6 +467,7 @@ impl ClusterOfProcesses {
     /// network DKG (which runs during epoch 1) has completed — rather than
     /// polling the network-key state directly.
     pub async fn wait_for_epoch(&self, target: u64, timeout: Duration) -> Result<()> {
+        tracing::info!("[flow] waiting for epoch {target} (timeout {timeout:?})");
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // A failed read is treated as "not there yet" so a transient RPC
@@ -526,6 +535,7 @@ impl ClusterOfProcesses {
     ///
     /// Returns the new validator's index in `validators`.
     pub async fn add_joiner_validator(&mut self, binary: PathBuf) -> Result<usize> {
+        tracing::info!("[flow] joining new validator (candidate -> stake -> activate)");
         let index = self.validators.len();
         let mut rng = OsRng;
         let mut init = ValidatorInitializationConfigBuilder::new().build(&mut rng);

@@ -81,6 +81,29 @@ pub enum Step {
     },
 }
 
+impl std::fmt::Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Step::StartAll(spec) => write!(f, "start_all({})", spec.label()),
+            Step::WaitForEpoch(e) => write!(f, "wait_for_epoch({e})"),
+            Step::StopAndSwap { validators, to } => {
+                write!(f, "stop_and_swap({validators:?} -> {})", to.label())
+            }
+            Step::SetBufferStake { buffer_bps } => write!(f, "set_buffer_stake({buffer_bps})"),
+            Step::ExpectProtocolVersionAtLeast(v) => {
+                write!(f, "expect_protocol_version_at_least({v})")
+            }
+            Step::JoinValidator(spec) => write!(f, "join_validator({})", spec.label()),
+            Step::RemoveValidator { index } => write!(f, "remove_validator({index})"),
+            Step::StopValidator { index } => write!(f, "stop_validator({index})"),
+            Step::ExpectCommitteeSize(n) => write!(f, "expect_committee_size({n})"),
+            Step::SetGlobalPresignConfig => write!(f, "set_global_presign_config"),
+            Step::RecordMpcTimings { label } => write!(f, "record_mpc_timings({label:?})"),
+            Step::RunWorkload { label } => write!(f, "run_workload({label:?})"),
+        }
+    }
+}
+
 /// What a scenario run produced beyond pass/fail: the labeled MPC timing
 /// snapshots, in recording order. The comparison between consecutive
 /// snapshots is printed by `run` itself; tests can also inspect the raw
@@ -257,7 +280,11 @@ impl Scenario {
         let mut cluster: Option<ClusterOfProcesses> = None;
         let mut timing_snapshots: Vec<TimingSnapshot> = Vec::new();
 
-        for step in &self.steps {
+        let total = self.steps.len();
+        for (index, step) in self.steps.iter().enumerate() {
+            let step_number = index + 1;
+            let step_started = std::time::Instant::now();
+            tracing::info!("[flow {step_number}/{total}] >>> {step}");
             match step {
                 Step::StartAll(spec) => {
                     let validator_binary = resolve(&resolver, spec).await?;
@@ -393,6 +420,10 @@ impl Scenario {
                     tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
                 }
             }
+            tracing::info!(
+                "[flow {step_number}/{total}] <<< {step} done in {:.1}s",
+                step_started.elapsed().as_secs_f64()
+            );
         }
         if timing_snapshots.len() >= 2 {
             println!("{}", mpc_timings::render_comparison(&timing_snapshots));
