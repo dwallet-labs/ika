@@ -260,8 +260,13 @@ jobs:
           set -euo pipefail
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
-          # green. `--no-default-features` drops ika-node's enforce-minimum-cpu.
-          cargo build --release --no-default-features -p ika-node --bin ika-validator --bin ika-notifier
+          # green. `--no-default-features --features jemalloc` drops ika-node's
+          # enforce-minimum-cpu (panics on cgroup-throttled pods) but KEEPS
+          # jemalloc. Both are in `default`, so `--no-default-features` alone
+          # ALSO dropped jemalloc — leaving CI on the glibc allocator, so the
+          # jemalloc background_threads memory fix and heap profiling (the
+          # `profiling` feature) never took effect. Prod uses jemalloc; so does CI now.
+          cargo build --release --no-default-features --features jemalloc -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
