@@ -151,7 +151,8 @@ far the heaviest upgrade-test. On the current `ika-k8s-large` pods the
 and `Run cross_binary` + all `if: always()` steps **blank** (distinct from a
 real nextest failure, which leaves artifacts + exit 100). The *same* death
 reproduces on a clean `dev` checkout, so it is the **pod, not any branch's
-code**. The mechanism is not yet proven (see the forensic findings below).
+code**. The mechanism is now proven — a cgroup OOM-kill at the pod's 96 GiB
+memory limit (`OOMKilled`/137); see the findings and the fix below.
 
 What the surviving **"Runner resources"** step reports on these pods (it runs
 *before* the test, so its log survives the death):
@@ -168,22 +169,27 @@ jobs) actually established — read this before "fixing" it again. Several
 earlier confident claims here were wrong:**
 
 - **The death is a deterministic test phase, not an external timer.** Build /
-  setup time varies between jobs, yet the death lands at a near-constant
-  **~29 min into the *Run* step** (≈1760 s). One job with +108 s longer setup
-  still died at the same *run-relative* time — i.e. +108 s later in pod
-  wall-clock — so it tracks the scenario, not pod age. ~29 min is the
-  peak-concurrency phase (final 5→4 reshare / second MPC lifecycle, 5 resident
-  validators). This rules out a runner max-lifetime / kubelet-eviction timer.
+  setup time varies between jobs, yet the job is marked failed at a
+  near-constant **~29 min into the *Run* step** (≈1760 s). One job with +108 s
+  longer setup still died at the same *run-relative* time — so it tracks the
+  scenario, not pod age. Refinement from `kubectl`: the **actual OOM is ~20 min
+  into the Run step** (peak 5→4 reshare / second MPC lifecycle); GitHub's "lost
+  communication" then **lags the real kill by ~9–10 min** (its heartbeat-loss
+  timeout), which is the ~29 min figure. Rules out a max-lifetime/eviction timer.
 - **CPU starvation is refuted.** The sampler shows the heavy scenarios peak at
   **~13 of the 80-CPU quota** with **zero in-window CFS throttling**
   (`nr_throttled` flat). The runner agent always had schedulable CPU;
   `rayon_threads_per_node` (#1770) already keeps threads well under quota.
-- **Memory-OOM is the leading suspect but UNPROVEN.** Until 2026-06 *nothing
-  measured memory* — the old sampler recorded CPU only, and a runner death
-  404s the job log + drops all artifacts, so no dead `cross_binary` pod's
-  memory was ever observed. 96 GiB / no swap across 5–6 class-groups
-  validators makes OOM plausible, but it is inference, not data. Don't restate
-  it as fact.
+- **Memory-OOM is CONFIRMED (2026-06, via `kubectl`).** The runner pod ends
+  `State: Terminated, Reason: OOMKilled, Exit Code: 137` — the kernel OOM-killer
+  fired at the pod's **own 96 GiB cgroup limit** (`limits.memory=96Gi` on the
+  ARC runner). "Runner lost communication" is just the downstream symptom (the
+  OOM killed the runner container). It is **not** node pressure: the node
+  (`ika-worker-8`, 125 GiB) was at 17 %. `kubectl top` traced the climb to the
+  kill (steady ~24–36 GiB through the churn, then 24→54→56→66 GiB in the final
+  5 min). Note `top` reports `working_set`, which under-reads the cgroup
+  `memory.current` that triggers OOM, so its ~64 GiB peak is low — the
+  `OOMKilled`/137 status is ground truth that `memory.current` hit 96 GiB.
 - **`max_mpc_computation_cores` is NOT a proven fix, and is a CPU lever, not a
   memory one.** It caps *concurrent* dwallet-MPC computations
   (`currently_running < available`, orchestrator.rs) — but each computation
@@ -195,42 +201,46 @@ earlier confident claims here were wrong:**
   "the memory axis, complementary to #1770's CPU axis" was wrong — both act on
   CPU. Keep it as a cheap knob; don't rely on it to fix the death.
 
-**What we measured, and the on-pod dead end (2026-06 follow-up):** the sampler
-is now memory-aware (`resource-sampler.log`: `mem=current/max pct=… swap=…
-oom_kill=… top=[RSS]` every 15 s). On a *surviving* `smoke` run it showed **each
-`ika-validator` ≈ 7.5–8 GB RSS** and 4 idle validators + overhead at **62 % of
-the 96 GiB pod, swap=0** — memory is the dominant resource, and `cross_binary`'s
-5–6 concurrently-resharing validators extrapolate past the ceiling, so
-**memory-OOM is the strongly-supported (but still unconfirmed) suspect**. Two
-attempts to capture it *on the pod* both failed, and the failures are the point:
+**How it was confirmed — `kubectl`, not on-pod (every on-pod channel is wiped by
+the death):** the in-pod sampler measured **each `ika-validator` ≈ 7.5–8 GB RSS**
+(idle, from a surviving `smoke` run), but the death itself can't be read on the
+pod — a runner death **wipes the job's runner-emitted `::warning::` annotations**
+(a surviving `smoke` shows the sampler's startup line; a dead `cross_binary` with
+the identical line shows none — only GitHub's backend "lost communication"
+annotation remains), and drops the artifacts + job log too. The off-pod read is
+the one that works: with `kubectl` on the runners' cluster (`ika-prod-netbird` —
+NetBird must be up),
 
-- **Runner-emitted annotations do NOT survive a runner death.** A foreground
-  `::warning::` *is* parsed (a surviving `smoke` run shows the sampler's startup
-  line), but a death **wipes the job's runner-emitted annotations** — a dead
-  `cross_binary` run with the identical startup line shows none; only GitHub's
-  own backend-generated "lost communication" annotation remains. (Background
-  sampler commands aren't parsed at all.) So annotations, artifacts, and the job
-  log are **all** lost on death — there is **no on-pod channel** that survives.
-- **`max_mpc_computation_cores=1` + 10 min epochs still died** (run 28062374647,
-  0 artifacts). Minimizing concurrent MPC + epoch overlap should have cut any
-  *transient* MPC memory — it didn't help, which points at the **baseline
-  per-validator footprint × 5–6 validators**, not the computation transient, as
-  the pressure. The cap is the wrong lever.
+```bash
+# while the cross_binary job runs, find its ephemeral runner pod + node:
+kubectl get pods -n github-actions -o wide | grep ika-k8s-large
+# trace memory live (metrics-server; survives the pod death):
+kubectl top pod -n github-actions <pod>       # poll every ~20s
+# after death — the smoking gun:
+kubectl describe pod -n github-actions <pod> | grep -A3 'Last State'
+#   -> State: Terminated  Reason: OOMKilled  Exit Code: 137
+```
 
-**So a direct read of the death needs an OFF-pod channel:** the infra owner pulls
-the pod's **kubelet events** (`OOMKilled` vs `Evicted` vs node loss) and **node
-`dmesg`** (OOM-killer line names the process + RSS) — definitive; or the sampler
-pushes samples off-pod mid-run via the runner `GITHUB_TOKEN` (e.g. to a throwaway
-branch) so they land before the death.
+`OOMKilled`/137 at the pod's **96 GiB cgroup limit** is the confirmed cause; the
+node (125 GiB, 17 % used) had headroom, so it is the pod limit, not eviction.
+`max_mpc_computation_cores=1` + 10 min epochs **still OOM'd** (run 28062374647) —
+the pressure is the **baseline per-validator footprint × 5–6 validators**, not
+MPC transient, so the cap can't fix it.
 
-**To get `cross_binary` green meanwhile:** the fix follows the evidence, not the
-mechanism — **a bigger-memory pod or a smaller peak committee**. The cap and
-longer epochs do *not* save it. `v118_churn` (one joiner from a real 1.1.8
-origin) already passes and covers the OCS joiner-anchor path, so `cross_binary`'s
-heavier synthetic coverage is the only thing blocked by the pod ceiling. Note:
-on a runner death, artifacts, the live step log, **and** runner-emitted
-annotations are all lost — only the pre-test step logs ("Runner resources",
-builds) survive.
+**The fix (infra — the ARC `ika-k8s-large` `AutoscalingRunnerSet` in
+`github-actions`):** the runner template is `requests.memory=16Gi
+limits.memory=96Gi`, no `nodeSelector`, max 8 runners. cross_binary's peak demand
+is **> 96 GiB** (it died *at* the limit; true peak unmeasured). Because the
+*request* is only 16 GiB the scheduler can pack several bursting runners onto one
+125 GiB node, so **raising the limit alone risks a node-level OOM** — raise the
+*request* too (so heavy runners don't co-schedule), or pin cross_binary to the
+**377 GiB node `ika-worker-51`** (the rest are 125 GiB) via `nodeSelector` and a
+~150 GiB limit (which also reveals the true peak). Until then, `v118_churn` (one
+joiner from a real 1.1.8 origin) already passes and covers the OCS joiner-anchor
+path, so only cross_binary's heavier synthetic coverage is blocked. Note: on a
+runner death, artifacts, the live step log, **and** runner-emitted annotations
+are all lost — only pre-test step logs survive, and the live `kubectl top` /
+post-mortem `describe` above are the diagnostic channels.
 
 ## Facts that save debugging time
 

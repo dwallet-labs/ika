@@ -334,8 +334,8 @@ jobs:
           # death; capturing it needs an off-pod channel (kubelet/dmesg, or a
           # token-push of samples). What the sampler DID establish on surviving
           # runs: each ika-validator ~7.5-8 GB RSS, 4 idle validators = 62% of
-          # the 96 GiB pod, swap=0 -> memory is the dominant resource and the
-          # leading (still-unconfirmed) suspect for the cross_binary death. One
+          # the 96 GiB pod, swap=0. The cross_binary death is CONFIRMED (kubectl)
+          # to be a cgroup OOM-kill at the pod's 96 GiB limit (OOMKilled/137). One
           # scenario, one process: the harness binds fixed Sui ports and chdirs
           # during publish, so --test-threads=1 is mandatory. (Live test output
           # is in the artifact, not the step log.)
