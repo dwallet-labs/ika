@@ -83,6 +83,11 @@ on:
         type: string
         required: false
         default: "info"
+      heap_profile:
+        description: "Enable jemalloc heap profiling (jeprof) to find what holds validator memory — pair with ONE light scenario, e.g. test=workload"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -324,6 +329,12 @@ jobs:
           # never sets it. This is the other half of the per-validator RSS that
           # parks the 5-validator pod at the 96 GiB ceiling.
           IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
+          # heap_profile: turn on jemalloc heap profiling (the `profiling`
+          # feature is compiled in). PREFIXED var (_RJEM_); each validator dumps
+          # a `.heap` per pid to the workspace data dir every ~2 GiB allocated;
+          # the "Heap profile" step below symbolizes the latest with jeprof.
+          # Empty when off (the compiled background_thread:true still applies).
+          _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:31', github.workspace) || '' }}
         run: |
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
@@ -393,6 +404,37 @@ jobs:
         if: always()
         run: |
           grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
+
+      - name: Heap profile (jeprof)
+        if: ${{ always() && inputs.heap_profile }}
+        run: |
+          set +e
+          DIR="${{ github.workspace }}/upgrade-test-data"
+          BIN="${{ github.workspace }}/target/release/ika-validator"
+          echo "heap dumps under $DIR:"; ls -la "$DIR"/jeprof.*.heap 2>/dev/null | tail -12
+          # jeprof ships with libjemalloc-dev; it reads the .heap dump + the
+          # binary's symbol table (release keeps it — strip='debuginfo' only
+          # drops debug info) to attribute live bytes to functions.
+          if ! command -v jeprof >/dev/null; then
+            if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+            $SUDO apt-get -o Acquire::ForceIPv4=true install -y libjemalloc-dev 2>&1 | tail -3
+          fi
+          LAST=$(ls -t "$DIR"/jeprof.*.heap 2>/dev/null | head -1)
+          if [ -n "$LAST" ] && command -v jeprof >/dev/null; then
+            echo "=== jeprof --inuse_space: top live-allocation sites (bytes) — $LAST ==="
+            jeprof --text --show_bytes --inuse_space "$BIN" "$LAST" 2>/dev/null | head -45
+          else
+            echo "no heap dumps or jeprof missing — heap_profile must be on AND a workload-bearing scenario must have run"
+          fi
+
+      - name: Upload heap dumps
+        if: ${{ always() && inputs.heap_profile }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jeprof-${{ matrix.test }}-${{ github.run_attempt }}
+          path: upgrade-test-data/jeprof.*.heap
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload resource sampler log
         if: always()
