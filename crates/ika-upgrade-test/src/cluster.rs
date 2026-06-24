@@ -181,6 +181,14 @@ impl ClusterBuilder {
     }
 
     pub async fn build(self) -> Result<ClusterOfProcesses> {
+        let genesis_version = self
+            .genesis_protocol_version
+            .unwrap_or(ProtocolVersion::MIN);
+        tracing::info!(
+            "[flow] bringing up {} validators (genesis v{})",
+            self.num_validators,
+            genesis_version.as_u64()
+        );
         let base_dir = match &self.base_dir {
             Some(p) => {
                 std::fs::create_dir_all(p)?;
@@ -264,28 +272,54 @@ impl ClusterBuilder {
             })
             .collect();
 
+        // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
+        // set refuses to boot without a Sui trust anchor. Seed every validator
+        // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
+        // anchor (the private-net path), mirroring IkaTestClusterBuilder. Harmless
+        // pre-v4 (the field is unused on the JSON-RPC path).
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}"))?;
+
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
+        // Bound every co-located node's crypto rayon pool to a fair share of the
+        // host so the validators + notifier don't oversubscribe the CPU (see
+        // `rayon_threads_per_node`).
+        let rayon_threads = rayon_threads_per_node(self.num_validators + 1);
+        // Optional cap on each validator's concurrent dwallet-MPC computations
+        // (NodeConfig.max_mpc_computation_cores). Set MAX_MPC_COMPUTATION_CORES
+        // low to bound peak MEMORY when many validators are co-located on one CI
+        // pod — the class-groups crypto state of concurrent computations, not
+        // the thread count, is what OOMs the runner. Unset = node default.
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
         let mut validators = Vec::with_capacity(self.num_validators);
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
-            let node_config = ValidatorConfigBuilder::new()
+            let mut builder = ValidatorConfigBuilder::new()
                 .with_config_directory(data_dir.clone())
-                .build(
-                    init,
-                    rpc_url.clone(),
-                    ika_package_id,
-                    ika_common_package_id,
-                    ika_dwallet_2pc_mpc_package_id,
-                    ika_system_package_id,
-                    ika_system_object_id,
-                    ika_dwallet_coordinator_object_id,
-                );
+                .with_unsafe_genesis_committee(genesis_committee.clone());
+            if let Some(cores) = max_mpc_computation_cores {
+                builder = builder.with_max_mpc_computation_cores(cores);
+            }
+            let node_config = builder.build(
+                init,
+                rpc_url.clone(),
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
+                ika_system_package_id,
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
+            );
             let proc = spawn_node(
                 i,
                 self.validator_binary.clone(),
                 &node_config,
                 data_dir.clone(),
+                rayon_threads,
             )
             .await?;
             validators.push(proc);
@@ -316,6 +350,7 @@ impl ClusterBuilder {
             self.notifier_binary.clone(),
             &notifier_config,
             notifier_dir,
+            rayon_threads,
         )
         .await?;
 
@@ -432,6 +467,7 @@ impl ClusterOfProcesses {
     /// network DKG (which runs during epoch 1) has completed — rather than
     /// polling the network-key state directly.
     pub async fn wait_for_epoch(&self, target: u64, timeout: Duration) -> Result<()> {
+        tracing::info!("[flow] waiting for epoch {target} (timeout {timeout:?})");
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // A failed read is treated as "not there yet" so a transient RPC
@@ -499,6 +535,7 @@ impl ClusterOfProcesses {
     ///
     /// Returns the new validator's index in `validators`.
     pub async fn add_joiner_validator(&mut self, binary: PathBuf) -> Result<usize> {
+        tracing::info!("[flow] joining new validator (candidate -> stake -> activate)");
         let index = self.validators.len();
         let mut rng = OsRng;
         let mut init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
@@ -570,19 +607,42 @@ impl ClusterOfProcesses {
 
         let data_dir = self.base.join(format!("validator-{index}"));
         std::fs::create_dir_all(&data_dir)?;
-        let node_config = ValidatorConfigBuilder::new()
+        // Same OCS v4 trust anchor as the genesis validators (see `build`): the
+        // epoch-0 committee is immutable, so re-fetch it for the joiner.
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&self.rpc_url)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("fetch Sui genesis committee for joiner OCS anchor: {e}")
+            })?;
+        // Same MPC-computation-core cap as the genesis validators (see `build`).
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
+        let mut builder = ValidatorConfigBuilder::new()
             .with_config_directory(data_dir.clone())
-            .build(
-                &init,
-                self.rpc_url.clone(),
-                self.packages.ika_package_id,
-                self.packages.ika_common_package_id,
-                self.packages.ika_dwallet_2pc_mpc_package_id,
-                self.packages.ika_system_package_id,
-                self.system.ika_system_object_id,
-                self.system.ika_dwallet_coordinator_object_id,
-            );
-        let proc = spawn_node(index, binary, &node_config, data_dir).await?;
+            .with_unsafe_genesis_committee(genesis_committee);
+        if let Some(cores) = max_mpc_computation_cores {
+            builder = builder.with_max_mpc_computation_cores(cores);
+        }
+        let node_config = builder.build(
+            &init,
+            self.rpc_url.clone(),
+            self.packages.ika_package_id,
+            self.packages.ika_common_package_id,
+            self.packages.ika_dwallet_2pc_mpc_package_id,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.ika_dwallet_coordinator_object_id,
+        );
+        let proc = spawn_node(
+            index,
+            binary,
+            &node_config,
+            data_dir,
+            // existing validators (`index`) + this joiner + the notifier.
+            rayon_threads_per_node(index + 2),
+        )
+        .await?;
         self.validators.push(proc);
         self.committee.push(ValidatorSlot {
             address: joiner_address,
@@ -671,6 +731,7 @@ async fn spawn_node(
     binary: PathBuf,
     node_config: &NodeConfig,
     data_dir: PathBuf,
+    rayon_threads: usize,
 ) -> Result<ValidatorProcess> {
     let config_path = data_dir.join("node-config.yaml");
     let yaml = serde_yaml::to_string(node_config).context("serialize NodeConfig")?;
@@ -690,7 +751,52 @@ async fn spawn_node(
         admin_addr,
         node_config.metrics_address.port(),
         log_path,
+        rayon_threads,
     );
     proc.start().await?;
     Ok(proc)
+}
+
+/// `RAYON_NUM_THREADS` budget for each spawned node, given how many node
+/// processes will share this host. The harness co-locates every validator
+/// (plus the notifier) on one machine, each running the real node binary built
+/// `--no-default-features` — so each one's rayon pool otherwise defaults to ALL
+/// cores (`ika-core`'s `runtime.rs`). With the parallel crypto feature active
+/// that oversubscribes the CPU by the node count, starving the async runtimes
+/// (and, on CI, the runner agent itself → "runner lost communication"). Hand
+/// each node a fair slice of ~75% of the cores, reserving the rest for the
+/// async/IO work across all the processes — the out-of-process analogue of the
+/// in-process swarm's core reserve.
+fn rayon_threads_per_node(node_count: usize) -> usize {
+    // The pod's REAL CPU budget is the cgroup v2 CFS quota (`cpu.max` =
+    // "<quota> <period>"); on a throttled CI runner this is below the host core
+    // count that `available_parallelism()` reports, and sizing the per-node
+    // thread bound off host cores oversubscribes the pod. Prefer the quota.
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4);
+    let cgroup_quota = std::fs::read_to_string("/sys/fs/cgroup/cpu.max")
+        .ok()
+        .and_then(|raw| {
+            let mut parts = raw.split_whitespace();
+            let quota = parts.next()?;
+            let period: usize = parts.next()?.parse().ok()?;
+            if quota == "max" || period == 0 {
+                return None;
+            }
+            Some((quota.parse::<usize>().ok()? / period).max(1))
+        });
+    let cores = cgroup_quota.map_or(available, |q| q.min(available));
+    let threads = ((cores * 3 / 4) / node_count.max(1)).max(1);
+    // Log both so the cores-vs-quota gap is visible in CI. Fires at cluster
+    // build (early), before the heavy crypto / any runner death.
+    tracing::warn!(
+        available_parallelism = available,
+        cgroup_cpu_quota = ?cgroup_quota,
+        effective_cores = cores,
+        node_count,
+        rayon_threads_per_node = threads,
+        "upgrade-test rayon budget: available_parallelism vs cgroup cpu.max"
+    );
+    threads
 }

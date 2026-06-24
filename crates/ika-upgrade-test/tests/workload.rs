@@ -57,6 +57,8 @@ async fn workload_dkg_presign_sign() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
+    tracing::info!("[flow 1/7] >>> cluster_bring_up");
+    let phase_start = std::time::Instant::now();
     let cluster = ClusterBuilder::new(validator, notifier, sui)
         .with_num_validators(4)
         // Genesis at v3 (MIN), never v4 — see module docs. The binary supports
@@ -74,6 +76,10 @@ async fn workload_dkg_presign_sign() {
         .build()
         .await
         .expect("cluster bring-up");
+    tracing::info!(
+        "[flow 1/7] <<< cluster_bring_up done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
     // Wait for epoch 2, not 1. Epoch 1 is genesis and is reached immediately,
     // *before* the network DKG runs — so the DKG output isn't on-chain yet and
@@ -81,28 +87,53 @@ async fn workload_dkg_presign_sign() {
     // 2 is itself the completion signal: reconfiguration into epoch 2 reshares
     // the genesis key, which can't happen until the genesis DKG finished. So
     // reaching epoch 2 guarantees the v3 network key is readable.
+    tracing::info!("[flow 2/7] >>> wait_for_epoch(2)");
+    let phase_start = std::time::Instant::now();
     cluster
         .wait_for_epoch(2, Duration::from_secs(900))
         .await
         .expect("reach epoch 2 (genesis network DKG + reshare done at v3)");
+    tracing::info!(
+        "[flow 2/7] <<< wait_for_epoch(2) done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
     // With n=4 the default 50% buffer stake rounds the capability-vote
     // threshold up to all four validators; a single lagging capability
     // registration then blocks the upgrade forever. Drop the buffer to a bare
     // quorum (the realistic behavior on larger committees) so the v3->v4 vote
     // tallies at the next epoch boundary.
+    // current_epoch() reads the on-chain epoch counter, which advances at the
+    // epoch-closing checkpoint *before* each validator locally reconfigures.
+    // The admin handler validates the override against the node's local epoch,
+    // so POST it with a retry that waits out that reconfiguration lag rather
+    // than firing once the instant the counter ticks (which loses the race).
+    tracing::info!("[flow 3/7] >>> set_buffer_stake");
+    let phase_start = std::time::Instant::now();
     let epoch = cluster.current_epoch().await.expect("read current epoch");
     for proc in &cluster.validators {
-        proc.set_buffer_stake(epoch, 0)
+        proc.set_buffer_stake_when_at_epoch(epoch, 0, Duration::from_secs(120))
             .await
             .unwrap_or_else(|e| panic!("set buffer stake on validator {}: {e}", proc.index));
     }
+    tracing::info!(
+        "[flow 3/7] <<< set_buffer_stake done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
+    tracing::info!("[flow 4/7] >>> wait_for_epoch(3)");
+    let phase_start = std::time::Instant::now();
     cluster
         .wait_for_epoch(3, Duration::from_secs(600))
         .await
         .expect("reach epoch 3 (crossing the v3->v4 upgrade boundary)");
+    tracing::info!(
+        "[flow 4/7] <<< wait_for_epoch(3) done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
+    tracing::info!("[flow 5/7] >>> assert_protocol_version");
+    let phase_start = std::time::Instant::now();
     let protocol_version = cluster
         .current_protocol_version()
         .await
@@ -111,7 +142,13 @@ async fn workload_dkg_presign_sign() {
         protocol_version >= 4,
         "expected protocol v4 after the upgrade boundary, got v{protocol_version}"
     );
+    tracing::info!(
+        "[flow 5/7] <<< assert_protocol_version done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
+    tracing::info!("[flow 6/7] >>> build_workload_driver");
+    let phase_start = std::time::Instant::now();
     let driver = WorkloadDriver::new(
         ika_cli,
         cluster.rpc_url().to_string(),
@@ -121,6 +158,10 @@ async fn workload_dkg_presign_sign() {
     )
     .await
     .expect("build workload driver");
+    tracing::info!(
+        "[flow 6/7] <<< build_workload_driver done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
     // Debug aid: hold the cluster up and print config paths so `ika dwallet`
     // can be driven manually (fast iteration vs. ~6-min test cycles).
@@ -136,6 +177,8 @@ async fn workload_dkg_presign_sign() {
         return;
     }
 
+    tracing::info!("[flow 7/7] >>> run_dwallet_lifecycle");
+    let phase_start = std::time::Instant::now();
     let outcome = driver
         .run_dwallet_lifecycle()
         .await
@@ -144,6 +187,10 @@ async fn workload_dkg_presign_sign() {
     assert!(
         !outcome.sign_digest.is_empty(),
         "sign produced a transaction digest"
+    );
+    tracing::info!(
+        "[flow 7/7] <<< run_dwallet_lifecycle done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
     );
     tracing::info!(
         dwallet_id = %outcome.dwallet_id,

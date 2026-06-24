@@ -36,6 +36,15 @@ pub struct ValidatorProcess {
     metrics_port: u16,
     /// Per-validator log file (child stdout+stderr).
     log_path: PathBuf,
+    /// `RAYON_NUM_THREADS` for this child's crypto pool. The harness packs
+    /// several validator processes onto one host, each running the real node
+    /// binary built `--no-default-features` (so `enforce-minimum-cpu` is off and
+    /// the node's rayon pool would otherwise grab every core — see
+    /// `ika-core`'s `runtime.rs`). With the parallel crypto feature active, N
+    /// such processes oversubscribe the CPU N× and starve the async runtimes —
+    /// on CI hard enough to kill the runner agent. Bounded to a fair per-node
+    /// slice at construction.
+    rayon_threads: usize,
     child: Option<Child>,
     http: reqwest::Client,
 }
@@ -49,6 +58,7 @@ impl ValidatorProcess {
         admin_addr: SocketAddr,
         metrics_port: u16,
         log_path: PathBuf,
+        rayon_threads: usize,
     ) -> Self {
         Self {
             index,
@@ -58,6 +68,7 @@ impl ValidatorProcess {
             admin_addr,
             metrics_port,
             log_path,
+            rayon_threads,
             child: None,
             http: reqwest::Client::new(),
         }
@@ -85,6 +96,9 @@ impl ValidatorProcess {
         let child = Command::new(&self.binary)
             .arg("--config-path")
             .arg(&self.config_path)
+            // Bound this child's crypto rayon pool so co-located validator
+            // processes don't oversubscribe the host (see `rayon_threads`).
+            .env("RAYON_NUM_THREADS", self.rayon_threads.to_string())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true)
@@ -169,6 +183,43 @@ impl ValidatorProcess {
             "set-override-buffer-stake?buffer_bps={buffer_bps}&epoch={epoch}"
         ))
         .await
+    }
+
+    /// Like [`set_buffer_stake`], but tolerant of the validator's local epoch
+    /// lagging the on-chain epoch right after a boundary. The admin handler
+    /// checks the requested `epoch` against the node's *local* `epoch_store`
+    /// and returns a 500 `WrongEpoch` until the node has reconfigured into
+    /// `epoch` — but the on-chain counter (what callers read to pick `epoch`)
+    /// advances first, so a POST fired the instant the counter ticks races the
+    /// node's reconfiguration. Retry across that window until the override
+    /// lands, or `timeout` elapses. Only the wrong-epoch rejection is retried;
+    /// any other error returns immediately.
+    pub async fn set_buffer_stake_when_at_epoch(
+        &self,
+        epoch: u64,
+        buffer_bps: u64,
+        timeout: Duration,
+    ) -> Result<String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        loop {
+            match self.set_buffer_stake(epoch, buffer_bps).await {
+                Ok(body) => return Ok(body),
+                Err(error) => {
+                    let local_epoch_lagging = error.to_string().contains("wrong epoch");
+                    if !local_epoch_lagging || tokio::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    tracing::info!(
+                        index = self.index,
+                        target_epoch = epoch,
+                        "buffer-stake override rejected; local epoch still catching up, retrying",
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(2));
+                }
+            }
+        }
     }
 
     pub fn is_running(&self) -> bool {

@@ -159,7 +159,14 @@ indicatif = "0.18.0"
 insta = { version = "1.21.1", features = ["redactions", "yaml", "json"] }
 itertools = "0.14.0"
 tikv-jemalloc-ctl = "0.5.4"
-tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls"] }
+# `background_threads` bakes `background_thread:true` into the compiled-in
+# jemalloc malloc_conf so the allocator runs a background purger that proactively
+# returns freed pages to the OS. Without it (jemalloc's default) freed memory —
+# e.g. the transient class-groups MPC working set — is retained as per-arena
+# dirty pages and RSS plateaus at the high-water mark. Supported on every target
+# ika ships (only `musl` is unsupported, and that degrades to a build warning,
+# not an error, because `background_threads_runtime_support` stays enabled).
+tikv-jemallocator = { version = "0.5", features = ["profiling", "disable_initial_exec_tls", "background_threads"] }
 jsonrpsee = { version = "0.26.0", features = ["server", "macros", "ws-client", "http-client", "jsonrpsee-core"] }
 lru = "0.16.3"
 merlin = { version = "3", default-features = false }

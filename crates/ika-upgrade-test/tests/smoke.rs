@@ -52,6 +52,8 @@ async fn smoke_four_validators_reach_epoch_two() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
+    tracing::info!("[flow 1/2] >>> cluster_bring_up");
+    let phase_start = std::time::Instant::now();
     let cluster = ClusterBuilder::new(validator, notifier, sui)
         .with_num_validators(4)
         .with_epoch_duration_ms(60_000)
@@ -60,6 +62,10 @@ async fn smoke_four_validators_reach_epoch_two() {
         .build()
         .await
         .expect("cluster bring-up");
+    tracing::info!(
+        "[flow 1/2] <<< cluster_bring_up done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
     let start_epoch = cluster.current_epoch().await.expect("read epoch");
     let start_version = cluster
@@ -72,10 +78,16 @@ async fn smoke_four_validators_reach_epoch_two() {
         "cluster up; waiting for epoch 2"
     );
 
+    tracing::info!("[flow 2/2] >>> wait_for_epoch(2)");
+    let phase_start = std::time::Instant::now();
     cluster
         .wait_for_epoch(2, Duration::from_secs(900))
         .await
         .expect("reach epoch 2");
+    tracing::info!(
+        "[flow 2/2] <<< wait_for_epoch(2) done in {:.1}s",
+        phase_start.elapsed().as_secs_f64()
+    );
 
     tracing::info!("go/no-go PASSED: out-of-process cluster reached epoch 2");
 }

@@ -14,6 +14,7 @@ use tracing::{error, info};
 use ika_config::node::RunWithRange;
 use ika_config::{Config, NodeConfig};
 use ika_core::runtime::IkaRuntimes;
+use ika_protocol_config::ProtocolConfig;
 use ika_telemetry::send_telemetry_event;
 use ika_types::crypto::KeypairTraits;
 use ika_types::digests::ChainIdentifier;
@@ -81,6 +82,17 @@ pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_nam
         "supported_protocol_versions cannot be read from the config file"
     );
     config.supported_protocol_versions = Some(SupportedProtocolVersions::SYSTEM_DEFAULT);
+
+    // Test-only: shrink the per-curve presign pools. Production maxima are
+    // 30k-150k presigns per pool (10 pools), RocksDB-backed, and the refill
+    // loop tops them up whenever the network is idle — so out-of-process test
+    // validators fill GiB-scale pools the test never uses (a Sign consumes a
+    // handful). The in-process swarm calls this directly; a spawned child
+    // process can't see that call, so the harness opts in via env. Never set on
+    // mainnet; the DKG->Presign->Sign path is unchanged.
+    if std::env::var("IKA_ENABLE_SMALL_PRESIGN_POOLS").is_ok() {
+        ProtocolConfig::enable_small_presign_pools_for_local_swarm();
+    }
 
     // Match run_with_range args
     // this means that we always modify the config used to start the node

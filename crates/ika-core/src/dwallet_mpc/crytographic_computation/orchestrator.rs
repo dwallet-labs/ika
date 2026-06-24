@@ -84,7 +84,10 @@ pub(crate) struct CryptographicComputationsOrchestrator {
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(
+        root_seed: RootSeed,
+        max_computation_cores: Option<usize>,
+    ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -96,8 +99,15 @@ impl CryptographicComputationsOrchestrator {
                 .map_err(|e| DwalletMPCError::FailedToGetAvailableParallelism(e.to_string()))?
                 .into();
         }
+        // Operator override (`NodeConfig::max_mpc_computation_cores`): cap the
+        // concurrent-computation budget below the host core count. Bounds peak
+        // CPU + memory when validators are co-located (e.g. CI test clusters).
+        if let Some(max) = max_computation_cores {
+            available_cores_for_computations = available_cores_for_computations.min(max).max(1);
+        }
         info!(
             available_cores_for_computations =? available_cores_for_computations,
+            ?max_computation_cores,
             "Available CPU cores for Rayon cryptographic computations"
         );
 

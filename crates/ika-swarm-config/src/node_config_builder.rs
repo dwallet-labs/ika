@@ -36,6 +36,10 @@ pub struct ValidatorConfigBuilder {
     config_directory: Option<PathBuf>,
     supported_protocol_versions: Option<SupportedProtocolVersions>,
     authority_overload_config: Option<AuthorityOverloadConfig>,
+    /// Override for `NodeConfig.max_mpc_computation_cores` — caps concurrent
+    /// dwallet-MPC computations so co-located test validators don't starve the
+    /// host. `None` = the node default (host core count).
+    max_mpc_computation_cores: Option<usize>,
     max_submit_position: Option<usize>,
     submit_delay_step_override_millis: Option<u64>,
     /// Optional digest of an end-of-epoch checkpoint summary, pasted
@@ -103,6 +107,11 @@ impl ValidatorConfigBuilder {
 
     pub fn with_unsafe_genesis_committee(mut self, committee: Committee) -> Self {
         self.unsafe_genesis_committee = Some(committee);
+        self
+    }
+
+    pub fn with_max_mpc_computation_cores(mut self, cores: usize) -> Self {
+        self.max_mpc_computation_cores = Some(cores);
         self
     }
 
@@ -222,6 +231,7 @@ impl ValidatorConfigBuilder {
             run_with_range: None,
             authority_db_retention_epochs: None,
             authority_db_pruner_period_secs: None,
+            max_mpc_computation_cores: self.max_mpc_computation_cores,
         }
     }
 
@@ -463,6 +473,8 @@ impl FullnodeConfigBuilder {
             run_with_range: self.run_with_range,
             authority_db_retention_epochs: None,
             authority_db_pruner_period_secs: None,
+            // Fullnodes/notifiers don't run validator MPC computations.
+            max_mpc_computation_cores: None,
         }
     }
 }
