@@ -433,9 +433,6 @@ mod quorum_after_bad_sig_eviction_tests {
             0,
             vec![(auth_high, 7), (auth_low, 3)],
             HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
             /* quorum_threshold */ 7,
             /* validity_threshold */ 3,
         ));
