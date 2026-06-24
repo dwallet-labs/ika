@@ -28,6 +28,9 @@ use ika_types::dwallet_mpc_error::{DwalletMPCError, DwalletMPCResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
+// Only the non-msim path dispatches the completion via `Handle::spawn`; under
+// msim the computation runs inline (see `try_spawn_cryptographic_computation`).
+#[cfg(not(msim))]
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{debug, error, info};
@@ -80,6 +83,11 @@ pub(crate) struct CryptographicComputationsOrchestrator {
     /// advancing this session.
     /// SECURITY NOTICE: *MUST KEEP PRIVATE*.
     root_seed: RootSeed,
+
+    /// Fast Schnorr (VSS) HPKE curve25519 secret key, derived once at startup
+    /// from `root_seed` and reused for every VSS presign — avoids re-running
+    /// the HPKE keypair generation per presign.
+    vss_hpke_secret_key: group::curve25519::Scalar,
 }
 
 impl CryptographicComputationsOrchestrator {
@@ -111,6 +119,11 @@ impl CryptographicComputationsOrchestrator {
             "Available CPU cores for Rayon cryptographic computations"
         );
 
+        let vss_hpke_secret_key =
+            dwallet_classgroups_types::ValidatorMPCSecrets::vss_hpke_secret_key_from_seed(
+                &root_seed,
+            );
+
         Ok(CryptographicComputationsOrchestrator {
             available_cores_for_cryptographic_computations: available_cores_for_computations,
             completed_computation_sender: report_computation_completed_sender,
@@ -118,6 +131,7 @@ impl CryptographicComputationsOrchestrator {
             currently_running_cryptographic_computations: HashSet::new(),
             completed_cryptographic_computations: HashSet::new(),
             root_seed,
+            vss_hpke_secret_key,
         })
     }
 
@@ -254,6 +268,7 @@ impl CryptographicComputationsOrchestrator {
 
             return false;
         }
+
         let party_id = computation_request.party_id;
         let protocol_metadata: DWalletSessionRequestMetricData =
             (&computation_request.protocol_cryptographic_data).into();
@@ -269,6 +284,7 @@ impl CryptographicComputationsOrchestrator {
 
         let computation_channel_sender = self.completed_computation_sender.clone();
         let root_seed = self.root_seed.clone();
+        let vss_hpke_secret_key = self.vss_hpke_secret_key;
 
         // Under msim, run the computation INLINE in the calling task instead
         // of on rayon. Crypto is sequential under msim anyway (the `parallel`
@@ -283,8 +299,12 @@ impl CryptographicComputationsOrchestrator {
         #[cfg(msim)]
         {
             let advance_start_time = Instant::now();
-            let computation_result =
-                computation_request.compute(computation_id, root_seed, dwallet_mpc_metrics.clone());
+            let computation_result = computation_request.compute(
+                computation_id,
+                root_seed,
+                vss_hpke_secret_key,
+                dwallet_mpc_metrics.clone(),
+            );
             let elapsed_ms = advance_start_time.elapsed().as_millis();
             if let Err(err) = computation_channel_sender
                 .send(ComputationCompletionUpdate {
@@ -309,6 +329,7 @@ impl CryptographicComputationsOrchestrator {
                 let computation_result = computation_request.compute(
                     computation_id,
                     root_seed,
+                    vss_hpke_secret_key,
                     dwallet_mpc_metrics.clone(),
                 );
 

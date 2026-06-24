@@ -7,6 +7,7 @@ version.workspace = true
 dwallet-rng.workspace = true
 class_groups = { workspace = true }
 group.workspace = true
+mpc.workspace = true
 crypto-bigint.workspace = true
 serde.workspace = true
 ika-types.workspace = true
@@ -18,6 +19,7 @@ twopc_mpc.workspace = true
 # `parallel` feature in that profile to force sequential iteration.
 [target.'cfg(not(msim))'.dependencies]
 class_groups = { workspace = true, features = ["parallel"] }
+twopc_mpc = { workspace = true, features = ["parallel"] }
 
 [dev-dependencies]
 bcs.workspace = true

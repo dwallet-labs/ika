@@ -76,7 +76,7 @@ pub struct SuiConnectorService {
     /// `sync_next_committee` builds the `Committee` from this
     /// instead of from the on-chain mpc_data. `Incomplete` /
     /// `None` paths fall through to the existing chain-read.
-    class_groups_source: Arc<
+    off_chain_mpc_data_source: Arc<
         arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>>,
     >,
 }
@@ -91,6 +91,12 @@ impl SuiConnectorService {
         mode: NodeMode,
         next_epoch_committee_sender: Sender<Committee>,
         chain_next_committee_sender: Sender<CommitteeMembership>,
+        current_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
+        next_epoch_mpc_keys_sender: Sender<
+            Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+        >,
         new_requests_sender: tokio::sync::broadcast::Sender<Vec<DWalletSessionRequest>>,
         end_of_publish_sender: Sender<Option<u64>>,
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
@@ -132,7 +138,7 @@ impl SuiConnectorService {
         let network_key_blob_source: Arc<
             arc_swap::ArcSwapOption<Box<dyn crate::validator_metadata::NetworkKeyBlobSource>>,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
-        let class_groups_source: Arc<
+        let off_chain_mpc_data_source: Arc<
             arc_swap::ArcSwapOption<
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
@@ -170,6 +176,8 @@ impl SuiConnectorService {
             Duration::from_secs(2),
             next_epoch_committee_sender,
             chain_next_committee_sender,
+            current_epoch_mpc_keys_sender,
+            next_epoch_mpc_keys_sender,
             mode,
             run_legacy_event_ingestion,
             system_object_receiver,
@@ -181,7 +189,7 @@ impl SuiConnectorService {
             syncer_uncompleted,
             noa_checkpoints_finalized,
             network_key_blob_source.clone(),
-            class_groups_source.clone(),
+            off_chain_mpc_data_source.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
@@ -245,7 +253,7 @@ impl SuiConnectorService {
                 network_keys_receiver: network_keys_receiver.clone(),
                 task_handles,
                 network_key_blob_source,
-                class_groups_source,
+                off_chain_mpc_data_source,
             }),
             network_keys_receiver,
         ))
@@ -269,7 +277,7 @@ impl SuiConnectorService {
         &self,
         source: Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
     ) {
-        self.class_groups_source.store(Some(Arc::new(source)));
+        self.off_chain_mpc_data_source.store(Some(Arc::new(source)));
     }
 
     pub async fn run_epoch(

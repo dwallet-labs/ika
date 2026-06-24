@@ -1036,6 +1036,12 @@ impl IkaNode {
         ) = watch::channel((0, 0));
         let (uncompleted_requests_sender, uncompleted_requests_receiver) =
             watch::channel((Vec::new(), 0));
+        // Off-chain-assembled validator MPC keys (3 PVSS + VSS HPKE), delivered
+        // per-epoch to the MPC manager — the off-chain-only keys no longer live
+        // on `Committee`. Current epoch feeds within-epoch network DKG; next
+        // epoch feeds reconfiguration.
+        let (current_epoch_mpc_keys_sender, current_epoch_mpc_keys_receiver) = watch::channel(None);
+        let (next_epoch_mpc_keys_sender, next_epoch_mpc_keys_receiver) = watch::channel(None);
         // Separate flags for each NOA checkpoint kind to avoid race between handlers.
         let noa_dwallet_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let noa_system_finalized = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -1055,6 +1061,8 @@ impl IkaNode {
             mode,
             next_epoch_committee_sender,
             chain_next_committee_sender,
+            current_epoch_mpc_keys_sender,
+            next_epoch_mpc_keys_sender,
             new_requests_sender,
             end_of_publish_sender.clone(),
             last_session_to_complete_in_current_epoch_sender,
@@ -1105,6 +1113,8 @@ impl IkaNode {
             new_requests_receiver,
             next_epoch_committee_receiver,
             chain_next_epoch_committee_receiver,
+            current_epoch_mpc_keys_receiver,
+            next_epoch_mpc_keys_receiver,
             last_session_to_complete_in_current_epoch_receiver,
             end_of_publish_receiver,
             uncompleted_requests_receiver,

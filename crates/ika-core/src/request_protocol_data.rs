@@ -40,10 +40,7 @@ pub struct DWalletDKGData {
     pub user_secret_key_share: UserSecretKeyShareEventType,
 }
 
-// No `Ord`/`PartialOrd`: `hash_context: HashContext` is not orderable, and nothing
-// orders this type (the only `Ord` consumer, `DWalletSessionRequest`, sorts on
-// `session_type`/`session_sequence_number`, never on `protocol_data`).
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("dWallet DKG and Sign")]
 pub struct DWalletDKGAndSignData {
     pub curve: DWalletCurve,
@@ -73,8 +70,7 @@ pub struct InternalPresignData {
     pub signature_algorithm: DWalletSignatureAlgorithm,
 }
 
-// No `Ord`/`PartialOrd`: see `DWalletDKGAndSignData` — `hash_context` is not orderable.
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Sign")]
 pub struct SignData {
     pub curve: DWalletCurve,
@@ -83,8 +79,7 @@ pub struct SignData {
     pub hash_context: HashContext,
 }
 
-// No `Ord`/`PartialOrd`: see `DWalletDKGAndSignData` — `hash_context` is not orderable.
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("NetworkOwnedAddressSign")]
 pub struct NetworkOwnedAddressSignData {
     pub curve: DWalletCurve,
@@ -121,8 +116,7 @@ pub struct EncryptedShareVerificationData {
     pub encryption_key: Vec<u8>,
 }
 
-// No `Ord`/`PartialOrd`: see `DWalletDKGAndSignData` — `hash_context` is not orderable.
-#[derive(Debug, Clone, Eq, PartialEq, derive_more::Display)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::Display)]
 #[display("Partial Signature Verification")]
 pub struct PartialSignatureVerificationData {
     pub curve: DWalletCurve,
@@ -135,10 +129,7 @@ pub struct PartialSignatureVerificationData {
     pub partially_signed_message: SerializedWrappedMPCPublicOutput,
 }
 
-// No `Ord`/`PartialOrd`: several variant payloads carry `hash_context: HashContext`,
-// which is not orderable. Nothing orders `ProtocolData` (`DWalletSessionRequest` sorts
-// on `session_type`/`session_sequence_number`, never on `protocol_data`).
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ProtocolData {
     ImportedKeyVerification {
         data: ImportedKeyVerificationData,
@@ -223,6 +214,22 @@ pub enum ProtocolData {
 }
 
 impl ProtocolData {
+    /// Returns the signature algorithm this request operates on, if any. Used by
+    /// the protocol-version feature gate (e.g. Fast Schnorr / VSS).
+    pub fn signature_algorithm(&self) -> Option<DWalletSignatureAlgorithm> {
+        match self {
+            ProtocolData::Presign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::InternalPresign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::Sign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::NetworkOwnedAddressSign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::DWalletDKGAndSign { data, .. } => Some(data.signature_algorithm),
+            ProtocolData::PartialSignatureVerification { data, .. } => {
+                Some(data.signature_algorithm)
+            }
+            _ => None,
+        }
+    }
+
     /// Returns `None` if this request is not a global presign one (either not a presign, or a targeted presign),
     /// and `Some((presign_id, curve, signature_algorithm, network_key_id))` if it is.
     pub fn is_global_presign(
@@ -242,6 +249,11 @@ impl ProtocolData {
                     DWalletSignatureAlgorithm::EdDSA => true,
                     DWalletSignatureAlgorithm::Taproot => true,
                     DWalletSignatureAlgorithm::Schnorrkel => true,
+                    // VSS (Fast Schnorr) variants are global-presign Schnorr,
+                    // DKG-created keys only (never imported).
+                    DWalletSignatureAlgorithm::TaprootVSS => true,
+                    DWalletSignatureAlgorithm::EdDSAVSS => true,
+                    DWalletSignatureAlgorithm::SchnorrkelVSS => true,
                 };
 
                 if is_global_presign {
@@ -316,7 +328,6 @@ pub fn dwallet_dkg_and_sign_protocol_data(
         request_event_data.curve,
         sign_during_dkg_request.signature_algorithm,
     )?;
-    let hash_context = signature_algorithm.hash_context();
     Ok(ProtocolData::DWalletDKGAndSign {
         data: DWalletDKGAndSignData {
             curve: try_into_curve(request_event_data.curve)?,
@@ -331,7 +342,7 @@ pub fn dwallet_dkg_and_sign_protocol_data(
                 sign_during_dkg_request.signature_algorithm,
                 sign_during_dkg_request.hash_scheme,
             )?,
-            hash_context,
+            hash_context: signature_algorithm.hash_context(),
             message: sign_during_dkg_request.message.clone(),
             message_centralized_signature: sign_during_dkg_request
                 .message_centralized_signature
@@ -365,13 +376,12 @@ pub fn network_owned_address_sign_protocol_data(
     message: Vec<u8>,
     presign: SerializedWrappedMPCPublicOutput,
 ) -> ProtocolData {
-    let hash_context = signature_algorithm.hash_context();
     ProtocolData::NetworkOwnedAddressSign {
         data: NetworkOwnedAddressSignData {
             curve,
             signature_algorithm,
             hash_scheme,
-            hash_context,
+            hash_context: signature_algorithm.hash_context(),
         },
         dwallet_network_encryption_key_id,
         message,

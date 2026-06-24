@@ -3,6 +3,7 @@
 
 use dwallet_mpc_types::dwallet_mpc::{DWalletCurve, DWalletHashScheme, DWalletSignatureAlgorithm};
 use group::PartyID;
+use group::curve25519;
 use ika_types::committee::{
     ClassGroupsEncryptionKeyAndProof, Committee, RistrettoPvssEncryptionKeyAndProof,
     Secp256k1PvssEncryptionKeyAndProof, Secp256r1PvssEncryptionKeyAndProof,
@@ -98,15 +99,89 @@ pub(crate) struct ValidatorMpcKeysByPartyId {
     pub secp256k1_pvss: HashMap<PartyID, Secp256k1PvssEncryptionKeyAndProof>,
     pub secp256r1_pvss: HashMap<PartyID, Secp256r1PvssEncryptionKeyAndProof>,
     pub ristretto_pvss: HashMap<PartyID, RistrettoPvssEncryptionKeyAndProof>,
+    /// Fast Schnorr (VSS) HPKE encryption public **key values** (curve25519,
+    /// serializable form), already filtered to the parties whose UC proof of
+    /// knowledge verified at [`Committee::new`]. Read sites rebuild
+    /// `EncryptionPublicKey` via `EncryptionPublicKey::new(value, &pp)` — a
+    /// cheap curve-point parse — without re-running the UC proof verification.
+    pub vss_hpke_verified_party_encryption_key_values: HashMap<PartyID, curve25519::Value>,
 }
 
+/// Re-key an epoch's off-chain validator MPC keys from `AuthorityName` to the
+/// committee's 1-based `PartyID`, producing the form the crypto library
+/// consumes.
+///
+/// All key material — class-groups + the three per-curve PVSS HPKE keys + the
+/// Fast Schnorr (VSS) HPKE key — comes from the single atomic off-chain
+/// `bundles` (the consensus-agreed set delivered per-epoch). `committee` is used
+/// only for the `AuthorityName → PartyID` mapping and to verify the VSS UC
+/// proofs (once). A validator absent from `bundles` (offline/withholding) is
+/// absent from every map — the DKG/reconfig then deal only to the parties that
+/// are present, and the committee stays full for consensus.
 pub(crate) fn get_validator_mpc_keys_by_party_id(
     committee: &Committee,
+    bundles: &crate::validator_metadata::OffChainCommitteeBundles,
 ) -> DwalletMPCResult<ValidatorMpcKeysByPartyId> {
     let mut class_groups = HashMap::new();
     let mut secp256k1_pvss = HashMap::new();
     let mut secp256r1_pvss = HashMap::new();
     let mut ristretto_pvss = HashMap::new();
+    for (name, _) in committee.voting_rights.iter() {
+        let party_id = authority_name_to_party_id_from_committee(committee, name)?;
+        // All four maps come from the same atomic off-chain bundle, so a
+        // validator that withheld its bundle is absent from ALL of them (rather
+        // than appearing in class_groups but not PVSS). This keeps the dealt set
+        // consistent across class-groups + PVSS + VSS — the DKG/reconfig deal to
+        // exactly the parties present in the agreed bundle.
+        if let Some(k) = bundles.class_groups.get(name).cloned() {
+            class_groups.insert(party_id, k);
+        }
+        if let Some(k) = bundles.secp256k1_pvss.get(name).cloned() {
+            secp256k1_pvss.insert(party_id, k);
+        }
+        if let Some(k) = bundles.secp256r1_pvss.get(name).cloned() {
+            secp256r1_pvss.insert(party_id, k);
+        }
+        if let Some(k) = bundles.ristretto_pvss.get(name).cloned() {
+            ristretto_pvss.insert(party_id, k);
+        }
+    }
+    Ok(ValidatorMpcKeysByPartyId {
+        class_groups,
+        secp256k1_pvss,
+        secp256r1_pvss,
+        ristretto_pvss,
+        // Verify the VSS HPKE UC proofs once, keyed by this committee's party ids.
+        vss_hpke_verified_party_encryption_key_values: committee
+            .verified_vss_hpke_party_encryption_key_values(&bundles.vss_hpke),
+    })
+}
+
+impl ValidatorMpcKeysByPartyId {
+    /// An empty key set — the manager's starting point at network key version 3,
+    /// where every key (class_groups included) is supplied by the off-chain
+    /// consensus-agreed set via `ingest_offchain_mpc_keys`, never from Sui.
+    pub(crate) fn empty() -> Self {
+        Self {
+            class_groups: HashMap::new(),
+            secp256k1_pvss: HashMap::new(),
+            secp256r1_pvss: HashMap::new(),
+            ristretto_pvss: HashMap::new(),
+            vss_hpke_verified_party_encryption_key_values: HashMap::new(),
+        }
+    }
+}
+
+/// Build the manager's key set from the committee's on-chain `class_groups`
+/// alone, with empty PVSS / VSS maps. This is the manager's starting point each
+/// epoch: `class_groups` is on `Committee` in every mode (it's the bare on-chain
+/// key), so the backward-compatible network DKG (legacy / pre-v4, which needs
+/// only class-groups) works immediately — while the off-chain-only PVSS / VSS
+/// keys are filled in later by `ingest_offchain_mpc_keys` once delivered (v4).
+pub(crate) fn class_groups_keys_by_party_id(
+    committee: &Committee,
+) -> DwalletMPCResult<ValidatorMpcKeysByPartyId> {
+    let mut class_groups = HashMap::new();
     for (name, _) in committee.voting_rights.iter() {
         let party_id = authority_name_to_party_id_from_committee(committee, name)?;
         if let Some(k) = committee
@@ -116,33 +191,13 @@ pub(crate) fn get_validator_mpc_keys_by_party_id(
         {
             class_groups.insert(party_id, k);
         }
-        if let Some(k) = committee
-            .secp256k1_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
-            secp256k1_pvss.insert(party_id, k);
-        }
-        if let Some(k) = committee
-            .secp256r1_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
-            secp256r1_pvss.insert(party_id, k);
-        }
-        if let Some(k) = committee
-            .ristretto_pvss_public_keys_and_proofs
-            .get(name)
-            .cloned()
-        {
-            ristretto_pvss.insert(party_id, k);
-        }
     }
     Ok(ValidatorMpcKeysByPartyId {
         class_groups,
-        secp256k1_pvss,
-        secp256r1_pvss,
-        ristretto_pvss,
+        secp256k1_pvss: HashMap::new(),
+        secp256r1_pvss: HashMap::new(),
+        ristretto_pvss: HashMap::new(),
+        vss_hpke_verified_party_encryption_key_values: HashMap::new(),
     })
 }
 

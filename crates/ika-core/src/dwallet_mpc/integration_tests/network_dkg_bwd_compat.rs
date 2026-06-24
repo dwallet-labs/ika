@@ -181,7 +181,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     // keeps validator keys across the protocol_config flip — without seed sharing, phase 2
     // validators couldn't decrypt phase 1's V2 DKG output (it's encrypted to phase 1's
     // class-groups encryption keys).
-    let (committee, seeds) = utils::build_committee_with_random_seeds(4);
+    let (committee, seeds, bundles) = utils::build_committee_with_random_seeds(4);
 
     // ── Phase 1: pin v=2, run network DKG under the bwd-compat Party ─────
     let v2_override = pin_protocol_to_v2_overrides();
@@ -196,6 +196,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
         committee.clone(),
         seeds.clone(),
+        bundles.clone(),
     );
 
     for service in &v2_dwallet_mpc_services {
@@ -241,6 +242,7 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     ) = utils::create_dwallet_mpc_services_with_committee_and_seeds(
         committee.clone(),
         seeds.clone(),
+        bundles.clone(),
     );
 
     for service in &v3_dwallet_mpc_services {
@@ -332,8 +334,11 @@ async fn test_v2_to_v3_reconfiguration_migration() {
     // Set up upcoming committee + run reconfiguration; the main Reconfig
     // Party should consume the V2 DKG output via the existing
     // `(V2 dkg, None reconfig)` arm at reconfiguration.rs:170-196.
-    let (next_epoch_dwallet_mpc_services, ..) = utils::create_dwallet_mpc_services(4);
-    let mut next_committee = (*next_epoch_dwallet_mpc_services[0].committee.clone()).clone();
+    // Upcoming committee: a fresh validator set whose off-chain PVSS/VSS keys
+    // travel on the next-epoch key channel (no longer on `Committee`), so deliver
+    // both the committee and its bundles.
+    let (mut next_committee, _next_seeds, next_bundles) =
+        utils::build_committee_with_random_seeds(4);
     next_committee.epoch = epoch_id + 1;
     v3_state
         .sui_data_senders
@@ -342,6 +347,9 @@ async fn test_v2_to_v3_reconfiguration_migration() {
             let _ = sui_data_sender
                 .next_epoch_committee_sender
                 .send(next_committee.clone());
+            let _ = sui_data_sender
+                .next_epoch_mpc_keys_sender
+                .send(Some((next_committee.epoch, next_bundles.clone())));
         });
     send_start_network_key_reconfiguration_event(
         epoch_id,

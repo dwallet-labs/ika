@@ -54,6 +54,19 @@ pub struct SuiDataReceivers {
     /// can't complete until a joiner announces and the joiner can't
     /// learn it's a joiner until the assembly publishes.
     pub chain_next_epoch_committee_receiver: Receiver<CommitteeMembership>,
+    /// Off-chain-assembled validator MPC keys (3 PVSS + VSS HPKE) for the
+    /// CURRENT epoch's committee, delivered once the off-chain assembly
+    /// completes. The MPC manager ingests these into its
+    /// `validator_mpc_keys_by_party_id` — the within-epoch network DKG needs
+    /// them, and at genesis they were never assembled as a prior epoch's
+    /// "next". `None` until the first complete assembly.
+    pub current_epoch_mpc_keys_receiver:
+        Receiver<Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>>,
+    /// Same, for the NEXT epoch's committee — consumed by network
+    /// reconfiguration (the dealers encrypt under the upcoming parties' PVSS
+    /// keys). `None` until the next-epoch off-chain assembly completes.
+    pub next_epoch_mpc_keys_receiver:
+        Receiver<Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>>,
     pub last_session_to_complete_in_current_epoch_receiver: Receiver<(EpochId, u64)>,
     pub end_of_publish_receiver: Receiver<Option<u64>>,
     pub uncompleted_requests_receiver: Receiver<(Vec<DWalletSessionRequest>, EpochId)>,
@@ -66,6 +79,8 @@ impl Clone for SuiDataReceivers {
             new_requests_receiver: self.new_requests_receiver.resubscribe(),
             next_epoch_committee_receiver: self.next_epoch_committee_receiver.clone(),
             chain_next_epoch_committee_receiver: self.chain_next_epoch_committee_receiver.clone(),
+            current_epoch_mpc_keys_receiver: self.current_epoch_mpc_keys_receiver.clone(),
+            next_epoch_mpc_keys_receiver: self.next_epoch_mpc_keys_receiver.clone(),
             last_session_to_complete_in_current_epoch_receiver: self
                 .last_session_to_complete_in_current_epoch_receiver
                 .clone(),
@@ -82,6 +97,12 @@ pub struct SuiDataSenders {
     pub new_events_sender: broadcast::Sender<Vec<DWalletSessionRequest>>,
     pub next_epoch_committee_sender: tokio::sync::watch::Sender<Committee>,
     pub chain_next_epoch_committee_sender: tokio::sync::watch::Sender<CommitteeMembership>,
+    pub current_epoch_mpc_keys_sender: tokio::sync::watch::Sender<
+        Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+    >,
+    pub next_epoch_mpc_keys_sender: tokio::sync::watch::Sender<
+        Option<(EpochId, crate::validator_metadata::OffChainCommitteeBundles)>,
+    >,
     pub last_session_to_complete_in_current_epoch_sender:
         tokio::sync::watch::Sender<(EpochId, u64)>,
     pub end_of_publish_sender: tokio::sync::watch::Sender<Option<u64>>,
@@ -112,11 +133,17 @@ impl SuiDataReceivers {
         let (end_of_publish_sender, end_of_publish_receiver) = tokio::sync::watch::channel(None);
         let (uncompleted_events_sender, uncompleted_events_receiver) =
             tokio::sync::watch::channel((Vec::new(), EpochId::default()));
+        let (current_epoch_mpc_keys_sender, current_epoch_mpc_keys_receiver) =
+            tokio::sync::watch::channel(None);
+        let (next_epoch_mpc_keys_sender, next_epoch_mpc_keys_receiver) =
+            tokio::sync::watch::channel(None);
         let senders = SuiDataSenders {
             network_keys_sender,
             new_events_sender,
             next_epoch_committee_sender,
             chain_next_epoch_committee_sender,
+            current_epoch_mpc_keys_sender,
+            next_epoch_mpc_keys_sender,
             last_session_to_complete_in_current_epoch_sender,
             end_of_publish_sender,
             uncompleted_events_sender,
@@ -127,6 +154,8 @@ impl SuiDataReceivers {
                 new_requests_receiver: new_events_receiver,
                 chain_next_epoch_committee_receiver,
                 next_epoch_committee_receiver,
+                current_epoch_mpc_keys_receiver,
+                next_epoch_mpc_keys_receiver,
                 last_session_to_complete_in_current_epoch_receiver,
                 end_of_publish_receiver,
                 uncompleted_requests_receiver: uncompleted_events_receiver,

@@ -406,6 +406,14 @@ impl DWalletMPCManager {
         if self.next_active_committee.is_none() {
             let got_next_active_committee = self.try_receiving_next_active_committee();
             if got_next_active_committee {
+                // The next committee's off-chain PVSS/VSS keys arrive on a separate
+                // channel, so receiving the committee does not imply they're
+                // ingested yet (the committee can land before the keys). We do NOT
+                // ingest here: any reconfig request drained below whose
+                // `next_epoch_validator_mpc_keys` isn't populated yet hits the
+                // off-chain freeze gate, parks on `requests_pending_for_frozen_mpc_data`,
+                // and re-drains on a later cycle once the top-of-loop
+                // `ingest_offchain_mpc_keys` (`dwallet_mpc_service`) fills it in.
                 let events_pending_for_next_active_committee =
                     mem::take(&mut self.requests_pending_for_next_active_committee);
 
@@ -567,11 +575,21 @@ impl DWalletMPCManager {
         //
         // Bypassed entirely when the off-chain validator metadata
         // protocol feature is disabled — legacy chain-only behavior.
+        // Gate also requires the agreed (frozen) off-chain key set to be ingested
+        // — `is_mpc_data_frozen` says the set is decided, but the keys arrive on
+        // a separate channel; without this a DKG could start after the freeze but
+        // before the keys land and run against an empty key map. DKG needs the
+        // current-epoch set; reconfiguration needs the next-epoch set.
         let off_chain_gate_passes = match &request.protocol_data {
-            ProtocolData::NetworkEncryptionKeyDkg { .. }
-            | ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+            ProtocolData::NetworkEncryptionKeyDkg { .. } => {
                 !self.epoch_store.off_chain_validator_metadata_enabled()
-                    || self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                    || (self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                        && self.current_epoch_keys_ingested)
+            }
+            ProtocolData::NetworkEncryptionKeyReconfiguration { .. } => {
+                !self.epoch_store.off_chain_validator_metadata_enabled()
+                    || (self.epoch_store.is_mpc_data_frozen().unwrap_or(false)
+                        && self.next_epoch_validator_mpc_keys.is_some())
             }
             _ => true,
         };

@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::NodeConfig;
-use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
+use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::metrics::SuiClientMetrics;
@@ -551,16 +551,7 @@ impl ClusterOfProcesses {
             .await
             .context("faucet-fund joiner")?;
 
-        // Publish the shape matching the current protocol version: bare pre-v4
-        // (mainnet-v1.1.8), full `ValidatorEncryptionKeysAndProofs` bundle at v4+
-        // (see `ValidatorInitializationConfig::to_validator_info`).
-        let protocol_version = self.current_protocol_version().await?;
-        let legacy_class_groups_only = !ProtocolConfig::get_for_version(
-            ProtocolVersion::new(protocol_version),
-            Chain::Unknown,
-        )
-        .is_network_encryption_key_version_v3();
-        let metadata = init.to_validator_info(legacy_class_groups_only);
+        let metadata = init.to_validator_info();
         let (validator_id, validator_cap_id) = retry_on_object_contention!(
             "request_add_validator_candidate",
             request_add_validator_candidate(

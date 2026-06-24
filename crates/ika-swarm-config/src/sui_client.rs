@@ -15,7 +15,7 @@ use ika_move_contracts::{
     save_contracts_to_temp_dir, save_contracts_to_temp_dir_for_simtest,
     save_mainnet_contracts_to_temp_dir, save_testnet_contracts_to_temp_dir,
 };
-use ika_protocol_config::{Chain, ProtocolConfig, ProtocolVersion};
+use ika_protocol_config::Chain;
 use ika_types::ika_coin::IKACoin;
 use ika_types::sui::system_inner_v1::ValidatorCapV1;
 use ika_types::sui::{
@@ -452,22 +452,15 @@ pub async fn initialize_ika_system(
 
     let mut validator_ids = Vec::new();
     let mut validator_cap_ids = Vec::new();
-    // Pre-v4 genesis (mainnet-v1.1.8, network_encryption_key_version 2) publishes the
-    // bare class-groups shape so a mainnet binary can decode genesis records; v4+
-    // (version 3) publishes the full `ValidatorEncryptionKeysAndProofs` bundle with
-    // PVSS, which the v4 network-key DKG requires (otherwise it wedges with 0 PVSS).
-    // Keyed off the genesis protocol version; the gate is chain-independent.
-    let legacy_class_groups_only = !ProtocolConfig::get_for_version(
-        ProtocolVersion::new(initiation_parameters.protocol_version),
-        Chain::Unknown,
-    )
-    .is_network_encryption_key_version_v3();
     for validator_initialization_config in validator_initialization_configs {
         let validator_address: SuiAddress =
             (&validator_initialization_config.account_key_pair.public()).into();
 
-        let validator_initialization_metadata =
-            validator_initialization_config.to_validator_info(legacy_class_groups_only);
+        // On this branch the on-chain `mpc_data` is always the bare class-groups
+        // shape; the full bundle (PVSS + VSS HPKE) travels off-chain via the
+        // validator-metadata pipeline, so the genesis publish shape is fixed and
+        // not gated on the protocol version.
+        let validator_initialization_metadata = validator_initialization_config.to_validator_info();
         let (validator_id, validator_cap_id) = request_add_validator_candidate(
             validator_address,
             context,

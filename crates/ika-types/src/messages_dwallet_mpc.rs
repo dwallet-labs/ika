@@ -176,6 +176,14 @@ pub struct ConsensusGlobalPresignRequest {
     pub request: GlobalPresignRequest,
 }
 
+/// Individual consensus message for network encryption key data.
+/// One message per key, keyed by `authority + key_id`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ConsensusNetworkKeyData {
+    pub authority: AuthorityName,
+    pub key_data: DWalletNetworkEncryptionKeyData,
+}
+
 /// Individual consensus message for an NOA checkpoint observation.
 /// One message per observation, keyed by `authority + nonce`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -550,6 +558,12 @@ pub type Secp256k1TaprootProtocol = twopc_mpc::secp256k1::class_groups::TaprootP
 pub type Secp256r1ECDSAProtocol = twopc_mpc::secp256r1::class_groups::ECDSAProtocol;
 pub type Curve25519EdDSAProtocol = twopc_mpc::curve25519::class_groups::EdDSAProtocol;
 pub type RistrettoSchnorrkelProtocol = twopc_mpc::ristretto::class_groups::SchnorrkelProtocol;
+
+// Fast Schnorr (VSS) protocol aliases. Note the module path is `<curve>::vss`,
+// a sibling of `class_groups` (not `class_groups::vss`).
+pub type Secp256k1TaprootVSSProtocol = twopc_mpc::secp256k1::vss::TaprootVSSProtocol;
+pub type Curve25519EdDSAVSSProtocol = twopc_mpc::curve25519::vss::EdDSAVSSProtocol;
+pub type RistrettoSchnorrkelVSSProtocol = twopc_mpc::ristretto::vss::SchnorrkelVSSProtocol;
 
 pub type Secp256k1AsyncDKGProtocol = twopc_mpc::secp256k1::class_groups::DKGProtocol;
 pub type Secp256r1AsyncDKGProtocol = twopc_mpc::secp256r1::class_groups::DKGProtocol;

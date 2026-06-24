@@ -79,10 +79,26 @@ pub(crate) fn session_input_from_request(
     network_keys: &DwalletMPCNetworkKeys,
     next_active_committee: Option<Committee>,
     validator_mpc_keys_by_party_id: ValidatorMpcKeysByPartyId,
+    next_epoch_validator_mpc_keys: Option<ValidatorMpcKeysByPartyId>,
     protocol_config: &ProtocolConfig,
 ) -> DwalletMPCResult<(PublicInput, MPCPrivateInput)> {
     let session_id =
         CommitmentSizedNumber::from_le_slice(request.session_identifier.to_vec().as_slice());
+
+    // Defense-in-depth protocol-version gate for Fast Schnorr (VSS): the primary
+    // enforcement is the on-chain supported-algorithm map population, but reject
+    // any VSS presign/sign request here too if the active protocol version does
+    // not enable it. (Move has no version gate; this is the Rust-side gate.)
+    if let Some(signature_algorithm) = request.protocol_data.signature_algorithm()
+        && signature_algorithm.is_vss()
+        && !protocol_config.fast_schnorr_supported()
+    {
+        return Err(DwalletMPCError::InvalidInput(format!(
+            "Fast Schnorr (VSS) algorithm {signature_algorithm} requested but \
+             fast_schnorr_supported is disabled at this protocol version"
+        )));
+    }
+
     match &request.protocol_data {
         ProtocolData::DWalletDKG {
             dwallet_network_encryption_key_id,
@@ -116,6 +132,23 @@ pub(crate) fn session_input_from_request(
                 &data.centralized_public_key_share_and_proof,
                 BytesCentralizedPartyKeyShareVerification::from(data.user_secret_key_share.clone()),
             )?;
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
             Ok((
                 PublicInput::DWalletDKGAndSign(DKGAndSignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -127,6 +160,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_context.clone(),
                     access_structure,
                     encryption_key_public_data,
+                    vss_shamir_cache.as_ref(),
                     data.signature_algorithm,
                 )?),
                 None,
@@ -184,32 +218,13 @@ pub(crate) fn session_input_from_request(
             // CRT map. At `_version == 3` we have per-curve
             // PVSS HPKE keys too and call the main DKG `PublicInput::new`.
             let dkg_public_input = if protocol_config.is_network_encryption_key_version_v3() {
-                // At `_version == 3` every committee member MUST publish the version-3
-                // bundle shape (class-groups + per-curve PVSS HPKE). The shape-tolerant
-                // decoder accepts old-shape submissions silently, so a validator that
-                // hasn't migrated would land here with empty PVSS entries while their
-                // class-groups entry is present — fail loudly rather than running DKG
-                // on a partial map.
-                let expected = committee.voting_rights.len();
-                let class_groups_count = validator_mpc_keys_by_party_id.class_groups.len();
-                let secp256k1_pvss_count = validator_mpc_keys_by_party_id.secp256k1_pvss.len();
-                let secp256r1_pvss_count = validator_mpc_keys_by_party_id.secp256r1_pvss.len();
-                let ristretto_pvss_count = validator_mpc_keys_by_party_id.ristretto_pvss.len();
-                if class_groups_count != expected
-                    || secp256k1_pvss_count != expected
-                    || secp256r1_pvss_count != expected
-                    || ristretto_pvss_count != expected
-                {
-                    return Err(DwalletMPCError::InvalidMPCPartyType(format!(
-                        "at network_encryption_key_version == 3 every committee member \
-                         must publish the version-3 bundle shape (class-groups + per-curve \
-                         PVSS HPKE keys), but only \
-                         {class_groups_count}/{expected} class-groups, \
-                         {secp256k1_pvss_count}/{expected} secp256k1 PVSS, \
-                         {secp256r1_pvss_count}/{expected} secp256r1 PVSS, \
-                         {ristretto_pvss_count}/{expected} ristretto PVSS keys decoded",
-                    )));
-                }
+                // No all-committee completeness check: the off-chain key set is
+                // the consensus-frozen agreed set, which may legitimately omit
+                // offline/withholding validators. The DKG deals shares only to
+                // the parties that have keys (the rest stay active in consensus,
+                // just undealt). The freeze gate in `handle_mpc_request` already
+                // ensures the agreed set has been ingested before we get here, so
+                // these maps are the agreed quorum set, not a pre-freeze partial.
                 PublicInput::NetworkEncryptionKeyDkg(network_dkg_v2_public_input(
                     access_structure,
                     validator_mpc_keys_by_party_id.class_groups,
@@ -245,10 +260,22 @@ pub(crate) fn session_input_from_request(
                 network_keys.get_last_reconfiguration_output(dwallet_network_encryption_key_id);
 
             let reconfig_public_input = if protocol_config.is_reconfiguration_message_version_v3() {
+                // Main reconfig (network_encryption_key_version == 3): all keys
+                // come from the off-chain consensus-agreed sets, never Sui. The
+                // current set is this epoch's agreed keys (the parties holding
+                // shares from the DKG); the upcoming set is delivered on the
+                // next-epoch channel and is absent until the next-epoch off-chain
+                // assembly completes — error to retry, like a missing next
+                // committee.
+                let upcoming_validator_mpc_keys = next_epoch_validator_mpc_keys.ok_or(
+                    DwalletMPCError::MissingNextActiveCommittee(session_id.to_be_bytes().to_vec()),
+                )?;
                 PublicInput::NetworkEncryptionKeyReconfiguration(
                     <ReconfigurationParty as ReconfigurationPartyPublicInputGenerator>::generate_public_input(
                         committee,
                         next_active_committee,
+                        validator_mpc_keys_by_party_id,
+                        upcoming_validator_mpc_keys,
                         network_dkg_public_output,
                         latest_reconfiguration_public_output,
                     )?,
@@ -285,6 +312,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     None,
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))
@@ -307,6 +335,7 @@ pub(crate) fn session_input_from_request(
                     *signature_algorithm,
                     encryption_key_public_data,
                     dwallet_public_output.clone(),
+                    &validator_mpc_keys_by_party_id,
                 )?),
                 None,
             ))
@@ -319,22 +348,43 @@ pub(crate) fn session_input_from_request(
             presign,
             message_centralized_signature,
             ..
-        } => Ok((
-            PublicInput::Sign(SignPublicInputByProtocol::try_new(
-                request.session_identifier,
-                dwallet_decentralized_public_output,
-                message.clone(),
-                presign,
-                message_centralized_signature,
-                data.hash_scheme,
-                data.hash_context.clone(),
-                access_structure,
-                network_keys
-                    .get_network_encryption_key_public_data(dwallet_network_encryption_key_id)?,
-                data.signature_algorithm,
-            )?),
-            None,
-        )),
+        } => {
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
+            Ok((
+                PublicInput::Sign(SignPublicInputByProtocol::try_new(
+                    request.session_identifier,
+                    dwallet_decentralized_public_output,
+                    message.clone(),
+                    presign,
+                    message_centralized_signature,
+                    data.hash_scheme,
+                    data.hash_context.clone(),
+                    access_structure,
+                    network_keys.get_network_encryption_key_public_data(
+                        dwallet_network_encryption_key_id,
+                    )?,
+                    vss_shamir_cache.as_ref(),
+                    data.signature_algorithm,
+                )?),
+                None,
+            ))
+        }
         ProtocolData::NetworkOwnedAddressSign {
             data,
             dwallet_network_encryption_key_id,
@@ -352,6 +402,23 @@ pub(crate) fn session_input_from_request(
                 encryption_key_public_data.network_owned_address_dkg_output(data.curve);
 
             let stored_dkg_output_bytes = stored_dkg_output_bytes.to_vec();
+            // The VSS Shamir cache is consumed ONLY by the Fast Schnorr (VSS)
+            // protocols, so fetch (and wait on) it only for those. It is derived
+            // exclusively from a V3 DKG/reconfiguration output, so at a pre-V3
+            // network key it is never populated — requiring it unconditionally
+            // would permanently block EVERY non-VSS sign (ECDSA/EdDSA/Schnorrkel/
+            // Taproot, and the DKG-and-sign path) with `WaitingForNetworkKey`.
+            // Non-VSS signs are already gated by `get_network_encryption_key_public_data`
+            // above; they pass `None` and the non-VSS builders ignore it.
+            let vss_shamir_cache = if data.signature_algorithm.is_vss() {
+                Some(
+                    network_keys
+                        .vss_shamir_cache(dwallet_network_encryption_key_id)?
+                        .clone(),
+                )
+            } else {
+                None
+            };
             Ok((
                 PublicInput::Sign(SignPublicInputByProtocol::try_new(
                     request.session_identifier,
@@ -363,6 +430,7 @@ pub(crate) fn session_input_from_request(
                     data.hash_context.clone(),
                     access_structure,
                     encryption_key_public_data,
+                    vss_shamir_cache.as_ref(),
                     data.signature_algorithm,
                 )?),
                 None,

@@ -205,6 +205,8 @@ jobs:
           curl -L "https://github.com/MystenLabs/sui/releases/download/${SUI_TAG}/sui-${SUI_TAG}-ubuntu-x86_64.tgz" > sui.tgz
           tar -xzf sui.tgz
           cp ./sui "$HOME/.local/bin/sui"
+          chmod +x "$HOME/.local/bin/sui"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/sui" --version
 
       - name: Resolve test selection
@@ -375,12 +377,22 @@ jobs:
           wait "$TEST_PID"; rc=$?
           echo "=== $TEST_NAME exited rc=$rc; tail of upgrade-test.log: ==="
           tail -100 upgrade-test.log || true
+          # The RUN_* gate makes the scenario #[ignore]d when unset, so a
+          # misconfigured gate (or a harness that leaves child processes and
+          # muddies cargo's exit code) could SKIP the test yet still exit 0 — a
+          # false green (#1714). Assert the gated test actually ran and passed;
+          # this run step uses `set -uo pipefail` (no -e), so fail rc explicitly
+          # rather than relying on grep's exit status.
+          if [ "$rc" -eq 0 ] && ! grep -q "test result: ok. 1 passed" upgrade-test.log; then
+            echo "::error::$TEST_NAME exited 0 but did not report 'test result: ok. 1 passed' (gate misfire / skipped)"
+            rc=1
+          fi
           exit "$rc"
 
       - name: Summarize results
         if: always()
         run: |
-          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked" upgrade-test.log | tail -60 || true
+          grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
 
       - name: Upload resource sampler log
         if: always()

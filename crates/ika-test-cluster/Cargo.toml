@@ -47,3 +47,13 @@ sui-macros.workspace = true
 sui-protocol-config.workspace = true
 telemetry-subscribers.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
+
+# `#[sim_test]` expands (under cfg(msim)) to sui-macros' `init_static_initializers`,
+# whose generated static-init thread references `sui_protocol_config` and
+# `prometheus` directly (everything else it uses is re-exported through
+# `sui-simulator`). They must be linkable deps of the test crate or the msim
+# build of these tests fails: `unresolved import sui_protocol_config` /
+# `unlinked crate prometheus`.
+[target.'cfg(msim)'.dev-dependencies]
+sui-protocol-config.workspace = true
+prometheus.workspace = true

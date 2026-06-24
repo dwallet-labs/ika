@@ -79,6 +79,12 @@ pub enum Step {
     RunWorkload {
         label: String,
     },
+    /// Assert that at least one running validator's
+    /// `ika_dwallet_mpc_malicious_actors_count` gauge is `>= min_total` — i.e.
+    /// malicious detection actually fired. Scrapes metrics, no log grep.
+    ExpectMaliciousActorsAtLeast {
+        min_total: u64,
+    },
 }
 
 impl std::fmt::Display for Step {
@@ -100,6 +106,9 @@ impl std::fmt::Display for Step {
             Step::SetGlobalPresignConfig => write!(f, "set_global_presign_config"),
             Step::RecordMpcTimings { label } => write!(f, "record_mpc_timings({label:?})"),
             Step::RunWorkload { label } => write!(f, "run_workload({label:?})"),
+            Step::ExpectMaliciousActorsAtLeast { min_total } => {
+                write!(f, "expect_malicious_actors_at_least({min_total})")
+            }
         }
     }
 }
@@ -245,6 +254,15 @@ impl Scenario {
         self.steps.push(Step::RunWorkload {
             label: label.into(),
         });
+        self
+    }
+
+    /// Assert at least one running validator recorded `>= min_total` malicious
+    /// actors this epoch (scrapes the `ika_dwallet_mpc_malicious_actors_count`
+    /// gauge).
+    pub fn expect_malicious_actors_at_least(mut self, min_total: u64) -> Self {
+        self.steps
+            .push(Step::ExpectMaliciousActorsAtLeast { min_total });
         self
     }
 
@@ -395,6 +413,23 @@ impl Scenario {
                         .context("RecordMpcTimings before StartAll")?;
                     let snapshot = mpc_timings::record_snapshot(c, label.clone()).await?;
                     timing_snapshots.push(snapshot);
+                }
+                Step::ExpectMaliciousActorsAtLeast { min_total } => {
+                    let c = cluster
+                        .as_ref()
+                        .context("ExpectMaliciousActorsAtLeast before StartAll")?;
+                    let got = mpc_timings::max_malicious_actors_count(c).await?;
+                    if got < *min_total {
+                        bail!(
+                            "expected at least {min_total} malicious actor(s) recorded, \
+                             but the max across running validators was {got}"
+                        );
+                    }
+                    tracing::info!(
+                        got,
+                        expected = *min_total,
+                        "malicious-actors assertion passed (scraped from metrics)"
+                    );
                 }
                 Step::RunWorkload { label } => {
                     let c = cluster.as_ref().context("RunWorkload before StartAll")?;

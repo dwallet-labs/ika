@@ -154,9 +154,9 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
     Ok(Committee::new(
         expected_prior_epoch,
         voting_rights,
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
+        // class-groups left empty: handoff-cert verification only needs
+        // membership, voting power, and the quorum threshold. The off-chain
+        // PVSS / VSS keys are not on `Committee` at all.
         HashMap::new(),
         bls_committee.quorum_threshold,
         bls_committee.validity_threshold,

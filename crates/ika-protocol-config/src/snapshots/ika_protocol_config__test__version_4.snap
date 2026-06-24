@@ -12,6 +12,7 @@ feature_flags:
   enforce_checkpoint_timestamp_monotonicity: true
   internal_presign_sessions: true
   bls_checkpoints: true
+  fast_schnorr_supported: true
   off_chain_validator_metadata: true
 max_messages_per_dwallet_checkpoint: 500
 max_messages_per_system_checkpoint: 500
@@ -26,6 +27,7 @@ consensus_max_transactions_in_block_bytes: 315218930
 consensus_gc_depth: 60
 decryption_key_reconfiguration_third_round_delay: 10
 schnorr_presign_second_round_delay: 8
+schnorr_presign_third_round_delay: 8
 network_dkg_third_round_delay: 10
 network_encryption_key_version: 3
 reconfiguration_message_version: 3
