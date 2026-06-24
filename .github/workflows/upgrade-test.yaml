@@ -334,14 +334,19 @@ jobs:
           # never sets it. This is the other half of the per-validator RSS that
           # parks the 5-validator pod at the 96 GiB ceiling.
           IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
-          # heap_profile: turn on jemalloc heap profiling (the `profiling`
-          # feature is compiled in). PREFIXED var (_RJEM_); each validator dumps
-          # a `.heap` per pid to the workspace data dir every ~256 MiB allocated
-          # (lg_prof_interval:28); the "Heap profile" step below symbolizes the
-          # latest with jeprof. A coarser 2 GiB interval (lg=31) produced zero
-          # dumps on a light scenario — no process crossed the threshold before
-          # SIGTERM teardown (no prof_final / explicit dump to flush at exit).
-          # Empty when off (the compiled background_thread:true still applies).
+          # heap_profile: turn on jemalloc heap profiling. prof IS compiled in
+          # (tikv-jemalloc-sys `profiling` feature). The conf env-var NAME depends
+          # on the jemalloc symbol prefix: librocksdb-sys feature-unifies
+          # `unprefixed_malloc_on_supported_platforms` onto the shared
+          # tikv-jemalloc-sys, so on Linux the allocator is UNPREFIXED and reads
+          # `MALLOC_CONF` — NOT `_RJEM_MALLOC_CONF`. Earlier runs set only the
+          # prefixed name and got zero dumps regardless of interval/load. Set BOTH
+          # so it works whichever prefix a given build resolves to. Each validator
+          # dumps a `.heap` per pid every ~256 MiB allocated (lg_prof_interval:28);
+          # the "Heap profile" step below symbolizes the latest with jeprof.
+          # Empty when off — the compiled-in background_thread:true still applies
+          # and is what bounds RSS / fixed the OOM, independent of this var.
+          MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
           _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
         run: |
           set -uo pipefail
