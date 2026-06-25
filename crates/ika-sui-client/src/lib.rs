@@ -585,12 +585,7 @@ where
         pending_active_set_id: ObjectID,
     ) -> Result<Vec<ObjectID>, IkaError> {
         // Read the wrapper's single dynamic field by LISTING it (not by
-        // deriving the child id) — robust to the `Key()` encoding. The byte
-        // source resolves a dynamic field to its VALUE bytes — the same
-        // convention `get_validators` relies on (it decodes a bare
-        // `StakingPool`, not a `Field<_, StakingPool>`). Decode the bare value;
-        // fall back to the `Field<Key, _>` wrapper framing in case a backend
-        // hands back the wrapper, so the read survives either resolution.
+        // deriving the child id) — robust to the `Key()` encoding.
         let bytes = self
             .inner
             .get_extended_field_value_bcs(pending_active_set_id)
@@ -598,14 +593,12 @@ where
             .map_err(|e| {
                 IkaError::SuiClientInternalError(format!("read pending_active_set: {e}"))
             })?;
-        let pending: PendingActiveSet = bcs::from_bytes::<PendingActiveSet>(&bytes)
-            .or_else(|_| bcs::from_bytes::<Field<(), PendingActiveSet>>(&bytes).map(|f| f.value))
-            .map_err(|e| {
-                IkaError::SuiClientSerializationError(format!(
-                    "decode pending_active_set ({} bytes): {e}",
-                    bytes.len()
-                ))
-            })?;
+        let pending = decode_pending_active_set(&bytes).map_err(|e| {
+            IkaError::SuiClientSerializationError(format!(
+                "decode pending_active_set ({} bytes): {e}",
+                bytes.len()
+            ))
+        })?;
         Ok(pending.validator_ids())
     }
 
@@ -1884,5 +1877,67 @@ impl SuiClientInner for SuiBackend {
         events_bag_id: ObjectID,
     ) -> Result<Vec<DBSuiEvent>, Self::Error> {
         dispatch_backend!(self, get_uncompleted_events(events_bag_id))
+    }
+}
+
+/// Decode a `pending_active_set` from the BCS bytes of its backing
+/// `Field<Key, PendingActiveSet>` dynamic-field object.
+///
+/// The object is `id: UID` (32 bytes) ++ `name: Key` ++ `value:
+/// PendingActiveSet`. On-chain `ika_common::extended_field::Key` serializes to a
+/// SINGLE byte (an "empty" Move struct still carries a `bool` dummy field), so
+/// the value lives behind a 33-byte header — `Field<u8, _>`, NOT `Field<(), _>`.
+/// The unit-name and bare-value framings are tried as fallbacks so the decode
+/// also survives a backend that resolves the dynamic field differently.
+fn decode_pending_active_set(bytes: &[u8]) -> Result<PendingActiveSet, bcs::Error> {
+    bcs::from_bytes::<Field<u8, PendingActiveSet>>(bytes)
+        .map(|f| f.value)
+        .or_else(|_| bcs::from_bytes::<Field<(), PendingActiveSet>>(bytes).map(|f| f.value))
+        .or_else(|_| bcs::from_bytes::<PendingActiveSet>(bytes))
+}
+
+#[cfg(test)]
+mod pending_active_set_tests {
+    use super::decode_pending_active_set;
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Real BCS bytes of the `pending_active_set` child object captured from a
+    /// 4-validator localnet (`SystemInner.validator_set.pending_active_set`).
+    /// Guards the dynamic-field framing: `id: UID`(32) ++ `name: Key`(1) ++
+    /// `value`. Decoding it as `Field<(), _>` (a 0-byte name) short-reads with
+    /// "unexpected end of input" — the bug this regression test pins.
+    #[test]
+    fn decodes_field_wrapped_pending_active_set_from_chain_bytes() {
+        let bytes = unhex(concat!(
+            "cd469f28ea7d4a66faf34ca44e2a32ca12717e39d79af89d7169dda9dcd8d563",
+            "00040000000000000066000000000000000000434fd7946a000a00000000000000",
+            "0492d17c3bbc37c855e47d311f73be413d953e8792429765ff899f40d185072baa",
+            "0000434fd7946a0042cb3e9037f05a5a312d539469e59a91da2f9ed6dddf7e197f",
+            "1803dbf6222d9b0000434fd7946a0035e3903f1cb93fde2005ee4983091879bfa2",
+            "1c193ba5ac7cf112bb0c7b77021f0000434fd7946a00a183df56e91f88e839d8da",
+            "3ca3c83a42a70c3897dfe8af7545c37875c09d5b990000434fd7946a0000000c3d",
+            "5d53aa0100",
+        ));
+        let pending = decode_pending_active_set(&bytes).expect("decode failed");
+        let ids: Vec<String> = pending
+            .validator_ids()
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "0x92d17c3bbc37c855e47d311f73be413d953e8792429765ff899f40d185072baa",
+                "0x42cb3e9037f05a5a312d539469e59a91da2f9ed6dddf7e197f1803dbf6222d9b",
+                "0x35e3903f1cb93fde2005ee4983091879bfa21c193ba5ac7cf112bb0c7b77021f",
+                "0xa183df56e91f88e839d8da3ca3c83a42a70c3897dfe8af7545c37875c09d5b99",
+            ]
+        );
     }
 }
