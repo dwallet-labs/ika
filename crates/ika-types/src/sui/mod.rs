@@ -13,6 +13,7 @@ use sui_types::collection_types::VecMap;
 use sui_types::versioned::Versioned;
 
 pub mod epoch_start_system;
+pub mod pending_active_set;
 pub mod staking;
 pub mod system_inner_v1;
 
