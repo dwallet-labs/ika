@@ -4182,10 +4182,18 @@ impl AuthorityPerEpochStore {
                 // closing on the EndOfPublish grace alone can close the epoch
                 // while the handoff cert is born on NO validator — every
                 // validator then blocks at the barrier and the chain wedges.
-                // Require the handoff-cert quorum before closing; it is a
-                // deterministic function of the consensus-sequenced
-                // `handoff_signatures` table, so every validator closes at the
-                // same round.
+                // Require the handoff-cert quorum before closing. NOTE: this gate
+                // is NOT a pure consensus function. The `handoff_signatures` table
+                // is written in consensus order, but WHETHER a row exists at a
+                // given round also depends on off-consensus state — this
+                // validator's `expected_handoff_attestation` install and its
+                // consensus-pubkey provider (a ~5s background Sui poll); until
+                // both are present, sequenced `EndOfPublishV2` bundles buffer and
+                // write no row. So close-determinism does NOT come from this gate
+                // being a deterministic function of the sequence; it comes from
+                // buffered-quorum adoption (a lagging validator reaches quorum
+                // from peers' signatures at the same sequenced bundle index) plus
+                // the `grace*4` liveness backstop in `decide_v4_epoch_close`.
                 let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
 
                 // The close decision (and the liveness backstop for a genuinely
