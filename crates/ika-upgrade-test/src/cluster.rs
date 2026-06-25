@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::initiation::InitiationParameters;
-use ika_config::node::NodeConfig;
+use ika_config::node::{NodeConfig, SuiDataSource};
 use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
@@ -33,6 +33,7 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
+use ika_types::crypto::KeypairTraits;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::SystemInner;
 use rand::rngs::OsRng;
@@ -62,6 +63,10 @@ pub struct ClusterOfProcesses {
     /// `validators` by index. Joiners append; removal leaves the slot in
     /// place (the cap stays valid, the process is just stopped).
     committee: Vec<ValidatorSlot>,
+    /// hex-encoded anemo `PeerId` (network public key) of each validator,
+    /// aligned with `validators` by index; joiners append. A mirrored
+    /// validator's `sui_state_mirror_peers` is built from these.
+    validator_peer_ids: Vec<String>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -272,6 +277,14 @@ impl ClusterBuilder {
             })
             .collect();
 
+        // hex anemo PeerId of each validator (its network pubkey) — the same
+        // derivation the p2p layer uses; a mirrored validator's
+        // `sui_state_mirror_peers` is built from these.
+        let validator_peer_ids: Vec<String> = validator_init_configs
+            .iter()
+            .map(|init| hex::encode(init.network_key_pair.public().0.to_bytes()))
+            .collect();
+
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
         // set refuses to boot without a Sui trust anchor. Seed every validator
         // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
@@ -380,6 +393,7 @@ impl ClusterBuilder {
             rpc_url,
             publisher_keypair,
             committee,
+            validator_peer_ids,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -535,6 +549,26 @@ impl ClusterOfProcesses {
     ///
     /// Returns the new validator's index in `validators`.
     pub async fn add_joiner_validator(&mut self, binary: PathBuf) -> Result<usize> {
+        self.add_joiner_validator_inner(binary, None).await
+    }
+
+    /// Like [`Self::add_joiner_validator`], but the joiner boots peer-only
+    /// `SuiStateMirrored`, reading verified Sui state through `mirror_peers`
+    /// (the direct validators' hex anemo PeerIds) instead of a direct uplink.
+    pub async fn add_joiner_validator_mirrored(
+        &mut self,
+        binary: PathBuf,
+        mirror_peers: Vec<String>,
+    ) -> Result<usize> {
+        self.add_joiner_validator_inner(binary, Some(mirror_peers))
+            .await
+    }
+
+    async fn add_joiner_validator_inner(
+        &mut self,
+        binary: PathBuf,
+        mirror_peers: Option<Vec<String>>,
+    ) -> Result<usize> {
         tracing::info!("[flow] joining new validator (candidate -> stake -> activate)");
         let index = self.validators.len();
         let mut rng = OsRng;
@@ -615,6 +649,16 @@ impl ClusterOfProcesses {
         if let Some(cores) = max_mpc_computation_cores {
             builder = builder.with_max_mpc_computation_cores(cores);
         }
+        // A mirrored joiner reads Sui peer-only over the relay (no direct
+        // uplink) from the given direct validators, instead of the default
+        // `SuiStateDirect` path.
+        if let Some(peers) = &mirror_peers {
+            builder = builder
+                .with_sui_data_source(SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                })
+                .with_sui_state_mirror_peers(peers.clone());
+        }
         let node_config = builder.build(
             &init,
             self.rpc_url.clone(),
@@ -640,7 +684,41 @@ impl ClusterOfProcesses {
             validator_id,
             validator_cap_id,
         });
+        self.validator_peer_ids
+            .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
         Ok(index)
+    }
+
+    /// The hex anemo PeerIds of the validators at `indices` — used as a
+    /// mirrored validator's `sui_state_mirror_peers` (its set of relay
+    /// servers).
+    pub fn peer_ids_of(&self, indices: &[usize]) -> Result<Vec<String>> {
+        indices
+            .iter()
+            .map(|&i| {
+                self.validator_peer_ids
+                    .get(i)
+                    .cloned()
+                    .with_context(|| format!("peer id for validator {i} out of range"))
+            })
+            .collect()
+    }
+
+    /// Swap the validator at `index` to `new_binary` AND rewrite its config to
+    /// read Sui peer-only over the verified relay from `mirror_peers`. Flips a
+    /// validator direct -> mirrored at an upgrade swap (see
+    /// [`ValidatorProcess::swap_binary_mirrored`]).
+    pub async fn swap_and_mirror(
+        &mut self,
+        index: usize,
+        new_binary: PathBuf,
+        mirror_peers: Vec<String>,
+    ) -> Result<()> {
+        self.validators
+            .get_mut(index)
+            .with_context(|| format!("validator index {index} out of range"))?
+            .swap_binary_mirrored(new_binary, mirror_peers)
+            .await
     }
 
     /// Submit `system::request_remove_validator` for the validator at

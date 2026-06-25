@@ -92,6 +92,14 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         .with_epoch_duration_ms(epoch_duration_ms)
         .with_epoch_timeout(Duration::from_secs(1200))
         .with_ika_cli(ika_cli)
+        // OCS read topology: keep validators 0 and 1 on the direct gRPC path
+        // (serving the SuiStateMirror relay); flip validators 2 and 3 to
+        // peer-only SuiStateMirrored at the atomic swap and bring the joiner up
+        // mirrored, all reading verified Sui state through 0 and 1. The split
+        // materializes at the 1.1.8->local swap (the 1.1.8 phase stays direct on
+        // legacy JSON-RPC), giving a stable 5-member committee of 2 direct + 3
+        // mirrored. SUI_STATE_DIRECT_COUNT=1 narrows the relay set to validator 0.
+        .with_direct_validators(&[0, 1])
         // Mainnet-faithful on-chain state (populated global-presign config).
         .with_genesis_global_presign_config(GenesisGlobalPresignConfig::Full)
         // Boot the literal 1.1.8 committee at v3; epoch 2 guarantees the genesis
@@ -113,8 +121,9 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         // includes a party which never held it, and the joiner boots on the OCS
         // gRPC path — which refuses to start without a Sui trust anchor; the
         // harness seeds it in `add_joiner_validator` (the path this scenario
-        // exists to exercise from a real 1.1.8 origin).
-        .join_validator(new.clone())
+        // exists to exercise from a real 1.1.8 origin). The joiner comes up
+        // peer-only mirrored, reading verified Sui state through 0 and 1.
+        .join_validator_mirrored(new.clone())
         .wait_for_epoch(4)
         .expect_committee_size(5)
         // The new 5-member committee runs a full lifecycle against the reshared

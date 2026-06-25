@@ -16,6 +16,7 @@
 //!     .run().await?;
 //! ```
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -50,6 +51,10 @@ pub enum Step {
     /// spawn its process on the given binary. It enters the active committee
     /// at the next epoch boundary.
     JoinValidator(BinarySpec),
+    /// Like [`Step::JoinValidator`], but the joiner boots peer-only
+    /// `SuiStateMirrored`, reading verified Sui state through the scenario's
+    /// `direct_validators` relay servers.
+    JoinValidatorMirrored(BinarySpec),
     /// Submit on-chain removal for the validator at `index`. It leaves the
     /// committee at the next epoch boundary; its process keeps running until
     /// an explicit `StopValidator`.
@@ -101,6 +106,9 @@ impl std::fmt::Display for Step {
                 write!(f, "expect_protocol_version_at_least({v})")
             }
             Step::JoinValidator(spec) => write!(f, "join_validator({})", spec.label()),
+            Step::JoinValidatorMirrored(spec) => {
+                write!(f, "join_validator_mirrored({})", spec.label())
+            }
             Step::RemoveValidator { index } => write!(f, "remove_validator({index})"),
             Step::StopValidator { index } => write!(f, "stop_validator({index})"),
             Step::ExpectCommitteeSize(n) => write!(f, "expect_committee_size({n})"),
@@ -148,6 +156,12 @@ pub struct Scenario {
     /// mainnet-v1.1.8 state) plus a [`Step::SetGlobalPresignConfig`] after
     /// the upgrade.
     pub genesis_global_presign_config: GenesisGlobalPresignConfig,
+    /// Indices of validators kept on the DIRECT gRPC path (serving the
+    /// `SuiStateMirror` relay). At a `stop_and_swap`, every OTHER swapped
+    /// validator is flipped to peer-only `SuiStateMirrored` reading through
+    /// these; joiners added via `join_validator_mirrored` mirror through them
+    /// too. Empty (default) = every validator reads Sui directly.
+    pub direct_validators: Vec<usize>,
 }
 
 impl Scenario {
@@ -169,6 +183,7 @@ impl Scenario {
             min_validator_count: None,
             ika_cli: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
+            direct_validators: Vec::new(),
         }
     }
 
@@ -226,6 +241,31 @@ impl Scenario {
 
     pub fn join_validator(mut self, spec: BinarySpec) -> Self {
         self.steps.push(Step::JoinValidator(spec));
+        self
+    }
+
+    /// Join a brand-new validator that boots peer-only `SuiStateMirrored`,
+    /// reading verified Sui state through the `direct_validators` relay servers
+    /// (set via [`Self::with_direct_validators`]).
+    pub fn join_validator_mirrored(mut self, spec: BinarySpec) -> Self {
+        self.steps.push(Step::JoinValidatorMirrored(spec));
+        self
+    }
+
+    /// Designate the relay-server (direct) validators by index; every other
+    /// validator that runs v4 is flipped to peer-only `SuiStateMirrored`
+    /// reading through them — at a [`Self::stop_and_swap`] (the split
+    /// materializes at the upgrade swap) or when added via
+    /// [`Self::join_validator_mirrored`]. The `SUI_STATE_DIRECT_COUNT` env var
+    /// truncates this set (default: all of `indices`, clamped to >= 1), so one
+    /// dispatch can test a single direct relay and another can test several.
+    pub fn with_direct_validators(mut self, indices: &[usize]) -> Self {
+        let count = std::env::var("SUI_STATE_DIRECT_COUNT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(indices.len())
+            .clamp(1, indices.len().max(1));
+        self.direct_validators = indices.iter().copied().take(count).collect();
         self
     }
 
@@ -298,6 +338,10 @@ impl Scenario {
         let resolver = BinaryResolver::new(self.repo.clone(), BinaryResolver::default_cache_root());
         let mut cluster: Option<ClusterOfProcesses> = None;
         let mut timing_snapshots: Vec<TimingSnapshot> = Vec::new();
+        // Validators with an on-chain removal already submitted. They stay on
+        // the direct path through a `stop_and_swap` (no point flipping a node
+        // that's leaving) instead of being auto-mirrored.
+        let mut removed_indices: HashSet<usize> = HashSet::new();
 
         let total = self.steps.len();
         for (index, step) in self.steps.iter().enumerate() {
@@ -332,13 +376,37 @@ impl Scenario {
                 }
                 Step::StopAndSwap { validators, to } => {
                     let new_binary = resolve(&resolver, to).await?;
+                    let split_configured = !self.direct_validators.is_empty();
+                    // With a direct/mirror split configured, every swapped
+                    // validator that is NOT a direct relay server and is NOT
+                    // already leaving flips to peer-only SuiStateMirrored
+                    // (reading through the direct validators) as it comes up on
+                    // the new binary — the split materializes exactly at the
+                    // upgrade swap. Partition so the relay servers swap FIRST:
+                    // a mirrored validator must not restart before the servers
+                    // it reads through are back up on the new binary.
+                    let (to_mirror, to_direct): (Vec<usize>, Vec<usize>) =
+                        validators.iter().copied().partition(|idx| {
+                            split_configured
+                                && !self.direct_validators.contains(idx)
+                                && !removed_indices.contains(idx)
+                        });
                     let c = cluster.as_mut().context("StopAndSwap before StartAll")?;
-                    for &idx in validators {
-                        let proc = c
-                            .validators
+                    let mirror_peers = if split_configured {
+                        c.peer_ids_of(&self.direct_validators)?
+                    } else {
+                        Vec::new()
+                    };
+                    for idx in to_direct {
+                        c.validators
                             .get_mut(idx)
-                            .with_context(|| format!("validator index {idx} out of range"))?;
-                        proc.swap_binary(new_binary.clone()).await?;
+                            .with_context(|| format!("validator index {idx} out of range"))?
+                            .swap_binary(new_binary.clone())
+                            .await?;
+                    }
+                    for idx in to_mirror {
+                        c.swap_and_mirror(idx, new_binary.clone(), mirror_peers.clone())
+                            .await?;
                     }
                 }
                 Step::SetBufferStake { buffer_bps } => {
@@ -382,11 +450,28 @@ impl Scenario {
                     let index = c.add_joiner_validator(binary).await?;
                     tracing::info!(index, spec = %spec.label(), "joiner validator spawned");
                 }
+                Step::JoinValidatorMirrored(spec) => {
+                    let binary = resolve(&resolver, spec).await?;
+                    let c = cluster
+                        .as_mut()
+                        .context("JoinValidatorMirrored before StartAll")?;
+                    ensure!(
+                        !self.direct_validators.is_empty(),
+                        "join_validator_mirrored requires with_direct_validators(...) \
+                         (a mirrored joiner needs at least one direct relay server)"
+                    );
+                    let mirror_peers = c.peer_ids_of(&self.direct_validators)?;
+                    let index = c
+                        .add_joiner_validator_mirrored(binary, mirror_peers)
+                        .await?;
+                    tracing::info!(index, spec = %spec.label(), "mirrored joiner validator spawned");
+                }
                 Step::RemoveValidator { index } => {
                     let c = cluster
                         .as_mut()
                         .context("RemoveValidator before StartAll")?;
                     c.remove_validator(*index).await?;
+                    removed_indices.insert(*index);
                 }
                 Step::StopValidator { index } => {
                     let c = cluster.as_mut().context("StopValidator before StartAll")?;
