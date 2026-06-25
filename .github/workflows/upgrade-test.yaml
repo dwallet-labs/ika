@@ -256,6 +256,17 @@ jobs:
           echo "test=$TEST flag=$RUN_FLAG old_ref=${OLD_REF:-<none>} old_bin=${OLD_BIN_NAME:-<none>} patch_max=${PATCH_MAX:-<none>}"
 
       - name: Build current binaries
+        # When heap_profile is on, keep full symbols IN the binary so jeprof can
+        # name frames: the release profile has `debug = 1` but
+        # `strip = 'debuginfo'` + `split-debuginfo = 'packed'`, which moves the
+        # line tables OUT to a side file — jeprof reads only the binary, so it
+        # falls back to `::clone@<addr>`. Overriding strip=none + split=off
+        # embeds them (keeps the target dir at target/release/, unlike switching
+        # to the release-dbgsym profile). Off → the repo defaults (stripped, ~1GB
+        # smaller binary), so non-profiling runs are unchanged.
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
         run: |
           set -euo pipefail
           # Compilation in its own step: the Downloaded/Compiling stream is
@@ -414,16 +425,22 @@ jobs:
           BIN="${{ github.workspace }}/target/release/ika-validator"
           echo "heap dumps under $DIR:"; ls -la "$DIR"/jeprof.*.heap 2>/dev/null | tail -12
           # jeprof ships with libjemalloc-dev; it reads the .heap dump + the
-          # binary's symbol table (release keeps it — strip='debuginfo' only
-          # drops debug info) to attribute live bytes to functions.
+          # binary's symbols to attribute live bytes to call paths. The build
+          # step above keeps full symbols in the binary when heap_profile is on
+          # (strip=none, split-debuginfo=off), so frames resolve to names.
           if ! command -v jeprof >/dev/null; then
             if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
             $SUDO apt-get -o Acquire::ForceIPv4=true install -y libjemalloc-dev 2>&1 | tail -3
           fi
           LAST=$(ls -t "$DIR"/jeprof.*.heap 2>/dev/null | head -1)
           if [ -n "$LAST" ] && command -v jeprof >/dev/null; then
-            echo "=== jeprof --inuse_space: top live-allocation sites (bytes) — $LAST ==="
-            jeprof --text --show_bytes --inuse_space "$BIN" "$LAST" 2>/dev/null | head -45
+            # Read by CUMULATIVE and hide jemalloc's own sampling frames
+            # (prof_backtrace*/prof_dump* are the universal backtrace-capture
+            # leaf — flat-sorted they show ~99% and bury the real call sites).
+            echo "=== jeprof --inuse_space --cum (top allocation call paths; jemalloc prof frames hidden) — $LAST ==="
+            jeprof --text --cum --show_bytes --inuse_space \
+              --ignore='prof_backtrace|prof_dump|prof_alloc|prof_tctx|je_prof' \
+              "$BIN" "$LAST" 2>/dev/null | head -50
           else
             echo "no heap dumps or jeprof missing — heap_profile must be on AND a workload-bearing scenario must have run"
           fi
