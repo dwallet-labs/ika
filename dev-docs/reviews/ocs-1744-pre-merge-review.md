@@ -22,6 +22,140 @@ synthesized. 27 agents; 14 raw findings, **11 survived** verification, 3 refuted
 
 ---
 
+## Status refresh — 2026-06-26 (re-verified at HEAD `b2bd0e27e1`)
+
+The findings below were written at `72e3c76f78`; each was re-checked against the
+current tree. **The one MUST-FIX (`mpc-consensus-1`) is resolved** (`ff3feba0f6`).
+Tally: **1 fixed · 2 partially fixed · 9 open** — every open item is LOW/MEDIUM;
+nothing is merge-blocking by the review's own bar. (One new finding,
+`ocs-binding-1`, was added 2026-06-26 from the read-path binding review —
+[`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md).)
+Landed *since* the review and
+**not** covered by it (all green): continuous trusted-peer discovery, the
+changeset-stream currency gate (now live on mirrored/peer-only nodes), and the
+cross-Sui-epoch committee-ratchet tests.
+
+## The flow (full PR)
+
+What #1744 delivers, top to bottom — every remaining item below pins to a stage here.
+
+```
+PR #1744  (feat/ocs-grpc-migration)
+├─ OCS: verified Sui reads + peer-only validators          ← the core
+├─ Continuous trusted-peer discovery (replaces seed_peers)  ← bootstrap
+├─ Changeset-stream currency (eclipse defense)
+├─ #1736: epoch-close coupled to handoff-cert quorum   (was #1761)
+├─ Upgrade-test harness + CI memory / jemalloc         (was #1763/#1771)
+└─ merged up: Fast Schnorr #1714, rayon bound #1770
+```
+
+**① Runtime read path — the heart**
+```
+  SUI CHAIN ── checkpoints signed by the Sui validator committee (BLS)
+      │
+      └─►┌───────────────────────────────────────────────────────────────┐
+         │ DIRECT validator   (sui-data-source = SuiStateDirect)          │
+         │   • reads Sui over gRPC                                        │
+         │   • ratchets committee[E]→[E+1], folds a verified state cache  │
+         │   • SERVES the relay (proofs + changeset stream) to peers      │
+         └───────────────┬───────────────────────────────────────────────┘
+                         │  anemo p2p   ‹‹ UNTRUSTED relay ››
+                         ▼
+         ┌───────────────────────────────────────────────────────────────┐
+         │ PEER-ONLY validator (SuiStateMirrored, fallback = None)        │
+         │   every relay read is VERIFIED, link by link:                 │
+         │    [A] committee BLS → [B] artifacts-digest → [C] Merkle       │
+         │        inclusion → [D] id-binding → [E] CURRENCY gate          │
+         │   → verified state cache  (retain window)                     │
+         └───────────────┬───────────────────────────────────────────────┘
+                         ▼
+           MPC engine (DKG / presign / sign) consumes verified state
+```
+
+**② Transport gate — config *shape*, never protocol version**
+```
+  old-style  sui-rpc-url        → legacy JSON-RPC
+  new-style  sui-data-source ──┬─ SuiStateDirect{serve_mirror}  → gRPC + serve relay
+                               └─ SuiStateMirrored{fallback?}   → relay
+                                    fallback = None  ⇒  PEER-ONLY
+```
+
+**③ Peer-only joiner bootstrap (no uplink, no seed peers)**
+```
+  ① trust anchor      genesis / compiled-in committee           ‹ start of trust ›
+  ② committee ratchet committee[0]→…→[current]  (BLS-verify each end-of-epoch ckpt)
+  ③ discovery DIAL    direct validators read pending_active_set every 3s
+                      → DIAL the registered-but-not-active joiner INBOUND
+                      → wait_for_specific_peers satisfied → joiner on the p2p net
+  ④ verified reads    now routable over the relay → joiner joins MPC
+```
+
+**④ Epoch boundary**
+```
+  close gate   v4 epoch-close COUPLED to handoff-cert quorum (#1736); grace×4 backstop
+  handoff      EAGER end-of-epoch committee capture from the pusher
+               — committee[E+1] grabbed as the epoch closes, never reach back
+                 to a (possibly pruned) checkpoint
+```
+
+**⑤ Freshness — changeset-stream currency (gate [E] above)**
+```
+  relay streams committee-signed CHANGESETS (paged) → peer folds a per-id lifecycle
+  index (Modified/Deleted/Wrapped), contiguity-enforced (+1 + previous_digest + gap
+  recovery) → gate [E] rejects NotCurrent if the anchor is older than the object's
+  latest folded change, or the object is Deleted/Wrapped.
+```
+
+**⑥ Validation harness**
+```
+  ika-upgrade-test (out-of-process)            ocs_verifier.rs (in-process cluster)
+   • smoke/workload/cross_binary/v118_*         • direct + mirrored + peer-only
+   • direct + mirrored + peer-only JOINER (③)   • cross-Sui-epoch ratchet (short Sui epochs)
+   • jemalloc background_threads → RSS to OS
+
+  MPC orchestrator:  compute() wrapped in catch_unwind → core slot always reclaimed
+```
+
+## What's left — and where it sits in the flow
+
+| item | flow stage | status | sev | effort | call |
+|------|-----------|--------|-----|--------|------|
+| `mpc-consensus-1` orchestrator panic guard | ⑥ MPC orchestrator | **FIXED** (`ff3feba0f6`) | — | — | done |
+| `ocs-verifier-core-1` batch read returns short set as `Ok` | ① read · gate **[D]** | open | LOW | 1 line | **fix before merge** |
+| `ocs-binding-1` `pending_active_set` child read unbound | ① read / ③ discovery | open | LOW | small | fix-soon (cheap; closes the only unbound hop) |
+| `spec-conformance-1` currency gate absent from the spec | ⑤ currency · gate **[E]** | partial (code live, spec stale) | MED | small (docs) | **fix before merge** |
+| `authority-epoch-1` false "deterministic" close comment | ④ close gate | open | MED | 1 comment | **fix before merge** (comment) |
+| `node-config-2` presign-pool env unguarded + false comment | startup / config | open | LOW | small | **fix before merge** |
+| `ocs-transport-1` mirror `execute_transaction` returns unverified effects | submit path (mirror transport) | open (dormant) | LOW | 1 line | **fix before merge** (fail-closed) |
+| `network-mirror-1` `submit_transaction` / ckpt RPCs uncapped | DIRECT serving side | open | MED | small | fast-follow |
+| `network-mirror-2` consumer doesn't bound response length | ① read | partial (server caps in) | LOW | small | fast-follow (w/ ↑) |
+| `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | open | MED | small | fast-follow |
+| `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | open | LOW | small | eventually (1 change) |
+
+**My recommendation** (tracked as a checklist in
+[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md))**.**
+The MUST-FIX is done, so merge is technically unblocked — but there's a cheap,
+high-value cluster worth landing first:
+
+- **Pre-merge cleanup (~half a day, all trivial/small, all close a real gap):** the
+  one-line batch length-check (`ocs-verifier-core-1`), the spec + `ocs_currency.rs`
+  module-doc update (`spec-conformance-1` — it's the spec for a *merging* subsystem and
+  currently misrepresents the live trust model to operators), the wrong epoch-close
+  comment (`authority-epoch-1` — provably false, breeds false confidence), the
+  presign-pool guard + false-comment fix (`node-config-2` — a silent mainnet foot-gun),
+  and the fail-closed guard on the mirror submit path (`ocs-transport-1` — 1 line of
+  insurance so a future mis-wire fails loudly instead of trusting forged effects). None
+  touch the trust chain; reviewer value-per-line is highest here.
+- **Fast-follow (own PR, not blocking):** the relay DoS bounds (`network-mirror-1`
+  serving caps + `network-mirror-2` consumer length-check — fix together) and the cache
+  `prune_floor` decoupling (`ocs-cache-committee-1` — a slow-onset leak; land it before
+  long-lived mainnet direct validators accumulate distinct object ids past the window).
+- **Eventually:** the bag-pump failure/omission discipline (`ocs-ingest-2` +
+  `ocs-wiring-1` — defense-in-depth + log hygiene; omitted sessions are already caught by
+  the consensus catch-up backstop).
+
+---
+
 # Code Review Report — Ika #1744 (`feat/ocs-grpc-migration`)
 ### OCS verified-Sui-reads + peer-only-validator subsystem, reviewed against `origin/dev`
 
@@ -29,8 +163,11 @@ synthesized. 27 agents; 14 raw findings, **11 survived** verification, 3 refuted
 
 Overall risk is **moderate-to-high, concentrated in one item**. The verified-read trust chain (committee BLS → artifacts-digest binding → Merkle inclusion → currency gate) is fundamentally sound: the alarming-sounding committee-corruption and forged-effects scenarios are all neutralized downstream or by wiring discipline. The single **MUST-FIX-BEFORE-MERGE** item is the orchestrator panic-handling gap (`mpc-consensus-1`): an unguarded panic in `compute()` either aborts the whole validator (release/`panic=abort`) or permanently leaks an MPC core for the epoch (test/simulator), and the known `#1736` fix (`catch_unwind` + always-send-completion) is simply absent on this branch. This matches the heavy-TS CI wedge tracked in memory and should not merge without the guard. Two further items warrant attention before merge: a verified-read robustness gap that is a trivial one-line hardening (`ocs-verifier-core-1`) and a stale spec that misrepresents the live per-read trust model to peer-only operators (`spec-conformance-1`). The remaining seven are correctly-rated low/medium DoS-amplification, log-hygiene, dormant-landmine, and slow-onset-growth observations — real, worth fixing, none blocking. Confidence in these verdicts is **high**; all were adversarially verified against the working tree, with one residual hypothesis (remote-triggerability of a crypto-library panic) explicitly flagged but not load-bearing for the fix.
 
-**MUST-FIX before merge:** `mpc-consensus-1`.
-**Strongly recommended before merge:** `ocs-verifier-core-1` (one line), `spec-conformance-1` (docs only).
+**MUST-FIX before merge:** `mpc-consensus-1` — ✅ **FIXED since review** (`ff3feba0f6`).
+**Strongly recommended before merge:** `ocs-verifier-core-1` (one line, still open), `spec-conformance-1` (docs only — code shipped, spec still stale).
+
+> _The Executive summary above is the at-review snapshot (`72e3c76f78`). For current
+> per-finding status see the **Status refresh** + **What's left** map near the top._
 
 ---
 
@@ -38,6 +175,7 @@ Overall risk is **moderate-to-high, concentrated in one item**. The verified-rea
 
 ### `mpc-consensus-1` — Orchestrator computation slot leaks / node aborts when `compute()` panics
 - **Severity: HIGH (verified real).** MUST-FIX-BEFORE-MERGE.
+- **STATUS (2026-06-26): ✅ FIXED** (`ff3feba0f6`) — `compute()` is wrapped in `compute_catching_panic` (`catch_unwind(AssertUnwindSafe(..))`), a `ComputationCompletionUpdate` is always sent so the core slot is reclaimed on the panic path, and two unit tests guard it (`panic_in_compute_becomes_a_failed_result`, `ordinary_failure_passes_through`).
 - **File:** `crates/ika-core/src/dwallet_mpc/crytographic_computation/orchestrator.rs:323-360`
 - **Mechanism (plain terms):** The core slot is reserved unconditionally at line 356 (`currently_running_cryptographic_computations.insert(...)`) and is only ever reclaimed when a `ComputationCompletionUpdate` is read back. That update is sent *inside* the rayon closure, only after `computation_request.compute(...)` (line 329) **returns normally**. If `compute()` panics, the closure unwinds, the `handle.spawn` send at line 339 is never reached, and the completion update is never produced. Under `[profile.release] panic='abort'` the panic kills the whole validator; under test/simulator (`panic='unwind'`) the rayon `panic_handler` only logs and the worker survives, so the slot is leaked for the rest of the epoch. Accumulated leaked slots drive `has_available_cores_to_perform_computation()` permanently false → epoch MPC wedges silently. The branch diff added only the `max_computation_cores` cap (lines 110-115); the panic guard is absent.
 - **Reachability:** `compute()` dispatches into external 2PC-MPC / class-groups `advance()` on inputs aggregated from other (possibly malicious) parties, and the in-tree dispatch itself contains `unreachable!()`/unwrap sites (e.g. `sign.rs`). The orchestrator has zero resilience to *any* panic in `compute()` — independent of the (unproven) remote-trigger hypothesis. The authors' own msim-path comment (lines 289-298) acknowledges a rayon-worker panic aborts the process.
@@ -56,10 +194,18 @@ Overall risk is **moderate-to-high, concentrated in one item**. The verified-rea
 
 ### `spec-conformance-1` — Changeset currency gate is shipped and read-blocking, but the spec presents it as an unbuilt future plan
 - **Severity: MEDIUM (verified real).** Recommended before merge — docs-only.
+- **STATUS (2026-06-26): ◐ PARTIAL** — the currency gate is **live** (built for every mirrored/peer-only node, read-blocking on all three paths); only the docs lag: `dev-docs/specs/ocs-verified-sui-reads.md` (freshness/eclipse/invariants) and the `ocs_currency.rs:16-18` module doc still present it as a future plan. Docs fix outstanding.
 - **File:** `crates/ika-core/src/sui_connector/verified_reader.rs:760, 786-808`; `ocs_currency.rs`; `setup.rs:373-412`; spec `dev-docs/specs/ocs-verified-sui-reads.md`
 - **Mechanism (plain terms):** `setup.rs` builds a real `ChangesetReceiver` + `ChangesetIndex` for **every** mirrored/peer-only node, and `check_currency` runs as a fourth, read-**rejecting** gate on every `verified_object` (line 760), `verified_objects` (331), and `verified_bag_page` (569): a `Stale`/`NotLive` verdict returns `ReaderError::NotCurrent` and fails the read. But the spec's "Freshness and rollback protection" and "Eclipse residual" sections state the only active per-read anti-rollback defenses "today" are version monotonicity + the cache-first tripwire, present committee-attested currency as a *future* plan, and omit a currency gate from the key-invariant list. Per CLAUDE.md, a spec/code disagreement is a bug in one of them — here the spec is stale. This is a documentation defect, not a behavioral one (the code is the intended, tested design).
 - **Triggering scenario:** A peer-only operator provisions per the spec's trust model, then hits a hard `NotCurrent` read rejection on the MPC read hot path (in-flight read anchored at a prior validly-proven checkpoint while the changeset stream has folded a newer modification) — a failure mode the spec neither documents nor bounds.
 - **Suggested fix:** Update the spec to (1) document the currency gate as a live per-read defense on all mirrored/peer-only nodes, (2) add it to the invariant list, (3) specify the `NotCurrent` rejection semantics and the `not_current` metric label, and (4) correct the "Eclipse residual" / "not active on the per-read path today" claims. Also fix the stale `ocs_currency.rs:16-18` module doc. (Note: the cache-*first* path for mirrors genuinely remains unbuilt — keep that part.)
+
+### `ocs-binding-1` — `pending_active_set` ExtendedField child is read UNBOUND (listed, not derived or owner-checked)
+- **Severity: LOW (verified real).** Recommended — small fix. _Added 2026-06-26 from the read-path binding review ([`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md), Q4)._
+- **File:** `crates/ika-sui-client/src/lib.rs:1093-1121` (JSON-RPC) and `crates/ika-network/.../grpc_backend.rs:223-235` (gRPC); caller `get_pending_active_set_ids` (`lib.rs:583-603`).
+- **Mechanism (plain terms):** `get_extended_field_value_bcs` reads the `pending_active_set` `ExtendedField`'s single dynamic field by **listing** it (`get_dynamic_fields`/`list_dynamic_fields`) and taking `.first().object_id` — with **no** local derivation of the child id from the wrapper and **no** owner-check that the proven child's `Owner` is the wrapper id. Of the object-graph hops from the pinned system/coordinator roots, this is the *only* one that is neither **(a) derived** nor **(b) owner-bound** — it is **(c) unbound**: a relay chooses which proven child id the reader consumes. (Every trust-critical hop — the versioned `*Inner` children, the inline committees, the validator pools, the `session_events` bags — is bound; see the Q4 graph.)
+- **Why LOW (not critical):** `pending_active_set` feeds **discovery only** (`known_peers`, merge-only), never consensus/committee/quorum — those come from the *inline*, bound committees in the proven `SystemInner`. Resolved peers pass `validator_info.verify()` + self-exclusion, so a relay cannot inject an attacker-controlled peer (it can't forge a `StakingPool` signature or a p2p address for a key it doesn't hold). Worst case is availability: a malicious relay omits/staffs the staging set, delaying or denying a peer-only joiner's discovery, or showing a stale joiner list. No trust/quorum break.
+- **Suggested fix — generic, not a one-off owner-check (verified feasible):** the binding already exists *inline* in `verified_bag_page` (`verified_reader.rs:543-565`: proof-bound `Owner == bag_id` or the derived wrapper id, else `BagMembership`). **Extract it** into a reusable `verify_dynamic_field_entry_binding(entry_owner, parent_id, [name_type, name_bcs]) -> Result<(), ReaderError>`, and call it from BOTH the bag path and a NEW `OcsVerifiedReader::verified_extended_field_value` (list the single field → verify the child's inclusion proof → bind `Owner == ef_id`). Route `get_pending_active_set_ids` through that verified method on peer-only nodes. **Crucial layering:** the binding MUST live at the verified-reader layer — the proof-bound `Owner` is only available there (`VerifiedSuiTransport` carries the `Object`; the lower `SuiClientInner::get_extended_field_value_bcs` returns raw `Vec<u8>` and *drops* the `Owner`), so a check bolted onto the existing method literally cannot see the owner. This is a small **extraction of logic that already exists** (not a speculative abstraction): it unifies the bag and ExtendedField bindings and closes the gap for the next listed read too. On JSON-RPC / direct (trusted uplink) binding is moot. (We *list* rather than *derive* because the empty-`Key()` child-id derivation produced a wrong id; the owner-check is the correct binding regardless of how the id is obtained.)
 
 ### `ocs-transport-1` — Relay `execute_transaction` returns unverified effects bytes (dormant landmine)
 - **Severity: LOW (verified real).** Not blocking.
@@ -84,6 +230,7 @@ These two share a theme — **the serving/consuming relay surface lacks resource
 
 ### `network-mirror-2` — Relay client accepts up to a 1 GB response frame from an untrusted serving peer
 - **Severity: LOW (verified real).** Not blocking.
+- **STATUS (2026-06-26): ◐ PARTIAL** — server-side caps now exist (`proof_provider.rs` `MAX_BATCH_OBJECTS = 4096`, `MAX_BAG_PAGE_SIZE = 1000`), but those only bound an *honest* server; the consumer still allocates `Vec::with_capacity(resp.entries.len())` without re-bounding the peer-controlled length against the request. Consumer-side check outstanding.
 - **File:** `crates/ika-network/src/sui_state_mirror/client.rs:299-345`; frame size at `lib.rs:1579`
 - **Mechanism (plain terms):** The consumer requests a bounded `page_size`, but the response entry count is peer-controlled and never re-bounded against the request. `verified_reader.rs:477` allocates `Vec::with_capacity(resp.entries.len())` and runs O(entries) Merkle-inclusion + binding + currency work before rejecting. The server-side `MAX_BAG_PAGE_SIZE`/`MAX_BATCH_OBJECTS`/`MAX_CHANGESET_PAGE` caps only constrain an *honest* server's output. A malicious peer can answer a small request with a ~1 GB frame of bogus entries → ~1 GB alloc + per-entry verification before discard.
 - **Why low:** Frame-bounded at 1 GB; `max_frame_size` is a pre-existing global, not introduced here; BLS dedup reduces BLS to O(distinct checkpoints) (dominant cost is the Merkle check + the allocation). Capped amplification, not unbounded DoS.

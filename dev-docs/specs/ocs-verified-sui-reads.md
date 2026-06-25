@@ -51,7 +51,143 @@ different object than the one returned. For batch and bag reads each
 distinct checkpoint is BLS-verified once and reused, but every entry
 still gets its own inclusion check.
 
+## Object-graph binding (every read rooted in a pinned object)
+
+The trust chain proves a *single* object — but the relay still chooses WHICH object
+to serve. Safety therefore also requires that every object a node reads is reachable
+from one of the two **config-pinned** roots (`IkaNetworkConfig.objects.{ika_system_object_id,
+ika_dwallet_coordinator_object_id}`) by a chain of *bound* hops. Each hop is one of:
+
+- **(a) DERIVED** — the child id is computed locally from the parent id
+  (`derive_dynamic_field_id` / a versioned child id / an ObjectField `Wrapper<K>` id).
+  The relay can't substitute because the reader chose the id.
+- **(b) OWNER-BOUND** — the child is proven, then its proof-bound `Owner` is checked
+  `== parent id` (or the derived wrapper id), else `ReaderError::BagMembership`.
+- **(c) UNBOUND** — the child id is taken from an untrusted `list_dynamic_fields` and
+  read without deriving or owner-checking it: a relay chooses the id → substitution risk.
+
+```
+       PINNED ROOTS (config, trusted)
+       ika_system_object_id              ika_dwallet_coordinator_object_id
+             │ (a) derived (versioned child id)     │ (a) derived
+             ▼                                       ▼
+       SystemInner                              DWalletCoordinatorInner
+        │  │  │                                      │ (a) inline
+        │  │  │ (a) inline                           ▼
+        │  │  └─ active / next / previous committee  session_events bags
+        │  │      → epoch committee + QUORUM bound        │ (b) owner-bound
+        │  │                                              ▼
+        │  └─ validators: ObjectTable               session-event children ✓
+        │        │ (b) owner-bound
+        │        ▼
+        │     StakingPools ✓
+        │
+        └─ pending_active_set: ExtendedField
+                 │ (c) UNBOUND ☠  listed, not derived/owner-checked
+                 ▼                 (discovery-only, LOW impact; ocs-binding-1)
+              PendingActiveSet
+```
+
+Every trust-critical read is (a) or (b): the versioned `*Inner` children are **derived**;
+the active/next/previous committees and the quorum are **inline** in the proven
+`SystemInner` bytes; the validator `StakingPool`s and the `session_events` entries are
+**owner-bound**. The one **(c)** hop is the `pending_active_set` `ExtendedField` read
+(`get_extended_field_value_bcs` lists the wrapper's single field and reads `.first()`
+with no owner-check) — a known gap, LOW impact (it feeds *discovery only*, and resolved
+peers still pass `validator_info.verify()`), tracked as `ocs-binding-1` (see *Residuals*).
+
+**Type-correctness follows from id-binding.** The inclusion proof binds the object's
+Move type (it is inside the proof-bound `ObjectDigest`), so a correctly-bound id yields a
+correctly-typed object — the consumer does not *separately* assert the type
+(`bcs::from_bytes` is structural); only the event path re-checks the `StructTag` against
+the pinned ika package. A relay-chosen id (the (c) hop) is the only place a same-layout
+wrong object could slip in, and the fix for that is the owner-binding, not a type assert.
+
 ## Node roles and transports
+
+How the roles connect to Sui and to each other:
+
+```
+                     SUI  (L1)
+          Sui validators ──▶ checkpoints (BLS-signed)
+                     │
+                     │  a Sui FULL NODE follows the chain / serves RPC
+                     ▼
+             ┌──────────────────┐       submit txns        ┌──────────────────┐
+             │   SUI FULL NODE   │ ◀──── (ika checkpoints ─ │   NOTIFIER        │
+             │   (gRPC / RPC)    │        write-back)       │   (direct uplink) │
+             └────────▲──────────┘                          └──────────────────┘
+                      │
+         gRPC reads ──┤  direct Sui uplink
+        (Sui state)   │  (DIRECT + mirrored-with-fallback only)
+                      ▼
+             ┌──────────────────────────┐
+             │  DIRECT validator         │ ──────┐
+             │  • reads Sui over gRPC    │       │  SuiStateMirror relay
+             │  • serves SuiStateMirror  │       │  (verified Sui state
+             └─────────────┬─────────────┘       │   + changeset stream)
+                           │                       ▼
+                           │             ┌──────────────────────────┐
+                           │             │  PEER-ONLY validator      │
+                           │             │  • NO Sui uplink          │
+                           │             │  • every read via relay   │
+                           │             └─────────────┬─────────────┘
+                           │                           │
+                           └───────────────────────────┘
+                     anemo p2p mesh — ALL validators:
+                     consensus (Mysticeti) · MPC · trusted-peer discovery
+                     (the SuiStateMirror relay rides this mesh)
+```
+
+The asymmetry is the point: a **direct** validator reaches Sui two ways — its own
+gRPC uplink to a full node, and the p2p mesh — while a **peer-only** validator
+reaches Sui *only* through the relay, with every byte verified against the Sui
+committee signature (the trust chain above). A **mirrored-with-fallback** validator
+is a peer-only reader that additionally keeps a gRPC fallback (used only for the few
+reads it does not relay, and as the bootstrap uplink). The notifier always has a
+direct uplink — it is the only node that submits transactions back to Sui.
+
+```
+        ══▶ PUSH  (source streams / submits, no per-item request)
+        ──▶ PULL  (consumer requests each item, on demand)
+
+  SUI full node  ══▶  direct validator   checkpoint-summary subscription  (committee chain)
+  SUI full node  ──▶  direct validator   point object reads (get_object)
+  notifier       ══▶  SUI full node      submit ika checkpoints (write-back)
+
+  direct (relay) ──▶  peer-only          verified object / bag reads
+  direct (relay) ──▶  peer-only          ChangesetPage currency stream (polled)
+
+  validator     ◀══▶  validator          consensus (Mysticeti) + MPC  (mesh broadcast)
+```
+
+Read it as: the **committee chain** rides a push (a Sui subscription, on uplinked
+nodes); **all verified state** a peer-only node depends on — objects, bags, and the
+currency changesets — is pulled over the relay; consensus/MPC are pushed across the
+mesh; and the notifier pushes write-back to Sui.
+
+**Push vs pull on these links:**
+
+- **Push** (the source streams / submits without a per-item request):
+  - *Sui → direct validator* — the committee follower **subscribes** to Sui's
+    checkpoint-*summary* stream (`subscribe_checkpoint_summaries`); Sui streams each new
+    summary, keeping the committee chain current without polling.
+  - *Notifier → Sui* — the notifier **submits** (pushes) ika checkpoints back to Sui.
+  - *Validator ↔ validator* — consensus blocks (Mysticeti) and MPC messages are
+    **broadcast** across the p2p mesh.
+- **Pull** (the consumer requests, on demand) — **the entire relay is pull**:
+  - *Peer-only → relay* — every verified read is request/response
+    (`verified_object` / `batch_verified_objects` / `verified_bag_page`). There is **no
+    push of verified state**: a direct node's pusher folds into its *own* cache only (the
+    earlier push-gossip subsystem was removed).
+  - *Changeset currency stream* — **polled** in contiguous pages
+    (`ChangesetPageRequest { from_seq, limit }`), never a held-open stream; the
+    session-event bag pump likewise lists pages on a tick.
+  - *Direct validator → Sui* — point object reads over gRPC (`get_object`).
+
+So the committee chain rides a **push** (a Sui subscription on uplinked nodes), while all
+verified state — objects, bags, and the currency changesets a peer-only node depends on —
+is **pulled** over the relay.
 
 Role is `NodeMode::detect_from_config` (Validator = has `consensus_config`;
 Notifier = has `notifier_client_key_pair`; Fullnode = neither) and is
@@ -68,7 +204,9 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
 - **Peer-only validator** — `SuiStateMirrored { fallback_grpc_url: None }`:
   no Sui uplink at all; every read, including committee/epoch bootstrap,
   flows over the verified relay. This is the *sole* identifier of the
-  peer-only role.
+  peer-only role. A fresh peer-only node can't dial out to reach the relay,
+  so existing validators *dial it inbound* off the on-chain `pending_active_set`
+  — see [`trusted-peer-discovery.md`](trusted-peer-discovery.md).
 - **Notifier / fullnode** — read gRPC at one endpoint; notifiers are the
   only nodes that submit transactions and always use a direct uplink.
 
@@ -135,20 +273,45 @@ can never poison it.
 
 The absolute checkpoint-distance bound (`StaleCheckpoint`) is wired but
 **dormant** in production (`freshness_bound = None`). The active
-anti-rollback guarantees today are version monotonicity and the
-cache-first staleness tripwire — except the two singleton anchors
-(`System` / `DWalletCoordinator` inner), which are deliberately served
-*through* a tripped tripwire on direct nodes (see *The cache fast path*)
-and so rely on version monotonicity alone.
+anti-rollback guarantees today are version monotonicity, the cache-first
+staleness tripwire, and — on mirrored/peer-only nodes — the
+**changeset-stream currency gate** (below) — except the two singleton
+anchors (`System` / `DWalletCoordinator` inner), which are deliberately
+served *through* a tripped tripwire on direct nodes (see *The cache fast
+path*) and so rely on version monotonicity alone.
 
-**Eclipse residual (known non-guarantee):** the monotone defenses are
-relative, not absolute. A fresh node whose only relay is malicious can
-be pinned to an internally-consistent OLD-but-validly-proven snapshot
-indefinitely: `observed_upstream_head` and the high-water both start
-empty, so the stale-but-real view sets the floor rather than tripping a
-guard. The relay still cannot forge state or roll back below what it has
-already served this process. Closing this requires an enabled freshness
-bound and/or multiple independent relays.
+**Changeset-stream currency gate (LIVE on mirrored/peer-only nodes).** An
+inclusion proof attests an object at its last-modifying checkpoint M, not
+that M is still the latest version. Each mirrored/peer-only node therefore
+*pulls* a committee-signed **changeset stream** (paged `ChangesetPage`,
+`from_seq`+`limit`) and folds it into a per-id lifecycle index keyed by
+last-modifying checkpoint, with enforced contiguity (`+1` advance +
+`previous_digest` chaining + id-set gap recovery) so a relay cannot silently
+skip a checkpoint where an object changed. It rests on an id-binding
+non-inclusion primitive (verify neither neighbor leaf of the proof matches
+the target id, so absence cannot be forged for a present object). Every
+verified read — `verified_object`, `batch_verified_objects`,
+`verified_bag_page` — then consults the index as a fourth, read-**blocking**
+gate: a read whose anchor predates the object's latest folded modification,
+or whose object is `Deleted`/`Wrapped` in the folded range, is rejected
+`ReaderError::NotCurrent` (metered `not_current`) even though the proof is
+validly signed. `Unknown` anchors (outside the folded/retain window) fall
+back to the per-read monotone defenses. The index is bounded by a retain
+window (`CHANGESET_RETAIN_WINDOW`, larger than one epoch). Direct nodes do
+not run it — their own folder is already a complete in-order fold.
+
+**Eclipse residual (known non-guarantee, NARROWED by the currency gate):**
+the monotone defenses are relative, not absolute. A fresh node whose only
+relay is malicious can be pinned to an internally-consistent
+OLD-but-validly-proven snapshot: `observed_upstream_head` and the high-water
+both start empty, so the stale-but-real view sets the floor rather than
+tripping a guard. The currency gate raises the bar — a relay must now also
+withhold the changeset stream consistently, and contiguity makes a silent
+gap detectable — but a relay that withholds the *whole* stream can still
+stall a node at a consistent point. The relay still cannot forge state or
+roll back below what it has already served this process. Fully closing the
+residual requires an enabled freshness bound and/or multiple independent
+relays.
 
 ## Bag walks and the event pump
 
@@ -208,7 +371,9 @@ dropping entries are layered:
 ## Relay protocol
 
 The relay exposes verified-read RPCs (`VerifiedObject`,
-`BatchVerifiedObjects`, `VerifiedBagPage`), committee-ratchet plumbing
+`BatchVerifiedObjects`, `VerifiedBagPage`), the `ChangesetPage` currency
+stream (paged `from_seq`+`limit`; see *Freshness and rollback protection*),
+committee-ratchet plumbing
 (checkpoint summary/full/by-digest, `LastCheckpointOfEpoch`,
 `GetTransactionCheckpoint`, `get_current_epoch`, `get_reference_gas_price`),
 and `SubmitTransaction` (peer-only `execute_transaction` — its
@@ -243,6 +408,19 @@ effects bytes. This is acceptable only because no live caller reaches it
 
 ## The cache fast path (sui-state-direct only)
 
+Direct and peer-only nodes run the SAME cryptography but reach it differently — the
+verification asymmetry:
+
+```
+  DIRECT validator                          PEER-ONLY validator
+  ────────────────                          ───────────────────
+  fold once (own gRPC) → verify → cache     (no fold, no cache-first)
+  cache HIT  → serve, NO re-verify  ◄── asymmetry ──►  EVERY read → verify
+  cache MISS / stale → fetch + verify        (committee BLS + Merkle + currency)
+  trust root: own gRPC uplink               trust root: committee signature
+  ── both: committee ratchet BLS-verified; per-object high-water on every read ──
+```
+
 Direct validators run a checkpoint folder (`IkaCheckpointPusher`) that
 folds every Ika-modified object of every checkpoint, in order, into a
 local verified state cache — building each object's inclusion proof from
@@ -274,9 +452,12 @@ it does not ingest peer state. Mirrored and peer-only validators have no
 such folder; they read with `cache_first = false`, pulling each object
 over the relay and re-verifying it per read.
 
-> Giving mirrored/peer-only nodes a committee-attested cache-first path
-> (so they don't re-pull every read) needs a currency mechanism the pull
-> path doesn't require — see
+> The committee-attested **currency mechanism** a cached mirror read would
+> need is now built and live on the per-read *pull* path (the
+> changeset-stream currency gate, under *Freshness and rollback protection*).
+> What remains future is the cache-*first* optimization itself — letting
+> mirrored/peer-only nodes serve a read from a local fold instead of
+> re-pulling every read — see
 > [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
 
 ## Key invariants
@@ -309,13 +490,32 @@ over the relay and re-verifying it per read.
 8. Cached state is committee-verified before it enters the cache; the
    cache never holds unverified state, and on a direct node it is folded
    only from the node's own authoritative Sui access, never from peers.
+9. On mirrored/peer-only nodes a verified read additionally passes a
+   committee-attested **currency** gate: an authentic-but-superseded object
+   is rejected — a read anchored before the object's latest folded
+   modification (or after its deletion/wrapping) returns `NotCurrent`. The
+   backing changeset fold is contiguity-enforced, so a skipped modification
+   is detectable, not silently dropped.
 
 ## Residuals and known gaps
 
 - **Eclipse on a fresh node** (above): a lone malicious relay can pin a
-  cold-started node to a stale-but-real snapshot; mitigations
-  (freshness bound, multiple relays) are not active on the per-read
-  path today.
+  cold-started node to a stale-but-real snapshot. The changeset-stream
+  currency gate (now live on the per-read path) narrows this — the relay
+  must withhold the whole stream consistently, and contiguity makes a silent
+  gap detectable — but does not fully close it; the absolute mitigations
+  (an enabled freshness bound, multiple independent relays) are still not
+  active today.
+- **`pending_active_set` read is owner-UNBOUND** (`ocs-binding-1`): the only object-graph
+  hop that is neither derived nor owner-bound — `get_extended_field_value_bcs` lists the
+  `ExtendedField` wrapper's single dynamic field and reads `.first()` without checking the
+  proven child's `Owner == pending_active_set_id`. Impact is LOW (discovery-only; the set
+  feeds `known_peers` and resolved peers still pass `validator_info.verify()`; consensus
+  state rides the inline, bound committees). Fix: extract the `verified_bag_page` owner-check
+  into a reusable `verify_dynamic_field_entry_binding` and route this read through the
+  verified-reader layer (where the proof-bound `Owner` is available — the `SuiClientInner`
+  layer only sees raw bytes). See
+  [`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md).
 - **`compiled_in_trusted_anchor`** returns `None` for all chains; when
   release tooling fills it, every old-style config on that chain would
   gain `has_anchor` and trip the anchor-without-data-source guard —
