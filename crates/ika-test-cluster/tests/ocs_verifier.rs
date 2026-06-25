@@ -198,13 +198,17 @@ async fn ocs_verifier_v4_peer_only_validator_drives_user_dkg_and_epoch_advance()
     drive_dkg_and_epoch_advance(&mut cluster, "peer-only").await;
 }
 
-/// Peer-only validators (no Sui uplink) crossing MULTIPLE epoch boundaries.
-/// After the initial DKGs, the cluster advances through several more
-/// reconfigurations, exercising the committee ratchet + follower over a run of
-/// boundaries entirely over the relay — the finding-17 committee half: a skipped
-/// or mis-derived `committee[E+1]` would stall reconfiguration. The single-epoch
-/// topology tests above prove one crossing; this proves the chain holds over
-/// many. Slow (several 60s epochs) — a cluster-suite test, not the fast unit pass.
+/// Peer-only validators (no Sui uplink) crossing MULTIPLE Sui committee
+/// boundaries. The OCS ratchet is over the SUI validator committee, so the
+/// underlying Sui localnet is given short epochs (15s) to actually rotate its
+/// committee — otherwise Sui sits at epoch 0 for the whole run, the ratchet loop
+/// never executes, and this test passes vacuously (a broken `committee[E+1]`
+/// derivation would go undetected). With Sui rotating, each peer-only validator
+/// must install every `committee[E+1]` over the relay without skipping, or its
+/// verified reads fail and reconfiguration stalls — and with only two direct
+/// validators (below the quorum of three) the cluster cannot advance unless at
+/// least one peer-only validator keeps its ratchet current. Slow (several 60s ika
+/// epochs) — a cluster-suite test, not the fast unit pass.
 #[tokio::test(flavor = "multi_thread")]
 async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() {
     telemetry_subscribers::init_for_testing();
@@ -212,6 +216,7 @@ async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() 
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(60_000)
+        .with_sui_epoch_duration_ms(30_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .with_sui_state_direct_count(2)
@@ -222,10 +227,26 @@ async fn ocs_verifier_v4_peer_only_ratchet_survives_multiple_epoch_boundaries() 
 
     // Initial DKGs + the first boundary (reaches epoch 2).
     drive_dkg_and_epoch_advance(&mut cluster, "peer-only-multi-epoch").await;
-    // Cross several more boundaries: each peer-only validator's committee ratchet
-    // + follower must install every committee[E+1] over the relay without
+    // Cross several more ika boundaries. With 15s Sui epochs, many Sui committee
+    // boundaries elapse over these ~60s ika epochs; each peer-only validator's
+    // ratchet + follower must install every committee[E+1] over the relay without
     // skipping, or reconfiguration would stall here.
     cluster.wait_for_epoch(5).await;
+
+    // Anti-vacuous gate: the ratchet only means something if Sui actually rotated
+    // its committee. Assert Sui crossed multiple boundaries; without short Sui
+    // epochs this would have hung at the first `wait_for_epoch` above, but make
+    // the requirement explicit so a dropped `with_sui_epoch_duration_ms` fails
+    // loudly rather than silently reverting to a no-op ratchet.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        cluster.wait_for_sui_epoch(5),
+    )
+    .await
+    .expect(
+        "Sui did not cross multiple committee boundaries — short Sui epochs not \
+         in effect, so the peer-only committee ratchet was never exercised",
+    );
 }
 
 /// A direct validator is stopped and restarted mid-run. On reboot its OCS stack
@@ -397,51 +418,70 @@ async fn ocs_verifier_v4_mirrored_relay_fails_over_when_a_relay_peer_dies() {
 async fn ocs_verifier_v4_late_joiner_ratchets_committee_from_stale_anchor() {
     telemetry_subscribers::init_for_testing();
 
+    // Short SUI epochs (15s) so Sui's validator committee actually rotates: the
+    // OCS ratchet is over the SUI committee chain, so without this Sui sits at
+    // epoch 0 forever and the joiner's genesis anchor is never stale — there is
+    // nothing to ratchet and the test passes vacuously. ika epochs stay at 60s.
     let mut cluster = IkaTestClusterBuilder::new()
         .with_num_validators(4)
         .with_epoch_duration_ms(60_000)
+        .with_sui_epoch_duration_ms(30_000)
         .with_protocol_version(ProtocolVersion::new(4))
         .with_ocs_genesis_anchor(true)
         .build()
         .await
         .expect("IkaTestClusterBuilder::build() failed");
 
-    // Cross two boundaries first so the genesis anchor the joiner boots from is
-    // already two committees stale relative to the active committee. (Reaching
-    // epoch 2 also implies the network-key DKG completed — reconfiguration
-    // can't advance past epoch 1 without it — so this is a sufficient health
-    // gate before perturbing the set.)
-    cluster.wait_for_epoch(2).await;
+    // Health gate: reaching ika epoch 1 implies the network-key DKG completed
+    // (reconfiguration can't advance past epoch 1 without it).
+    cluster.wait_for_epoch(1).await;
+
+    // Drive SUI across several real committee boundaries BEFORE the joiner exists,
+    // so its genesis anchor (committee[0]) is genuinely several Sui committees
+    // stale. Bounded so a missing `with_sui_epoch_duration_ms` fails loudly here
+    // instead of letting the rest of the test pass vacuously.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        cluster.wait_for_sui_epoch(3),
+    )
+    .await
+    .expect(
+        "Sui did not cross committee boundaries — short Sui epochs not in effect, \
+         so the committee ratchet under test would be a no-op",
+    );
 
     // Add the late joiner. Its OCS committee store starts at committee[0]
-    // (add_joiner_validator hands it the unsafe-genesis committee) and must
-    // ratchet up to the current committee over the verified read path. It
-    // becomes part of the active set at the next boundary.
+    // (add_joiner_validator hands it the unsafe-genesis committee) while Sui is
+    // already at epoch >= 3, so it must ratchet committee[0] -> committee[>=3]
+    // over the verified read path before it can verify a single read. It becomes
+    // part of the active set at the next ika boundary.
     let joiner = cluster
         .add_joiner_validator()
         .await
         .expect("add_joiner_validator failed");
 
-    // Advance one boundary. To move its own epoch view to 3 the joiner must have
-    // ratcheted committee[0] -> committee[3] (the two boundaries that elapsed
-    // before it booted, plus this one) over the verified reader.
+    // To move its own epoch view forward the joiner must verified-read
+    // system_inner, which requires the Sui committee that signed each checkpoint —
+    // so its ratchet has to walk committee[0] -> committee[current] with no gap. A
+    // skipped or mis-derived committee[E+1] fails the verified read and stalls the
+    // node below the target rather than catching up.
+    cluster.wait_for_epoch(2).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        wait_for_node_epoch(&joiner.node_handle, 2),
+    )
+    .await
+    .expect(
+        "late joiner did not reach epoch 2 — its OCS committee ratchet failed to \
+         catch up across the elapsed Sui boundaries from the stale genesis anchor",
+    );
+
+    // And it keeps pace across more Sui + ika boundaries, proving the ratchet
+    // continues from a mid-stream join rather than only doing a one-shot catch-up.
     cluster.wait_for_epoch(3).await;
     tokio::time::timeout(
         std::time::Duration::from_secs(180),
         wait_for_node_epoch(&joiner.node_handle, 3),
-    )
-    .await
-    .expect(
-        "late joiner did not reach epoch 3 — its OCS committee ratchet failed to \
-         catch up from the stale genesis anchor",
-    );
-
-    // And it keeps pace across one more boundary, proving the ratchet continues
-    // from a mid-stream join rather than only doing a one-shot catch-up.
-    cluster.wait_for_epoch(4).await;
-    tokio::time::timeout(
-        std::time::Duration::from_secs(180),
-        wait_for_node_epoch(&joiner.node_handle, 4),
     )
     .await
     .expect("late joiner fell behind after joining — OCS ratchet did not continue");

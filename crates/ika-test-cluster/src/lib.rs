@@ -204,6 +204,15 @@ impl IkaTestCluster {
         Ok(handle.with(|node| node.current_epoch_for_testing()))
     }
 
+    /// Wait until the underlying **Sui** localnet reconfigures to (at least)
+    /// `target` Sui epoch. Only makes progress when the cluster was built with
+    /// [`IkaTestClusterBuilder::with_sui_epoch_duration_ms`]; with Sui's default
+    /// 24h epoch this would hang, so callers must pair the two. Distinct from
+    /// [`Self::wait_for_epoch`], which tracks the ika epoch.
+    pub async fn wait_for_sui_epoch(&self, target: u64) {
+        self.test_cluster.wait_for_epoch(Some(target)).await;
+    }
+
     /// Generate a fresh validator config, run the full candidate →
     /// staked → active flow on-chain, then spawn the joiner's in-memory
     /// `IkaNode` and attach it to the swarm. The returned [`JoinerHandle`]
@@ -995,6 +1004,13 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
+    /// Epoch duration of the underlying **Sui** localnet (NOT ika's epoch). When
+    /// `None` (default) Sui keeps its 24h `for_local_testing` epoch, so the Sui
+    /// validator committee never rotates during a test and the OCS Sui-committee
+    /// ratchet is a no-op. Set a short value (Sui enforces a 10s floor) to make
+    /// Sui cross real epoch boundaries — required to exercise the OCS verifier's
+    /// committee handoff and a late joiner ratcheting from a stale genesis anchor.
+    sui_epoch_duration_ms: Option<u64>,
     protocol_version: Option<ProtocolVersion>,
     /// Per-validator `SupportedProtocolVersions` overrides (indexed). When
     /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
@@ -1076,6 +1092,7 @@ impl IkaTestClusterBuilder {
         Self {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
+            sui_epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
             ocs_genesis_anchor: true,
@@ -1123,6 +1140,18 @@ impl IkaTestClusterBuilder {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Set a short epoch duration for the underlying **Sui** localnet so its
+    /// validator committee actually rotates during the test. Sui enforces a 10s
+    /// (`10_000` ms) floor; values below it panic the swarm builder. Use this to
+    /// drive the OCS Sui-committee ratchet across real epoch boundaries (e.g. a
+    /// late joiner that must ratchet `committee[0] -> committee[N]` from its
+    /// stale genesis anchor). Leave unset for tests that don't care about Sui
+    /// epoch transitions — those keep Sui's default 24h epoch.
+    pub fn with_sui_epoch_duration_ms(mut self, sui_epoch_duration_ms: u64) -> Self {
+        self.sui_epoch_duration_ms = Some(sui_epoch_duration_ms);
         self
     }
 
@@ -1177,9 +1206,14 @@ impl IkaTestClusterBuilder {
                     .build(&mut sui_validator_rng)
             })
             .collect::<Vec<_>>();
-        let sui_network_config = ConfigBuilder::new_with_temp_dir()
-            .with_validators(sui_validators)
-            .build();
+        let mut sui_config_builder =
+            ConfigBuilder::new_with_temp_dir().with_validators(sui_validators);
+        if let Some(sui_epoch_duration_ms) = self.sui_epoch_duration_ms {
+            // Make Sui's own committee rotate during the test (default is 24h,
+            // i.e. never). Sui's swarm builder asserts a 10s floor.
+            sui_config_builder = sui_config_builder.with_epoch_duration(sui_epoch_duration_ms);
+        }
+        let sui_network_config = sui_config_builder.build();
         let mut test_cluster = TestClusterBuilder::new()
             .set_network_config(sui_network_config)
             .with_fullnode_rpc_port(port_base + SUI_FULLNODE_RPC_PORT_OFFSET)
