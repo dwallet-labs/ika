@@ -585,9 +585,12 @@ where
         pending_active_set_id: ObjectID,
     ) -> Result<Vec<ObjectID>, IkaError> {
         // Read the wrapper's single dynamic field by LISTING it (not by
-        // deriving the child id) — robust to the `Key()` encoding. The child is
-        // a `Field<Key, PendingActiveSet>`; `Key` is an empty struct so it
-        // decodes as `Field<(), PendingActiveSet>`.
+        // deriving the child id) — robust to the `Key()` encoding. The byte
+        // source resolves a dynamic field to its VALUE bytes — the same
+        // convention `get_validators` relies on (it decodes a bare
+        // `StakingPool`, not a `Field<_, StakingPool>`). Decode the bare value;
+        // fall back to the `Field<Key, _>` wrapper framing in case a backend
+        // hands back the wrapper, so the read survives either resolution.
         let bytes = self
             .inner
             .get_extended_field_value_bcs(pending_active_set_id)
@@ -595,12 +598,15 @@ where
             .map_err(|e| {
                 IkaError::SuiClientInternalError(format!("read pending_active_set: {e}"))
             })?;
-        let field: Field<(), PendingActiveSet> = bcs::from_bytes(&bytes).map_err(|e| {
-            IkaError::SuiClientSerializationError(format!(
-                "decode Field<(), PendingActiveSet>: {e}"
-            ))
-        })?;
-        Ok(field.value.validator_ids())
+        let pending: PendingActiveSet = bcs::from_bytes::<PendingActiveSet>(&bytes)
+            .or_else(|_| bcs::from_bytes::<Field<(), PendingActiveSet>>(&bytes).map(|f| f.value))
+            .map_err(|e| {
+                IkaError::SuiClientSerializationError(format!(
+                    "decode pending_active_set ({} bytes): {e}",
+                    bytes.len()
+                ))
+            })?;
+        Ok(pending.validator_ids())
     }
 
     pub async fn get_validators_info_by_ids(
