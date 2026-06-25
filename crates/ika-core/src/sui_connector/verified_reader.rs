@@ -29,9 +29,9 @@ use sui_types::dynamic_field::Field;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointSequenceNumber, VerifiedCheckpoint,
 };
-use sui_types::object::{Object, Owner};
+use sui_types::object::Object;
 
-use ika_sui_client::transport::{TransportError, derive_object_field_wrapper_id};
+use ika_sui_client::transport::{TransportError, dynamic_field_child_owned_by};
 
 use ika_network::proof_provider::{ProofProvider, VerifiedBagPageRequest, VerifiedObjectResponse};
 
@@ -555,19 +555,12 @@ impl OcsVerifiedReader {
             // Without this a malicious relay could return a validly-proven
             // dynamic field of a *different* collection (e.g. replayed session
             // events), which the count-only omission detector wouldn't catch.
-            let bound_to_collection = match entry.object.owner() {
-                Owner::ObjectOwner(addr) => {
-                    let owner_id = ObjectID::from(*addr);
-                    owner_id == bag_id
-                        || derive_object_field_wrapper_id(
-                            bag_id,
-                            &entry.dynamic_field_name_type,
-                            &entry.dynamic_field_name_bcs,
-                        )
-                        .is_some_and(|field_id| owner_id == field_id)
-                }
-                _ => false,
-            };
+            let bound_to_collection = dynamic_field_child_owned_by(
+                entry.object.owner(),
+                bag_id,
+                &entry.dynamic_field_name_type,
+                &entry.dynamic_field_name_bcs,
+            );
             if !bound_to_collection {
                 return Err(self.record_fail(
                     "bag_entry",
@@ -975,6 +968,7 @@ mod tests {
     use crate::sui_connector::verified_state_cache::VerifiedStateCache;
     use async_trait::async_trait;
     use ika_network::proof_provider::{BatchVerifiedObjectsResponse, VerifiedBagPageResponse};
+    use ika_sui_client::transport::derive_object_field_wrapper_id;
     use parking_lot::Mutex;
     use std::collections::BTreeMap;
     use sui_light_client::proof::ocs::ModifiedObjectTree;
@@ -987,6 +981,7 @@ mod tests {
     use sui_types::messages_checkpoint::{
         CheckpointArtifacts, CheckpointCommitment, CheckpointSummary,
     };
+    use sui_types::object::Owner;
 
     /// The two rejection gates exercised below — high-water rollback and
     /// freshness — are pure local checks that never reach the network, so the

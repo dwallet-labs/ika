@@ -18,7 +18,7 @@ use sui_types::digests::CheckpointDigest;
 use sui_types::effects::TransactionEffects;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
-use sui_types::object::Object;
+use sui_types::object::{Object, Owner};
 use sui_types::transaction::Transaction;
 
 /// Minimal, transport-agnostic result of submitting a transaction: the tx
@@ -78,6 +78,38 @@ pub fn derive_object_field_wrapper_id(
         sui_types::dynamic_field::DynamicFieldInfo::dynamic_object_field_wrapper(inner),
     ));
     sui_types::dynamic_field::derive_dynamic_field_id(parent, &wrapper, name_value_bcs).ok()
+}
+
+/// True iff a *proof-bound* `owner` proves the object is a genuine dynamic-field
+/// child of `parent` — the single binding check for every "listed, then read"
+/// dynamic field, so a relay can't substitute a validly-proven field of a
+/// *different* collection (the list itself is untrusted).
+///
+/// - A plain `Field<K, V>` — a `Bag`/`Table` entry, or the value of an
+///   `ExtendedField` — is owned directly by the parent UID
+///   (`Owner::ObjectOwner(parent)`).
+/// - A dynamic OBJECT field (`ObjectTable`/`ObjectBag`) resolves to the wrapped
+///   value, owned by its derived `Field<Wrapper<K>, ID>` id; the entry's
+///   (untrusted) `name_type` / `name_value_bcs` are accepted only because the
+///   derivation is collision-resistant against the proven owner.
+///
+/// Any non-`ObjectOwner` owner is rejected: a genuine dynamic field is always
+/// object-owned by its parent.
+pub fn dynamic_field_child_owned_by(
+    owner: &Owner,
+    parent: ObjectID,
+    name_type: &str,
+    name_value_bcs: &[u8],
+) -> bool {
+    match owner {
+        Owner::ObjectOwner(addr) => {
+            let owner_id = ObjectID::from(*addr);
+            owner_id == parent
+                || derive_object_field_wrapper_id(parent, name_type, name_value_bcs)
+                    .is_some_and(|field_id| owner_id == field_id)
+        }
+        _ => false,
+    }
 }
 
 /// Borrowed BCS contents of a Move object; `None` when the object is a
@@ -269,5 +301,56 @@ mod tests {
     fn wrapper_id_rejects_an_unparseable_type() {
         let parent = ObjectID::from_single_byte(0x01);
         assert!(derive_object_field_wrapper_id(parent, "not a valid type", &[]).is_none());
+    }
+
+    /// The dynamic-field binding accepts ONLY a proof-bound owner that is the
+    /// parent UID (plain `Field<K,V>` / `ExtendedField` value) or the derived
+    /// `Wrapper<K>` id (dynamic object field). A child owned by a *different*
+    /// collection — the relay-substitution attack — is rejected.
+    #[test]
+    fn dynamic_field_binding_accepts_only_the_parent_or_wrapper_owner() {
+        let parent = ObjectID::from_single_byte(0x42);
+        let foreign = ObjectID::from_single_byte(0x99);
+        let name_bcs = bcs::to_bytes(&7u64).unwrap();
+
+        // Plain Field<K, V> (Bag/Table entry, ExtendedField value): owned by the
+        // parent UID directly.
+        assert!(dynamic_field_child_owned_by(
+            &Owner::ObjectOwner(parent.into()),
+            parent,
+            "u64",
+            &name_bcs,
+        ));
+
+        // Dynamic OBJECT field: owned by the derived Wrapper<K> id.
+        let wrapper = derive_object_field_wrapper_id(parent, "u64", &name_bcs).unwrap();
+        assert!(dynamic_field_child_owned_by(
+            &Owner::ObjectOwner(wrapper.into()),
+            parent,
+            "u64",
+            &name_bcs,
+        ));
+
+        // SUBSTITUTION: a validly-proven child owned by a different collection.
+        assert!(!dynamic_field_child_owned_by(
+            &Owner::ObjectOwner(foreign.into()),
+            parent,
+            "u64",
+            &name_bcs,
+        ));
+
+        // A non-object owner is never a dynamic-field child of `parent`.
+        assert!(!dynamic_field_child_owned_by(
+            &Owner::AddressOwner(parent.into()),
+            parent,
+            "u64",
+            &name_bcs,
+        ));
+        assert!(!dynamic_field_child_owned_by(
+            &Owner::Immutable,
+            parent,
+            "u64",
+            &name_bcs,
+        ));
     }
 }

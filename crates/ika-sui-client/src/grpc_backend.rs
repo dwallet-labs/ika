@@ -39,7 +39,7 @@ use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
 
 use crate::SuiClientInner;
 use crate::grpc::SuiGrpcClient;
-use crate::transport::{SuiTransport, TransportError};
+use crate::transport::{SuiTransport, TransportError, dynamic_field_child_owned_by};
 
 /// Error surface of the gRPC backend. Satisfies the
 /// `SuiClientInner::Error` bound (`Into<anyhow::Error> + Send + Sync +
@@ -231,7 +231,26 @@ impl SuiClientInner for GrpcSuiClient {
         let entry = page.entries.first().ok_or_else(|| {
             GrpcSuiClientError::decode(format!("ExtendedField {ef_id} has no dynamic field"))
         })?;
-        self.object_bcs(entry.object_id).await
+        // Bind the listed child to the wrapper. The list is untrusted: on the
+        // verified relay path a malicious peer could point us at a validly-proven
+        // `Field<Key, V>` owned by a DIFFERENT ExtendedField. `get_object`'s owner
+        // is proof-bound (verified-read) on a peer-only node, so checking it ==
+        // the wrapper id closes the substitution. (No-op on a direct uplink — the
+        // owner is then the fullnode's own authoritative answer.)
+        let object = self.transport.get_object(entry.object_id).await?;
+        if !dynamic_field_child_owned_by(
+            object.owner(),
+            ef_id,
+            &entry.name_type,
+            &entry.name_value_bcs,
+        ) {
+            return Err(GrpcSuiClientError::decode(format!(
+                "ExtendedField {ef_id} child {} is owned by {:?}, not the wrapper",
+                entry.object_id,
+                object.owner()
+            )));
+        }
+        move_object_contents(&object, entry.object_id)
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
