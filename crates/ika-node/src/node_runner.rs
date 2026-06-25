@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use ika_config::node::RunWithRange;
 use ika_config::{Config, NodeConfig};
@@ -88,9 +88,20 @@ pub fn run_node_with_name(mode: Option<NodeMode>, version: &'static str, bin_nam
     // loop tops them up whenever the network is idle — so out-of-process test
     // validators fill GiB-scale pools the test never uses (a Sign consumes a
     // handful). The in-process swarm calls this directly; a spawned child
-    // process can't see that call, so the harness opts in via env. Never set on
-    // mainnet; the DKG->Presign->Sign path is unchanged.
-    if std::env::var("IKA_ENABLE_SMALL_PRESIGN_POOLS").is_ok() {
+    // process can't see that call, so the harness opts in via env.
+    //
+    // This is the REAL validator/notifier/fullnode entrypoint, so the override is
+    // demonstrably reachable on a production binary — gate it on the explicit
+    // sentinel `=1` (not mere presence, which fires for an empty/typo'd value
+    // carried over from a CI launch script) and shout when it takes effect, so a
+    // mainnet operator who set it by accident sees it rather than silently
+    // starving Sign throughput. Blast radius is local (pool sizes aren't
+    // consensus-agreed); the DKG->Presign->Sign path is unchanged.
+    if std::env::var("IKA_ENABLE_SMALL_PRESIGN_POOLS").as_deref() == Ok("1") {
+        warn!(
+            "IKA_ENABLE_SMALL_PRESIGN_POOLS=1: shrinking presign pools to test sizes \
+             (2/10 per curve). TEST/CI ONLY — never set this on a production validator."
+        );
         ProtocolConfig::enable_small_presign_pools_for_local_swarm();
     }
 
