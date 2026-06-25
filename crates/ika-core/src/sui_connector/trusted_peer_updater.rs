@@ -111,13 +111,20 @@ async fn refresh_once(
     if let Some(next) = &si.validator_set.next_epoch_committee {
         ids.extend(next.members.iter().map(|m| m.validator_id));
     }
-    // The load-bearing set: the only one a fresh joiner is in during the
-    // registration window, before it reaches the next-epoch committee.
-    let pending = sui_client
+    // The load-bearing set for dialing a fresh joiner (it's the only set a
+    // joiner is in during the registration window). A failure to read it must
+    // not drop the committee peers, so degrade gracefully rather than aborting
+    // the whole refresh.
+    match sui_client
         .get_pending_active_set_ids(si.validator_set.pending_active_set.id)
         .await
-        .map_err(|e| anyhow::anyhow!("get_pending_active_set_ids: {e}"))?;
-    ids.extend(pending);
+    {
+        Ok(pending) => ids.extend(pending),
+        Err(e) => warn!(
+            error = %e,
+            "pending_active_set read failed; proceeding with committee peers only"
+        ),
+    }
 
     if ids.is_empty() {
         return Ok(BTreeMap::new());

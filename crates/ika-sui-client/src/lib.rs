@@ -21,7 +21,6 @@ use ika_types::sui::{
     SystemInner, SystemInnerTrait, Validator,
 };
 use itertools::Itertools;
-use move_core_types::language_storage::StructTag;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +36,7 @@ use sui_types::TypeTag;
 use sui_types::base_types::{EpochId, ObjectRef};
 use sui_types::clock::Clock;
 use sui_types::collection_types::{Entry, Table};
-use sui_types::dynamic_field::{Field, derive_dynamic_field_id};
+use sui_types::dynamic_field::Field;
 use sui_types::gas_coin::GasCoin;
 use sui_types::object::Owner;
 use sui_types::transaction::ObjectArg;
@@ -585,23 +584,13 @@ where
         &self,
         pending_active_set_id: ObjectID,
     ) -> Result<Vec<ObjectID>, IkaError> {
-        let key_type = TypeTag::Struct(Box::new(StructTag {
-            address: self
-                .ika_network_config
-                .packages
-                .ika_common_package_id
-                .into(),
-            module: Identifier::new("extended_field").expect("valid module ident"),
-            name: Identifier::new("Key").expect("valid struct ident"),
-            type_params: vec![],
-        }));
-        let child_id =
-            derive_dynamic_field_id(pending_active_set_id, &key_type, &[]).map_err(|e| {
-                IkaError::SuiClientInternalError(format!("derive pending_active_set child id: {e}"))
-            })?;
+        // Read the wrapper's single dynamic field by LISTING it (not by
+        // deriving the child id) — robust to the `Key()` encoding. The child is
+        // a `Field<Key, PendingActiveSet>`; `Key` is an empty struct so it
+        // decodes as `Field<(), PendingActiveSet>`.
         let bytes = self
             .inner
-            .get_move_object_bcs(child_id)
+            .get_extended_field_value_bcs(pending_active_set_id)
             .await
             .map_err(|e| {
                 IkaError::SuiClientInternalError(format!("read pending_active_set: {e}"))
@@ -968,10 +957,11 @@ pub trait SuiClientInner: Send + Sync {
 
     async fn get_system(&self, ika_system_object_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
 
-    /// Read an arbitrary Move object's BCS contents by id. Generic counterpart
-    /// to [`Self::get_system`], used to read derived dynamic-field children
-    /// (e.g. the `pending_active_set` under its `ExtendedField` wrapper).
-    async fn get_move_object_bcs(&self, object_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
+    /// Read the single value stored in an `ExtendedField` wrapper at `ef_id` by
+    /// LISTING its one dynamic field and returning that child's BCS (a
+    /// `Field<Key, V>`). Robust to the wrapper's empty-`Key()` encoding — no
+    /// manual dynamic-field-id derivation (used for `pending_active_set`).
+    async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error>;
 
@@ -1101,8 +1091,34 @@ impl SuiClientInner for SuiSdkClient {
             .await
     }
 
-    async fn get_move_object_bcs(&self, object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
-        self.read_api().get_move_object_bcs(object_id).await
+    async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        let dynamic_fields = self
+            .read_api()
+            .get_dynamic_fields(ef_id, None, None)
+            .await?;
+        let dynamic_field = dynamic_fields.data.first().ok_or_else(|| {
+            Error::DataError(format!("ExtendedField {ef_id} has no dynamic field"))
+        })?;
+        let result = self
+            .read_api()
+            .get_dynamic_field_object(ef_id, dynamic_field.name.clone())
+            .await?;
+        let data = result.data.ok_or_else(|| {
+            Error::DataError(format!("ExtendedField {ef_id} dynamic field has no object"))
+        })?;
+        let object_id = data.object_id;
+        let dynamic_field_response = self
+            .read_api()
+            .get_object_with_options(object_id, SuiObjectDataOptions::bcs_lossless())
+            .await?;
+        let resp = dynamic_field_response.into_object().map_err(|e| {
+            Error::DataError(format!("Can't get bcs of object {object_id:?}: {e:?}"))
+        })?;
+        let move_object = resp.bcs.unwrap();
+        let raw_move_obj = move_object.try_into_move().ok_or(Error::DataError(format!(
+            "Object {object_id:?} is not a MoveObject"
+        )))?;
+        Ok(raw_move_obj.bcs_bytes)
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
@@ -1722,8 +1738,8 @@ impl SuiClientInner for SuiBackend {
         dispatch_backend!(self, get_system(ika_system_object_id))
     }
 
-    async fn get_move_object_bcs(&self, object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
-        dispatch_backend!(self, get_move_object_bcs(object_id))
+    async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        dispatch_backend!(self, get_extended_field_value_bcs(ef_id))
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {

@@ -220,8 +220,18 @@ impl SuiClientInner for GrpcSuiClient {
         self.object_bcs(ika_system_object_id).await
     }
 
-    async fn get_move_object_bcs(&self, object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
-        self.object_bcs(object_id).await
+    async fn get_extended_field_value_bcs(&self, ef_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        // The ExtendedField wrapper has exactly one dynamic field (`Key()` ->
+        // value). List it (don't derive the child id) and read that child's BCS
+        // (a `Field<Key, V>`).
+        let page = self
+            .transport
+            .list_dynamic_fields(ef_id, None, None)
+            .await?;
+        let entry = page.entries.first().ok_or_else(|| {
+            GrpcSuiClientError::decode(format!("ExtendedField {ef_id} has no dynamic field"))
+        })?;
+        self.object_bcs(entry.object_id).await
     }
 
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
