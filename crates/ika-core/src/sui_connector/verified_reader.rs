@@ -278,6 +278,21 @@ impl OcsVerifiedReader {
         self.note_upstream_head(resp.claimed_latest_checkpoint_seq);
         let observed_head = self.observed_upstream_head.load(Ordering::Relaxed);
 
+        // A short results vec from a malicious/faulty relay must not silently
+        // truncate via `zip`: the trailing ids would never get their per-slot
+        // NotFound + id-binding checks, and the function would return a partial
+        // set as `Ok`. Require exactly one slot per requested id up front.
+        if resp.results.len() != ids.len() {
+            return Err(self.record_fail(
+                "batch_objects",
+                ReaderError::Transport(TransportError::NotFound(format!(
+                    "batch response has {} slots for {} requested ids",
+                    resp.results.len(),
+                    ids.len()
+                ))),
+            ));
+        }
+
         let mut verified_summaries: HashMap<CheckpointSequenceNumber, VerifiedCheckpoint> =
             HashMap::new();
         let mut out = Vec::with_capacity(ids.len());
@@ -1784,6 +1799,36 @@ mod tests {
                 .get(),
             0,
             "anchor short-circuit precedes — and avoids — the NotFound fallback path",
+        );
+    }
+
+    #[tokio::test]
+    async fn batch_read_rejects_a_short_results_vec_instead_of_truncating() {
+        // ocs-verifier-core-1: a relay that returns fewer slots than requested
+        // must be rejected, not silently `zip`-truncated into a partial `Ok`
+        // (the trailing ids would skip their per-slot NotFound + id-binding checks).
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        // ONE valid entry, but TWO ids requested. Without the length guard the
+        // zip truncates to the single valid slot and returns a one-element `Ok`
+        // (the test-test: this entry verifies, so a vacuous fixture would pass).
+        let id0 = ObjectID::from_single_byte(0x21);
+        let id1 = ObjectID::from_single_byte(0x22);
+        let object = test_object(id0, 7, address_owner(0xAA));
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let entry = bag_entry(object, proof, 100, "", Vec::new());
+        let resp = BatchVerifiedObjectsResponse {
+            summaries: BTreeMap::from([(100, summary)]),
+            results: vec![Some(entry)],
+            claimed_latest_checkpoint_seq: 100,
+        };
+        let (_dir, reader, _metrics) = reader_with(StagedProvider::batch(resp), committee, None);
+        let err = reader
+            .verified_objects(&[id0, id1])
+            .await
+            .expect_err("a short results vec must be rejected, not truncated to a partial Ok");
+        assert!(
+            matches!(err, ReaderError::Transport(TransportError::NotFound(_))),
+            "expected NotFound for the slot/id count mismatch, got {err:?}",
         );
     }
 
