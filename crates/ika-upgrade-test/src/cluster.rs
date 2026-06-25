@@ -19,6 +19,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use ika_config::initiation::InitiationParameters;
 use ika_config::node::{NodeConfig, SuiDataSource};
+use ika_config::p2p::SeedPeer;
 use ika_protocol_config::ProtocolVersion;
 use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
@@ -67,6 +68,11 @@ pub struct ClusterOfProcesses {
     /// aligned with `validators` by index; joiners append. A mirrored
     /// validator's `sui_state_mirror_peers` is built from these.
     validator_peer_ids: Vec<String>,
+    /// p2p `SeedPeer` (anemo PeerId + address) of each validator, aligned with
+    /// `validators` by index; joiners append. A mirrored JOINER (which has no
+    /// on-disk committee to discover peers from) is seeded with the direct
+    /// validators' entries so it can dial the relay at boot.
+    validator_seed_peers: Vec<SeedPeer>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -284,6 +290,13 @@ impl ClusterBuilder {
             .iter()
             .map(|init| hex::encode(init.network_key_pair.public().0.to_bytes()))
             .collect();
+        let validator_seed_peers: Vec<SeedPeer> = validator_init_configs
+            .iter()
+            .map(|init| SeedPeer {
+                peer_id: Some(anemo::PeerId(init.network_key_pair.public().0.to_bytes())),
+                address: init.p2p_address.clone(),
+            })
+            .collect();
 
         // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
         // set refuses to boot without a Sui trust anchor. Seed every validator
@@ -394,6 +407,7 @@ impl ClusterBuilder {
             publisher_keypair,
             committee,
             validator_peer_ids,
+            validator_seed_peers,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -553,21 +567,30 @@ impl ClusterOfProcesses {
     }
 
     /// Like [`Self::add_joiner_validator`], but the joiner boots peer-only
-    /// `SuiStateMirrored`, reading verified Sui state through `mirror_peers`
-    /// (the direct validators' hex anemo PeerIds) instead of a direct uplink.
+    /// `SuiStateMirrored`, reading verified Sui state through the validators at
+    /// `direct_indices` (the relay servers) instead of a direct uplink. It is
+    /// also seeded with those validators as p2p `SeedPeer`s so a fresh node —
+    /// which has no on-disk committee to discover peers from — can dial the
+    /// relay at boot (without them it fails with "no peers reachable").
     pub async fn add_joiner_validator_mirrored(
         &mut self,
         binary: PathBuf,
-        mirror_peers: Vec<String>,
+        direct_indices: &[usize],
     ) -> Result<usize> {
-        self.add_joiner_validator_inner(binary, Some(mirror_peers))
+        let mirror_peers = self.peer_ids_of(direct_indices)?;
+        // Seed the joiner with every currently-running validator — the active
+        // committee plus the active set (next-epoch candidates) — automatically.
+        // A fresh peer-only node has no on-disk committee to discover peers
+        // from, so without seeds it can't dial the relay and fails to boot.
+        let seed_peers = self.active_validator_seed_peers();
+        self.add_joiner_validator_inner(binary, Some((mirror_peers, seed_peers)))
             .await
     }
 
     async fn add_joiner_validator_inner(
         &mut self,
         binary: PathBuf,
-        mirror_peers: Option<Vec<String>>,
+        mirror: Option<(Vec<String>, Vec<SeedPeer>)>,
     ) -> Result<usize> {
         tracing::info!("[flow] joining new validator (candidate -> stake -> activate)");
         let index = self.validators.len();
@@ -652,14 +675,14 @@ impl ClusterOfProcesses {
         // A mirrored joiner reads Sui peer-only over the relay (no direct
         // uplink) from the given direct validators, instead of the default
         // `SuiStateDirect` path.
-        if let Some(peers) = &mirror_peers {
+        if let Some((mirror_peers, _)) = &mirror {
             builder = builder
                 .with_sui_data_source(SuiDataSource::SuiStateMirrored {
                     fallback_grpc_url: None,
                 })
-                .with_sui_state_mirror_peers(peers.clone());
+                .with_sui_state_mirror_peers(mirror_peers.clone());
         }
-        let node_config = builder.build(
+        let mut node_config = builder.build(
             &init,
             self.rpc_url.clone(),
             self.packages.ika_package_id,
@@ -669,6 +692,13 @@ impl ClusterOfProcesses {
             self.system.ika_system_object_id,
             self.system.ika_dwallet_coordinator_object_id,
         );
+        // A peer-only joiner has no on-disk committee to discover peers from,
+        // so seed it with the relay servers' p2p addresses — without these it
+        // fails to boot ("no peers reachable"). The rewritten-at-swap mirrored
+        // validators don't need this; they self-bootstrap from on-disk state.
+        if let Some((_, seed_peers)) = &mirror {
+            node_config.p2p_config.seed_peers = seed_peers.clone();
+        }
         let proc = spawn_node(
             index,
             binary,
@@ -686,6 +716,10 @@ impl ClusterOfProcesses {
         });
         self.validator_peer_ids
             .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
+        self.validator_seed_peers.push(SeedPeer {
+            peer_id: Some(anemo::PeerId(init.network_key_pair.public().0.to_bytes())),
+            address: init.p2p_address.clone(),
+        });
         Ok(index)
     }
 
@@ -701,6 +735,20 @@ impl ClusterOfProcesses {
                     .cloned()
                     .with_context(|| format!("peer id for validator {i} out of range"))
             })
+            .collect()
+    }
+
+    /// The p2p `SeedPeer`s of every currently-running validator — the active
+    /// committee, the active set (next-epoch candidates), and any prior-epoch
+    /// member whose process is still up. A mirrored joiner is seeded with these
+    /// so it can dial the network at boot. A validator that has been stopped
+    /// can't be reached anyway, so the running set is the complete seedable net.
+    fn active_validator_seed_peers(&self) -> Vec<SeedPeer> {
+        self.validators
+            .iter()
+            .zip(self.validator_seed_peers.iter())
+            .filter(|(proc, _)| proc.is_running())
+            .map(|(_, seed_peer)| seed_peer.clone())
             .collect()
     }
 

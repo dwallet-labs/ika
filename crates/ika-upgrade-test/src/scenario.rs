@@ -460,9 +460,8 @@ impl Scenario {
                         "join_validator_mirrored requires with_direct_validators(...) \
                          (a mirrored joiner needs at least one direct relay server)"
                     );
-                    let mirror_peers = c.peer_ids_of(&self.direct_validators)?;
                     let index = c
-                        .add_joiner_validator_mirrored(binary, mirror_peers)
+                        .add_joiner_validator_mirrored(binary, &self.direct_validators)
                         .await?;
                     tracing::info!(index, spec = %spec.label(), "mirrored joiner validator spawned");
                 }
