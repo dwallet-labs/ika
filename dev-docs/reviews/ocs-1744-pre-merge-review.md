@@ -10,6 +10,16 @@ synthesized. 27 agents; 14 raw findings, **11 survived** verification, 3 refuted
 > The body below is the synthesizer's report verbatim; each finding's verdict reflects
 > the adversarial verification pass, not the original reviewer's first rating.
 
+> **Editor's note on `mpc-consensus-1` (rated MUST-FIX below) — correction after cross-referencing
+> the `#1736` forensics:** the finding is real but the rating is **overstated**. The orchestrator
+> panic guard is **inert in release** (`[profile.release] panic = "abort"` → a `compute()` panic
+> aborts before `catch_unwind` can intercept), and it is **not** the `#1736` production wedge
+> (refuted by balanced compute-lifecycle traces; the actual cause — the v4 epoch-close condition
+> being weaker than the handoff-cert quorum — was fixed in #1761 and is merged into #1744). It was
+> nonetheless implemented (commit `ff3feba0f6`) as **defensive hygiene** — it prevents the
+> slot-leak / test-process crash on *unwinding* builds (`cargo test`, simtest) and is test-guarded
+> — **not** as the #1736 fix and **not** a true merge blocker.
+
 ---
 
 # Code Review Report — Ika #1744 (`feat/ocs-grpc-migration`)
