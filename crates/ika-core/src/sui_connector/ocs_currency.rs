@@ -5,17 +5,20 @@
 //!
 //! A mirrored node's OCS inclusion proof attests *authenticity* (object `X`
 //! was at version `V` in some committee-signed checkpoint `M`) but not
-//! *currency* (`V` is still the latest version at head `N`). The
-//! changeset-stream design — see
-//! [`dev-docs/plans/ocs-changeset-stream-mirror-currency.md`] — closes that gap
-//! by folding a committee-signed stream of modified-object-id sets and proving
-//! `X@V` current iff `X`'s id appears in no checkpoint after `M`. The audit /
-//! fallback path for that "appears in no checkpoint" claim is a Merkle
-//! *non-inclusion* proof against each checkpoint's `ModifiedObjectTree`.
+//! *currency* (`V` is still the latest version at head `N`). The changeset
+//! stream closes that gap by folding a committee-signed stream of
+//! modified-object-id sets and proving `X@V` current iff `X`'s id appears in no
+//! checkpoint after `M`. The audit / fallback path for that "appears in no
+//! checkpoint" claim is a Merkle *non-inclusion* proof against each checkpoint's
+//! `ModifiedObjectTree`.
 //!
-//! This module starts that subsystem with its single load-bearing primitive:
-//! an **id-binding** check on non-inclusion proofs (the design's "Blocker 1").
-//! Until it exists, no read path may consume a non-inclusion proof.
+//! This module IS that subsystem, and it is **live**: [`ChangesetIndex`] folds
+//! the committee-signed changeset stream (contiguity-enforced) and `check_currency`
+//! gates every verified read (single / batch / bag) on mirrored / peer-only nodes
+//! — a `Stale`/`NotLive` verdict is rejected `NotCurrent`. Its load-bearing
+//! primitive is the **id-binding** check on non-inclusion proofs (the design's
+//! "Blocker 1"). Design notes:
+//! [`dev-docs/plans/ocs-changeset-stream-mirror-currency.md`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
