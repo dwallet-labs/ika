@@ -31,7 +31,6 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
 use sui_types::digests::CheckpointDigest;
-use sui_types::effects::TransactionEffects;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
@@ -50,8 +49,7 @@ use crate::proof_provider::{
 use super::{
     BatchVerifiedObjectsRequest, ChangesetPageRequest, ChangesetPageResponse,
     GetCheckpointSummaryByDigestRequest, GetFullCheckpointRequest, GetTransactionCheckpointRequest,
-    LastCheckpointOfEpochRequest, SubmitTransactionRequest, SuiStateMirrorClient,
-    VerifiedObjectRequest,
+    LastCheckpointOfEpochRequest, SuiStateMirrorClient, VerifiedObjectRequest,
 };
 
 /// Per-peer, per-request deadline for relay reads. anemo configures no
@@ -492,48 +490,26 @@ impl SuiTransport for SuiMirrorTransport {
 
     async fn execute_transaction(
         &self,
-        tx: &Transaction,
+        _tx: &Transaction,
     ) -> Result<SubmittedTransaction, TransportError> {
-        // Peer-only submission: forward our own signed tx to a direct peer,
-        // which submits it and returns the committed effects.
+        // FAIL-CLOSED. A relay cannot return committee-verified transaction
+        // EFFECTS: only the echoed digest and a relay-served commit confirmation
+        // are checkable; the effects bytes would be the relay's unverified word
+        // (a malicious relay could claim success for an aborted-but-committed
+        // digest). Rather than forward and return those unverified effects, refuse.
         //
-        // What IS verified: that the relay echoed our digest, and that the tx
-        // is committed under a checkpoint (`get_transaction_checkpoint`,
-        // itself relay-served and committee-anchored via the ratchet). A
-        // relay can't forge a *committed* tx — Sui rejects any tampered tx
-        // and the digest is deterministic — and a censoring/withholding peer
-        // surfaces as a retry, not a falsely-committed result.
-        //
-        // What is NOT verified: the effects BYTES. They come from the relay's
-        // word; a malicious relay could return fabricated effects (e.g. claim
-        // success for an aborted tx) for a genuinely-committed digest. This
-        // is acceptable today only because no caller reaches this path: the
-        // writer is notifier-gated and notifiers run direct gRPC, so a
-        // peer-only node never submits. Before any real submitter uses this,
-        // the effects must be verified against the committed checkpoint
-        // (effects digest is bound by the checkpoint contents/artifacts).
-        let digest = *tx.digest();
-        let tx = tx.clone();
-        let resp = self
-            .peers
-            .try_peers("submit_transaction", move |c| {
-                let req = Request::new(SubmitTransactionRequest { tx: tx.clone() });
-                Box::pin(async move { c.submit_transaction(req).await })
-            })
-            .await?;
-        if resp.digest != digest {
-            return Err(TransportError::Network(format!(
-                "submit_transaction: peer returned digest {} for tx {digest}",
-                resp.digest
-            )));
-        }
-        // Confirm committed under a BLS-signed checkpoint (this call is itself
-        // relay-served and committee-anchored on the ratchet side).
-        self.get_transaction_checkpoint(digest).await?;
-        let effects: TransactionEffects = bcs::from_bytes(&resp.effects_bcs).map_err(|e| {
-            TransportError::Encoding(format!("decode relayed effects for {digest}: {e}"))
-        })?;
-        Ok(SubmittedTransaction { digest, effects })
+        // This path is unreachable today — writes are notifier-gated and notifiers
+        // run direct gRPC; `FallbackTransport` routes `execute_transaction` to the
+        // direct uplink and `VerifiedSuiTransport::execute_transaction` is itself
+        // unreachable — so a future change that wires a bare `SuiMirrorTransport`
+        // as a submitter (or drops those guards) now fails LOUDLY here instead of
+        // trusting forged effects. To support peer-only submit, first verify the
+        // effects against the committed checkpoint's artifacts before returning.
+        Err(TransportError::Network(
+            "SuiMirrorTransport::execute_transaction is unsupported: a relay cannot \
+             return committee-verified effects. Submit over a direct uplink."
+                .to_string(),
+        ))
     }
 
     async fn list_owned_gas_coins(
