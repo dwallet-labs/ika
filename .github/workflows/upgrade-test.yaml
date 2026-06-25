@@ -83,6 +83,11 @@ on:
         type: string
         required: false
         default: "info"
+      heap_profile:
+        description: "Enable jemalloc heap profiling (jeprof) to find what holds validator memory — pair with ONE light scenario, e.g. test=workload"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -251,12 +256,28 @@ jobs:
           echo "test=$TEST flag=$RUN_FLAG old_ref=${OLD_REF:-<none>} old_bin=${OLD_BIN_NAME:-<none>} patch_max=${PATCH_MAX:-<none>}"
 
       - name: Build current binaries
+        # When heap_profile is on, keep full symbols IN the binary so jeprof can
+        # name frames: the release profile has `debug = 1` but
+        # `strip = 'debuginfo'` + `split-debuginfo = 'packed'`, which moves the
+        # line tables OUT to a side file — jeprof reads only the binary, so it
+        # falls back to `::clone@<addr>`. Overriding strip=none + split=off
+        # embeds them (keeps the target dir at target/release/, unlike switching
+        # to the release-dbgsym profile). Off → the repo defaults (stripped, ~1GB
+        # smaller binary), so non-profiling runs are unchanged.
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: ${{ inputs.heap_profile && 'none' || 'debuginfo' }}
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ inputs.heap_profile && 'off' || 'packed' }}
         run: |
           set -euo pipefail
           # Compilation in its own step: the Downloaded/Compiling stream is
           # the majority of this job's log volume and collapses in the UI when
-          # green. `--no-default-features` drops ika-node's enforce-minimum-cpu.
-          cargo build --release --no-default-features -p ika-node --bin ika-validator --bin ika-notifier
+          # green. `--no-default-features --features jemalloc` drops ika-node's
+          # enforce-minimum-cpu (panics on cgroup-throttled pods) but KEEPS
+          # jemalloc. Both are in `default`, so `--no-default-features` alone
+          # ALSO dropped jemalloc — leaving CI on the glibc allocator, so the
+          # jemalloc background_threads memory fix and heap profiling (the
+          # `profiling` feature) never took effect. Prod uses jemalloc; so does CI now.
+          cargo build --release --no-default-features --features jemalloc -p ika-node --bin ika-validator --bin ika-notifier
           cargo build --release -p ika --bin ika
           cargo test --no-run --release -p ika-upgrade-test --test "$TEST_NAME"
 
@@ -324,59 +345,61 @@ jobs:
           # never sets it. This is the other half of the per-validator RSS that
           # parks the 5-validator pod at the 96 GiB ceiling.
           IKA_ENABLE_SMALL_PRESIGN_POOLS: "1"
+          # heap_profile: turn on jemalloc heap profiling. prof IS compiled in
+          # (tikv-jemalloc-sys `profiling` feature). The conf env-var NAME depends
+          # on the jemalloc symbol prefix: librocksdb-sys feature-unifies
+          # `unprefixed_malloc_on_supported_platforms` onto the shared
+          # tikv-jemalloc-sys, so on Linux the allocator is UNPREFIXED and reads
+          # `MALLOC_CONF` — NOT `_RJEM_MALLOC_CONF`. Earlier runs set only the
+          # prefixed name and got zero dumps regardless of interval/load. Set BOTH
+          # so it works whichever prefix a given build resolves to. Each validator
+          # dumps a `.heap` per pid every ~256 MiB allocated (lg_prof_interval:28);
+          # the "Heap profile" step below symbolizes the latest with jeprof.
+          # Empty when off — the compiled-in background_thread:true still applies
+          # and is what bounds RSS / fixed the OOM, independent of this var.
+          MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
+          _RJEM_MALLOC_CONF: ${{ inputs.heap_profile && format('prof:true,prof_active:true,prof_prefix:{0}/upgrade-test-data/jeprof,lg_prof_interval:28', github.workspace) || '' }}
         run: |
           set -uo pipefail
           export SUI_BIN="$HOME/.local/bin/sui"
           export "${RUN_FLAG}=1"
           mkdir -p "$UPGRADE_TEST_DIR"
           echo "running $TEST_NAME (flag $RUN_FLAG); sui=$SUI_BIN old_bin=${OLD_BIN:-<none>}"
-          # Run the test in the BACKGROUND (output -> upgrade-test.log) and use
-          # THIS foreground shell as the resource sampler (CPU+MEMORY ->
-          # resource-sampler.log: mem current/max/pct, swap, cgroup oom_kill,
-          # top-RSS every 15s). It also emits ::warning:: annotations (startup +
-          # ~6min heartbeat + 90/95%/oom_kill); those parse only from a step's
-          # FOREGROUND (background commands are dropped) and show on runs that
-          # FINISH. CAVEAT (proven, runs 28057062769/28059893726): a "runner
-          # lost communication" death WIPES this job's runner-emitted
-          # annotations AND drops the artifacts + job log — a surviving smoke run
-          # shows the startup annotation; a dead cross_binary run with the
-          # identical line shows none. So NOTHING here survives the cross_binary
-          # death; capturing it needs an off-pod channel (kubelet/dmesg, or a
-          # token-push of samples). What the sampler DID establish on surviving
-          # runs: each ika-validator ~7.5-8 GB RSS, 4 idle validators = 62% of
-          # the 96 GiB pod, swap=0. The cross_binary death is CONFIRMED (kubectl)
-          # to be a cgroup OOM-kill at the pod's 96 GiB limit (OOMKilled/137). One
-          # scenario, one process: the harness binds fixed Sui ports and chdirs
-          # during publish, so --test-threads=1 is mandatory. (Live test output
-          # is in the artifact, not the step log.)
+          # Resource sampler (CPU + MEMORY) -> resource-sampler.log, BACKGROUNDED
+          # so the test runs in the FOREGROUND and its [flow N/total] progress +
+          # logs stream LIVE to the step log (via tee), not only the artifact.
+          # Every 15s: effective CPUs, loadavg, mem current/max/pct, swap, the
+          # cgroup oom_kill counter, top-RSS. (This file is lost on a "runner
+          # lost communication" death — the cross_binary OOM — which also wipes
+          # any runner-emitted annotations, so we don't emit them; that death is
+          # an OOMKilled/137 at the pod's 96 GiB cgroup limit, captured off-pod
+          # via `kubectl top`/describe or node dmesg. Idle validators ~7.5-8 GB.)
+          ( set +eu
+            CG=/sys/fs/cgroup
+            prev=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo 0)
+            memmax=$(cat "$CG/memory.max" 2>/dev/null || echo 0); case "$memmax" in ''|max) memmax=0;; esac
+            while true; do
+              sleep 15
+              cur=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo "$prev")
+              cpus="$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 ))"; prev=$cur
+              load=$(cut -d' ' -f1-3 /proc/loadavg)
+              memcur=$(cat "$CG/memory.current" 2>/dev/null || echo 0)
+              swap=$(cat "$CG/memory.swap.current" 2>/dev/null || echo 0)
+              oom=$(awk '/^oom_kill /{print $2}' "$CG/memory.events" 2>/dev/null || echo 0); [ -n "$oom" ] || oom=0
+              pct=0; [ "$memmax" -gt 0 ] && pct=$(( memcur * 100 / memmax ))
+              top=$(ps -eo rss,comm --sort=-rss 2>/dev/null | awk 'NR>1 && NR<=4{printf "%s:%dM ",$2,$1/1024}')
+              echo "$(date -u +%T) cpus=$cpus load=$load mem=$((memcur/1048576))M/$((memmax/1048576))M pct=${pct}% swap=$((swap/1048576))M oom_kill=$oom top=[$top]" >> resource-sampler.log
+            done ) &
+          SAMPLER_PID=$!
+          # One scenario, one process: the harness binds fixed Sui ports and
+          # chdirs during publish, so --test-threads=1 is mandatory. `tee`
+          # streams the test output (incl. [flow N/total]) LIVE to the step log
+          # AND to the artifact; PIPESTATUS[0] is cargo's exit code, not tee's.
+          set +e
           cargo test --release -p ika-upgrade-test --test "$TEST_NAME" \
-            -- --nocapture --test-threads=1 > upgrade-test.log 2>&1 &
-          TEST_PID=$!
-          CG=/sys/fs/cgroup
-          memmax=$(cat "$CG/memory.max" 2>/dev/null || echo 0); case "$memmax" in ''|max) memmax=0;; esac
-          prev=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo 0)
-          echo "::warning title=sampler up::memory.max=$((memmax/1048576))M cpu.max=$(cat "$CG/cpu.max" 2>/dev/null) nproc=$(nproc)"
-          w90=0; w95=0; oomprev=0; tick=0
-          while kill -0 "$TEST_PID" 2>/dev/null; do
-            sleep 15
-            cur=$(awk '/usage_usec/{print $2}' "$CG/cpu.stat" 2>/dev/null || echo "$prev")
-            cpus="$(( (cur - prev) / 15000000 )).$(( ((cur - prev) / 1500000) % 10 ))"; prev=$cur
-            load=$(cut -d' ' -f1-3 /proc/loadavg)
-            memcur=$(cat "$CG/memory.current" 2>/dev/null || echo 0)
-            swap=$(cat "$CG/memory.swap.current" 2>/dev/null || echo 0)
-            oom=$(awk '/^oom_kill /{print $2}' "$CG/memory.events" 2>/dev/null || echo 0); [ -n "$oom" ] || oom=0
-            pct=0; [ "$memmax" -gt 0 ] && pct=$(( memcur * 100 / memmax ))
-            top=$(ps -eo rss,comm --sort=-rss 2>/dev/null | awk 'NR>1 && NR<=4{printf "%s:%dM ",$2,$1/1024}')
-            echo "$(date -u +%T) cpus=$cpus load=$load mem=$((memcur/1048576))M/$((memmax/1048576))M pct=${pct}% swap=$((swap/1048576))M oom_kill=$oom top=[$top]" >> resource-sampler.log
-            tick=$((tick+1))
-            if [ $((tick % 24)) -eq 0 ]; then echo "::warning title=mem heartbeat::$(date -u +%T) mem=$((memcur/1048576))M/$((memmax/1048576))M (${pct}%) cpus=$cpus top=[$top]"; fi
-            if [ "$oom" -gt "$oomprev" ]; then echo "::warning title=cgroup oom_kill::oom_kill=$oom mem=$((memcur/1048576))M/$((memmax/1048576))M (${pct}%) top=[$top]"; oomprev=$oom; fi
-            if [ "$pct" -ge 95 ] && [ "$w95" -eq 0 ]; then echo "::warning title=memory >=95%::mem=$((memcur/1048576))M/$((memmax/1048576))M (${pct}%) top=[$top]"; w95=1; fi
-            if [ "$pct" -ge 90 ] && [ "$w90" -eq 0 ]; then echo "::warning title=memory >=90%::mem=$((memcur/1048576))M/$((memmax/1048576))M (${pct}%) top=[$top]"; w90=1; fi
-          done
-          wait "$TEST_PID"; rc=$?
-          echo "=== $TEST_NAME exited rc=$rc; tail of upgrade-test.log: ==="
-          tail -100 upgrade-test.log || true
+            -- --nocapture --test-threads=1 2>&1 | tee upgrade-test.log
+          rc=${PIPESTATUS[0]}
+          kill "$SAMPLER_PID" 2>/dev/null || true
           # The RUN_* gate makes the scenario #[ignore]d when unset, so a
           # misconfigured gate (or a harness that leaves child processes and
           # muddies cargo's exit code) could SKIP the test yet still exit 0 — a
@@ -393,6 +416,43 @@ jobs:
         if: always()
         run: |
           grep -E "^test .*(ok|FAILED)|test result|PASSED|panicked|MPC timings|MPC timing comparison" upgrade-test.log | tail -60 || true
+
+      - name: Heap profile (jeprof)
+        if: ${{ always() && inputs.heap_profile }}
+        run: |
+          set +e
+          DIR="${{ github.workspace }}/upgrade-test-data"
+          BIN="${{ github.workspace }}/target/release/ika-validator"
+          echo "heap dumps under $DIR:"; ls -la "$DIR"/jeprof.*.heap 2>/dev/null | tail -12
+          # jeprof ships with libjemalloc-dev; it reads the .heap dump + the
+          # binary's symbols to attribute live bytes to call paths. The build
+          # step above keeps full symbols in the binary when heap_profile is on
+          # (strip=none, split-debuginfo=off), so frames resolve to names.
+          if ! command -v jeprof >/dev/null; then
+            if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=; fi
+            $SUDO apt-get -o Acquire::ForceIPv4=true install -y libjemalloc-dev 2>&1 | tail -3
+          fi
+          LAST=$(ls -t "$DIR"/jeprof.*.heap 2>/dev/null | head -1)
+          if [ -n "$LAST" ] && command -v jeprof >/dev/null; then
+            # Read by CUMULATIVE and hide jemalloc's own sampling frames
+            # (prof_backtrace*/prof_dump* are the universal backtrace-capture
+            # leaf — flat-sorted they show ~99% and bury the real call sites).
+            echo "=== jeprof --inuse_space --cum (top allocation call paths; jemalloc prof frames hidden) — $LAST ==="
+            jeprof --text --cum --show_bytes --inuse_space \
+              --ignore='prof_backtrace|prof_dump|prof_alloc|prof_tctx|je_prof' \
+              "$BIN" "$LAST" 2>/dev/null | head -50
+          else
+            echo "no heap dumps or jeprof missing — heap_profile must be on AND a workload-bearing scenario must have run"
+          fi
+
+      - name: Upload heap dumps
+        if: ${{ always() && inputs.heap_profile }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jeprof-${{ matrix.test }}-${{ github.run_attempt }}
+          path: upgrade-test-data/jeprof.*.heap
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload resource sampler log
         if: always()

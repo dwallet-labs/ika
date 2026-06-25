@@ -19,9 +19,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use ika_protocol_config::ProtocolVersion;
 use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
+use tokio::time::sleep;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
@@ -448,11 +449,30 @@ impl Scenario {
                     )
                     .await
                     .context("build workload driver")?;
-                    let outcome = driver
-                        .run_dwallet_lifecycle()
-                        .await
-                        .with_context(|| format!("workload [{label}]"))?;
-                    tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
+                    // Debug aid: HOLD_CLUSTER holds the cluster up with the
+                    // driver's config paths printed so `ika dwallet` can be
+                    // driven by hand (fast iteration vs. ~6-min test cycles)
+                    // instead of running the lifecycle.
+                    if std::env::var("HOLD_CLUSTER").is_ok() {
+                        eprintln!("HOLD_CLUSTER: cluster up at workload [{label}]. Run e.g.:");
+                        eprintln!(
+                            "  ika --json --client.config {} --ika-config {} dwallet create --curve secp256k1 --output-secret /tmp/s.bin",
+                            driver.client_config_path().display(),
+                            driver.ika_config_path().display(),
+                        );
+                        eprintln!("user_address={}", driver.user_address());
+                        sleep(Duration::from_secs(3600)).await;
+                    } else {
+                        let outcome = driver
+                            .run_dwallet_lifecycle()
+                            .await
+                            .with_context(|| format!("workload [{label}]"))?;
+                        ensure!(
+                            !outcome.sign_digest.is_empty(),
+                            "workload [{label}]: lifecycle completed but produced no signature digest"
+                        );
+                        tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
+                    }
                 }
             }
             tracing::info!(
