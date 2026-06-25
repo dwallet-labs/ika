@@ -48,6 +48,7 @@ pub mod setup;
 mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
+pub mod trusted_peer_updater;
 pub mod verified_reader;
 pub mod verified_state_cache;
 pub mod verified_transport;

@@ -1200,6 +1200,7 @@ impl IkaNode {
         let node = Arc::new(node);
         let node_copy = node.clone();
         let sui_client_clone = sui_client.clone();
+        let trusted_peer_sui_client = sui_client.clone();
 
         // Joiner-side announcement fan-out: a node selected into the
         // next-epoch committee but not yet in the current one isn't a
@@ -1232,6 +1233,22 @@ impl IkaNode {
             if let Err(error) = result {
                 warn!("Reconfiguration finished with error {:?}", error);
             }
+        });
+
+        // Continuously feed the p2p trusted-peer set from the on-chain
+        // {active, next, previous} committee + pending_active_set, refreshed
+        // every few seconds so the pending/next sets stay current mid-epoch.
+        // This is what makes a DIRECT validator dial a registered-but-not-yet-
+        // active joiner (inbound), so a peer-only joiner boots without static
+        // seed peers. Runs on every node for its lifetime.
+        let trusted_peer_node = node.clone();
+        spawn_monitored_task!(async move {
+            ika_core::sui_connector::trusted_peer_updater::refresh_trusted_peers_loop(
+                trusted_peer_sui_client,
+                trusted_peer_node.trusted_peer_change_tx.clone(),
+                trusted_peer_node.config.protocol_public_key(),
+            )
+            .await;
         });
 
         Ok(node)

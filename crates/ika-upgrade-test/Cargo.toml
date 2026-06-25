@@ -14,7 +14,6 @@ name = "upgrade-test"
 path = "src/bin/upgrade-test.rs"
 
 [dependencies]
-anemo.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 fastcrypto.workspace = true

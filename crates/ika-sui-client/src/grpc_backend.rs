@@ -220,6 +220,10 @@ impl SuiClientInner for GrpcSuiClient {
         self.object_bcs(ika_system_object_id).await
     }
 
+    async fn get_move_object_bcs(&self, object_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
+        self.object_bcs(object_id).await
+    }
+
     async fn get_clock(&self, clock_obj_id: ObjectID) -> Result<Vec<u8>, Self::Error> {
         self.object_bcs(clock_obj_id).await
     }

@@ -7058,7 +7058,6 @@ dependencies = [
 name = "ika-upgrade-test"
 version = "1.1.9"
 dependencies = [
- "anemo",
  "anyhow",
  "clap",
  "fastcrypto",
