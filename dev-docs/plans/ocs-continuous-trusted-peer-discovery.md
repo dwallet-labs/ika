@@ -1,7 +1,21 @@
 # Continuous trusted-peer discovery (active + next + previous committee + pending_active_set)
 
-**Status:** design locked, `ika-types` mirror landed; rest in progress.
+**Status:** landed (2026-06-26, #1744). Behavioral contract moved to
+[`../specs/trusted-peer-discovery.md`](../specs/trusted-peer-discovery.md) — read
+that, not this plan, for the current behavior. This file is kept for the intent +
+sequencing record.
 **Branch:** feat/ocs-grpc-migration (#1744).
+
+> **Correction (the fragile assumption flagged in §1B / Blocker 1 was wrong).**
+> `extended_field::Key` does NOT BCS-encode to zero bytes — it is **one byte**
+> (an "empty" Move struct still carries a `bool` dummy field → `0x00`). The
+> on-chain round-trip test the blocker demanded was run and showed the value sits
+> behind a 33-byte `Field<u8, PendingActiveSet>` header, not `Field<(), _>`. The
+> `Field<(), _>` decode below short-reads with "unexpected end of input"; the
+> shipped decoder uses `Field<u8, _>` with `Field<(), _>` / bare-value fallbacks.
+> Also: the final read **lists** the wrapper's single dynamic field rather than
+> deriving the child id (the derive produced a wrong/nonexistent child). See the
+> spec and [`../learnings/pitfalls.md`](../learnings/pitfalls.md).
 
 ## Why
 A fresh peer-only (`SuiStateMirrored`, fallback=None) validator boots passively —
