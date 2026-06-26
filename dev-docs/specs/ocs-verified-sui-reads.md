@@ -386,21 +386,27 @@ dropping entries are layered:
 ## Relay protocol
 
 The relay exposes verified-read RPCs (`VerifiedObject`,
-`BatchVerifiedObjects`, `VerifiedBagPage`), the `ChangesetPage` currency
+`BatchVerifiedObjects`, `VerifiedDynamicFieldsPage`), the `ChangesetPage` currency
 stream (paged `from_seq`+`limit`; see *Freshness and rollback protection*),
 and committee-ratchet plumbing (checkpoint summary/full/by-digest,
-`LastCheckpointOfEpoch`, `GetTransactionCheckpoint`, `get_current_epoch`,
-`get_reference_gas_price`). It serves **reads only** — there is no
+`LastCheckpointOfEpoch`, `get_current_epoch`). It serves **reads only** — there is no
 `SubmitTransaction`: writes are notifier-gated and the notifier always uses a
 direct uplink, so no node submits through the relay (a submit-via-relay surface
 would only be an unverified-effects + amplification hazard). Every served read
 RPC carries an inflight cap so a byzantine peer can't flood a serving node.
-`get_committee`, `get_transaction`, and `list_owned_gas_coins` are **not**
-relayed and error on the relay surface so callers fall through to a direct
-gRPC fallback. Only `get_transaction` is *un*-relayable for a hard reason
-(its `ExecutedTransaction` return isn't Deserializable); the other two are
-a routing choice — committee comes from the ratchet/anchor, and gas
-selection rides with the writer.
+`get_committee` and `get_transaction` are part of the read transport but **not**
+relayed: they error on the relay surface so callers fall through to a direct
+gRPC fallback. `get_transaction` is *un*-relayable for a hard reason (its
+`ExecutedTransaction` return isn't Deserializable); `get_committee` is a routing
+choice (the committee comes from the ratchet/anchor).
+
+Two capability sets are deliberately **off the relay-able `SuiTransport` trait
+entirely**, so a relay/peer transport doesn't even pretend to offer them:
+- **Writing** (`SuiWriter`: `execute_transaction`, `get_reference_gas_price`,
+  `list_owned_gas_coins`) — building and submitting transactions. Notifier-gated
+  to a direct uplink; a read-only mirrored/peer node has no writer at all.
+- **`get_transaction_checkpoint`** — `tx → checkpoint` lookup whose sole user is
+  the *direct* proof builder, so it's an inherent `SuiGrpcClient` method.
 
 The client (`SuiMirrorPeers::try_peers`) is the failover engine: it
 rotates the peer list round-robin but every pass visits all peers,

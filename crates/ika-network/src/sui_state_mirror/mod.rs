@@ -181,14 +181,6 @@ impl SuiStateMirror for Server {
         let v = self.transport.get_current_epoch().await.map_err(map_err)?;
         Ok(Response::new(v))
     }
-    async fn get_reference_gas_price(&self, _: Request<()>) -> Result<Response<u64>, Status> {
-        let v = self
-            .transport
-            .get_reference_gas_price()
-            .await
-            .map_err(map_err)?;
-        Ok(Response::new(v))
-    }
     async fn get_latest_checkpoint(
         &self,
         _: Request<()>,
@@ -319,8 +311,8 @@ const INFLIGHT_CHANGESET_PAGE: usize = 16;
 /// fullnode/store round-trip, so bound like the other heavy reads.
 const INFLIGHT_CHECKPOINT_READ: usize = 64;
 /// The cheap single-value metadata reads (`get_current_epoch`,
-/// `get_reference_gas_price`, `get_chain_identifier`). Generous, but still
-/// bounded so every served read has a ceiling.
+/// `get_chain_identifier`). Generous, but still bounded so every served read
+/// has a ceiling.
 const INFLIGHT_METADATA_READ: usize = 256;
 /// Max checkpoints served per `changeset_page` call. Each fetches a full
 /// checkpoint server-side to extract its object-set, so keep the page modest;
@@ -363,6 +355,5 @@ pub fn make_server(
         .add_layer_for_get_latest_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
         // cheap metadata reads (were uncapped)
         .add_layer_for_get_current_epoch(inflight!(INFLIGHT_METADATA_READ))
-        .add_layer_for_get_reference_gas_price(inflight!(INFLIGHT_METADATA_READ))
         .add_layer_for_get_chain_identifier(inflight!(INFLIGHT_METADATA_READ))
 }

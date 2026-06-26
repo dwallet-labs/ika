@@ -18,14 +18,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use sui_types::transaction::Transaction;
 
 use ika_sui_client::transport::{
-    DynamicFieldPage, ExecutedTransaction, SubmittedTransaction, SuiTransport, TransportError,
+    DynamicFieldPage, ExecutedTransaction, SuiTransport, TransportError,
 };
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
@@ -70,9 +69,6 @@ impl SuiTransport for RetainedFullnodeTransport {
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
         self.inner.get_current_epoch().await
     }
-    async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        self.inner.get_reference_gas_price().await
-    }
     async fn get_committee(
         &self,
         epoch: Option<u64>,
@@ -101,12 +97,6 @@ impl SuiTransport for RetainedFullnodeTransport {
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError> {
         self.inner.batch_get_objects(ids).await
     }
-    async fn list_owned_gas_coins(
-        &self,
-        address: SuiAddress,
-    ) -> Result<Vec<ObjectRef>, TransportError> {
-        self.inner.list_owned_gas_coins(address).await
-    }
     async fn list_dynamic_fields(
         &self,
         parent: ObjectID,
@@ -122,12 +112,6 @@ impl SuiTransport for RetainedFullnodeTransport {
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError> {
         self.inner.get_transaction(tx).await
-    }
-    async fn execute_transaction(
-        &self,
-        tx: &Transaction,
-    ) -> Result<SubmittedTransaction, TransportError> {
-        self.inner.execute_transaction(tx).await
     }
 }
 
@@ -186,9 +170,6 @@ mod tests {
         async fn get_current_epoch(&self) -> Result<u64, TransportError> {
             unimplemented!()
         }
-        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-            unimplemented!()
-        }
         async fn get_committee(
             &self,
             _epoch: Option<u64>,
@@ -222,12 +203,6 @@ mod tests {
         ) -> Result<Vec<Object>, TransportError> {
             unimplemented!()
         }
-        async fn list_owned_gas_coins(
-            &self,
-            _address: SuiAddress,
-        ) -> Result<Vec<ObjectRef>, TransportError> {
-            unimplemented!()
-        }
         async fn list_dynamic_fields(
             &self,
             _parent: ObjectID,
@@ -240,12 +215,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unimplemented!()
-        }
-        async fn execute_transaction(
-            &self,
-            _tx: &Transaction,
-        ) -> Result<SubmittedTransaction, TransportError> {
             unimplemented!()
         }
     }
@@ -302,9 +271,6 @@ mod tests {
         async fn get_current_epoch(&self) -> Result<u64, TransportError> {
             unimplemented!()
         }
-        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-            unimplemented!()
-        }
         async fn get_committee(
             &self,
             _epoch: Option<u64>,
@@ -338,12 +304,6 @@ mod tests {
         ) -> Result<Vec<Object>, TransportError> {
             unimplemented!()
         }
-        async fn list_owned_gas_coins(
-            &self,
-            _address: SuiAddress,
-        ) -> Result<Vec<ObjectRef>, TransportError> {
-            unimplemented!()
-        }
         async fn list_dynamic_fields(
             &self,
             _parent: ObjectID,
@@ -356,12 +316,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unimplemented!()
-        }
-        async fn execute_transaction(
-            &self,
-            _tx: &Transaction,
-        ) -> Result<SubmittedTransaction, TransportError> {
             unimplemented!()
         }
     }

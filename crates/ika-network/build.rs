@@ -163,15 +163,11 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("get_reference_gas_price")
-                .route_name("GetReferenceGasPrice")
-                .request_type("()")
-                .response_type("u64")
-                .codec_path(codec_path)
-                .build(),
-        )
+        // NOTE: no `get_reference_gas_price` RPC. Gas price is only needed to
+        // build transactions, which is notifier-gated to a direct uplink — no
+        // read-only mirrored/peer-only node ever needs it, so the relay doesn't
+        // serve it. (It remains a `SuiTransport` method for the direct writer
+        // path; on the mirror client it errors like the other non-relayed reads.)
         .method(
             anemo_build::manual::Method::builder()
                 .name("get_latest_checkpoint")

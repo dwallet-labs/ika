@@ -38,7 +38,7 @@ use sui_types::transaction::{ObjectArg, SharedObjectMutability, Transaction};
 
 use crate::SuiClientInner;
 use crate::grpc::SuiGrpcClient;
-use crate::transport::{SuiTransport, TransportError, dynamic_field_child_owned_by};
+use crate::transport::{SuiTransport, SuiWriter, TransportError, dynamic_field_child_owned_by};
 
 /// Error surface of the gRPC backend. Satisfies the
 /// `SuiClientInner::Error` bound (`Into<anyhow::Error> + Send + Sync +
@@ -61,22 +61,47 @@ impl GrpcSuiClientError {
 
 pub struct GrpcSuiClient {
     transport: std::sync::Arc<dyn SuiTransport>,
+    /// Writer uplink: gas price, gas-coin selection, and transaction
+    /// submission. `Some` only when this client was opened against a direct
+    /// fullnode (`new`); `None` on a read-only node built over a relay
+    /// transport (`with_transport`). Writes are notifier-gated to a direct
+    /// uplink, so a read-only mirrored/peer-only node legitimately has none.
+    writer: Option<std::sync::Arc<dyn SuiWriter>>,
 }
 
 impl GrpcSuiClient {
-    /// Connect to a Sui fullnode over gRPC at `grpc_url`.
+    /// Connect to a Sui fullnode over gRPC at `grpc_url`. The same direct
+    /// client backs both the read transport and the writer uplink.
     pub async fn new(grpc_url: &str) -> anyhow::Result<Self> {
-        let transport = SuiGrpcClient::new(grpc_url).await?;
+        let grpc = std::sync::Arc::new(SuiGrpcClient::new(grpc_url).await?);
         Ok(Self {
-            transport: std::sync::Arc::new(transport),
+            transport: grpc.clone(),
+            writer: Some(grpc),
         })
     }
 
     /// Build over an arbitrary transport. Lets a caller reuse an existing
     /// (e.g. fallback-decorated) transport instead of opening a new gRPC
-    /// connection.
+    /// connection. Used by a *peer-only* node, which is read-only — so it has
+    /// no writer uplink.
     pub fn with_transport(transport: std::sync::Arc<dyn SuiTransport>) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            writer: None,
+        }
+    }
+
+    /// The writer uplink, or a clear error on a read-only node. Transaction
+    /// building/submission (and the gas-price / gas-coin reads that only serve
+    /// it) are notifier-gated to a direct fullnode connection.
+    fn writer(&self) -> Result<&std::sync::Arc<dyn SuiWriter>, TransportError> {
+        self.writer.as_ref().ok_or_else(|| {
+            TransportError::Network(
+                "no writer uplink on this node: transaction building/submission is \
+                 notifier-gated to a direct gRPC connection"
+                    .into(),
+            )
+        })
     }
 
     /// BCS contents of the Move object `id`.
@@ -188,7 +213,7 @@ impl SuiClientInner for GrpcSuiClient {
     }
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error> {
-        Ok(self.transport.get_reference_gas_price().await?)
+        Ok(self.writer()?.get_reference_gas_price().await?)
     }
 
     async fn get_latest_checkpoint_sequence_number(&self) -> Result<u64, Self::Error> {
@@ -497,7 +522,8 @@ impl SuiClientInner for GrpcSuiClient {
     ) -> Result<SuiTransactionBlockResponse, IkaError> {
         let tx_digest = *tx.digest();
         let executed = self
-            .transport
+            .writer()
+            .map_err(|e| IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string()))?
             .execute_transaction(&tx)
             .await
             .map_err(|e| IkaError::SuiClientTxFailureGeneric(tx_digest, e.to_string()))?;
@@ -517,8 +543,14 @@ impl SuiClientInner for GrpcSuiClient {
     }
 
     async fn get_gas_objects(&self, address: SuiAddress) -> Vec<ObjectRef> {
+        let Ok(writer) = self.writer() else {
+            tracing::warn!(
+                "get_gas_objects on a read-only node with no writer uplink; returning no gas coins"
+            );
+            return Vec::new();
+        };
         loop {
-            match self.transport.list_owned_gas_coins(address).await {
+            match writer.list_owned_gas_coins(address).await {
                 Ok(gas_objs) => return gas_objs,
                 Err(err) => {
                     tracing::warn!("can't get gas objects for address {address}: {err}");

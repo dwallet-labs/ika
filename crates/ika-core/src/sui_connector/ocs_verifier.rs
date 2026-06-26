@@ -253,11 +253,9 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use async_trait::async_trait;
-    use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, SubmittedTransaction};
+    use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction};
     use sui_light_client::proof::committee::extract_new_committee_info;
-    use sui_types::base_types::{
-        ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest,
-    };
+    use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
     use sui_types::committee::{Committee, ProtocolVersion};
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointDigest;
@@ -267,7 +265,6 @@ mod tests {
         CertifiedCheckpointSummary, CheckpointContents, CheckpointSummary, EndOfEpochData,
     };
     use sui_types::object::Object;
-    use sui_types::transaction::Transaction;
 
     use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
     use crate::sui_connector::committee_store::CommitteeBootstrap;
@@ -400,9 +397,6 @@ mod tests {
         async fn get_chain_identifier(&self) -> Result<String, TransportError> {
             unimplemented!()
         }
-        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-            unimplemented!()
-        }
         async fn get_latest_checkpoint(
             &self,
         ) -> Result<CertifiedCheckpointSummary, TransportError> {
@@ -430,12 +424,6 @@ mod tests {
         ) -> Result<Vec<Object>, TransportError> {
             unimplemented!()
         }
-        async fn list_owned_gas_coins(
-            &self,
-            _address: SuiAddress,
-        ) -> Result<Vec<ObjectRef>, TransportError> {
-            unimplemented!()
-        }
         async fn list_dynamic_fields(
             &self,
             _parent: ObjectID,
@@ -448,12 +436,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unimplemented!()
-        }
-        async fn execute_transaction(
-            &self,
-            _tx: &Transaction,
-        ) -> Result<SubmittedTransaction, TransportError> {
             unimplemented!()
         }
     }

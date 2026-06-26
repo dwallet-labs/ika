@@ -9,10 +9,10 @@
 //! - [`SuiMirrorTransport`] implements [`SuiTransport`] for the
 //!   committee-ratchet primitives (full-checkpoint fetch, end-of-epoch
 //!   resolution). Every other `SuiTransport` method errors out: object reads
-//!   use the proof-bearing surface instead; `get_committee` / `get_transaction`
-//!   / `list_owned_gas_coins` are served by the direct fallback; and
-//!   `execute_transaction` is fail-closed (a relay must never return unverified
-//!   effects — writes are notifier-gated to a direct uplink).
+//!   use the proof-bearing surface instead, and `get_committee` /
+//!   `get_transaction` fall through to the direct fallback. It implements no
+//!   writer surface (`SuiWriter`) at all — a relay can neither submit nor price
+//!   transactions (writes are notifier-gated to a direct uplink).
 //!
 //! Both adapters share an identical multi-peer health strategy: try
 //! peers in order, demote on failure.
@@ -26,16 +26,15 @@ use std::sync::Arc;
 use anemo::{Network, PeerId, Request};
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use sui_types::transaction::Transaction;
 use tracing::{debug, warn};
 
 use ika_sui_client::transport::{
-    DynamicFieldPage, ExecutedTransaction, SubmittedTransaction, SuiTransport, TransportError,
+    DynamicFieldPage, ExecutedTransaction, SuiTransport, TransportError,
 };
 
 use crate::proof_provider::{
@@ -358,14 +357,6 @@ impl SuiTransport for SuiMirrorTransport {
             .await
     }
 
-    async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        self.peers
-            .try_peers("get_reference_gas_price", |c| {
-                Box::pin(async move { c.get_reference_gas_price(Request::new(())).await })
-            })
-            .await
-    }
-
     async fn get_latest_checkpoint(&self) -> Result<CertifiedCheckpointSummary, TransportError> {
         self.peers
             .try_peers("get_latest_checkpoint", |c| {
@@ -468,41 +459,6 @@ impl SuiTransport for SuiMirrorTransport {
     ) -> Result<ExecutedTransaction, TransportError> {
         Err(TransportError::Network(
             "get_transaction is not relayable over SuiStateMirror; use a \
-             fallback gRPC client"
-                .into(),
-        ))
-    }
-
-    async fn execute_transaction(
-        &self,
-        _tx: &Transaction,
-    ) -> Result<SubmittedTransaction, TransportError> {
-        // FAIL-CLOSED. A relay cannot return committee-verified transaction
-        // EFFECTS: only the echoed digest and a relay-served commit confirmation
-        // are checkable; the effects bytes would be the relay's unverified word
-        // (a malicious relay could claim success for an aborted-but-committed
-        // digest). Rather than forward and return those unverified effects, refuse.
-        //
-        // This path is unreachable today — writes are notifier-gated and notifiers
-        // run direct gRPC; `FallbackTransport` routes `execute_transaction` to the
-        // direct uplink and `VerifiedSuiTransport::execute_transaction` is itself
-        // unreachable — so a future change that wires a bare `SuiMirrorTransport`
-        // as a submitter (or drops those guards) now fails LOUDLY here instead of
-        // trusting forged effects. To support peer-only submit, first verify the
-        // effects against the committed checkpoint's artifacts before returning.
-        Err(TransportError::Network(
-            "SuiMirrorTransport::execute_transaction is unsupported: a relay cannot \
-             return committee-verified effects. Submit over a direct uplink."
-                .to_string(),
-        ))
-    }
-
-    async fn list_owned_gas_coins(
-        &self,
-        _address: SuiAddress,
-    ) -> Result<Vec<ObjectRef>, TransportError> {
-        Err(TransportError::Network(
-            "list_owned_gas_coins is not relayable over SuiStateMirror; use a \
              fallback gRPC client"
                 .into(),
         ))

@@ -23,7 +23,7 @@ use sui_types::transaction::Transaction;
 
 use crate::transport::{
     CheckpointSummaryStream, DynamicFieldEntry, DynamicFieldPage, SubmittedTransaction,
-    SuiTransport, TransportError,
+    SuiTransport, SuiWriter, TransportError,
 };
 
 pub struct SuiGrpcClient {
@@ -157,11 +157,6 @@ impl SuiTransport for SuiGrpcClient {
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
         let rpc = self.rpc.clone();
         rpc.get_current_epoch().await.map_err(Self::rpc_err)
-    }
-
-    async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        let rpc = self.rpc.clone();
-        rpc.get_reference_gas_price().await.map_err(Self::rpc_err)
     }
 
     async fn get_committee(
@@ -301,31 +296,6 @@ impl SuiTransport for SuiGrpcClient {
             .map_err(Self::rpc_status_err)
     }
 
-    async fn list_owned_gas_coins(
-        &self,
-        address: SuiAddress,
-    ) -> Result<Vec<ObjectRef>, TransportError> {
-        let rpc = self.rpc.clone();
-        let mut refs = Vec::new();
-        let mut page_token = None;
-        loop {
-            let page = rpc
-                .get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
-                .await
-                .map_err(Self::rpc_err)?;
-            refs.extend(
-                page.items
-                    .iter()
-                    .map(|object| object.compute_object_reference()),
-            );
-            match page.next_page_token {
-                Some(token) => page_token = Some(token),
-                None => break,
-            }
-        }
-        Ok(refs)
-    }
-
     // -- dynamic fields ---------------------------------------------------------------------
     async fn list_dynamic_fields(
         &self,
@@ -358,6 +328,39 @@ impl SuiTransport for SuiGrpcClient {
     ) -> Result<ExecutedTransaction, TransportError> {
         let mut rpc = self.rpc.clone();
         rpc.get_transaction(&tx).await.map_err(Self::rpc_status_err)
+    }
+}
+
+#[async_trait]
+impl SuiWriter for SuiGrpcClient {
+    async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
+        let rpc = self.rpc.clone();
+        rpc.get_reference_gas_price().await.map_err(Self::rpc_err)
+    }
+
+    async fn list_owned_gas_coins(
+        &self,
+        address: SuiAddress,
+    ) -> Result<Vec<ObjectRef>, TransportError> {
+        let rpc = self.rpc.clone();
+        let mut refs = Vec::new();
+        let mut page_token = None;
+        loop {
+            let page = rpc
+                .get_owned_objects(address, Some(GasCoin::type_()), None, page_token)
+                .await
+                .map_err(Self::rpc_err)?;
+            refs.extend(
+                page.items
+                    .iter()
+                    .map(|object| object.compute_object_reference()),
+            );
+            match page.next_page_token {
+                Some(token) => page_token = Some(token),
+                None => break,
+            }
+        }
+        Ok(refs)
     }
 
     async fn execute_transaction(

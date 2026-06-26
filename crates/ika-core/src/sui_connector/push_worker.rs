@@ -419,16 +419,13 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashMap;
 
-    use ika_sui_client::transport::{
-        DynamicFieldPage, ExecutedTransaction, SubmittedTransaction, TransportError,
-    };
-    use sui_types::base_types::{ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+    use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, TransportError};
+    use sui_types::base_types::{SequenceNumber, TransactionDigest};
     use sui_types::committee::{Committee, ProtocolVersion};
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointDigest;
     use sui_types::gas::GasCostSummary;
     use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSummary, EndOfEpochData};
-    use sui_types::transaction::Transaction;
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
     use crate::sui_connector::verified_state_cache::{
@@ -471,9 +468,6 @@ mod tests {
         async fn get_current_epoch(&self) -> Result<u64, TransportError> {
             unimplemented!()
         }
-        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-            unimplemented!()
-        }
         async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
             unimplemented!()
         }
@@ -508,12 +502,6 @@ mod tests {
         ) -> Result<Vec<Object>, TransportError> {
             unimplemented!()
         }
-        async fn list_owned_gas_coins(
-            &self,
-            _address: SuiAddress,
-        ) -> Result<Vec<ObjectRef>, TransportError> {
-            unimplemented!()
-        }
         async fn list_dynamic_fields(
             &self,
             _parent: ObjectID,
@@ -526,12 +514,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unimplemented!()
-        }
-        async fn execute_transaction(
-            &self,
-            _tx: &Transaction,
-        ) -> Result<SubmittedTransaction, TransportError> {
             unimplemented!()
         }
     }

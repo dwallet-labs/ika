@@ -149,7 +149,6 @@ pub trait SuiTransport: Send + Sync {
     // -- chain metadata ---------------------------------------------------------------------
     async fn get_chain_identifier(&self) -> Result<String, TransportError>;
     async fn get_current_epoch(&self) -> Result<u64, TransportError>;
-    async fn get_reference_gas_price(&self) -> Result<u64, TransportError>;
     /// Sui [`Committee`] for the given epoch (or current if `None`). Used as
     /// a fallback when the committee ratchet's BLS proof chain is broken
     /// by upstream pruning of end-of-epoch checkpoints.
@@ -213,14 +212,6 @@ pub trait SuiTransport: Send + Sync {
     /// the underlying client's all-or-nothing collect; the mirror surface
     /// doesn't serve it — use `ProofProvider::batch_verified_objects`.)
     async fn batch_get_objects(&self, ids: &[ObjectID]) -> Result<Vec<Object>, TransportError>;
-    /// Owned SUI gas-coin object refs for `address`. Mirrors the JSON-RPC
-    /// `get_gas_objects` selection: filters owned objects to the SUI
-    /// `GasCoin` struct type and returns their `ObjectRef`s. Used to pick
-    /// gas for transaction submission.
-    async fn list_owned_gas_coins(
-        &self,
-        address: SuiAddress,
-    ) -> Result<Vec<ObjectRef>, TransportError>;
 
     // -- dynamic fields ---------------------------------------------------------------------
     async fn list_dynamic_fields(
@@ -235,6 +226,28 @@ pub trait SuiTransport: Send + Sync {
         &self,
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError>;
+}
+
+/// The notifier's **writer** surface — building and submitting transactions.
+/// Kept separate from [`SuiTransport`] because only a node with a direct Sui
+/// uplink can do these: a read-only relay/peer transport never implements them.
+/// `get_reference_gas_price` and `list_owned_gas_coins` live here too — they
+/// exist only to *build* transactions (gas price + gas-coin selection), so they
+/// share the writer's "needs a direct uplink" constraint rather than being
+/// general reads. Implemented only by [`crate::grpc::SuiGrpcClient`]; a
+/// gRPC-backed `SuiClient` carries one when (and only when) it was opened
+/// against a direct fullnode.
+#[async_trait]
+pub trait SuiWriter: Send + Sync {
+    async fn get_reference_gas_price(&self) -> Result<u64, TransportError>;
+    /// Owned SUI gas-coin object refs for `address`. Mirrors the JSON-RPC
+    /// `get_gas_objects` selection: filters owned objects to the SUI `GasCoin`
+    /// struct type and returns their `ObjectRef`s. Used to pick gas for
+    /// transaction submission.
+    async fn list_owned_gas_coins(
+        &self,
+        address: SuiAddress,
+    ) -> Result<Vec<ObjectRef>, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,

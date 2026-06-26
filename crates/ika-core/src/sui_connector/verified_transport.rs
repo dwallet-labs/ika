@@ -31,31 +31,30 @@
 //!   `batch_get_objects`, so layering the stock backend over this transport
 //!   yields verified high-level reads for free.
 //! - **chain metadata + checkpoints** (`get_chain_identifier`,
-//!   `get_reference_gas_price`, the committee-ratchet checkpoint lookups)
-//!   pass through to the relay transport (`SuiMirrorTransport`), which already
+//!   `get_current_epoch`, the committee-ratchet checkpoint lookups) pass
+//!   through to the relay transport (`SuiMirrorTransport`), which already
 //!   serves them.
 //!
-//! A peer-only validator never submits transactions (the writer path is
-//! notifier-gated — only the notifier, which is *not* peer-only, holds gas and
-//! writes) and holds no gas, so `execute_transaction`, `list_owned_gas_coins`,
+//! A peer-only validator never submits transactions and holds no gas, so it
+//! does not implement the writer surface (`SuiWriter`: `execute_transaction`,
+//! `get_reference_gas_price`, `list_owned_gas_coins`) at all — that lives only
+//! on a direct gRPC client. The `SuiTransport` reads it *can't* serve —
 //! `get_committee` (the ratchet's prune fallback), `get_transaction`, and
-//! pinned-version object reads are unreachable on this node and return a
-//! descriptive error rather than silently wrong data.
+//! pinned-version object reads — return a descriptive error rather than
+//! silently wrong data.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, SequenceNumber, TransactionDigest};
 use sui_types::committee::Committee;
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{CertifiedCheckpointSummary, CheckpointSequenceNumber};
 use sui_types::object::Object;
-use sui_types::transaction::Transaction;
 
 use ika_sui_client::transport::{
-    DynamicFieldEntry, DynamicFieldPage, ExecutedTransaction, SubmittedTransaction, SuiTransport,
-    TransportError,
+    DynamicFieldEntry, DynamicFieldPage, ExecutedTransaction, SuiTransport, TransportError,
 };
 
 use crate::sui_connector::verified_reader::OcsVerifiedReader;
@@ -94,9 +93,6 @@ impl SuiTransport for VerifiedSuiTransport {
     }
     async fn get_current_epoch(&self) -> Result<u64, TransportError> {
         self.relay.get_current_epoch().await
-    }
-    async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-        self.relay.get_reference_gas_price().await
     }
     async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
         // The ratchet's prune fallback. A peer-only node has no direct uplink,
@@ -154,13 +150,6 @@ impl SuiTransport for VerifiedSuiTransport {
             .map(|verified| verified.into_iter().map(|v| v.object).collect())
             .map_err(Self::read_err)
     }
-    async fn list_owned_gas_coins(
-        &self,
-        _address: SuiAddress,
-    ) -> Result<Vec<ObjectRef>, TransportError> {
-        Err(Self::unreachable("list_owned_gas_coins"))
-    }
-
     // -- dynamic fields: verified bag page ----------------------------------------------------
     async fn list_dynamic_fields(
         &self,
@@ -198,12 +187,6 @@ impl SuiTransport for VerifiedSuiTransport {
         _tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError> {
         Err(Self::unreachable("get_transaction"))
-    }
-    async fn execute_transaction(
-        &self,
-        _tx: &Transaction,
-    ) -> Result<SubmittedTransaction, TransportError> {
-        Err(Self::unreachable("execute_transaction"))
     }
 }
 
@@ -262,9 +245,6 @@ mod tests {
         async fn get_current_epoch(&self) -> Result<u64, TransportError> {
             unreachable!("relay must not be hit by this test")
         }
-        async fn get_reference_gas_price(&self) -> Result<u64, TransportError> {
-            unreachable!("relay must not be hit by this test")
-        }
         async fn get_committee(&self, _epoch: Option<u64>) -> Result<Committee, TransportError> {
             unreachable!("relay must not be hit by this test")
         }
@@ -307,12 +287,6 @@ mod tests {
         ) -> Result<Vec<Object>, TransportError> {
             unreachable!("relay must not be hit by this test")
         }
-        async fn list_owned_gas_coins(
-            &self,
-            _address: SuiAddress,
-        ) -> Result<Vec<ObjectRef>, TransportError> {
-            unreachable!("relay must not be hit by this test")
-        }
         async fn list_dynamic_fields(
             &self,
             _parent: ObjectID,
@@ -325,12 +299,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unreachable!("relay must not be hit by this test")
-        }
-        async fn execute_transaction(
-            &self,
-            _tx: &Transaction,
-        ) -> Result<SubmittedTransaction, TransportError> {
             unreachable!("relay must not be hit by this test")
         }
     }
@@ -386,23 +354,9 @@ mod tests {
                     .unwrap_err(),
             ),
             (
-                "list_owned_gas_coins",
-                transport
-                    .list_owned_gas_coins(SuiAddress::ZERO)
-                    .await
-                    .unwrap_err(),
-            ),
-            (
                 "get_transaction",
                 transport
                     .get_transaction(TransactionDigest::random())
-                    .await
-                    .unwrap_err(),
-            ),
-            (
-                "execute_transaction",
-                transport
-                    .execute_transaction(&dummy_transaction())
                     .await
                     .unwrap_err(),
             ),
@@ -432,28 +386,6 @@ mod tests {
             "batch_get_objects must map a reader failure to a descriptive Network error, \
              got: {batch_err}"
         );
-    }
-
-    /// A syntactically-valid but empty transaction, only as an
-    /// `execute_transaction` argument — the method errors before inspecting it.
-    fn dummy_transaction() -> Transaction {
-        use sui_types::base_types::ObjectDigest;
-        use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
-        use sui_types::transaction::{TransactionData, TransactionKind};
-
-        let pt = ProgrammableTransactionBuilder::new().finish();
-        let data = TransactionData::new(
-            TransactionKind::ProgrammableTransaction(pt),
-            SuiAddress::ZERO,
-            (
-                ObjectID::ZERO,
-                SequenceNumber::from(0u64),
-                ObjectDigest::MIN,
-            ),
-            0,
-            0,
-        );
-        Transaction::from_data(data, vec![])
     }
 
     // -- helpers + provider for the verified-walk tests (7 & 8) -------------------------------
