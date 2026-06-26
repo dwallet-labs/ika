@@ -137,12 +137,16 @@ ika_dwallet_coordinator_object_id}` (config-pinned, trusted).
 
 ## Plan / actions
 
-- [ ] **`ocs-binding-1` (HOP-4):** bind the `pending_active_set` ExtendedField child —
-      after listing+reading the child, assert its proof-bound `Owner` is the wrapper id
-      (`entry.owner == pending_active_set_id`), converting hop (c) → (b) and matching
-      invariant #5. (We *list* rather than *derive* because the `Key()` child-id
-      derivation produced a wrong id earlier; the owner-check is the right binding
-      regardless.) Tracked in the review.
+- [x] **`ocs-binding-1` (HOP-4):** DONE (`ade5d7cd55`). After listing+reading the child,
+      its proof-bound `Owner` is asserted == the wrapper id, converting hop (c) → (b) and
+      matching invariant #5. Shipped as a *shared* primitive
+      `transport::dynamic_field_child_owned_by` (extracted from `verified_bag_page`, which
+      now calls it too). **Layer correction:** the bind lives at the gRPC backend's
+      `get_extended_field_value_bcs`, NOT the verified-reader layer this plan first assumed —
+      `transport.get_object` already returns the proof-bound `Owner` there on a peer-only
+      node (`VerifiedSuiTransport::get_object -> verified.object`), so no new reader method
+      or caller routing was needed. (We *list* rather than *derive* because the `Key()`
+      child-id derivation produced a wrong id earlier; the owner-check binds regardless.)
 - [ ] **(consider) Q3 type assertion:** enforce a Move type/package assert at the
       verified-read surface (an optional `expected_type` on
       `verified_object`/`verified_*_inner`), or document the consumer obligation —

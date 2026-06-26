@@ -83,25 +83,27 @@ ika_dwallet_coordinator_object_id}`) by a chain of *bound* hops. Each hop is one
         │     StakingPools ✓
         │
         └─ pending_active_set: ExtendedField
-                 │ (c) UNBOUND ☠  listed, not derived/owner-checked
-                 ▼                 (discovery-only, LOW impact; ocs-binding-1)
-              PendingActiveSet
+                 │ (b) owner-bound  (child Owner == wrapper UID; ocs-binding-1)
+                 ▼
+              PendingActiveSet ✓
 ```
 
-Every trust-critical read is (a) or (b): the versioned `*Inner` children are **derived**;
-the active/next/previous committees and the quorum are **inline** in the proven
-`SystemInner` bytes; the validator `StakingPool`s and the `session_events` entries are
-**owner-bound**. The one **(c)** hop is the `pending_active_set` `ExtendedField` read
-(`get_extended_field_value_bcs` lists the wrapper's single field and reads `.first()`
-with no owner-check) — a known gap, LOW impact (it feeds *discovery only*, and resolved
-peers still pass `validator_info.verify()`), tracked as `ocs-binding-1` (see *Residuals*).
+Every hop is now (a) or (b): the versioned `*Inner` children are **derived**; the
+active/next/previous committees and the quorum are **inline** in the proven `SystemInner`
+bytes; and the validator `StakingPool`s, the `session_events` entries, AND the
+`pending_active_set` `ExtendedField` value are **owner-bound**. The last was the one gap
+(`get_extended_field_value_bcs` listed the wrapper's single field and read `.first()`
+without an owner-check) — closed by `ocs-binding-1` via the shared
+`transport::dynamic_field_child_owned_by` (the same primitive `verified_bag_page` uses):
+the proof-bound child `Owner` must equal the wrapper id.
 
 **Type-correctness follows from id-binding.** The inclusion proof binds the object's
 Move type (it is inside the proof-bound `ObjectDigest`), so a correctly-bound id yields a
 correctly-typed object — the consumer does not *separately* assert the type
 (`bcs::from_bytes` is structural); only the event path re-checks the `StructTag` against
-the pinned ika package. A relay-chosen id (the (c) hop) is the only place a same-layout
-wrong object could slip in, and the fix for that is the owner-binding, not a type assert.
+the pinned ika package. With every hop now bound, a same-layout wrong object can't be
+substituted at a relay-chosen id either; that residual was closed by the same
+owner-binding, not by a separate type assert.
 
 ## Node roles and transports
 
@@ -506,16 +508,6 @@ over the relay and re-verifying it per read.
   gap detectable — but does not fully close it; the absolute mitigations
   (an enabled freshness bound, multiple independent relays) are still not
   active today.
-- **`pending_active_set` read is owner-UNBOUND** (`ocs-binding-1`): the only object-graph
-  hop that is neither derived nor owner-bound — `get_extended_field_value_bcs` lists the
-  `ExtendedField` wrapper's single dynamic field and reads `.first()` without checking the
-  proven child's `Owner == pending_active_set_id`. Impact is LOW (discovery-only; the set
-  feeds `known_peers` and resolved peers still pass `validator_info.verify()`; consensus
-  state rides the inline, bound committees). Fix: extract the `verified_bag_page` owner-check
-  into a reusable `verify_dynamic_field_entry_binding` and route this read through the
-  verified-reader layer (where the proof-bound `Owner` is available — the `SuiClientInner`
-  layer only sees raw bytes). See
-  [`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md).
 - **`compiled_in_trusted_anchor`** returns `None` for all chains; when
   release tooling fills it, every old-style config on that chain would
   gain `has_anchor` and trip the anchor-without-data-source guard —

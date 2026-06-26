@@ -26,11 +26,15 @@ synthesized. 27 agents; 14 raw findings, **11 survived** verification, 3 refuted
 
 The findings below were written at `72e3c76f78`; each was re-checked against the
 current tree. **The one MUST-FIX (`mpc-consensus-1`) is resolved** (`ff3feba0f6`).
-Tally: **1 fixed · 2 partially fixed · 9 open** — every open item is LOW/MEDIUM;
-nothing is merge-blocking by the review's own bar. (One new finding,
-`ocs-binding-1`, was added 2026-06-26 from the read-path binding review —
-[`../plans/ocs-read-binding-and-verification.md`](../plans/ocs-read-binding-and-verification.md).)
-Landed *since* the review and
+Tally (updated 2026-06-26 after the cleanup pass): **7 fixed · 1 partially fixed · 4
+open** — the whole pre-merge cleanup bundle (`ocs-verifier-core-1`, `spec-conformance-1`,
+`authority-epoch-1`, `node-config-2`, `ocs-transport-1`) plus `ocs-binding-1` landed
+(commits `857ffdd645`..`ade5d7cd55`, tracked in
+[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md)).
+Remaining: `network-mirror-1` (open), `network-mirror-2` (consumer bound, partial),
+`ocs-cache-committee-1` (open), `ocs-ingest-2`+`ocs-wiring-1` (open) — all LOW/MEDIUM,
+none merge-blocking. (`ocs-binding-1` was itself added 2026-06-26 from the read-path
+binding review.) Landed *since* the original review and
 **not** covered by it (all green): continuous trusted-peer discovery, the
 changeset-stream currency gate (now live on mirrored/peer-only nodes), and the
 cross-Sui-epoch committee-ratchet tests.
@@ -121,12 +125,12 @@ PR #1744  (feat/ocs-grpc-migration)
 | item | flow stage | status | sev | effort | call |
 |------|-----------|--------|-----|--------|------|
 | `mpc-consensus-1` orchestrator panic guard | ⑥ MPC orchestrator | **FIXED** (`ff3feba0f6`) | — | — | done |
-| `ocs-verifier-core-1` batch read returns short set as `Ok` | ① read · gate **[D]** | open | LOW | 1 line | **fix before merge** |
-| `ocs-binding-1` `pending_active_set` child read unbound | ① read / ③ discovery | open | LOW | small | fix-soon (cheap; closes the only unbound hop) |
-| `spec-conformance-1` currency gate absent from the spec | ⑤ currency · gate **[E]** | partial (code live, spec stale) | MED | small (docs) | **fix before merge** |
-| `authority-epoch-1` false "deterministic" close comment | ④ close gate | open | MED | 1 comment | **fix before merge** (comment) |
-| `node-config-2` presign-pool env unguarded + false comment | startup / config | open | LOW | small | **fix before merge** |
-| `ocs-transport-1` mirror `execute_transaction` returns unverified effects | submit path (mirror transport) | open (dormant) | LOW | 1 line | **fix before merge** (fail-closed) |
+| `ocs-verifier-core-1` batch read returns short set as `Ok` | ① read · gate **[D]** | ✅ fixed | LOW | 1 line | done (`857ffdd645`) |
+| `ocs-binding-1` `pending_active_set` child read unbound | ① read / ③ discovery | ✅ fixed | LOW | small | done (`ade5d7cd55`) |
+| `spec-conformance-1` currency gate absent from the spec | ⑤ currency · gate **[E]** | ✅ fixed | MED | small (docs) | done (`12a52b700d` + spec) |
+| `authority-epoch-1` false "deterministic" close comment | ④ close gate | ✅ fixed | MED | 1 comment | done (`e8f39186d4`) |
+| `node-config-2` presign-pool env unguarded + false comment | startup / config | ✅ fixed | LOW | small | done (`9a7fe8494a`) |
+| `ocs-transport-1` mirror `execute_transaction` returns unverified effects | submit path (mirror transport) | ✅ fixed | LOW | 1 line | done (`dc9ff1d53e`) |
 | `network-mirror-1` `submit_transaction` / ckpt RPCs uncapped | DIRECT serving side | open | MED | small | fast-follow |
 | `network-mirror-2` consumer doesn't bound response length | ① read | partial (server caps in) | LOW | small | fast-follow (w/ ↑) |
 | `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | open | MED | small | fast-follow |
