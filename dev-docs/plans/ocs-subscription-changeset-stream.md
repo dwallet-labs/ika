@@ -541,14 +541,14 @@ There are exactly three currency-gated read entry points, each calling
 - single: `verified_object` → `check_currency(resp.object.id(), proof_seq)`
   (`verified_reader.rs:673`),
 - batch: `verified_objects` per slot (`:274`) — no application consumer today,
-- bag: `verified_bag_page` per entry (`:483`).
+- bag: `verified_dynamic_fields_page` per entry (`:483`).
 
 Id kinds: **(1,2)** the System and Coordinator outer roots are **static-known** from
 `IkaObjectsConfig` (`messages_dwallet_mpc.rs:813-820`). **(3,4)** the
 `SystemInnerV1` / `DWalletCoordinatorInnerV1` children are **version-derived**:
 `derive_versioned_child_id(root, outer.version)` (`transport.rs:48-52`), discovered
 by reading the verified outer. **(5)** the bag/dwallet entries are
-**fully dynamic**: `verified_bag_page` discovers each entry id only *after* the relay
+**fully dynamic**: `verified_dynamic_fields_page` discovers each entry id only *after* the relay
 returns the page, runs the OCS inclusion proof (`verified_reader.rs:434`) and the
 membership-Owner binding (`:457-470`) on it, and only then — on the bound id — both
 **enqueues `add_id(entry.object.id())`** into the subscription registry (§5.4
@@ -584,26 +584,26 @@ currency gate (see the admission invariant below).
 >
 > **(B) Bag-path binding-checked enqueue (the dynamic class-5 ids).** An `ObjectID`
 > enters the subscription registry as a verified child of a pinned bag **only** when
-> admitted **lexically inside `verified_bag_page`** *after* both the OCS inclusion
+> admitted **lexically inside `verified_dynamic_fields_page`** *after* both the OCS inclusion
 > proof (`verified_reader.rs:434`) and the membership-Owner binding (`:457-470`)
 > have passed — `Owner::ObjectOwner(addr)` of the proof-verified object must equal
 > the pinned `bag_id` or derive to its `Field<Wrapper<K>, ID>` wrapper id. The
 > enrollment site is the bag walk itself: on the bound id, between the binding
 > success (`:470`) and the existing `check_currency` call (`:483`),
-> `verified_bag_page` enqueues `add_id(entry.object.id())` to the registry.
+> `verified_dynamic_fields_page` enqueues `add_id(entry.object.id())` to the registry.
 >
 > Neither site routes through the shared currency helper. **`add_id` is NOT enqueued
 > from `check_currency`.** `check_currency(id, anchored_seq)` is a
 > single helper invoked from **three** sites — single `verified_object`
-> (`:673`), batch `verified_objects` (`:274`), and bag `verified_bag_page` (`:483`)
+> (`:673`), batch `verified_objects` (`:274`), and bag `verified_dynamic_fields_page` (`:483`)
 > — and it carries **no provenance**: its arguments are only `(id, anchored_seq)`,
 > so it cannot tell a binding-checked bag child from a relay-chosen id that a
 > single or batch read happened to verify-and-gate. Were enrollment placed there,
 > a single/batch read of a foreign id — or the verified `list_dynamic_fields`
-> surface (`verified_transport.rs:165`, which *is* `verified_bag_page` but is also
+> surface (`verified_transport.rs:165`, which *is* `verified_dynamic_fields_page` but is also
 > consumed raw via `pull_dwallet_mpc_uncompleted_events`,
 > `sui_syncer.rs:269`) feeding an unbound id — could name an id into the registry.
-> Pinning admission to the post-binding line of `verified_bag_page` closes that:
+> Pinning admission to the post-binding line of `verified_dynamic_fields_page` closes that:
 > the single (`:673`) and batch (`:274`) read sites do **not** admit, and the
 > relay's raw `list_dynamic_fields`/`list_dynamic_fields`-style listing
 > (`fallback_transport.rs:102`) — which has no membership-Owner binding — **never**
@@ -851,8 +851,8 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
    version-derived, not relay-listed, §5.1).
 
    **(B) Bag-path binding-checked enqueue (dynamic bag/dwallet children).** This
-   enrollment is wired **lexically into `verified_bag_page`**. Inside
-   `verified_bag_page`, once an entry has cleared
+   enrollment is wired **lexically into `verified_dynamic_fields_page`**. Inside
+   `verified_dynamic_fields_page`, once an entry has cleared
    the OCS inclusion proof (`verified_reader.rs:434`) and the membership-Owner
    binding (`:457-470`), the reader enqueues `add_id(entry.object.id())` to the
    subscription registry over a **bounded, non-blocking channel** (so a bag read
@@ -872,7 +872,7 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
    candidate id that did not arrive through the bag-path binding-checked enqueue —
    there is no API by which a relay listing (the raw `list_dynamic_fields` of
    `fallback_transport.rs:102`), a single/batch read, or a future caller
-   short-cutting `verified_bag_page` adds an id directly.
+   short-cutting `verified_dynamic_fields_page` adds an id directly.
 
    **Channel-full must never be a silent subscription loss (red-team fix).** An
    unbounded channel is forbidden (`clippy.toml`: *"use a bounded channel
@@ -920,18 +920,18 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
         `bag_event_pump.rs:104-122` does (these container ids are themselves
         version-derived children of the verified `DWalletCoordinatorInner`, §5.1, so
         the walk cannot be steered at a relay-named bag).
-     2. For each container, page through `reader.verified_bag_page(bag_id, page_size,
+     2. For each container, page through `reader.verified_dynamic_fields_page(bag_id, page_size,
         page_token)` (`verified_reader.rs:360`, already `pub`) to exhaustion, taking
         `entry.object.id()` of each returned `VerifiedObject`.
      3. Enroll (`add_id`, idempotent) every walked id **not already in the
         registry**; touch nothing else.
 
      **Why this enforces the registry-admission invariant (§5.1).** Every id the
-     re-walk yields has, inside `verified_bag_page`, already cleared the OCS inclusion
+     re-walk yields has, inside `verified_dynamic_fields_page`, already cleared the OCS inclusion
      proof (`verified_reader.rs:434`), the membership-Owner binding (`:457-470` — its
      proof-verified `Owner::ObjectOwner` must equal the pinned `bag_id` or derive to
      its `Field<Wrapper<K>, ID>` wrapper id), and the currency gate (`:483`) before
-     `verified_bag_page` returns it as a `VerifiedObject`. So reconciliation **only
+     `verified_dynamic_fields_page` returns it as a `VerifiedObject`. So reconciliation **only
      adds binding-checked ids** — it is the identical admission path as a live read
      firing `add_id` (§5.4 SUBSCRIBE), never a raw relay listing. This is deliberately
      *not* the alternative of broadcasting `BagEventPump`'s listed set: that set is
@@ -948,7 +948,7 @@ dispatches to `currency_subscribed` for ids governed by a subscription index and
      bounded retry — a dropped `add_id` re-enrolls on the next reconcile tick rather
      than waiting for a fresh read to re-fire `add_id`. (The walk is the same paged
      traversal `BagEventPump` already runs every tick, so it adds no new trust surface
-     and no new transport, only a second consumer of the existing `verified_bag_page`
+     and no new transport, only a second consumer of the existing `verified_dynamic_fields_page`
      RPC; its cost is one bag walk per reconcile interval, which can run at a coarser
      cadence than the §5.4 enqueue path since it is repair, not the primary enrollment
      trigger.)
@@ -2271,11 +2271,11 @@ direct/pre-catchup nodes.
   forbidden no-predecessor self-bootstrap (§8 step 2). Bounded `add_id` channel fed by
   the read path. The receiver holds `Arc<OcsVerifiedReader>` + a clone of
   `coordinator_rx` so its reconcile tick can re-walk the pinned bag containers via
-  `reader.verified_bag_page` (§5.4 SUBSCRIBE reconcile), with no new accessor on
+  `reader.verified_dynamic_fields_page` (§5.4 SUBSCRIBE reconcile), with no new accessor on
   `BagEventPump`.
 
 **Phase 5 — read-path wiring (subscription growth).**
-- In `verified_reader.rs::verified_bag_page`, **after** the membership-Owner
+- In `verified_reader.rs::verified_dynamic_fields_page`, **after** the membership-Owner
   binding passes (`:457-470`) and **before/at** the existing
   `check_currency(entry.object.id(), seq)` (`:483`), enqueue
   `add_id(entry.object.id())` non-blocking on the bound id. This is the **sole**
@@ -2539,14 +2539,14 @@ direct/pre-catchup nodes.
     (`ika_system_object_id`, `ika_dwallet_coordinator_object_id` from `IkaObjectsConfig`)
     via the static-pin enrollment (§5.1 site A, §5.4 SUBSCRIBE (A)), each with
     `subscribed_at_seq = seed.seq` and `floor = None`, with **no** bag walk having run
-    (no `add_id` from `verified_bag_page`). Then fold a single checkpoint at `seed.seq+1`
+    (no `add_id` from `verified_dynamic_fields_page`). Then fold a single checkpoint at `seed.seq+1`
     that modifies **only** a root (a `Modified` proof for that root id, the cohort's
     other pinned ids `Absent`): assert `highest_contiguous_seq()` advances from the seed
     to `seed.seq+1` driven by the root's own proof alone — i.e. the static-pin enrollment
     is what keeps a root in the cohort `ids` so a root-only checkpoint still produces an
     entry that advances the shared head — and that the modified root's `coverage.floor`
     is set to `seed.seq+1` (`> seed.seq`, §5.2). Assert the roots are exempt from the
-    bag-only admission invariant: they entered the registry with no `verified_bag_page`
+    bag-only admission invariant: they entered the registry with no `verified_dynamic_fields_page`
     binding and are never GC'd (§5.4).
 23. **Coverage prune drops aged non-pinned ids but keeps pinned roots/inners.** Fold
     past the retain window; assert a dynamic id whose `head` fell below the floor has
@@ -2570,16 +2570,16 @@ direct/pre-catchup nodes.
     exceeds `registry.len()` at any tick — the map does not grow monotonically the way
     it would if `prune` ignored it. (Guards against a verbatim-copy of `prune` that
     sweeps only `self.index`.)
-28. **Registry admission only from `verified_bag_page`.** Drive a single
+28. **Registry admission only from `verified_dynamic_fields_page`.** Drive a single
     `verified_object` read (`:673`) and a batch `verified_objects` read (`:274`) of an
     id that is NOT a bag child; assert the subscription registry remains empty
     afterward (no `add_id` fired) — enrollment never happens off the single/batch paths.
-29. **Registry admission after binding only.** In `verified_bag_page`, feed an entry
+29. **Registry admission after binding only.** In `verified_dynamic_fields_page`, feed an entry
     whose membership-Owner binding FAILS (owner `!= bag_id` and not the derived wrapper
-    id) so the call returns `BagMembership`; assert no `add_id` was enqueued for that
+    id) so the call returns `DynamicFieldMembership`; assert no `add_id` was enqueued for that
     entry's id (admission is strictly downstream of the binding, never on a rejected
     entry).
-30. **Registry admission on a bound bag child.** Feed a `verified_bag_page` entry that
+30. **Registry admission on a bound bag child.** Feed a `verified_dynamic_fields_page` entry that
     passes inclusion + membership-Owner binding; assert exactly one idempotent
     `add_id(entry.object.id())` enqueue for the bound id, recorded with
     `subscribed_at_seq = contiguous head` and `floor = None`, and that re-walking the
@@ -2587,13 +2587,13 @@ direct/pre-catchup nodes.
 31. **`list_dynamic_fields` relay listing does not admit.** Route a relay-chosen
     foreign id through the raw `list_dynamic_fields`/`pull_dwallet_mpc_uncompleted_events`
     path that does not carry the membership-Owner binding; assert the registry does not
-    admit it (only the binding-checked `verified_bag_page` admits).
+    admit it (only the binding-checked `verified_dynamic_fields_page` admits).
 32. **Reconciliation re-walk admits only binding-checked ids.** Stand up a
     `SubscribedChangesetReceiver` whose registry is missing an id that the verified bag
     walk lists; assert the reconcile tick enrolls exactly that id, and that an id the
     relay tries to inject WITHOUT a passing membership-Owner binding (a
-    `verified_bag_page` entry that fails `:457-470`) never reaches the registry —
-    `verified_bag_page` errors it out before `entry.object.id()` is taken.
+    `verified_dynamic_fields_page` entry that fails `:457-470`) never reaches the registry —
+    `verified_dynamic_fields_page` errors it out before `entry.object.id()` is taken.
 33. **Reconciliation never GC's on a relay-driven shrink.** A bag page that omits a
     previously-enrolled child does NOT remove it from the registry (trust-independent
     direction), it only adds; assert registry membership is monotone under
@@ -2720,7 +2720,7 @@ direct/pre-catchup nodes.
   GC) and raises the churn alarm.
 - Burst `add_id` overflow increments
   `ika_ocs_subscription_enqueue_dropped_total`, and the next receiver tick re-walks
-  the pinned bag containers via `reader.verified_bag_page` and enrolls the dropped id
+  the pinned bag containers via `reader.verified_dynamic_fields_page` and enrolls the dropped id
   (the burst is not a permanent subscription loss); a drop that never reconciles fails
   the health gate.
 

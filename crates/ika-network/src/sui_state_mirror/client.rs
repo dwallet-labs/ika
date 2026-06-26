@@ -42,8 +42,8 @@ use ika_sui_client::transport::{
 };
 
 use crate::proof_provider::{
-    BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics, VerifiedBagPageRequest,
-    VerifiedBagPageResponse, VerifiedObjectResponse,
+    BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics,
+    VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
 };
 
 use super::{
@@ -294,21 +294,21 @@ impl ProofProvider for SuiMirrorProofProvider {
         result
     }
 
-    async fn verified_bag_page(
+    async fn verified_dynamic_fields_page(
         &self,
-        request: VerifiedBagPageRequest,
-    ) -> Result<VerifiedBagPageResponse, TransportError> {
+        request: VerifiedDynamicFieldsPageRequest,
+    ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
         let started = std::time::Instant::now();
-        self.record_relay_request("verified_bag_page");
+        self.record_relay_request("verified_dynamic_fields_page");
         let result = self
             .peers
-            .try_peers("verified_bag_page", move |c| {
+            .try_peers("verified_dynamic_fields_page", move |c| {
                 let req = Request::new(request.clone());
-                Box::pin(async move { c.verified_bag_page(req).await })
+                Box::pin(async move { c.verified_dynamic_fields_page(req).await })
             })
             .await
-            .inspect_err(|e| self.record_relay_failure("verified_bag_page", e));
-        self.record_relay_latency("verified_bag_page", started);
+            .inspect_err(|e| self.record_relay_failure("verified_dynamic_fields_page", e));
+        self.record_relay_latency("verified_dynamic_fields_page", started);
         result
     }
 }
@@ -472,7 +472,7 @@ impl SuiTransport for SuiMirrorTransport {
     ) -> Result<DynamicFieldPage, TransportError> {
         Err(TransportError::Network(
             "list_dynamic_fields is not exposed by the verified mirror \
-             surface; use ProofProvider::verified_bag_page instead"
+             surface; use ProofProvider::verified_dynamic_fields_page instead"
                 .into(),
         ))
     }

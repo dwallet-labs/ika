@@ -464,7 +464,7 @@ pub async fn build_sui_connector_stack(
 
     // 5. sui-state-direct relay server (Some iff configured to serve): exposes
     //    the verified-read RPCs (VerifiedObject / BatchVerifiedObjects /
-    //    VerifiedBagPage) to mirrored and peer-only peers.
+    //    VerifiedDynamicFieldsPage) to mirrored and peer-only peers.
     let mirror_server = if mirror_capable
         && matches!(
             cfg.sui_data_source,

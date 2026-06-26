@@ -13,7 +13,7 @@
 //! [`SuiTransport`] the gRPC backend expects:
 //!
 //! - **objects + dynamic fields** are served by [`OcsVerifiedReader`], whose
-//!   `verified_object` / `verified_bag_page` check each object against the
+//!   `verified_object` / `verified_dynamic_fields_page` check each object against the
 //!   committee via an inclusion proof. Object reads are *version-tracked*
 //!   (the reader's per-object high-water mark): an inclusion proof only shows
 //!   the object existed at *some* checkpoint, so without monotonicity a
@@ -170,7 +170,7 @@ impl SuiTransport for VerifiedSuiTransport {
     ) -> Result<DynamicFieldPage, TransportError> {
         let page = self
             .reader
-            .verified_bag_page(parent, page_size, page_token)
+            .verified_dynamic_fields_page(parent, page_size, page_token)
             .await
             .map_err(Self::read_err)?;
         // The verified bag surface carries object identity, not the field-name
@@ -218,8 +218,8 @@ mod tests {
     use super::*;
 
     use ika_network::proof_provider::{
-        BatchVerifiedObjectsResponse, ProofProvider, VerifiedBagPageRequest,
-        VerifiedBagPageResponse, VerifiedObjectResponse,
+        BatchVerifiedObjectsResponse, ProofProvider, VerifiedDynamicFieldsPageRequest,
+        VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
     };
     use sui_types::committee::Committee as SuiCommittee;
 
@@ -247,10 +247,10 @@ mod tests {
         ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
             Err(TransportError::Network("provider down".into()))
         }
-        async fn verified_bag_page(
+        async fn verified_dynamic_fields_page(
             &self,
-            _request: VerifiedBagPageRequest,
-        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
             Err(TransportError::Network("provider down".into()))
         }
     }
@@ -535,7 +535,7 @@ mod tests {
     /// first read — exactly matching the one-read-per-id walk shape.
     struct MapProvider {
         objects: Mutex<HashMap<ObjectID, VerifiedObjectResponse>>,
-        bag: Mutex<Option<VerifiedBagPageResponse>>,
+        bag: Mutex<Option<VerifiedDynamicFieldsPageResponse>>,
     }
 
     impl MapProvider {
@@ -549,7 +549,7 @@ mod tests {
             self.objects.lock().unwrap().insert(id, resp);
             self
         }
-        fn with_bag(self, resp: VerifiedBagPageResponse) -> Self {
+        fn with_bag(self, resp: VerifiedDynamicFieldsPageResponse) -> Self {
             *self.bag.lock().unwrap() = Some(resp);
             self
         }
@@ -573,10 +573,10 @@ mod tests {
         ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
             Err(TransportError::Network("batch not staged".into()))
         }
-        async fn verified_bag_page(
+        async fn verified_dynamic_fields_page(
             &self,
-            _request: VerifiedBagPageRequest,
-        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
             self.bag
                 .lock()
                 .unwrap()
@@ -731,15 +731,14 @@ mod tests {
     #[tokio::test]
     async fn list_dynamic_fields_returns_empty_name_metadata() {
         let (committee, keys) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x40);
+        let parent_id = ObjectID::from_single_byte(0x40);
         let entry_id = ObjectID::from_single_byte(0x41);
-        let entry_obj = test_object(entry_id, 1, Owner::ObjectOwner(bag_id.into()));
+        let entry_obj = test_object(entry_id, 1, Owner::ObjectOwner(parent_id.into()));
         let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&entry_obj], &entry_obj);
 
         // The relay carries field-name metadata, but the verified surface must
         // strip it: stage an entry whose name metadata is non-empty upstream.
-        let bag = VerifiedBagPageResponse {
-            bag: None,
+        let bag = VerifiedDynamicFieldsPageResponse {
             summaries: BTreeMap::from([(100u64, summary)]),
             entries: vec![VerifiedObjectEntry {
                 object: entry_obj,
@@ -755,7 +754,7 @@ mod tests {
         let (_dir, transport) = transport_over_with_committee(provider, committee);
 
         let page = transport
-            .list_dynamic_fields(bag_id, None, None)
+            .list_dynamic_fields(parent_id, None, None)
             .await
             .unwrap();
         assert_eq!(page.entries.len(), 1);

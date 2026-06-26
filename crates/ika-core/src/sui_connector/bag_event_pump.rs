@@ -5,7 +5,7 @@
 //!
 //! Each tick reads the two `session_events` bag IDs out of the current
 //! `DWalletCoordinatorInner`, walks them through
-//! [`OcsVerifiedReader::verified_bag_page`] (every entry comes back with
+//! [`OcsVerifiedReader::verified_dynamic_fields_page`] (every entry comes back with
 //! an OCS inclusion proof we verify against `CommitteeStore`), diffs
 //! against the previous tick's set of bag-entry `ObjectID`s, and emits:
 //!
@@ -73,7 +73,7 @@ impl BagEventPump {
         metrics: Arc<OcsMetrics>,
         poll_interval: Duration,
     ) -> Self {
-        let detect_omission = reader.bag_source_is_untrusted();
+        let detect_omission = reader.relay_source_is_untrusted();
         Self {
             reader,
             network_config,
@@ -192,7 +192,7 @@ impl BagEventPump {
         loop {
             let page = self
                 .reader
-                .verified_bag_page(bag_id, Some(256), page_token)
+                .verified_dynamic_fields_page(bag_id, Some(256), page_token)
                 .await?;
             listed += page.entries.len() as u64;
             for verified in page.entries {

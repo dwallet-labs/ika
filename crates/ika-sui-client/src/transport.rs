@@ -262,7 +262,7 @@ mod tests {
     /// `K` — re-wrapping must change the id, and the result must equal the
     /// canonical `Wrapper<K>` derivation Sui's `dynamic_object_field::add`
     /// uses on-chain. This is what binds an ObjectTable/ObjectBag entry to its
-    /// parent in `verified_bag_page`; a regression that dropped the wrapper
+    /// parent in `verified_dynamic_fields_page`; a regression that dropped the wrapper
     /// would silently let a relay substitute a foreign-owned entry.
     #[test]
     fn wrapper_id_re_wraps_and_matches_the_object_field_layout() {

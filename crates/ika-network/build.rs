@@ -259,10 +259,10 @@ fn build_anemo_services(out_dir: &Path) {
         )
         .method(
             anemo_build::manual::Method::builder()
-                .name("verified_bag_page")
-                .route_name("VerifiedBagPage")
-                .request_type("crate::proof_provider::VerifiedBagPageRequest")
-                .response_type("crate::proof_provider::VerifiedBagPageResponse")
+                .name("verified_dynamic_fields_page")
+                .route_name("VerifiedDynamicFieldsPage")
+                .request_type("crate::proof_provider::VerifiedDynamicFieldsPageRequest")
+                .response_type("crate::proof_provider::VerifiedDynamicFieldsPageResponse")
                 .codec_path(codec_path)
                 .build(),
         )

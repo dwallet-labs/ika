@@ -40,7 +40,7 @@ technically unblocked; the cheap cluster below is worth landing first.
 
 - [x] **`ocs-binding-1`** — bound the `pending_active_set` ExtendedField read (the only
       unbound object-graph hop). Shipped a shared `transport::dynamic_field_child_owned_by`
-      (extracted from `verified_bag_page`, which now calls it) and bound the ExtendedField
+      (extracted from `verified_dynamic_fields_page`, which now calls it) and bound the ExtendedField
       child in the gRPC backend's `get_extended_field_value_bcs`. **Layer correction vs the
       design:** the bind lives at the gRPC backend, NOT the verified-reader layer — `get_object`
       already returns the proof-bound `Owner` there on a peer-only node, so no new reader

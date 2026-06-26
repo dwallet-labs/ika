@@ -265,7 +265,7 @@ impl SuiClientInner for GrpcSuiClient {
     }
 
     /// Unsupported on the gRPC backend: OCS ingests session events via the
-    /// `BagEventPump` (`verified_bag_page`), which binds every entry to its
+    /// `BagEventPump` (`verified_dynamic_fields_page`), which binds every entry to its
     /// parent bag (spec invariant 5). The recovery walk this replaced read each
     /// entry with an inclusion-only `get_object` and SKIPPED that
     /// collection-membership binding, so a relay could have injected a

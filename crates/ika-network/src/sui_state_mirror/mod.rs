@@ -40,8 +40,8 @@ use sui_types::messages_checkpoint::{
 };
 
 use crate::proof_provider::{
-    BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics, VerifiedBagPageRequest,
-    VerifiedBagPageResponse, VerifiedObjectResponse,
+    BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics,
+    VerifiedDynamicFieldsPageRequest, VerifiedDynamicFieldsPageResponse, VerifiedObjectResponse,
 };
 
 pub use client::{SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport};
@@ -304,17 +304,17 @@ impl SuiStateMirror for Server {
         self.serve_end("batch_verified_objects", started);
         Ok(Response::new(v))
     }
-    async fn verified_bag_page(
+    async fn verified_dynamic_fields_page(
         &self,
-        request: Request<VerifiedBagPageRequest>,
-    ) -> Result<Response<VerifiedBagPageResponse>, Status> {
-        let started = self.serve_start("verified_bag_page", request.peer_id().copied());
+        request: Request<VerifiedDynamicFieldsPageRequest>,
+    ) -> Result<Response<VerifiedDynamicFieldsPageResponse>, Status> {
+        let started = self.serve_start("verified_dynamic_fields_page", request.peer_id().copied());
         let v = self
             .provider
-            .verified_bag_page(request.into_inner())
+            .verified_dynamic_fields_page(request.into_inner())
             .await
             .map_err(map_err)?;
-        self.serve_end("verified_bag_page", started);
+        self.serve_end("verified_dynamic_fields_page", started);
         Ok(Response::new(v))
     }
 }
@@ -327,7 +327,7 @@ impl SuiStateMirror for Server {
 /// retries). Per-request size is also capped in `proof_provider.rs`.
 const INFLIGHT_VERIFIED_OBJECT: usize = 256;
 const INFLIGHT_BATCH_VERIFIED_OBJECTS: usize = 64;
-const INFLIGHT_VERIFIED_BAG_PAGE: usize = 64;
+const INFLIGHT_VERIFIED_DYNAMIC_FIELDS_PAGE: usize = 64;
 const INFLIGHT_GET_FULL_CHECKPOINT: usize = 32;
 const INFLIGHT_CHANGESET_PAGE: usize = 16;
 /// The checkpoint/transaction lookups a peer-only node's committee ratchet makes
@@ -369,7 +369,9 @@ pub fn make_server(
         // verified reads
         .add_layer_for_verified_object(inflight!(INFLIGHT_VERIFIED_OBJECT))
         .add_layer_for_batch_verified_objects(inflight!(INFLIGHT_BATCH_VERIFIED_OBJECTS))
-        .add_layer_for_verified_bag_page(inflight!(INFLIGHT_VERIFIED_BAG_PAGE))
+        .add_layer_for_verified_dynamic_fields_page(inflight!(
+            INFLIGHT_VERIFIED_DYNAMIC_FIELDS_PAGE
+        ))
         .add_layer_for_get_full_checkpoint(inflight!(INFLIGHT_GET_FULL_CHECKPOINT))
         .add_layer_for_changeset_page(inflight!(INFLIGHT_CHANGESET_PAGE))
         // committee-ratchet checkpoint / transaction lookups (were uncapped)

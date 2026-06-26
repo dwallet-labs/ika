@@ -39,7 +39,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 ### Fixed
 
 1. **[high] Bag-page entries not bound to the requested collection.**
-   `verified_reader.rs::verified_bag_page` proved each entry on-chain but did
+   `verified_reader.rs::verified_dynamic_fields_page` proved each entry on-chain but did
    not bind it to `bag_id`, so a malicious relay could inject validly-proven
    dynamic fields of a *different* collection (e.g. replayed session events,
    or a foreign network-encryption-key). Anchor:
@@ -141,7 +141,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 
 12. **[low] Failure-observability gaps on batch/bag verify paths.** Only
     inclusion-proof and batch id-mismatch failures increment
-    `proof_verify_failures_total`; BagMembership, BLS-summary, freshness, and
+    `proof_verify_failures_total`; DynamicFieldMembership, BLS-summary, freshness, and
     decode failures on the batch/bag paths leave no metric trail. Anchor:
     `crates/ika-core/src/sui_connector/verified_reader.rs`,
     `ocs_metrics.rs`. RESOLUTION (`384dce3f18`): added a `record_fail` helper
@@ -154,7 +154,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
 ### Open
 
 13. **[medium] Security-critical paths have zero negative/adversarial tests.**
-    Proof rejection, high-water rollback, the BagMembership binding, and the
+    Proof rejection, high-water rollback, the DynamicFieldMembership binding, and the
     legacy-JSON-RPC vs new-style gate truth-table are exercised only by
     happy-path cluster tests — nothing asserts they *reject* forged, stale, or
     foreign-owned input, so a future weakening of any proof or gate check
@@ -167,7 +167,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
     - **freshness bound** — `freshness_rejects_a_checkpoint_too_far_behind_the_head`
       (exact `gap`/`bound` on `StaleCheckpoint`) and
       `freshness_is_disabled_when_no_bound_is_set`.
-    - **BagMembership binding derivation** — `transport::tests` assert
+    - **DynamicFieldMembership binding derivation** — `transport::tests` assert
       `derive_object_field_wrapper_id` re-wraps `K` into `Wrapper<K>` (≠ bare
       `K`) and matches the canonical on-chain `dynamic_object_field` id.
 
@@ -189,7 +189,7 @@ Each finding: severity, anchor, and a RESOLUTION filled as addressed.
       (`…owned_by_the_bag…`) and one owned via the derived
       `Field<Wrapper<K>,ID>` (`…owned_via_the_object_field_wrapper…`); rejects a
       foreign `ObjectOwner` (`…owned_by_a_foreign_object…`) and an `AddressOwner`
-      (`…owned_by_an_address…`) → `BagMembership`.
+      (`…owned_by_an_address…`) → `DynamicFieldMembership`.
     Each rejection also asserts the `proof_verify_failures_total{kind,reason}`
     counter increments (finding 12's deferred metric-assert). Finding 6's fix
     added the ratchet error-classification negative test.

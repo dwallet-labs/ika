@@ -71,7 +71,7 @@ pinned ika package` + module), not on `verified_system_inner` /
         │
         ├─ verified_system_inner()        → bcs::from_bytes::<SystemInnerV1>  ✗ no type assert
         ├─ verified_dwallet_coordinator() → bcs::from_bytes::<…Inner>          ✗ no type assert
-        ├─ verified_bag_page()            → owner-bound ✓, type not asserted
+        ├─ verified_dynamic_fields_page()            → owner-bound ✓, type not asserted
         └─ [consumer] sui_event_into_request → ✓ asserts StructTag == pinned ika pkg + module
 ```
 
@@ -118,7 +118,7 @@ ika_dwallet_coordinator_object_id}` (config-pinned, trusted).
   epoch committee and quorum are fully bound.
 - **(b) Owner-bound:** validator `StakingPool`s and `session_events` children — each
   proven child's `Owner` is checked `== bag_id` (or the derived wrapper id), else
-  `BagMembership`.
+  `DynamicFieldMembership`.
 - **(c) Unbound — `pending_active_set`:** `get_extended_field_value_bcs` lists the
   wrapper's single dynamic field and reads `.first().object_id` with **no derive and
   no owner-check**. A relay chooses which child id you read.
@@ -140,7 +140,7 @@ ika_dwallet_coordinator_object_id}` (config-pinned, trusted).
 - [x] **`ocs-binding-1` (HOP-4):** DONE (`ade5d7cd55`). After listing+reading the child,
       its proof-bound `Owner` is asserted == the wrapper id, converting hop (c) → (b) and
       matching invariant #5. Shipped as a *shared* primitive
-      `transport::dynamic_field_child_owned_by` (extracted from `verified_bag_page`, which
+      `transport::dynamic_field_child_owned_by` (extracted from `verified_dynamic_fields_page`, which
       now calls it too). **Layer correction:** the bind lives at the gRPC backend's
       `get_extended_field_value_bcs`, NOT the verified-reader layer this plan first assumed —
       `transport.get_object` already returns the proof-bound `Owner` there on a peer-only

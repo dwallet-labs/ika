@@ -62,7 +62,7 @@ ika_dwallet_coordinator_object_id}`) by a chain of *bound* hops. Each hop is one
   (`derive_dynamic_field_id` / a versioned child id / an ObjectField `Wrapper<K>` id).
   The relay can't substitute because the reader chose the id.
 - **(b) OWNER-BOUND** — the child is proven, then its proof-bound `Owner` is checked
-  `== parent id` (or the derived wrapper id), else `ReaderError::BagMembership`.
+  `== parent id` (or the derived wrapper id), else `ReaderError::DynamicFieldMembership`.
 - **(c) UNBOUND** — the child id is taken from an untrusted `list_dynamic_fields` and
   read without deriving or owner-checking it: a relay chooses the id → substitution risk.
 
@@ -94,7 +94,7 @@ bytes; and the validator `StakingPool`s, the `session_events` entries, AND the
 `pending_active_set` `ExtendedField` value are **owner-bound**. The last was the one gap
 (`get_extended_field_value_bcs` listed the wrapper's single field and read `.first()`
 without an owner-check) — closed by `ocs-binding-1` via the shared
-`transport::dynamic_field_child_owned_by` (the same primitive `verified_bag_page` uses):
+`transport::dynamic_field_child_owned_by` (the same primitive `verified_dynamic_fields_page` uses):
 the proof-bound child `Owner` must equal the wrapper id.
 
 **Type-correctness follows from id-binding.** The inclusion proof binds the object's
@@ -179,7 +179,7 @@ mesh; and the notifier pushes write-back to Sui.
     **broadcast** across the p2p mesh.
 - **Pull** (the consumer requests, on demand) — **the entire relay is pull**:
   - *Peer-only → relay* — every verified read is request/response
-    (`verified_object` / `batch_verified_objects` / `verified_bag_page`). There is **no
+    (`verified_object` / `batch_verified_objects` / `verified_dynamic_fields_page`). There is **no
     push of verified state**: a direct node's pusher folds into its *own* cache only (the
     earlier push-gossip subsystem was removed).
   - *Changeset currency stream* — **polled** in contiguous pages
@@ -293,7 +293,7 @@ skip a checkpoint where an object changed. It rests on an id-binding
 non-inclusion primitive (verify neither neighbor leaf of the proof matches
 the target id, so absence cannot be forged for a present object). Every
 verified read — `verified_object`, `batch_verified_objects`,
-`verified_bag_page` — then consults the index as a fourth, read-**blocking**
+`verified_dynamic_fields_page` — then consults the index as a fourth, read-**blocking**
 gate: a read whose anchor predates the object's latest folded modification,
 or whose object is `Deleted`/`Wrapped` in the folded range, is rejected
 `ReaderError::NotCurrent` (metered `not_current`) even though the proof is
@@ -315,13 +315,25 @@ roll back below what it has already served this process. Fully closing the
 residual requires an enabled freshness bound and/or multiple independent
 relays.
 
-## Bag walks and the event pump
+## Verified dynamic-field enumeration (`verified_dynamic_fields_page`)
 
-The MPC engine's event source on the gRPC path is the `BagEventPump`,
-which walks the coordinator's `session_events` bags (≈20 Hz). A bag's
-children are dynamic-field objects; the relay enumerates them with an
-**untrusted** `list_dynamic_fields` index and serves each child with its
-own inclusion proof.
+`verified_dynamic_fields_page` is the relay's **generic verified
+enumeration** of a parent object's dynamic-field children. Given a parent
+`UID` it lists the children via an **untrusted** `list_dynamic_fields`
+index and serves each child with its own inclusion proof, paginated
+(`parent_id`, `page_size`, `page_token`). It is **not bag-specific** — at
+the Sui level a `Bag`, `Table`, `ObjectTable`, `ObjectBag`, and raw
+dynamic / dynamic-object fields are *all the same thing*: dynamic fields
+hanging off a `UID`. So this one RPC covers every dynamic-field-backed
+collection. The verified transport routes the gRPC backend's
+`list_dynamic_fields` through it, so every table/bag walk a peer-only node
+makes is committee-verified. The response also carries the field **key**
+(name type + BCS value) per entry, which the reader needs to bind
+dynamic-object-field values (below).
+
+Its primary consumer is the `BagEventPump`, the MPC engine's event source
+on the gRPC path, which walks the coordinator's `session_events` bags
+(≈20 Hz) — but the RPC itself is collection-agnostic.
 
 An inclusion proof alone only attests that an object existed on-chain —
 **not** that it is a child of the requested collection. Each entry is
@@ -329,23 +341,24 @@ therefore bound to its collection after the proof, using the entry's
 proof-bound owner (the owner is inside the proof-bound `ObjectDigest`).
 The binding depends on the collection kind:
 
-- A plain **Bag/Table** stores the value inline in a `Field<K, V>` owned
-  by the collection UID, so a genuine child's owner is
-  `Owner::ObjectOwner(bag_id)`.
-- An **ObjectTable/ObjectBag** stores the value as a separate object
-  pointed to by a `Field<Wrapper<K>, ID>`; `list_dynamic_fields` resolves
-  to that wrapped value object, which is owned by the `Field` wrapper, not
-  the collection. The genuine child's owner is therefore the wrapper id,
-  `derive_dynamic_field_id(bag_id, 0x2::dynamic_object_field::Wrapper<K>,
+- A plain **Bag/Table** (also a raw dynamic field) stores the value inline
+  in a `Field<K, V>` owned by the collection UID, so a genuine child's
+  owner is `Owner::ObjectOwner(parent_id)`.
+- An **ObjectTable/ObjectBag** (also a raw dynamic *object* field) stores
+  the value as a separate object pointed to by a `Field<Wrapper<K>, ID>`;
+  `list_dynamic_fields` resolves to that wrapped value object, which is
+  owned by the `Field` wrapper, not the collection. The genuine child's
+  owner is therefore the wrapper id,
+  `derive_dynamic_field_id(parent_id, 0x2::dynamic_object_field::Wrapper<K>,
   bcs(key))`. The relay carries the entry's key (name type + BCS value,
-  from `list_dynamic_fields`) on the verified bag-page response; the reader
+  from `list_dynamic_fields`) on the verified dynamic-fields-page response; the reader
   re-derives the wrapper id and matches it against the proven owner. The
   gRPC field visitor reports the *unwrapped* inner key type, so the reader
   re-wraps in `Wrapper<K>` before deriving (the BCS value is identical — a
   single-field `Wrapper` encodes as its inner value).
 
 The reader rejects any entry whose proven owner matches neither
-(`ReaderError::BagMembership`). The derivation is collision-resistant
+(`ReaderError::DynamicFieldMembership`). The derivation is collision-resistant
 against the committee-proven owner, so a relay cannot forge a key that
 derives to a foreign object's owner. Without this binding an untrusted
 relay could return a validly-proven dynamic field of a *different*

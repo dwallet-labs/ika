@@ -101,11 +101,11 @@ Each carries a RESOLUTION field; fill it in (with the fixing commit) as addresse
 5. **[LOW] `get_uncompleted_events` skips bag-membership binding (latent footgun,
    currently dead).** `grpc_backend.rs:236`. It walks an untrusted
    `list_dynamic_fields` and reads each entry via inclusion-only `verified_object`,
-   **not** `verified_bag_page` — so spec Invariant 5 (collection-ownership
+   **not** `verified_dynamic_fields_page` — so spec Invariant 5 (collection-ownership
    binding) is omitted. Confirmed **unreachable** on every untrusted-relay config:
    the only caller is spawned when `reader.is_none()`, which dispatches the
    JSON-RPC backend, not this gRPC one; OCS nodes use the `BagEventPump`
-   (`verified_bag_page`, binding enforced). **Fix:** make it return `Err(...)`
+   (`verified_dynamic_fields_page`, binding enforced). **Fix:** make it return `Err(...)`
    like the `query_events` stub, so an accidental future re-wiring fails loudly
    instead of accepting unbound entries. RESOLUTION: fixed in `5fd6b16ff8` —
    the gRPC `get_uncompleted_events` is now an `Err` stub mirroring `query_events`.

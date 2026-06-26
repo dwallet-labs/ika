@@ -48,21 +48,21 @@ use ika_sui_client::transport::{SuiTransport, TransportError};
 /// while still cutting off an abusive flood.
 const MAX_BATCH_OBJECTS: usize = 4096;
 
-/// Serving-side cap on `VerifiedBagPage` page size — one inclusion-proof build
+/// Serving-side cap on `VerifiedDynamicFieldsPage` page size — one inclusion-proof build
 /// per entry. The gRPC backend clamps too; this is the relay's own bound.
-const MAX_BAG_PAGE_SIZE: u32 = 1000;
+const MAX_DYNAMIC_FIELDS_PAGE_SIZE: u32 = 1000;
 
 /// Producer-side metrics for the `ProofProvider` layer. sui-state-direct nodes
 /// running [`LocalProofProvider`] populate the local-only counters
 /// (`*_built_total`, `tree_cache_*`); sui-state-mirrored nodes running
 /// `SuiMirrorProofProvider` populate the relay-call counters
-/// (`relay_*`). Both share `bag_walk_*` which counts at the wrapper
+/// (`relay_*`). Both share `dynamic_fields_walk_*` which counts at the wrapper
 /// layer.
 #[derive(Clone, Debug)]
 pub struct ProofProviderMetrics {
     // -- LocalProofProvider (sui-state-direct) --
     /// Inclusion proofs successfully constructed, by request kind.
-    pub proof_built_total: IntCounterVec, // labels: ["kind"="object"|"bag_page_entry"|"batch_entry"]
+    pub proof_built_total: IntCounterVec, // labels: ["kind"="object"|"dynamic_fields_page_entry"|"batch_entry"]
     /// Proof construction failures, by kind and reason.
     pub proof_build_failures_total: IntCounterVec, // labels: ["kind", "reason"]
     /// Times we found the per-checkpoint `ModifiedObjectTree` in cache
@@ -87,19 +87,19 @@ pub struct ProofProviderMetrics {
     /// validator see how much load the mirrored fleet puts on it.
     pub serve_request_total: IntCounterVec, // labels: ["op"]
     /// Relay requests served, attributed to the requesting peer (for the
-    /// object/bag/snapshot ops). Bounded-cardinality peer label.
+    /// object/dynamic-fields/snapshot ops). Bounded-cardinality peer label.
     pub serve_request_by_peer_total: IntCounterVec, // labels: ["op", "peer"]
     /// Serving-side handler latency, by op.
     pub serve_latency_seconds: HistogramVec, // labels: ["op"]
 
-    // -- Bag walk (both roles) --
-    /// Children scanned in `verified_bag_page` (across all pages).
-    pub bag_walk_entries_seen_total: IntCounter,
+    // -- Dynamic-field walk (both roles) --
+    /// Children scanned in `verified_dynamic_fields_page` (across all pages).
+    pub dynamic_fields_walk_entries_seen_total: IntCounter,
     /// Children successfully verified and returned.
-    pub bag_walk_entries_returned_total: IntCounter,
+    pub dynamic_fields_walk_entries_returned_total: IntCounter,
     /// Children skipped because their previous_transaction or object
     /// hadn't been indexed yet — picked up on the next tick.
-    pub bag_walk_entries_skipped_transient_total: IntCounter,
+    pub dynamic_fields_walk_entries_skipped_transient_total: IntCounter,
 
     // -- Static info gauges (set once at startup; value is always 1) --
     /// `role_info{role}` — set to 1 with the validator's role label.
@@ -197,20 +197,20 @@ impl ProofProviderMetrics {
                 registry,
             )
             .unwrap(),
-            bag_walk_entries_seen_total: register_int_counter_with_registry!(
-                "ika_ocs_bag_walk_entries_seen_total",
-                "Children scanned during a verified bag walk",
+            dynamic_fields_walk_entries_seen_total: register_int_counter_with_registry!(
+                "ika_ocs_dynamic_fields_walk_entries_seen_total",
+                "Children scanned during a verified dynamic-field walk",
                 registry,
             )
             .unwrap(),
-            bag_walk_entries_returned_total: register_int_counter_with_registry!(
-                "ika_ocs_bag_walk_entries_returned_total",
+            dynamic_fields_walk_entries_returned_total: register_int_counter_with_registry!(
+                "ika_ocs_dynamic_fields_walk_entries_returned_total",
                 "Children successfully verified and returned to the consumer",
                 registry,
             )
             .unwrap(),
-            bag_walk_entries_skipped_transient_total: register_int_counter_with_registry!(
-                "ika_ocs_bag_walk_entries_skipped_transient_total",
+            dynamic_fields_walk_entries_skipped_transient_total: register_int_counter_with_registry!(
+                "ika_ocs_dynamic_fields_walk_entries_skipped_transient_total",
                 "Children skipped due to a transient indexer race; retried next tick",
                 registry,
             )
@@ -277,7 +277,7 @@ pub struct VerifiedObjectEntry {
     pub object: Object,
     pub checkpoint_seq: CheckpointSequenceNumber,
     pub proof: OCSInclusionProof,
-    /// For entries surfaced by a dynamic-field walk (`verified_bag_page`):
+    /// For entries surfaced by a dynamic-field walk (`verified_dynamic_fields_page`):
     /// the field's key — stringified `TypeTag` of the name and its BCS
     /// value. Lets the consumer bind a value object to its parent collection
     /// (an `ObjectTable`/`ObjectBag` value is owned by its `Field`, not the
@@ -297,18 +297,28 @@ pub struct BatchVerifiedObjectsResponse {
     pub claimed_latest_checkpoint_seq: CheckpointSequenceNumber,
 }
 
+/// Enumerate the dynamic-field children of `parent_id`, one verified page
+/// at a time. `parent_id` is any dynamic-field-backed collection — `Bag`,
+/// `Table`, `ObjectTable`, `ObjectBag`, or a raw dynamic / dynamic-object
+/// field — since at the Sui level they are all dynamic fields hanging off a
+/// `UID`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VerifiedBagPageRequest {
-    pub bag_id: ObjectID,
+pub struct VerifiedDynamicFieldsPageRequest {
+    pub parent_id: ObjectID,
     pub page_size: Option<u32>,
     pub page_token: Option<Vec<u8>>,
 }
 
+/// One verified page of a parent's dynamic-field children. `entries` are the
+/// proven children (each an object plus its field key — see
+/// `VerifiedObjectEntry`); `summaries` carries each distinct last-modifying
+/// checkpoint summary once (BLS dedup); `next_page_token` continues the walk.
+/// The parent object itself is **not** returned: it is inlined inside its own
+/// parent struct and so isn't fetchable by id — a consumer that needs
+/// omission detection reads the authenticated collection `size` from verified
+/// parent state instead.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct VerifiedBagPageResponse {
-    /// The bag's parent object verified — lets the caller bound omission
-    /// by comparing `bag.size` against the accumulated children.
-    pub bag: Option<VerifiedObjectEntry>,
+pub struct VerifiedDynamicFieldsPageResponse {
     pub summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary>,
     pub entries: Vec<VerifiedObjectEntry>,
     pub next_page_token: Option<Vec<u8>>,
@@ -325,10 +335,19 @@ pub trait ProofProvider: Send + Sync {
         ids: &[ObjectID],
     ) -> Result<BatchVerifiedObjectsResponse, TransportError>;
 
-    async fn verified_bag_page(
+    /// Verified, paginated enumeration of a parent object's dynamic-field
+    /// children. Generic over the collection kind — `Bag`, `Table`,
+    /// `ObjectTable`, `ObjectBag`, and raw dynamic / dynamic-object fields are
+    /// all dynamic fields under a `UID`, so this one call covers every
+    /// dynamic-field-backed collection. Each child carries its own inclusion
+    /// proof and field key; the caller binds it to `parent_id` via the
+    /// proof-bound owner (`dynamic_field_child_owned_by`), since an inclusion
+    /// proof alone shows the object existed, not that it belongs to the
+    /// requested collection.
+    async fn verified_dynamic_fields_page(
         &self,
-        request: VerifiedBagPageRequest,
-    ) -> Result<VerifiedBagPageResponse, TransportError>;
+        request: VerifiedDynamicFieldsPageRequest,
+    ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError>;
 }
 
 #[derive(Clone, Debug)]
@@ -453,7 +472,7 @@ impl LocalProofProvider {
                 object,
                 checkpoint_seq: cp_seq,
                 proof,
-                // Populated by the bag-page walk (which has the field key);
+                // Populated by the dynamic-fields-page walk (which has the field key);
                 // empty for direct/batch object reads.
                 dynamic_field_name_type: String::new(),
                 dynamic_field_name_bcs: Vec::new(),
@@ -579,33 +598,35 @@ impl ProofProvider for LocalProofProvider {
         })
     }
 
-    async fn verified_bag_page(
+    async fn verified_dynamic_fields_page(
         &self,
-        request: VerifiedBagPageRequest,
-    ) -> Result<VerifiedBagPageResponse, TransportError> {
+        request: VerifiedDynamicFieldsPageRequest,
+    ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
         let started = std::time::Instant::now();
-        // We deliberately do NOT fetch the bag object itself. A Move
-        // `Bag { id: UID, size: u64 }` lives inlined inside its parent
-        // (e.g. `DWalletCoordinatorInner`), so its `id` is wrapped and
-        // `get_object(bag_id)` 404s. The dynamic-field index still works
-        // via that same id, which is enough to enumerate the children.
-        // Bag-size omission detection is therefore deferred to the
+        // We deliberately do NOT fetch the parent collection object itself.
+        // A Move collection (e.g. `Bag { id: UID, size: u64 }`) lives inlined
+        // inside its owning struct (e.g. `DWalletCoordinatorInner`), so its
+        // `id` is wrapped and `get_object(parent_id)` 404s. The dynamic-field
+        // index still works via that same id, which is enough to enumerate the
+        // children. Size-based omission detection is therefore deferred to the
         // consumer via the parent's verified state.
         let head = self.current_head_seq().await?;
         // Cap page size (the serving side builds one proof per entry). The
         // gRPC backend already clamps, but don't rely on the upstream's cap.
         // `None` keeps the backend default; a `Some` is clamped to our max.
-        let page_size = request.page_size.map(|n| n.min(MAX_BAG_PAGE_SIZE));
+        let page_size = request
+            .page_size
+            .map(|n| n.min(MAX_DYNAMIC_FIELDS_PAGE_SIZE));
         let page = self
             .raw
-            .list_dynamic_fields(request.bag_id, page_size, request.page_token)
+            .list_dynamic_fields(request.parent_id, page_size, request.page_token)
             .await?;
 
         let mut summaries: BTreeMap<CheckpointSequenceNumber, CertifiedCheckpointSummary> =
             BTreeMap::new();
         let mut entries = Vec::with_capacity(page.entries.len());
         self.metrics
-            .bag_walk_entries_seen_total
+            .dynamic_fields_walk_entries_seen_total
             .inc_by(page.entries.len() as u64);
         for entry in page.entries {
             // Children created very recently may not yet be resolvable
@@ -618,35 +639,41 @@ impl ProofProvider for LocalProofProvider {
             let object = match self.raw.get_object(entry.object_id).await {
                 Ok(o) => o,
                 Err(TransportError::NotFound(_)) => {
-                    self.metrics.bag_walk_entries_skipped_transient_total.inc();
+                    self.metrics
+                        .dynamic_fields_walk_entries_skipped_transient_total
+                        .inc();
                     continue;
                 }
                 Err(e) => {
-                    self.record_build_failure("bag_page_entry", &e);
+                    self.record_build_failure("dynamic_fields_page_entry", &e);
                     return Err(e);
                 }
             };
             match self.build_object_entry(object).await {
                 Ok((seq, mut verified_entry, summary)) => {
                     // Carry the field key so the consumer can bind this entry
-                    // to `bag_id` even when it's an `ObjectTable`/`ObjectBag`
+                    // to `parent_id` even when it's an `ObjectTable`/`ObjectBag`
                     // value object (owned by its `Field`, not the collection).
                     verified_entry.dynamic_field_name_type = entry.name_type;
                     verified_entry.dynamic_field_name_bcs = entry.name_value_bcs;
                     summaries.entry(seq).or_insert(summary);
                     self.metrics
                         .proof_built_total
-                        .with_label_values(&["bag_page_entry"])
+                        .with_label_values(&["dynamic_fields_page_entry"])
                         .inc();
-                    self.metrics.bag_walk_entries_returned_total.inc();
+                    self.metrics
+                        .dynamic_fields_walk_entries_returned_total
+                        .inc();
                     entries.push(verified_entry);
                 }
                 Err(TransportError::NotFound(_)) => {
-                    self.metrics.bag_walk_entries_skipped_transient_total.inc();
+                    self.metrics
+                        .dynamic_fields_walk_entries_skipped_transient_total
+                        .inc();
                     continue;
                 }
                 Err(e) => {
-                    self.record_build_failure("bag_page_entry", &e);
+                    self.record_build_failure("dynamic_fields_page_entry", &e);
                     return Err(e);
                 }
             }
@@ -654,10 +681,9 @@ impl ProofProvider for LocalProofProvider {
 
         self.metrics
             .proof_build_latency_seconds
-            .with_label_values(&["bag_page"])
+            .with_label_values(&["dynamic_fields_page"])
             .observe(started.elapsed().as_secs_f64());
-        Ok(VerifiedBagPageResponse {
-            bag: None,
+        Ok(VerifiedDynamicFieldsPageResponse {
             summaries,
             entries,
             next_page_token: page.next_page_token,

@@ -11,8 +11,11 @@
 //! 2. Per-object version monotonicity (rejects stale-state attacks).
 //! 3. Optional freshness bound (proof seq vs relay's claimed head).
 //!
-//! Plus a bag-omission detector when the response carries the parent bag's
-//! own object: compare `bag.size` against accumulated children.
+//! Dynamic-field pages additionally bind each child to the requested parent
+//! collection via its proof-bound owner (a plain field is owned by the
+//! collection UID; an object-field value by its `Field` wrapper). Omission
+//! detection is left to the consumer, which compares the listed count against
+//! the collection `size` it reads from verified parent state.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -33,7 +36,9 @@ use sui_types::object::Object;
 
 use ika_sui_client::transport::{TransportError, dynamic_field_child_owned_by};
 
-use ika_network::proof_provider::{ProofProvider, VerifiedBagPageRequest, VerifiedObjectResponse};
+use ika_network::proof_provider::{
+    ProofProvider, VerifiedDynamicFieldsPageRequest, VerifiedObjectResponse,
+};
 
 use ika_types::sui::system_inner_v1::{DWalletCoordinatorInnerV1, SystemInnerV1};
 use ika_types::sui::{DWalletCoordinator, DWalletCoordinatorInner, System, SystemInner};
@@ -75,11 +80,11 @@ pub enum ReaderError {
     #[error("unsupported version {kind}={version}")]
     UnsupportedVersion { kind: &'static str, version: u64 },
     #[error(
-        "bag membership: entry {entry} in a page for bag {bag_id} is owned by \
-         {owner} — not a dynamic-field child of the requested bag"
+        "dynamic-field membership: entry {entry} in a page for parent {parent_id} is owned by \
+         {owner} — not a dynamic-field child of the requested collection"
     )]
-    BagMembership {
-        bag_id: ObjectID,
+    DynamicFieldMembership {
+        parent_id: ObjectID,
         entry: ObjectID,
         owner: String,
     },
@@ -101,7 +106,7 @@ pub struct VerifiedObject {
 }
 
 #[derive(Debug)]
-pub struct VerifiedBagPage {
+pub struct VerifiedDynamicFieldsPage {
     pub entries: Vec<VerifiedObject>,
     pub next_page_token: Option<Vec<u8>>,
 }
@@ -130,8 +135,8 @@ pub struct OcsVerifiedReader {
     /// the (per-read verified) relay path.
     cache_first: bool,
     /// Highest upstream checkpoint seq we've observed from a provider response
-    /// (`claimed_latest_checkpoint_seq`). Updated on every network read/bag
-    /// walk — and bag walks run every pump tick independently of the pusher —
+    /// (`claimed_latest_checkpoint_seq`). Updated on every network read /
+    /// dynamic-field walk — and those walks run every pump tick independently of the pusher —
     /// so this stays fresh even if the pusher stalls. Used by the cache-first
     /// staleness tripwire below.
     observed_upstream_head: AtomicU64,
@@ -265,7 +270,7 @@ impl OcsVerifiedReader {
     /// round-trip for all `ids`, then the same per-object guarantees —
     /// freshness against the monotonic observed head, inclusion proof
     /// against a BLS-verified summary (verified once per distinct
-    /// checkpoint, as in [`Self::verified_bag_page`]), high-water version
+    /// checkpoint, as in [`Self::verified_dynamic_fields_page`]), high-water version
     /// tracking, and cache shadow-population. Errors if any id is missing
     /// from the response: callers ask for objects that must exist (e.g.
     /// the validator set), so a hole is a failed read, not an empty slot.
@@ -458,17 +463,17 @@ impl OcsVerifiedReader {
         })
     }
 
-    pub async fn verified_bag_page(
+    pub async fn verified_dynamic_fields_page(
         &self,
-        bag_id: ObjectID,
+        parent_id: ObjectID,
         page_size: Option<u32>,
         page_token: Option<Vec<u8>>,
-    ) -> Result<VerifiedBagPage, ReaderError> {
+    ) -> Result<VerifiedDynamicFieldsPage, ReaderError> {
         let started = std::time::Instant::now();
         let resp = self
             .provider
-            .verified_bag_page(VerifiedBagPageRequest {
-                bag_id,
+            .verified_dynamic_fields_page(VerifiedDynamicFieldsPageRequest {
+                parent_id,
                 page_size,
                 page_token,
             })
@@ -476,21 +481,21 @@ impl OcsVerifiedReader {
         let head = resp.claimed_latest_checkpoint_seq;
         self.note_upstream_head(head);
 
-        // No freshness bound on bag entries: a session event can sit in
-        // the bag across many checkpoints, so its proof's checkpoint seq
-        // legitimately lags far behind the relay's head. The freshness
-        // bound applies to objects we expect to advance frequently
-        // (coordinator/system); per-entry monotonicity protections are
-        // out of scope here because bag-entry ObjectIDs are short-lived.
+        // No freshness bound on dynamic-field entries: a collection child
+        // (e.g. a session event) can sit across many checkpoints, so its
+        // proof's checkpoint seq legitimately lags far behind the relay's
+        // head. The freshness bound applies to objects we expect to advance
+        // frequently (coordinator/system); per-entry monotonicity protections
+        // are out of scope here because these child ObjectIDs are short-lived.
         //
-        // The bag's parent object isn't fetchable (it's wrapped inside
-        // its parent struct), so we don't verify the bag itself here.
-        // Bag-omission detection lives in the consumer, which has the
-        // expected `Bag.size` from a verified parent state and can
+        // The parent collection object isn't fetchable (it's wrapped inside
+        // its own parent struct), so we don't verify the collection itself
+        // here. Omission detection lives in the consumer, which has the
+        // expected collection `size` from a verified parent state and can
         // accumulate child counts across pages.
         let _ = head;
         let mut verified = Vec::with_capacity(resp.entries.len());
-        // Per-summary BLS dedup: a bag page's entries usually all anchor to a
+        // Per-summary BLS dedup: a page's entries usually all anchor to a
         // handful of checkpoints, and the committee BLS verify is the dominant
         // cost. The page's `summaries` map is 1:1 with checkpoint seq, so
         // verifying each distinct summary once (→ `VerifiedCheckpoint`) and
@@ -510,14 +515,16 @@ impl OcsVerifiedReader {
                         .get(&seq)
                         .ok_or_else(|| {
                             self.record_fail(
-                                "bag_entry",
-                                ReaderError::Decode("missing summary for bag entry".into()),
+                                "dynamic_field_entry",
+                                ReaderError::Decode(
+                                    "missing summary for dynamic-field entry".into(),
+                                ),
                             )
                         })?
                         .clone();
                     let verified_summary = self
                         .verify_summary(summary)
-                        .map_err(|e| self.record_fail("bag_entry", e))?;
+                        .map_err(|e| self.record_fail("dynamic_field_entry", e))?;
                     e.insert(verified_summary)
                 }
             };
@@ -533,21 +540,21 @@ impl OcsVerifiedReader {
                 .clone();
             let entry_result =
                 self.verify_ocs_inclusion(&entry.object, entry.proof, verified_summary);
-            self.record_verify_outcome_unit("bag_entry", &entry_result);
+            self.record_verify_outcome_unit("dynamic_field_entry", &entry_result);
             entry_result?;
             // Bind the entry to the requested collection. The inclusion proof
             // above only attests that this object existed on-chain at a
-            // verified checkpoint — NOT that it is a member of `bag_id`. The
+            // verified checkpoint — NOT that it is a member of `parent_id`. The
             // binding is the entry's owner, which is part of the
             // proof-verified object digest, and depends on the collection
             // kind:
             //   - A plain `Bag`/`Table` stores the value inline in a
             //     `Field<K, V>` owned directly by the collection UID:
-            //     `Owner::ObjectOwner(bag_id)`.
+            //     `Owner::ObjectOwner(parent_id)`.
             //   - An `ObjectTable`/`ObjectBag` resolves to the wrapped value
             //     object, which is owned by its `Field<Wrapper<K>, ID>`
             //     wrapper, whose id is
-            //     `derive_dynamic_field_id(bag_id, Wrapper<K>, key)`. The
+            //     `derive_dynamic_field_id(parent_id, Wrapper<K>, key)`. The
             //     relay's key is untrusted, but the derivation is
             //     collision-resistant against the proven owner, so a relay
             //     cannot supply a name that derives to a *foreign* object's
@@ -557,25 +564,25 @@ impl OcsVerifiedReader {
             // events), which the count-only omission detector wouldn't catch.
             let bound_to_collection = dynamic_field_child_owned_by(
                 entry.object.owner(),
-                bag_id,
+                parent_id,
                 &entry.dynamic_field_name_type,
                 &entry.dynamic_field_name_bcs,
             );
             if !bound_to_collection {
                 return Err(self.record_fail(
-                    "bag_entry",
-                    ReaderError::BagMembership {
-                        bag_id,
+                    "dynamic_field_entry",
+                    ReaderError::DynamicFieldMembership {
+                        parent_id,
                         entry: entry.object.id(),
                         owner: format!("{:?}", entry.object.owner()),
                     },
                 ));
             }
-            // Currency: reject a relay serving a stale or already-deleted bag
+            // Currency: reject a relay serving a stale or already-deleted dynamic-field
             // child (its id modified after this checkpoint). Out-of-range or
             // unindexed anchors fall back (`Unknown`), as for direct reads.
             self.check_currency(entry.object.id(), seq)
-                .map_err(|e| self.record_fail("bag_entry", e))?;
+                .map_err(|e| self.record_fail("dynamic_field_entry", e))?;
             if let Some(proof) = cache_proof {
                 let cache_entry = VerifiedObjectEntry {
                     object: cache_object,
@@ -593,8 +600,8 @@ impl OcsVerifiedReader {
             });
         }
 
-        self.observe_verify_latency("bag_page", started);
-        Ok(VerifiedBagPage {
+        self.observe_verify_latency("dynamic_fields_page", started);
+        Ok(VerifiedDynamicFieldsPage {
             entries: verified,
             next_page_token: resp.next_page_token,
         })
@@ -604,18 +611,19 @@ impl OcsVerifiedReader {
         self.high_water.write().remove(id);
     }
 
-    /// Whether bag walks served by this reader come from an *untrusted
-    /// relay*, so a consumer should police `Bag.size`-vs-listed-children
-    /// omission (a relay could hide entries). True on sui-state-mirrored.
+    /// Whether dynamic-field walks served by this reader come from an
+    /// *untrusted relay*, so a consumer should police
+    /// collection-`size`-vs-listed-children omission (a relay could hide
+    /// entries). True on sui-state-mirrored.
     ///
-    /// False on sui-state-direct (`cache_first`): there bag pages come
+    /// False on sui-state-direct (`cache_first`): there the pages come
     /// from the local trusted gRPC provider — nothing to omit — while the
-    /// parent's `Bag.size` is served cache-first and therefore lags the
-    /// (fresh) bag walk by up to the pusher's poll interval. A
+    /// parent's collection `size` is served cache-first and therefore lags the
+    /// (fresh) walk by up to the pusher's poll interval. A
     /// size-greater-than-listed mismatch there is an expected freshness
     /// artifact (entries removed on session completion), not misbehavior,
     /// so policing it would just cry wolf.
-    pub fn bag_source_is_untrusted(&self) -> bool {
+    pub fn relay_source_is_untrusted(&self) -> bool {
         !self.cache_first
     }
 
@@ -650,11 +658,11 @@ impl OcsVerifiedReader {
 
     /// Record a verify failure under `kind` (lands in
     /// `proof_verify_failures_total`, and `high_water_violations_total` for a
-    /// stale version) and return it. For failure points on the batch/bag
+    /// stale version) and return it. For failure points on the batch/dynamic-field
     /// paths that would otherwise `?`-propagate or return *around* the
     /// per-entry [`Self::record_verify_outcome`] — the summary BLS verify, the
     /// missing-summary decode, the freshness/high-water checks, and the
-    /// bag-membership binding — so no verified-read failure mode is silent.
+    /// dynamic-field-membership binding — so no verified-read failure mode is silent.
     fn record_fail(&self, kind: &'static str, e: ReaderError) -> ReaderError {
         self.record_verify_failure(kind, &e);
         e
@@ -926,7 +934,7 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
         ReaderError::StaleCheckpoint { .. } => "stale_checkpoint",
         ReaderError::Decode(_) => "decode",
         ReaderError::UnsupportedVersion { .. } => "unsupported_version",
-        ReaderError::BagMembership { .. } => "bag_membership",
+        ReaderError::DynamicFieldMembership { .. } => "dynamic_field_membership",
         ReaderError::NotCurrent { .. } => "not_current",
     }
 }
@@ -967,7 +975,9 @@ mod tests {
     use crate::sui_connector::ocs_currency::ChangesetIndex;
     use crate::sui_connector::verified_state_cache::VerifiedStateCache;
     use async_trait::async_trait;
-    use ika_network::proof_provider::{BatchVerifiedObjectsResponse, VerifiedBagPageResponse};
+    use ika_network::proof_provider::{
+        BatchVerifiedObjectsResponse, VerifiedDynamicFieldsPageResponse,
+    };
     use ika_sui_client::transport::derive_object_field_wrapper_id;
     use parking_lot::Mutex;
     use std::collections::BTreeMap;
@@ -1002,10 +1012,10 @@ mod tests {
         ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
             unreachable!("provider must not be hit by a local rejection test")
         }
-        async fn verified_bag_page(
+        async fn verified_dynamic_fields_page(
             &self,
-            _request: VerifiedBagPageRequest,
-        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
             unreachable!("provider must not be hit by a local rejection test")
         }
     }
@@ -1476,7 +1486,7 @@ mod tests {
     struct StagedProvider {
         object: Mutex<Option<VerifiedObjectResponse>>,
         batch: Mutex<Option<BatchVerifiedObjectsResponse>>,
-        bag: Mutex<Option<VerifiedBagPageResponse>>,
+        bag: Mutex<Option<VerifiedDynamicFieldsPageResponse>>,
     }
 
     impl StagedProvider {
@@ -1494,7 +1504,7 @@ mod tests {
                 bag: Mutex::new(None),
             })
         }
-        fn bag(resp: VerifiedBagPageResponse) -> Arc<Self> {
+        fn bag(resp: VerifiedDynamicFieldsPageResponse) -> Arc<Self> {
             Arc::new(Self {
                 object: Mutex::new(None),
                 batch: Mutex::new(None),
@@ -1525,15 +1535,15 @@ mod tests {
                 .take()
                 .expect("no staged batch_verified_objects response"))
         }
-        async fn verified_bag_page(
+        async fn verified_dynamic_fields_page(
             &self,
-            _request: VerifiedBagPageRequest,
-        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
             Ok(self
                 .bag
                 .lock()
                 .take()
-                .expect("no staged verified_bag_page response"))
+                .expect("no staged verified_dynamic_fields_page response"))
         }
     }
 
@@ -1642,10 +1652,10 @@ mod tests {
         ) -> Result<BatchVerifiedObjectsResponse, TransportError> {
             unreachable!("batch not exercised by the fallback test")
         }
-        async fn verified_bag_page(
+        async fn verified_dynamic_fields_page(
             &self,
-            _request: VerifiedBagPageRequest,
-        ) -> Result<VerifiedBagPageResponse, TransportError> {
+            _request: VerifiedDynamicFieldsPageRequest,
+        ) -> Result<VerifiedDynamicFieldsPageResponse, TransportError> {
             unreachable!("bag not exercised by the fallback test")
         }
     }
@@ -1810,7 +1820,7 @@ mod tests {
         let id1 = ObjectID::from_single_byte(0x22);
         let object = test_object(id0, 7, address_owner(0xAA));
         let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
-        let entry = bag_entry(object, proof, 100, "", Vec::new());
+        let entry = field_entry(object, proof, 100, "", Vec::new());
         let resp = BatchVerifiedObjectsResponse {
             summaries: BTreeMap::from([(100, summary)]),
             results: vec![Some(entry)],
@@ -1827,7 +1837,7 @@ mod tests {
         );
     }
 
-    fn bag_entry(
+    fn field_entry(
         object: Object,
         proof: OCSInclusionProof,
         seq: CheckpointSequenceNumber,
@@ -1843,13 +1853,12 @@ mod tests {
         }
     }
 
-    fn bag_response(
+    fn field_page_response(
         summary: CertifiedCheckpointSummary,
         entry: VerifiedObjectEntry,
         seq: CheckpointSequenceNumber,
-    ) -> VerifiedBagPageResponse {
-        VerifiedBagPageResponse {
-            bag: None,
+    ) -> VerifiedDynamicFieldsPageResponse {
+        VerifiedDynamicFieldsPageResponse {
             summaries: BTreeMap::from([(seq, summary)]),
             entries: vec![entry],
             next_page_token: None,
@@ -1941,21 +1950,21 @@ mod tests {
 
     /// Plain `Bag`/`Table`: the value `Field` is owned directly by the bag UID.
     #[tokio::test]
-    async fn a_bag_entry_owned_by_the_bag_is_accepted() {
+    async fn a_field_entry_owned_by_the_bag_is_accepted() {
         let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
-        let object = test_object(entry_id, 1, Owner::ObjectOwner(bag_id.into()));
+        let object = test_object(entry_id, 1, Owner::ObjectOwner(parent_id.into()));
         let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary,
-            bag_entry(object, proof, 100, "", vec![]),
+            field_entry(object, proof, 100, "", vec![]),
             100,
         ));
         let (_dir, reader, _metrics) = reader_with(provider, committee, None);
 
         let page = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .expect("an entry owned by the bag must be accepted");
         assert_eq!(page.entries.len(), 1);
@@ -1963,27 +1972,27 @@ mod tests {
     }
 
     /// `ObjectTable`/`ObjectBag`: the value object is owned by its
-    /// `Field<Wrapper<K>, ID>` wrapper, whose id derives from `(bag_id, key)`.
+    /// `Field<Wrapper<K>, ID>` wrapper, whose id derives from `(parent_id, key)`.
     #[tokio::test]
-    async fn a_bag_entry_owned_via_the_object_field_wrapper_is_accepted() {
+    async fn a_field_entry_owned_via_the_object_field_wrapper_is_accepted() {
         let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
         let name_type = "u64";
         let name_bcs = bcs::to_bytes(&7u64).unwrap();
-        let field_id = derive_object_field_wrapper_id(bag_id, name_type, &name_bcs)
+        let field_id = derive_object_field_wrapper_id(parent_id, name_type, &name_bcs)
             .expect("wrapper id derivation");
         let object = test_object(entry_id, 1, Owner::ObjectOwner(field_id.into()));
         let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary,
-            bag_entry(object, proof, 100, name_type, name_bcs),
+            field_entry(object, proof, 100, name_type, name_bcs),
             100,
         ));
         let (_dir, reader, _metrics) = reader_with(provider, committee, None);
 
         let page = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .expect("an ObjectTable entry owned by its derived field must be accepted");
         assert_eq!(page.entries.len(), 1);
@@ -1991,59 +2000,65 @@ mod tests {
     }
 
     /// Validly proven, but owned by a *different* collection — a relay replaying
-    /// a foreign dynamic field. `foreign_id` is neither `bag_id` nor the derived
+    /// a foreign dynamic field. `foreign_id` is neither `parent_id` nor the derived
     /// field id, so the binding must reject it.
     #[tokio::test]
-    async fn a_bag_entry_owned_by_a_foreign_object_is_rejected() {
+    async fn a_field_entry_owned_by_a_foreign_object_is_rejected() {
         let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
         let foreign_id = ObjectID::from_single_byte(0x77);
         let object = test_object(entry_id, 1, Owner::ObjectOwner(foreign_id.into()));
         let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary,
-            bag_entry(object, proof, 100, "u64", bcs::to_bytes(&7u64).unwrap()),
+            field_entry(object, proof, 100, "u64", bcs::to_bytes(&7u64).unwrap()),
             100,
         ));
         let (_dir, reader, metrics) = reader_with(provider, committee, None);
 
         let err = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .unwrap_err();
         assert!(
-            matches!(err, ReaderError::BagMembership { .. }),
+            matches!(err, ReaderError::DynamicFieldMembership { .. }),
             "got {err:?}"
         );
-        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+        assert_eq!(
+            failure_count(&metrics, "dynamic_field_entry", "dynamic_field_membership"),
+            1
+        );
     }
 
     /// Address-owned (not object-owned at all): a dynamic-field child is always
     /// object-owned, so this can never be a member of the bag.
     #[tokio::test]
-    async fn a_bag_entry_owned_by_an_address_is_rejected() {
+    async fn a_field_entry_owned_by_an_address_is_rejected() {
         let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
         let object = test_object(entry_id, 1, address_owner(0x77));
         let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary,
-            bag_entry(object, proof, 100, "", vec![]),
+            field_entry(object, proof, 100, "", vec![]),
             100,
         ));
         let (_dir, reader, metrics) = reader_with(provider, committee, None);
 
         let err = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .unwrap_err();
         assert!(
-            matches!(err, ReaderError::BagMembership { .. }),
+            matches!(err, ReaderError::DynamicFieldMembership { .. }),
             "got {err:?}"
         );
-        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+        assert_eq!(
+            failure_count(&metrics, "dynamic_field_entry", "dynamic_field_membership"),
+            1
+        );
     }
 
     // ---- read-path currency gate (changeset-stream wiring) ----
@@ -2192,7 +2207,7 @@ mod tests {
         let (stale, summary100, proof100) =
             rolled_back_fixture(&committee, &keys, &index, id, address_owner(0xAA));
 
-        let entry = bag_entry(stale, proof100, 100, "", vec![]);
+        let entry = field_entry(stale, proof100, 100, "", vec![]);
         let provider = StagedProvider::batch(batch_response(summary100, entry, 100));
         let (_dir, reader, metrics) = reader_with(provider, committee, None);
         let reader = reader.with_changeset_index(Some(index));
@@ -2205,9 +2220,9 @@ mod tests {
     /// And the bag path: a relay serving a stale (since-modified) bag child is
     /// rejected, even though its membership binding to the bag is valid.
     #[tokio::test]
-    async fn currency_rejects_a_stale_bag_entry() {
+    async fn currency_rejects_a_stale_field_entry() {
         let (committee, keys) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
         let index: SharedChangesetIndex = Arc::new(RwLock::new(ChangesetIndex::new()));
         // The child is owned by the bag (membership binds); currency is the
@@ -2217,23 +2232,26 @@ mod tests {
             &keys,
             &index,
             entry_id,
-            Owner::ObjectOwner(bag_id.into()),
+            Owner::ObjectOwner(parent_id.into()),
         );
 
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary100,
-            bag_entry(stale, proof100, 100, "", vec![]),
+            field_entry(stale, proof100, 100, "", vec![]),
             100,
         ));
         let (_dir, reader, metrics) = reader_with(provider, committee, None);
         let reader = reader.with_changeset_index(Some(index));
 
         let err = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .unwrap_err();
         assert!(matches!(err, ReaderError::NotCurrent { .. }), "got {err:?}");
-        assert_eq!(failure_count(&metrics, "bag_entry", "not_current"), 1);
+        assert_eq!(
+            failure_count(&metrics, "dynamic_field_entry", "not_current"),
+            1
+        );
     }
 
     // ===== Regression tests for the verified-read failure modes =====
@@ -2431,8 +2449,8 @@ mod tests {
         let summary101 = chained_summary(&committee, &keys, 101, Some(digest100), &states101);
         index.write().absorb(&summary101, states101).unwrap();
 
-        let entry_a = bag_entry(a_v7, proof_a, 100, "", vec![]);
-        let entry_b = bag_entry(b_v7, proof_b, 100, "", vec![]);
+        let entry_a = field_entry(a_v7, proof_a, 100, "", vec![]);
+        let entry_b = field_entry(b_v7, proof_b, 100, "", vec![]);
         let resp = BatchVerifiedObjectsResponse {
             summaries: BTreeMap::from([(100, summary100)]),
             results: vec![Some(entry_a), Some(entry_b)],
@@ -2454,7 +2472,11 @@ mod tests {
         let wrong_obj = test_object(wrong, 1, address_owner(0xAA));
         let (summary2, proof2) =
             sign_inclusion(&committee2, &keys2, 100, &[&wrong_obj], &wrong_obj);
-        let resp2 = batch_response(summary2, bag_entry(wrong_obj, proof2, 100, "", vec![]), 100);
+        let resp2 = batch_response(
+            summary2,
+            field_entry(wrong_obj, proof2, 100, "", vec![]),
+            100,
+        );
         let provider2 = StagedProvider::batch(resp2);
         let (_dir2, reader2, metrics2) = reader_with(provider2, committee2, None);
 
@@ -2482,7 +2504,7 @@ mod tests {
         let (summary, proof) = sign_inclusion(&committee, &keys, 100, &[&object], &object);
         let resp = BatchVerifiedObjectsResponse {
             summaries: BTreeMap::from([(999u64, summary)]),
-            results: vec![Some(bag_entry(object, proof, 100, "", vec![]))],
+            results: vec![Some(field_entry(object, proof, 100, "", vec![]))],
             claimed_latest_checkpoint_seq: 100,
         };
         let provider = StagedProvider::batch(resp);
@@ -2506,14 +2528,14 @@ mod tests {
     /// from the entry's `dynamic_field_name_type`. A malformed type string fails
     /// to parse as a `TypeTag`, so `derive_object_field_wrapper_id` returns
     /// `None` and the wrapper branch can't match; with the entry object-owned by
-    /// a non-bag id, the binding fails with `BagMembership` and the failure
+    /// a non-bag id, the binding fails with `DynamicFieldMembership` and the failure
     /// counter moves.
     #[tokio::test]
     async fn bag_binding_rejects_a_malformed_dynamic_field_key_type() {
         let (committee, keys) = SuiCommittee::new_simple_test_committee();
-        let bag_id = ObjectID::from_single_byte(0x55);
+        let parent_id = ObjectID::from_single_byte(0x55);
         let entry_id = ObjectID::from_single_byte(0x56);
-        // Object-owned by a non-bag id: the direct `owner_id == bag_id` branch
+        // Object-owned by a non-bag id: the direct `owner_id == parent_id` branch
         // fails, so the binding falls through to the wrapper-id derivation.
         let foreign_id = ObjectID::from_single_byte(0x77);
         let object = test_object(entry_id, 1, Owner::ObjectOwner(foreign_id.into()));
@@ -2522,26 +2544,29 @@ mod tests {
         // A malformed name type: `TypeTag::from_str` fails → derivation None.
         let bad_type = "not a valid type";
         assert!(
-            derive_object_field_wrapper_id(bag_id, bad_type, &bcs::to_bytes(&7u64).unwrap())
+            derive_object_field_wrapper_id(parent_id, bad_type, &bcs::to_bytes(&7u64).unwrap())
                 .is_none(),
             "the malformed type must make the wrapper-id derivation return None"
         );
-        let provider = StagedProvider::bag(bag_response(
+        let provider = StagedProvider::bag(field_page_response(
             summary,
-            bag_entry(object, proof, 100, bad_type, bcs::to_bytes(&7u64).unwrap()),
+            field_entry(object, proof, 100, bad_type, bcs::to_bytes(&7u64).unwrap()),
             100,
         ));
         let (_dir, reader, metrics) = reader_with(provider, committee, None);
 
         let err = reader
-            .verified_bag_page(bag_id, None, None)
+            .verified_dynamic_fields_page(parent_id, None, None)
             .await
             .unwrap_err();
         assert!(
-            matches!(err, ReaderError::BagMembership { .. }),
+            matches!(err, ReaderError::DynamicFieldMembership { .. }),
             "got {err:?}"
         );
-        assert_eq!(failure_count(&metrics, "bag_entry", "bag_membership"), 1);
+        assert_eq!(
+            failure_count(&metrics, "dynamic_field_entry", "dynamic_field_membership"),
+            1
+        );
     }
 
     /// `clone_inclusion_proof` is a bcs round-trip: the cloned proof must

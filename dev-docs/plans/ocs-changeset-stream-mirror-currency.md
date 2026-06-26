@@ -57,7 +57,7 @@ Read alongside
 > Direct nodes leave the receiver `None`.
 >
 > Currency now gates **all three read paths** — single-object (`verify_response`),
-> batch (`verified_objects`, per entry), and bag (`verified_bag_page`, per entry
+> batch (`verified_objects`, per entry), and bag (`verified_dynamic_fields_page`, per entry
 > after the membership binding) — each via the same `check_currency`, metered
 > under `proof_verify_failures_total{kind, not_current}` and tested.
 >
@@ -88,7 +88,7 @@ Read alongside
 > **Production keeps `filter = None` deliberately.** A *static* boot-time filter
 > can cover only statically-known ids (the System / Coordinator roots and a
 > bounded prefix of their derived versioned-inner children). But the currency gate
-> was extended to the **bag path** (`verified_bag_page`), whose entries are
+> was extended to the **bag path** (`verified_dynamic_fields_page`), whose entries are
 > dwallet objects — a fully dynamic, unbounded id set. A static filter would
 > silently downgrade every bag-entry currency check to `Unknown`, gutting the
 > coverage the gate was added for. So a static filter trades correctness-of-coverage
