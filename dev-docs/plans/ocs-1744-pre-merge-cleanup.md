@@ -57,9 +57,15 @@ technically unblocked; the cheap cluster below is worth landing first.
       `get_reference_gas_price`, `get_chain_identifier`), via a `macro_rules! inflight`
       (each `add_layer_for_*` is generic over its own request type, so a closure won't type-check).
       Per-peer rate-limit / admitted-peer firewall deferred (the inflight ceilings bound the DoS).
-- [ ] **`network-mirror-2`** — consumer-side: reject responses where
-      `resp.entries.len()` / `results.len()` exceeds the requested `page_size`/`limit`
-      before allocating (`verified_reader.rs:477`). Server-side caps already exist.
+- [x] **`network-mirror-2`** — DONE. Consumer-side response-length bounds against a
+      byzantine *server* that ignores its own clamp: `verified_dynamic_fields_page` now
+      rejects `resp.entries.len()` over `min(page_size, MAX_VERIFIED_PAGE_ENTRIES=1024)`
+      *before* the `Vec::with_capacity` + O(entries) verify loop (`ReaderError::OverlongPage`),
+      and `pump_changesets` rejects `page.len() > page_limit` before the per-entry BLS verify.
+      The batch path was already bounded by the `results.len() != ids.len()` check
+      (`ocs-verifier-core-1`). Fault-injected unit test
+      (`an_overlong_dynamic_fields_page_is_rejected`): with the bound removed the 3-entry
+      page is accepted, with it the page is rejected.
 - [ ] **`ocs-cache-committee-1`** — decouple `prune_floor` from the immutable bootstrap-anchor
       clamp so the retain window actually prunes once `head - window > bootstrap_seq`
       (`verified_state_cache.rs:279-288`); keep the anchor floor only for the mirrored-bootstrap

@@ -393,7 +393,13 @@ and committee-ratchet plumbing (checkpoint summary/full/by-digest,
 `SubmitTransaction`: writes are notifier-gated and the notifier always uses a
 direct uplink, so no node submits through the relay (a submit-via-relay surface
 would only be an unverified-effects + amplification hazard). Every served read
-RPC carries an inflight cap so a byzantine peer can't flood a serving node.
+RPC carries an inflight cap so a byzantine peer can't flood a serving node, and
+symmetrically the *consumer* re-bounds each paged/batched response against what
+it asked for — `verified_dynamic_fields_page` rejects a page longer than the
+requested `page_size` (capped at a hard ceiling), `BatchVerifiedObjects` requires
+`results.len() == ids.len()`, and the changeset pump rejects a page longer than
+its `limit` — before allocating or verifying, since a byzantine *server* can
+ignore its own clamp.
 `get_committee` and `get_transaction` are part of the read transport but **not**
 relayed: they error on the relay surface so callers fall through to a direct
 gRPC fallback. `get_transaction` is *un*-relayable for a hard reason (its

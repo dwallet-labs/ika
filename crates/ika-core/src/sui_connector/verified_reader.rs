@@ -51,6 +51,13 @@ use crate::sui_connector::verified_state_cache::SharedVerifiedStateCache;
 use ika_network::proof_provider::VerifiedObjectEntry;
 use tracing::warn;
 
+/// Hard ceiling on dynamic-field entries the reader will accept from one relay
+/// page, used when the caller didn't pin a `page_size`. Comfortably above the
+/// serving side's own clamp (`MAX_DYNAMIC_FIELDS_PAGE_SIZE` = 1000 in
+/// `ika-network`) so a legitimate full page passes, but bounds a byzantine peer
+/// that ignores its own cap and over-stuffs the response.
+const MAX_VERIFIED_PAGE_ENTRIES: usize = 1024;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ReaderError {
     #[error("transport: {0}")]
@@ -77,6 +84,8 @@ pub enum ReaderError {
     },
     #[error("decode: {0}")]
     Decode(String),
+    #[error("relay returned {got} dynamic-field entries, over the {allowed} requested/allowed")]
+    OverlongPage { got: usize, allowed: usize },
     #[error("unsupported version {kind}={version}")]
     UnsupportedVersion { kind: &'static str, version: u64 },
     #[error(
@@ -478,6 +487,24 @@ impl OcsVerifiedReader {
                 page_token,
             })
             .await?;
+        // Bound the response length BEFORE allocating / verifying. The serving
+        // side clamps page size, but a byzantine peer can ignore its own cap, so
+        // the consumer independently rejects an over-long page — capping both the
+        // `Vec::with_capacity` and the O(entries) BLS/Merkle verify work below.
+        // Accept at most what we asked for, and never more than the hard ceiling
+        // (covers a `None` request where the server picks the size).
+        let allowed = page_size
+            .map(|n| (n as usize).min(MAX_VERIFIED_PAGE_ENTRIES))
+            .unwrap_or(MAX_VERIFIED_PAGE_ENTRIES);
+        if resp.entries.len() > allowed {
+            return Err(self.record_fail(
+                "dynamic_field_entry",
+                ReaderError::OverlongPage {
+                    got: resp.entries.len(),
+                    allowed,
+                },
+            ));
+        }
         let head = resp.claimed_latest_checkpoint_seq;
         self.note_upstream_head(head);
 
@@ -933,6 +960,7 @@ fn classify_verify_error(e: &ReaderError) -> &'static str {
         ReaderError::StaleVersion { .. } => "stale_version",
         ReaderError::StaleCheckpoint { .. } => "stale_checkpoint",
         ReaderError::Decode(_) => "decode",
+        ReaderError::OverlongPage { .. } => "overlong_page",
         ReaderError::UnsupportedVersion { .. } => "unsupported_version",
         ReaderError::DynamicFieldMembership { .. } => "dynamic_field_membership",
         ReaderError::NotCurrent { .. } => "not_current",
@@ -1969,6 +1997,60 @@ mod tests {
             .expect("an entry owned by the bag must be accepted");
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.entries[0].object.id(), entry_id);
+    }
+
+    /// network-mirror-2: a byzantine relay that over-stuffs the page with more
+    /// entries than the caller asked for is rejected UP FRONT — before the
+    /// `Vec::with_capacity` and the O(entries) BLS/Merkle verify loop — rather
+    /// than silently processed. The three staged entries are individually valid
+    /// (so the only thing that can reject the page is the length bound, not a
+    /// proof failure), but the caller requested a page size of one.
+    #[tokio::test]
+    async fn an_overlong_dynamic_fields_page_is_rejected() {
+        let (committee, keypairs) = SuiCommittee::new_simple_test_committee();
+        let parent_id = ObjectID::from_single_byte(0x55);
+        let object = test_object(
+            ObjectID::from_single_byte(0x56),
+            1,
+            Owner::ObjectOwner(parent_id.into()),
+        );
+        let (summary, proof) = sign_inclusion(&committee, &keypairs, 100, &[&object], &object);
+        let resp = VerifiedDynamicFieldsPageResponse {
+            summaries: BTreeMap::from([(100, summary)]),
+            entries: vec![
+                field_entry(
+                    object.clone(),
+                    clone_inclusion_proof(&proof).unwrap(),
+                    100,
+                    "",
+                    vec![],
+                ),
+                field_entry(
+                    object.clone(),
+                    clone_inclusion_proof(&proof).unwrap(),
+                    100,
+                    "",
+                    vec![],
+                ),
+                field_entry(object, proof, 100, "", vec![]),
+            ],
+            next_page_token: None,
+            claimed_latest_checkpoint_seq: 100,
+        };
+        let (_dir, reader, metrics) = reader_with(StagedProvider::bag(resp), committee, None);
+
+        let err = reader
+            .verified_dynamic_fields_page(parent_id, Some(1), None)
+            .await
+            .expect_err("a page longer than the requested size must be rejected");
+        assert!(
+            matches!(err, ReaderError::OverlongPage { got: 3, allowed: 1 }),
+            "expected OverlongPage, got {err:?}"
+        );
+        assert_eq!(
+            failure_count(&metrics, "dynamic_field_entry", "overlong_page"),
+            1
+        );
     }
 
     /// `ObjectTable`/`ObjectBag`: the value object is owned by its

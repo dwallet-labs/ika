@@ -77,6 +77,18 @@ pub async fn pump_changesets(
         .await
         .map_err(|e| ChangesetError::Internal(e.to_string()))?;
 
+    // Bound the page length before the per-entry BLS verify loop below. The
+    // server clamps to `MAX_CHANGESET_PAGE`, but a byzantine peer can ignore its
+    // own cap and over-stuff the page; reject up front so it can't force
+    // unbounded verify work. (Absorb drops non-contiguous extras anyway — but
+    // only after we'd already paid to verify them.)
+    if page.len() > page_limit as usize {
+        return Err(ChangesetError::Internal(format!(
+            "changeset page returned {} entries, over the {page_limit} requested",
+            page.len()
+        )));
+    }
+
     let mut advanced = 0;
     for entry in page {
         committees
