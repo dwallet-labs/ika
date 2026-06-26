@@ -16,11 +16,15 @@
 //! a network call.
 //!
 //! Bounded by a retain window ([`VerifiedStateCache::with_retain_window`]):
-//! snapshots more than `window` checkpoints behind the head are pruned from
-//! both the in-memory maps and the persisted column (never below the oldest
-//! committee-verifiable checkpoint, which a mirrored peer may still bootstrap
-//! from). Tombstone eviction on on-chain deletion is not yet implemented, but
-//! the retain window bounds growth regardless.
+//! object snapshots more than `window` checkpoints behind the head are pruned
+//! from both the in-memory maps and the persisted column. The window prunes
+//! freely — this is the direct node's *own* cache-first read path, not the
+//! mirrored-serving surface, so a pruned snapshot just re-fetches from gRPC. The
+//! *served* end-of-epoch checkpoint summaries are retained deeper — back to the
+//! oldest committee-verifiable anchor — because a mirrored peer's committee
+//! ratchet can't re-derive a pruned one. Tombstone eviction on on-chain
+//! deletion is not yet implemented, but the retain window bounds growth
+//! regardless.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -90,8 +94,9 @@ pub struct VerifiedStateCache {
     /// pruned) Sui fullnode. `None` is an in-memory-only cache (`new`, for
     /// tests / `Default`).
     perpetual: Option<Arc<AuthorityPerpetualTables>>,
-    /// Drop snapshots whose source checkpoint fell more than this many
-    /// checkpoints behind the head (also the mirrored-peer bootstrap depth).
+    /// Drop object snapshots whose source checkpoint fell more than this many
+    /// checkpoints behind the head. (The *served* end-of-epoch checkpoints are
+    /// retained deeper — back to the anchor — see `eop_retention_floor`.)
     /// `None` = unbounded. Set via [`Self::with_retain_window`].
     retain_window: Option<u64>,
     /// Floor (`head - window`) at the last prune sweep; the next sweep waits
@@ -114,9 +119,11 @@ impl VerifiedStateCache {
         }
     }
 
-    /// Bound the cache to snapshots within `window` checkpoints of the head
-    /// (`None` = unbounded). Mirrors `ChangesetIndex::with_retain_window`; the
-    /// sweep is amortized — it only runs once the floor rises a stride.
+    /// Bound the object cache to snapshots within `window` checkpoints of the
+    /// head (`None` = unbounded). The sweep is amortized — it only runs once the
+    /// floor rises a stride. (`ChangesetIndex` has its own, separate retain
+    /// window for the currency stream; this one governs only the verified-object
+    /// snapshots.)
     pub fn with_retain_window(mut self, window: Option<u64>) -> Self {
         self.retain_window = window;
         self
@@ -272,13 +279,31 @@ impl VerifiedStateCache {
         self.maybe_prune();
     }
 
-    /// Retention floor: drop snapshots whose source checkpoint is more than
-    /// `retain_window` behind the head, but never below the oldest
-    /// committee-verifiable checkpoint (a mirrored peer bootstrapping from there
-    /// still needs those objects). `None` when pruning is disabled.
+    /// Object-snapshot retention floor: `head - retain_window`. Snapshots whose
+    /// source checkpoint is older than this are dropped. `None` when pruning is
+    /// disabled.
+    ///
+    /// Deliberately **not** clamped to the bootstrap anchor. This cache is the
+    /// *direct node's own* cache-first read path — mirrored peers are served
+    /// fresh proofs by `LocalProofProvider`, which never reads it — so a pruned
+    /// snapshot is a pure cache miss that re-fetches + re-verifies from gRPC,
+    /// which is harmless. Clamping the floor down to the (slow-moving) anchor
+    /// would pin it below `head - window` forever, so the window would never
+    /// prune and the cache would leak one entry per distinct object id. The
+    /// anchor clamp belongs only on [`Self::eop_retention_floor`], whose
+    /// checkpoints a mirrored peer's ratchet genuinely can't re-derive.
     fn prune_floor(&self) -> Option<CheckpointSequenceNumber> {
-        let window = self.retain_window?;
-        let mut floor = self.head_seq().saturating_sub(window);
+        Some(self.head_seq().saturating_sub(self.retain_window?))
+    }
+
+    /// Retention floor for the *served* end-of-epoch checkpoint summaries: the
+    /// object floor, but never above the oldest committee-verifiable checkpoint.
+    /// A pruned end-of-epoch checkpoint can't be re-derived for a relayed
+    /// bootstrap, so a mirrored peer ratcheting its committee from that anchor
+    /// still needs every summary from there forward (a bounded O(epochs) set,
+    /// unlike the per-object cache). `None` when pruning is disabled.
+    fn eop_retention_floor(&self) -> Option<CheckpointSequenceNumber> {
+        let mut floor = self.prune_floor()?;
         if let Some(perpetual) = &self.perpetual {
             if let Ok(Some(oldest)) = perpetual.oldest_sui_committee_summary() {
                 floor = floor.min(*oldest.sequence_number());
@@ -309,11 +334,12 @@ impl VerifiedStateCache {
     /// Drop every snapshot last modified before `floor` from the in-memory maps
     /// and the persisted column, keeping the parent→children index consistent.
     fn prune(&self, floor: CheckpointSequenceNumber) {
-        // Retained end-of-epoch checkpoints (served to mirrored peers) share the
-        // cache's retention floor; prune them on the same amortized schedule,
-        // independently of whether any object snapshot aged out this sweep.
-        if let Some(perpetual) = &self.perpetual {
-            if let Err(e) = perpetual.retain_sui_end_of_epoch_checkpoints(floor) {
+        // Retained end-of-epoch checkpoints are served to mirrored peers for
+        // their committee ratchet, so they're kept back to the bootstrap anchor
+        // — a deeper floor than the object cache (see `eop_retention_floor`) —
+        // pruned on the same amortized schedule.
+        if let (Some(perpetual), Some(eop_floor)) = (&self.perpetual, self.eop_retention_floor()) {
+            if let Err(e) = perpetual.retain_sui_end_of_epoch_checkpoints(eop_floor) {
                 warn!(error = ?e, "failed to prune retained end-of-epoch checkpoints");
             }
         }
@@ -725,21 +751,18 @@ mod tests {
         assert_eq!(durable.head_seq(), 0);
     }
 
-    /// The retention floor never drops below the oldest committee-verifiable
-    /// checkpoint summary: a mirrored peer bootstrapping from that summary's
-    /// checkpoint still needs the objects last modified at/after it. With a
-    /// committee summary recorded at checkpoint seq `S`, folding objects far
-    /// past `S` with a small retain window leaves `prune_floor() == min(head -
-    /// window, S)` — so snapshots at/after `S` always survive; and when the
-    /// oldest summary's seq is *below* `head - window`, the floor follows the
-    /// window (the summary only ever lowers the floor, never raises it above
-    /// `head - window`).
+    /// The object cache's retention floor follows the window and prunes PAST the
+    /// bootstrap anchor — fixing the leak where it was pinned to the oldest
+    /// committee summary forever (so `head - window` never engaged once the
+    /// anchor fell behind). Only the *served* end-of-epoch checkpoint retention
+    /// floor keeps the anchor, because a mirrored peer's ratchet can't re-derive
+    /// a pruned summary.
     #[tokio::test]
-    async fn prune_floor_never_drops_below_oldest_committee_summary() {
+    async fn object_window_prunes_past_the_anchor_while_eop_retention_keeps_it() {
         let dir = tempfile::tempdir().unwrap();
         let (committee, keys) = SuiCommittee::new_simple_test_committee();
 
-        // Record a committee transition whose end-of-epoch summary sits at
+        // Anchor: a committee transition whose end-of-epoch summary sits at
         // checkpoint seq S = 50. `oldest_sui_committee_summary()` then returns a
         // summary with `sequence_number() == 50`.
         let target = ObjectID::from_single_byte(0xF0);
@@ -767,9 +790,9 @@ mod tests {
             .unwrap()
             .with_retain_window(Some(20));
 
-        // Fold an object at seq 100. head - window = 80, but the oldest
-        // committee summary is at 50, so the floor is clamped DOWN to 50 — never
-        // up to 80, which would prune below the bootstrap anchor.
+        // Fold an object at seq 100. The OBJECT floor follows the window
+        // (head - window = 80) and is NOT pinned to the anchor (50). The served
+        // end-of-epoch retention floor keeps the anchor: min(80, 50) = 50.
         let object = Object::with_id_owner_version_for_testing(
             ObjectID::from_single_byte(0x01),
             SequenceNumber::from(1u64),
@@ -780,13 +803,17 @@ mod tests {
         assert_eq!(cache.head_seq(), 100);
         assert_eq!(
             cache.prune_floor(),
+            Some(80),
+            "object floor follows head - window (80), no longer pinned to the anchor (50)"
+        );
+        assert_eq!(
+            cache.eop_retention_floor(),
             Some(50),
-            "floor follows the oldest committee summary (50), not head-window (80)"
+            "served end-of-epoch checkpoints are kept back to the anchor (50)"
         );
 
-        // A snapshot at/after S (= 50) survives the floor: fold one at seq 55,
-        // then advance the head to 120 so a prune sweep actually runs. 55 is
-        // below head-window (100) but >= floor (50), so it is NOT pruned.
+        // Fold a snapshot at seq 55 (>= anchor 50 but below the object floor),
+        // then advance the head to 120 so a prune sweep runs.
         let object55 = Object::with_id_owner_version_for_testing(
             ObjectID::from_single_byte(0x03),
             SequenceNumber::from(1u64),
@@ -801,11 +828,24 @@ mod tests {
         );
         let (summary_head, entry_head) = signed_entry(&committee, &keys, 120, &object_head);
         cache.absorb_entries(&summary_head, &[entry_head]);
-        // head=120, window=20 → head-window=100, clamped down to summary seq 50.
-        assert_eq!(cache.prune_floor(), Some(50));
+
+        // head=120, window=20 → object floor = 100. The seq-55 snapshot is below
+        // it and is PRUNED — the leak is gone (previously the floor was pinned at
+        // 50 and seq-55 survived forever).
+        assert_eq!(cache.prune_floor(), Some(100));
         assert!(
-            cache.get(object55.id()).is_some(),
-            "the seq-55 snapshot is at/after the committee summary seq (50) and must survive"
+            cache.get(object55.id()).is_none(),
+            "a snapshot below head - window must be pruned; the anchor no longer pins the floor"
+        );
+        // The anchor's end-of-epoch summary is still retained for mirrored bootstrap.
+        assert_eq!(
+            *perpetual
+                .oldest_sui_committee_summary()
+                .unwrap()
+                .unwrap()
+                .sequence_number(),
+            50,
+            "the served end-of-epoch summary at the anchor (50) survives for mirrored bootstrap"
         );
     }
 

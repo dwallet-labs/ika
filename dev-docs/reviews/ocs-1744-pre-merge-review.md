@@ -31,8 +31,8 @@ open** — the whole pre-merge cleanup bundle (`ocs-verifier-core-1`, `spec-conf
 `authority-epoch-1`, `node-config-2`, `ocs-transport-1`) plus `ocs-binding-1` landed
 (commits `857ffdd645`..`ade5d7cd55`, tracked in
 [`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md)).
-Remaining: `ocs-cache-committee-1` (open), `ocs-ingest-2`+`ocs-wiring-1` (open) — both
-LOW/MEDIUM, none merge-blocking. (`network-mirror-1` + `network-mirror-2` done.) (`ocs-binding-1` was itself added 2026-06-26 from the read-path
+Remaining: only `ocs-ingest-2`+`ocs-wiring-1` (open, LOW, "eventually") — not
+merge-blocking. (`network-mirror-1` + `network-mirror-2` + `ocs-cache-committee-1` done.) (`ocs-binding-1` was itself added 2026-06-26 from the read-path
 binding review.) Landed *since* the original review and
 **not** covered by it (all green): continuous trusted-peer discovery, the
 changeset-stream currency gate (now live on mirrored/peer-only nodes), and the
@@ -132,7 +132,7 @@ PR #1744  (feat/ocs-grpc-migration)
 | `ocs-transport-1` mirror `execute_transaction` returns unverified effects | submit path (mirror transport) | ✅ fixed | LOW | 1 line | done (`dc9ff1d53e`) |
 | `network-mirror-1` `submit_transaction` removed + every served read capped | DIRECT serving side | ✅ fixed | MED | small | done (`550db6ba2f`) |
 | `network-mirror-2` consumer doesn't bound response length | ① read | ✅ fixed | LOW | small | done |
-| `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | open | MED | small | fast-follow |
+| `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | ✅ fixed | MED | small | done |
 | `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | open | LOW | small | eventually (1 change) |
 
 **My recommendation** (tracked as a checklist in
@@ -149,12 +149,11 @@ high-value cluster worth landing first:
   and the fail-closed guard on the mirror submit path (`ocs-transport-1` — 1 line of
   insurance so a future mis-wire fails loudly instead of trusting forged effects). None
   touch the trust chain; reviewer value-per-line is highest here.
-- **Fast-follow (own PR, not blocking):** the relay DoS bounds — serving caps done
-  (`network-mirror-1`, `550db6ba2f`: `submit_transaction` removed + every served read
-  capped) and the consumer-side response length-check (`network-mirror-2`, done). Still
-  open: the cache `prune_floor` decoupling (`ocs-cache-committee-1` — a slow-onset leak;
-  land it before long-lived mainnet direct validators accumulate distinct object ids past
-  the window).
+- **Fast-follow (all done):** the relay DoS bounds — serving caps (`network-mirror-1`,
+  `550db6ba2f`) + the consumer-side response length-check (`network-mirror-2`) — and the
+  cache `prune_floor` decoupling (`ocs-cache-committee-1` — the slow-onset object-id leak;
+  the object floor now follows the window, the anchor clamp kept only for served
+  end-of-epoch checkpoints).
 - **Eventually:** the bag-pump failure/omission discipline (`ocs-ingest-2` +
   `ocs-wiring-1` — defense-in-depth + log hygiene; omitted sessions are already caught by
   the consensus catch-up backstop).
@@ -261,8 +260,9 @@ These two share a theme — **the serving/consuming relay surface lacks resource
 
 ## Cache / retention
 
-### `ocs-cache-committee-1` — Verified-cache retain window defeated by clamping `prune_floor` to the never-pruned bootstrap committee summary
+### `ocs-cache-committee-1` — Verified-cache retain window defeated by clamping `prune_floor` to the never-pruned bootstrap committee summary — **FIXED**
 - **Severity: MEDIUM (verified real; downgraded from HIGH).** Not blocking, but should be fixed soon for long-running direct validators.
+- **STATUS: ✅ FIXED.** `prune_floor()` is now just `head - window` (no clamp). Confirmed during the fix that the clamp's stated rationale was wrong: this cache is the direct node's own cache-first read path (a pruned snapshot just re-fetches from gRPC; mirrored peers are served fresh proofs by `LocalProofProvider`, which never reads it), so clamping was harmful (the leak) *and* unnecessary for objects. The anchor clamp moved to a new `eop_retention_floor()` used only for the served end-of-epoch checkpoints (a mirrored peer's ratchet can't re-derive a pruned one). Docs corrected; the leak-encoding test rewritten + fault-injected (`object_window_prunes_past_the_anchor_while_eop_retention_keeps_it`).
 - **File:** `crates/ika-core/src/sui_connector/verified_state_cache.rs:279-288`; `authority_perpetual_tables.rs:422-427`
 - **Mechanism (plain terms):** `prune_floor()` computes `floor = head - window`, then `floor = floor.min(*oldest_committee_summary.sequence_number())`. `oldest_sui_committee_summary()` returns the lowest-epoch (bootstrap) summary, whose seq is fixed because that column is never pruned on a schedule (only wiped by format-recovery). Once the chain advances past `bootstrap_seq + window`, the `.min()` pins the effective floor at `bootstrap_seq` forever, so `prune()` never drops anything — the retain window (default 432,000, whose stated purpose at `node.rs:494-498` is to bound the cache) becomes a no-op. This diverges from the sibling `ChangesetIndex::prune` (`ocs_currency.rs:421-435`, plain `head - window`, no clamp) despite the doc claiming it "Mirrors" it. The unit test `prune_floor_never_drops_below_oldest_committee_summary` encodes the leak as intended behavior, so it won't catch it.
 - **Why downgraded:** The cache is keyed by `ObjectID`, so growth is bounded by the count of *distinct* Ika object IDs modified at/after the anchor, not by checkpoint count — slow-onset (also gated behind the 432k-checkpoint onset delay), not the per-checkpoint blowup the title implies. The clamp also has a legitimate rationale (a mirrored peer bootstraps from `oldest_summary.seq + 1`).

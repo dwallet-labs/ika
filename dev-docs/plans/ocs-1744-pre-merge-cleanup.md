@@ -2,7 +2,7 @@
 
 **Status:** active — pre-merge cleanup (items 1–5) + `ocs-binding-1` **landed
 2026-06-26** (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
-`network-mirror-1/2`, `ocs-cache-committee-1`, and the bag-pump hygiene remain.
+only the bag-pump hygiene (`ocs-ingest-2`/`ocs-wiring-1`) remains.
 **Branch:** feat/ocs-grpc-migration (#1744).
 
 The actionable checklist derived from the pre-merge review
@@ -66,10 +66,16 @@ technically unblocked; the cheap cluster below is worth landing first.
       (`ocs-verifier-core-1`). Fault-injected unit test
       (`an_overlong_dynamic_fields_page_is_rejected`): with the bound removed the 3-entry
       page is accepted, with it the page is rejected.
-- [ ] **`ocs-cache-committee-1`** — decouple `prune_floor` from the immutable bootstrap-anchor
-      clamp so the retain window actually prunes once `head - window > bootstrap_seq`
-      (`verified_state_cache.rs:279-288`); keep the anchor floor only for the mirrored-bootstrap
-      path; fix the misleading "Mirrors ChangesetIndex" doc and the unit test that encodes the leak.
+- [x] **`ocs-cache-committee-1`** — DONE. The object-cache `prune_floor()` is now just
+      `head - window` (the anchor clamp removed) — verified the cache is the direct node's
+      *own* cache-first read path (a pruned snapshot just re-fetches; mirrored peers are
+      served fresh by `LocalProofProvider`, which never reads it), so clamping was both
+      harmful (pinned the floor → leaked one entry per object id) and unnecessary. The anchor
+      clamp moved to a new `eop_retention_floor()` used ONLY for the served end-of-epoch
+      checkpoints (which a mirrored peer's ratchet can't re-derive). Fixed the module /
+      `with_retain_window` ("Mirrors ChangesetIndex") / field docs, and rewrote the leak-
+      encoding test to `object_window_prunes_past_the_anchor_while_eop_retention_keeps_it`
+      (fault-injected: re-clamping the object prune lets the below-window snapshot survive).
 
 ## Eventually (defense-in-depth / hygiene)
 
