@@ -375,11 +375,13 @@ dropping entries are layered:
 The relay exposes verified-read RPCs (`VerifiedObject`,
 `BatchVerifiedObjects`, `VerifiedBagPage`), the `ChangesetPage` currency
 stream (paged `from_seq`+`limit`; see *Freshness and rollback protection*),
-committee-ratchet plumbing
-(checkpoint summary/full/by-digest, `LastCheckpointOfEpoch`,
-`GetTransactionCheckpoint`, `get_current_epoch`, `get_reference_gas_price`),
-and `SubmitTransaction` (peer-only `execute_transaction` — its
-`SubmittedTransaction` return is Deserializable, so it relays).
+and committee-ratchet plumbing (checkpoint summary/full/by-digest,
+`LastCheckpointOfEpoch`, `GetTransactionCheckpoint`, `get_current_epoch`,
+`get_reference_gas_price`). It serves **reads only** — there is no
+`SubmitTransaction`: writes are notifier-gated and the notifier always uses a
+direct uplink, so no node submits through the relay (a submit-via-relay surface
+would only be an unverified-effects + amplification hazard). Every served read
+RPC carries an inflight cap so a byzantine peer can't flood a serving node.
 `get_committee`, `get_transaction`, and `list_owned_gas_coins` are **not**
 relayed and error on the relay surface so callers fall through to a direct
 gRPC fallback. Only `get_transaction` is *un*-relayable for a hard reason
@@ -401,12 +403,6 @@ reached peer returned `NotFound` — any non-`NotFound` error or any
 timeout downgrades the verdict to a network failure. The committee
 ratchet keys its "data really doesn't exist → consider fallback"
 decision on exactly this distinction, so the rule must hold.
-
-Peer-only submit (`execute_transaction` over the relay) verifies the
-relay echoed the transaction's deterministic digest and that it is
-committed under a BLS-signed checkpoint, but does **not** verify the
-effects bytes. This is acceptable only because no live caller reaches it
-(writes are notifier-gated, and notifiers run direct gRPC).
 
 ## The cache fast path (sui-state-direct only)
 

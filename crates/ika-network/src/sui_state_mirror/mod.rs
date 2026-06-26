@@ -38,7 +38,6 @@ use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
-use sui_types::transaction::Transaction;
 
 use crate::proof_provider::{
     BatchVerifiedObjectsResponse, ProofProvider, ProofProviderMetrics, VerifiedBagPageRequest,
@@ -83,23 +82,6 @@ pub struct VerifiedObjectRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchVerifiedObjectsRequest {
     pub ids: Vec<ObjectID>,
-}
-
-// -- Peer-only tx submission ------------------------------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubmitTransactionRequest {
-    pub tx: Transaction,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubmitTransactionResponse {
-    pub digest: TransactionDigest,
-    /// BCS of `sui_types::effects::TransactionEffects`. Shipped as bytes
-    /// because the SDK `ExecutedTransaction` wrapper is `Serialize`-only; the
-    /// inner `TransactionEffects` round-trips fine. The submitter re-verifies
-    /// the tx is committed (via `get_transaction_checkpoint`) before trusting.
-    pub effects_bcs: Vec<u8>,
 }
 
 // -- Changeset stream (mirrored-node currency) ------------------------------------------------
@@ -335,28 +317,6 @@ impl SuiStateMirror for Server {
         self.serve_end("verified_bag_page", started);
         Ok(Response::new(v))
     }
-
-    async fn submit_transaction(
-        &self,
-        request: Request<SubmitTransactionRequest>,
-    ) -> Result<Response<SubmitTransactionResponse>, Status> {
-        let started = self.serve_start("submit_transaction", request.peer_id().copied());
-        let tx = request.into_inner().tx;
-        // We forward the peer's *already-signed* transaction to our full node;
-        // a tampered tx is rejected on-chain, so this is safe to serve.
-        let submitted = self
-            .transport
-            .execute_transaction(&tx)
-            .await
-            .map_err(map_err)?;
-        let effects_bcs = bcs::to_bytes(&submitted.effects)
-            .map_err(|e| Status::internal(format!("encode effects: {e}")))?;
-        self.serve_end("submit_transaction", started);
-        Ok(Response::new(SubmitTransactionResponse {
-            digest: submitted.digest,
-            effects_bcs,
-        }))
-    }
 }
 
 /// Coarse per-method concurrency ceilings for the heaviest serving RPCs, to
@@ -370,6 +330,15 @@ const INFLIGHT_BATCH_VERIFIED_OBJECTS: usize = 64;
 const INFLIGHT_VERIFIED_BAG_PAGE: usize = 64;
 const INFLIGHT_GET_FULL_CHECKPOINT: usize = 32;
 const INFLIGHT_CHANGESET_PAGE: usize = 16;
+/// The checkpoint/transaction lookups a peer-only node's committee ratchet makes
+/// over the relay (`last_checkpoint_of_epoch`, `get_transaction_checkpoint`,
+/// `get_checkpoint_summary_by_digest`, `get_latest_checkpoint`) — each a
+/// fullnode/store round-trip, so bound like the other heavy reads.
+const INFLIGHT_CHECKPOINT_READ: usize = 64;
+/// The cheap single-value metadata reads (`get_current_epoch`,
+/// `get_reference_gas_price`, `get_chain_identifier`). Generous, but still
+/// bounded so every served read has a ceiling.
+const INFLIGHT_METADATA_READ: usize = 256;
 /// Max checkpoints served per `changeset_page` call. Each fetches a full
 /// checkpoint server-side to extract its object-set, so keep the page modest;
 /// the receiver simply requests the next page to continue.
@@ -382,35 +351,34 @@ pub fn make_server(
     provider: Arc<dyn ProofProvider>,
     metrics: Arc<ProofProviderMetrics>,
 ) -> SuiStateMirrorServer<Server> {
+    // Every served READ RPC gets an inflight ceiling so a byzantine peer can't
+    // open unbounded concurrent streams against a sui-state-direct node. (Each
+    // `add_layer_for_*` is generic over its own request type, so the layers must
+    // be built inline rather than via a shared helper.) There is no
+    // `submit_transaction` RPC — the relay serves verified reads only (see
+    // `build.rs`), so there is nothing to cap on the write side.
+    macro_rules! inflight {
+        ($n:expr) => {
+            InboundRequestLayer::new(inflight_limit::InflightLimitLayer::new(
+                $n,
+                inflight_limit::WaitMode::ReturnError,
+            ))
+        };
+    }
     SuiStateMirrorServer::new(Server::new(transport, provider, metrics))
-        .add_layer_for_verified_object(InboundRequestLayer::new(
-            inflight_limit::InflightLimitLayer::new(
-                INFLIGHT_VERIFIED_OBJECT,
-                inflight_limit::WaitMode::ReturnError,
-            ),
-        ))
-        .add_layer_for_batch_verified_objects(InboundRequestLayer::new(
-            inflight_limit::InflightLimitLayer::new(
-                INFLIGHT_BATCH_VERIFIED_OBJECTS,
-                inflight_limit::WaitMode::ReturnError,
-            ),
-        ))
-        .add_layer_for_verified_bag_page(InboundRequestLayer::new(
-            inflight_limit::InflightLimitLayer::new(
-                INFLIGHT_VERIFIED_BAG_PAGE,
-                inflight_limit::WaitMode::ReturnError,
-            ),
-        ))
-        .add_layer_for_get_full_checkpoint(InboundRequestLayer::new(
-            inflight_limit::InflightLimitLayer::new(
-                INFLIGHT_GET_FULL_CHECKPOINT,
-                inflight_limit::WaitMode::ReturnError,
-            ),
-        ))
-        .add_layer_for_changeset_page(InboundRequestLayer::new(
-            inflight_limit::InflightLimitLayer::new(
-                INFLIGHT_CHANGESET_PAGE,
-                inflight_limit::WaitMode::ReturnError,
-            ),
-        ))
+        // verified reads
+        .add_layer_for_verified_object(inflight!(INFLIGHT_VERIFIED_OBJECT))
+        .add_layer_for_batch_verified_objects(inflight!(INFLIGHT_BATCH_VERIFIED_OBJECTS))
+        .add_layer_for_verified_bag_page(inflight!(INFLIGHT_VERIFIED_BAG_PAGE))
+        .add_layer_for_get_full_checkpoint(inflight!(INFLIGHT_GET_FULL_CHECKPOINT))
+        .add_layer_for_changeset_page(inflight!(INFLIGHT_CHANGESET_PAGE))
+        // committee-ratchet checkpoint / transaction lookups (were uncapped)
+        .add_layer_for_last_checkpoint_of_epoch(inflight!(INFLIGHT_CHECKPOINT_READ))
+        .add_layer_for_get_transaction_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
+        .add_layer_for_get_checkpoint_summary_by_digest(inflight!(INFLIGHT_CHECKPOINT_READ))
+        .add_layer_for_get_latest_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
+        // cheap metadata reads (were uncapped)
+        .add_layer_for_get_current_epoch(inflight!(INFLIGHT_METADATA_READ))
+        .add_layer_for_get_reference_gas_price(inflight!(INFLIGHT_METADATA_READ))
+        .add_layer_for_get_chain_identifier(inflight!(INFLIGHT_METADATA_READ))
 }

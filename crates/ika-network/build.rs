@@ -266,20 +266,11 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
-        // Peer-only tx submission: a sui-state-mirrored validator with no
-        // direct full-node connection forwards its own signed transaction to
-        // a direct peer, which submits it and returns the committed effects
-        // (BCS). The submitter re-verifies the tx is committed under a
-        // BLS-signed checkpoint before trusting the effects.
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("submit_transaction")
-                .route_name("SubmitTransaction")
-                .request_type("crate::sui_state_mirror::SubmitTransactionRequest")
-                .response_type("crate::sui_state_mirror::SubmitTransactionResponse")
-                .codec_path(codec_path)
-                .build(),
-        )
+        // NOTE: no `submit_transaction` RPC. The relay serves verified READS
+        // only — writes (ika checkpoint write-back) are notifier-gated and the
+        // notifier always uses a direct uplink, so no node ever submits through
+        // the relay. A submit-via-relay surface would only be an unverified-
+        // effects + amplification-DoS hazard (see `SuiMirrorTransport::execute_transaction`).
         .build();
 
     anemo_build::manual::Builder::new()
