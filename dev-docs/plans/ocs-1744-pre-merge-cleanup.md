@@ -80,7 +80,7 @@ technically unblocked; the cheap cluster below is worth landing first.
 ## Eventually (defense-in-depth / hygiene)
 
 - [x] **`ocs-ingest-2` + `ocs-wiring-1`** (same `BagEventPump` loop) — DONE. The run loop now
-      applies exponential backoff (`next_pump_backoff`: poll-interval → 30s cap, mirroring
+      applies exponential backoff (`next_pump_backoff`: poll-interval → 5s cap — short, since the pump is a live event feeder, cf.
       `verified_read_retry_backoff`) and escalates `advance()` failure logging warn→error after
       5 consecutive failures (then the grown backoff throttles to ~1/30s). Omission escalates
       across ticks (`omission_escalation` / `note_bag_omission`): one warn on the first suspected

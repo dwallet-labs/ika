@@ -67,10 +67,14 @@ pub struct BagEventPump {
     consecutive_omission_ticks: u32,
 }
 
-/// Backoff cap for a persistently-failing pump tick — matches the executor's
-/// `verified_read_retry_backoff` ceiling so a relay/proof outage throttles the
-/// retry (and the error log) to ~1/30s instead of flooding at the poll rate.
-const MAX_PUMP_BACKOFF: Duration = Duration::from_secs(30);
+/// Backoff cap for a persistently-failing pump tick. Throttles the retry (and
+/// the error log) during a relay/proof outage, but kept short — deliberately
+/// well below the 30s the executor's `verified_read_retry_backoff` uses —
+/// because this is a *live* MPC-session feeder: during a backoff the pump
+/// suppresses both the new-event broadcast and the recovery snapshot, so after a
+/// transient fullnode blip recovers, event delivery should resume within a few
+/// seconds, not tens. Still cuts a ~20 Hz flood down to ~1 line / 5s.
+const MAX_PUMP_BACKOFF: Duration = Duration::from_secs(5);
 /// Consecutive `advance()` failures before the per-tick `warn!` escalates to a
 /// single `error!` (after which the grown backoff throttles the rate anyway).
 const PUMP_FAILURE_ESCALATION_TICKS: u32 = 5;
@@ -430,7 +434,7 @@ mod tests {
         assert_eq!(b1, Duration::from_millis(100));
         // Exponential growth.
         assert_eq!(next_pump_backoff(b1, poll), Duration::from_millis(200));
-        // Caps at MAX_PUMP_BACKOFF (20s * 2 = 40s → clamped to 30s).
+        // Caps at MAX_PUMP_BACKOFF (20s * 2 = 40s → clamped to the 5s cap).
         assert_eq!(
             next_pump_backoff(Duration::from_secs(20), poll),
             MAX_PUMP_BACKOFF
