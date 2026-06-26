@@ -31,9 +31,9 @@ open** — the whole pre-merge cleanup bundle (`ocs-verifier-core-1`, `spec-conf
 `authority-epoch-1`, `node-config-2`, `ocs-transport-1`) plus `ocs-binding-1` landed
 (commits `857ffdd645`..`ade5d7cd55`, tracked in
 [`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md)).
-Remaining: `network-mirror-1` (open), `network-mirror-2` (consumer bound, partial),
+Remaining: `network-mirror-2` (consumer bound, partial),
 `ocs-cache-committee-1` (open), `ocs-ingest-2`+`ocs-wiring-1` (open) — all LOW/MEDIUM,
-none merge-blocking. (`ocs-binding-1` was itself added 2026-06-26 from the read-path
+none merge-blocking. (`network-mirror-1` done — `550db6ba2f`.) (`ocs-binding-1` was itself added 2026-06-26 from the read-path
 binding review.) Landed *since* the original review and
 **not** covered by it (all green): continuous trusted-peer discovery, the
 changeset-stream currency gate (now live on mirrored/peer-only nodes), and the
@@ -131,7 +131,7 @@ PR #1744  (feat/ocs-grpc-migration)
 | `authority-epoch-1` false "deterministic" close comment | ④ close gate | ✅ fixed | MED | 1 comment | done (`e8f39186d4`) |
 | `node-config-2` presign-pool env unguarded + false comment | startup / config | ✅ fixed | LOW | small | done (`9a7fe8494a`) |
 | `ocs-transport-1` mirror `execute_transaction` returns unverified effects | submit path (mirror transport) | ✅ fixed | LOW | 1 line | done (`dc9ff1d53e`) |
-| `network-mirror-1` `submit_transaction` / ckpt RPCs uncapped | DIRECT serving side | open | MED | small | fast-follow |
+| `network-mirror-1` `submit_transaction` removed + every served read capped | DIRECT serving side | ✅ fixed | MED | small | done (`550db6ba2f`) |
 | `network-mirror-2` consumer doesn't bound response length | ① read | partial (server caps in) | LOW | small | fast-follow (w/ ↑) |
 | `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | open | MED | small | fast-follow |
 | `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | open | LOW | small | eventually (1 change) |
@@ -150,9 +150,10 @@ high-value cluster worth landing first:
   and the fail-closed guard on the mirror submit path (`ocs-transport-1` — 1 line of
   insurance so a future mis-wire fails loudly instead of trusting forged effects). None
   touch the trust chain; reviewer value-per-line is highest here.
-- **Fast-follow (own PR, not blocking):** the relay DoS bounds (`network-mirror-1`
-  serving caps + `network-mirror-2` consumer length-check — fix together) and the cache
-  `prune_floor` decoupling (`ocs-cache-committee-1` — a slow-onset leak; land it before
+- **Fast-follow (own PR, not blocking):** the relay DoS bounds — serving caps done
+  (`network-mirror-1`, `550db6ba2f`: `submit_transaction` removed + every served read
+  capped); still open is `network-mirror-2` (consumer-side response length-check) — and the
+  cache `prune_floor` decoupling (`ocs-cache-committee-1` — a slow-onset leak; land it before
   long-lived mainnet direct validators accumulate distinct object ids past the window).
 - **Eventually:** the bag-pump failure/omission discipline (`ocs-ingest-2` +
   `ocs-wiring-1` — defense-in-depth + log hygiene; omitted sessions are already caught by
@@ -224,13 +225,12 @@ Overall risk is **moderate-to-high, concentrated in one item**. The verified-rea
 
 These two share a theme — **the serving/consuming relay surface lacks resource bounds against a byzantine peer** — but have distinct root causes and are not a dedup.
 
-### `network-mirror-1` — `submit_transaction` serving handler has no inflight cap and forwards arbitrary peer tx to the local full node
+### `network-mirror-1` — `submit_transaction` serving handler has no inflight cap and forwards arbitrary peer tx to the local full node — **FIXED (`550db6ba2f`)**
 - **Severity: MEDIUM (verified real).** Not blocking (opt-in serving role).
-- **File:** `crates/ika-network/src/sui_state_mirror/mod.rs:339-359` (handler), `380-416` (make_server)
-- **Mechanism (plain terms):** `make_server` installs `InflightLimitLayer` for the five heavy read RPCs but **not** for `submit_transaction`, which unconditionally calls `self.transport.execute_transaction(&tx)` on the validator's own full node for any peer-supplied `Transaction`. The anemo router (`lib.rs:1531-1560`) has no allowed-peers firewall; any discovered/admitted p2p peer can invoke it, with `max_frame_size=1 GB` and `max_concurrent_bidi_streams=500`.
+- **File:** `crates/ika-network/src/sui_state_mirror/mod.rs` `make_server`, `crates/ika-network/build.rs`
+- **Mechanism (plain terms):** `make_server` installed `InflightLimitLayer` for the five heavy read RPCs but **not** for `submit_transaction`, which unconditionally called `self.transport.execute_transaction(&tx)` on the validator's own full node for any peer-supplied `Transaction`. The anemo router (`lib.rs:1531-1560`) has no allowed-peers firewall; any discovered/admitted p2p peer could invoke it, with `max_frame_size=1 GB` and `max_concurrent_bidi_streams=500`.
 - **Triggering scenario:** A compromised/admitted peer opens many concurrent `submit_transaction` streams of well-formed (garbage) signed tx; each costs a full-node gRPC round-trip + validation, with unbounded concurrency — amplification DoS onto the validator's own full node. Tampered tx are still rejected on-chain and effects are re-verified client-side, so this is availability-only, no safety break.
-- **Nuance:** `last_checkpoint_of_epoch` and `get_transaction_checkpoint` are *also* uncapped, so "the other heavy RPCs are protected" is only partially true.
-- **Suggested fix:** Add an `InflightLimitLayer` (and per-peer rate limit) to `submit_transaction`, `last_checkpoint_of_epoch`, and `get_transaction_checkpoint`. Consider restricting the serving router to admitted committee/OCS-consumer peers rather than any discovered network member.
+- **Resolution (scope sharpened):** `submit_transaction` had **no live caller** — writes are notifier-gated and the notifier runs a direct uplink, and `SuiMirrorTransport::execute_transaction` already fail-closes. So instead of capping it, it was **removed entirely** (`.method()` dropped from `build.rs`; handler + `SubmitTransaction{Request,Response}` types deleted). Then *every* served read got an inflight cap — the five that had one plus the seven that didn't (`last_checkpoint_of_epoch`, `get_transaction_checkpoint`, `get_checkpoint_summary_by_digest`, `get_latest_checkpoint`, `get_current_epoch`, `get_reference_gas_price`, `get_chain_identifier`) — via a `macro_rules! inflight` (each `add_layer_for_*` is generic over its own request type). Per-peer rate-limit / admitted-peer firewall deferred; the inflight ceilings bound the DoS.
 
 ### `network-mirror-2` — Relay client accepts up to a 1 GB response frame from an untrusted serving peer
 - **Severity: LOW (verified real).** Not blocking.
@@ -294,7 +294,7 @@ These two share a theme — **the serving/consuming relay surface lacks resource
 
 ## Dedup notes
 - **`ocs-ingest-2` + `ocs-wiring-1`** share a root cause: the `BagEventPump` run loop's failure/omission response discipline (no fail-fast, no backoff, no escalation). Fix as one change.
-- **`network-mirror-1` + `network-mirror-2`** are the same *theme* (unbounded relay resource consumption against a byzantine peer) but **distinct root causes** (missing serving-side inflight cap vs. missing consumer-side response-size bound). Not merged; fix both, separately.
+- **`network-mirror-1` + `network-mirror-2`** are the same *theme* (unbounded relay resource consumption against a byzantine peer) but **distinct root causes** (missing serving-side inflight cap vs. missing consumer-side response-size bound), so they were fixed separately. `network-mirror-1` is done (`550db6ba2f`); `network-mirror-2` remains.
 - `ocs-verifier-core-1` and `ocs-transport-1` both stem from a missing fail-closed check at a relay boundary, but in opposite directions (read vs. submit) — list separately.
 
 ## Areas that came back clean

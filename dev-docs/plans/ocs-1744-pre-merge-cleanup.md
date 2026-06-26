@@ -46,9 +46,17 @@ technically unblocked; the cheap cluster below is worth landing first.
       already returns the proof-bound `Owner` there on a peer-only node, so no new reader
       method or caller routing was needed. LOW impact (discovery-only). Helper unit-tested;
       the 30 `verified_reader` tests pass through the refactored binding.
-- [ ] **`network-mirror-1`** — add `InflightLimitLayer` (+ per-peer rate limit) to the three
-      uncapped serving RPCs: `submit_transaction`, `last_checkpoint_of_epoch`,
-      `get_transaction_checkpoint` (`sui_state_mirror/mod.rs` `make_server`).
+- [x] **`network-mirror-1`** — DONE (`550db6ba2f`). **Scope sharpened during review:**
+      `submit_transaction` had no live caller (writes are notifier-gated → direct uplink;
+      `SuiMirrorTransport::execute_transaction` already fail-closes), so rather than cap it we
+      **removed it entirely** — dropped the `.method()` from `build.rs` and deleted the handler +
+      `SubmitTransaction{Request,Response}` types. Then capped *every* served read: the five that
+      already had an `InflightLimitLayer` plus the seven that didn't
+      (`last_checkpoint_of_epoch`, `get_transaction_checkpoint`,
+      `get_checkpoint_summary_by_digest`, `get_latest_checkpoint`, `get_current_epoch`,
+      `get_reference_gas_price`, `get_chain_identifier`), via a `macro_rules! inflight`
+      (each `add_layer_for_*` is generic over its own request type, so a closure won't type-check).
+      Per-peer rate-limit / admitted-peer firewall deferred (the inflight ceilings bound the DoS).
 - [ ] **`network-mirror-2`** — consumer-side: reject responses where
       `resp.entries.len()` / `results.len()` exceeds the requested `page_size`/`limit`
       before allocating (`verified_reader.rs:477`). Server-side caps already exist.
