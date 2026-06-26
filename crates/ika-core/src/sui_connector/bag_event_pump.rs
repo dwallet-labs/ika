@@ -61,6 +61,68 @@ pub struct BagEventPump {
     /// comes from a cache-first (lagging) parent read, so the check would
     /// false-positive on every session completion — disabled there.
     detect_omission: bool,
+    /// Consecutive ticks (so far) on which omission was suspected; drives the
+    /// warn→error escalation in [`Self::note_bag_omission`]. Reset to 0 on any
+    /// clean tick.
+    consecutive_omission_ticks: u32,
+}
+
+/// Backoff cap for a persistently-failing pump tick — matches the executor's
+/// `verified_read_retry_backoff` ceiling so a relay/proof outage throttles the
+/// retry (and the error log) to ~1/30s instead of flooding at the poll rate.
+const MAX_PUMP_BACKOFF: Duration = Duration::from_secs(30);
+/// Consecutive `advance()` failures before the per-tick `warn!` escalates to a
+/// single `error!` (after which the grown backoff throttles the rate anyway).
+const PUMP_FAILURE_ESCALATION_TICKS: u32 = 5;
+/// Consecutive omission-suspected ticks before escalating warn→error. At the
+/// ika-node ~50ms cadence this is ~5s of *persistent* suspicion — long enough
+/// to rule out a benign mid-walk `Bag.size` drift (a session completing during
+/// the walk), short enough to flag a relay actually withholding entries.
+const SUSTAINED_OMISSION_TICKS: u32 = 100;
+
+/// Next backoff after a failed tick: double the current (floored at the poll
+/// interval), capped. Pure for testability.
+fn next_pump_backoff(current: Duration, poll_interval: Duration) -> Duration {
+    (current.max(poll_interval) * 2).min(MAX_PUMP_BACKOFF)
+}
+
+/// What to log for an omission streak, given the previous streak length and
+/// whether this tick suspected omission. Pure for testability — the caller logs
+/// and stores the returned streak length.
+#[derive(Debug, PartialEq, Eq)]
+enum OmissionEscalation {
+    /// Within a streak but not at a logging boundary (metric still ticks).
+    Quiet,
+    /// First tick of a fresh streak — a single `warn!`.
+    FirstSuspected,
+    /// Streak reached the sustained threshold — a single `error!`.
+    Sustained,
+    /// A clean tick ended a previously-sustained streak — an `info!` recovery.
+    Cleared { after: u32 },
+}
+
+fn omission_escalation(
+    prev_ticks: u32,
+    suspected: bool,
+    sustained_ticks: u32,
+) -> (u32, OmissionEscalation) {
+    if !suspected {
+        let action = if prev_ticks >= sustained_ticks {
+            OmissionEscalation::Cleared { after: prev_ticks }
+        } else {
+            OmissionEscalation::Quiet
+        };
+        return (0, action);
+    }
+    let n = prev_ticks.saturating_add(1);
+    let action = if n == 1 {
+        OmissionEscalation::FirstSuspected
+    } else if n == sustained_ticks {
+        OmissionEscalation::Sustained
+    } else {
+        OmissionEscalation::Quiet
+    };
+    (n, action)
 }
 
 impl BagEventPump {
@@ -84,6 +146,7 @@ impl BagEventPump {
             poll_interval,
             seen: HashSet::new(),
             detect_omission,
+            consecutive_omission_ticks: 0,
         }
     }
 
@@ -93,10 +156,43 @@ impl BagEventPump {
             "BagEventPump starting"
         );
         let mut tick = tokio::time::interval(self.poll_interval);
+        // Don't let `sleep(backoff)` below make the interval burst-catch-up.
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut backoff = Duration::ZERO;
+        let mut consecutive_failures: u32 = 0;
         loop {
             tick.tick().await;
-            if let Err(e) = self.advance().await {
-                warn!(error = ?e, "BagEventPump tick failed; will retry");
+            if !backoff.is_zero() {
+                tokio::time::sleep(backoff).await;
+            }
+            match self.advance().await {
+                Ok(()) => {
+                    if consecutive_failures > 0 {
+                        info!(
+                            after_failures = consecutive_failures,
+                            "BagEventPump recovered"
+                        );
+                    }
+                    consecutive_failures = 0;
+                    backoff = Duration::ZERO;
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    backoff = next_pump_backoff(backoff, self.poll_interval);
+                    // Escalate to a single error once sustained; from then on the
+                    // grown backoff throttles the rate to ~1 line / 30s, so a long
+                    // outage no longer floods the log at the poll rate.
+                    if consecutive_failures >= PUMP_FAILURE_ESCALATION_TICKS {
+                        error!(
+                            error = ?e,
+                            consecutive_failures,
+                            backoff_ms = backoff.as_millis() as u64,
+                            "BagEventPump tick failing persistently (relay/proof outage?); backing off"
+                        );
+                    } else {
+                        warn!(error = ?e, consecutive_failures, "BagEventPump tick failed; will retry with backoff");
+                    }
+                }
             }
         }
     }
@@ -122,10 +218,13 @@ impl BagEventPump {
             };
 
         let mut entries: Vec<(ObjectID, DBSuiEvent)> = Vec::new();
-        self.collect_bag("user", user_bag, user_size, &mut entries)
+        let user_omitted = self
+            .collect_bag("user", user_bag, user_size, &mut entries)
             .await?;
-        self.collect_bag("system", sys_bag, sys_size, &mut entries)
+        let sys_omitted = self
+            .collect_bag("system", sys_bag, sys_size, &mut entries)
             .await?;
+        self.note_bag_omission(user_omitted || sys_omitted);
 
         let current_ids: HashSet<ObjectID> = entries.iter().map(|(id, _)| *id).collect();
         let new_ids: HashSet<ObjectID> = current_ids.difference(&self.seen).copied().collect();
@@ -174,19 +273,20 @@ impl BagEventPump {
     ///
     /// Bag-omission detection: `expected_size` comes from the verified
     /// `DWalletCoordinatorInner.sessions_manager.*.session_events.size`
-    /// field — i.e. an authenticated `Bag.size`. If the relay-listed
-    /// children come up short, log a warn and bump
-    /// `bag_omission_suspected_total{bag}`. We don't fail the tick: the
-    /// size could legitimately drift during the walk (sessions complete
-    /// and get removed), so a single short walk is just a hint, not a
-    /// proof of misbehavior. Persistent suspicion is what to alert on.
+    /// field — i.e. an authenticated `Bag.size`. If the relay-listed children
+    /// come up short, bump `bag_omission_suspected_total{bag}`, debug-log the
+    /// detail, and return `true` so the caller can escalate across ticks (see
+    /// [`Self::note_bag_omission`]). We don't fail the tick: the size could
+    /// legitimately drift during the walk (sessions complete and get removed),
+    /// so a single short walk is just a hint, not a proof of misbehavior —
+    /// *persistent* suspicion is what to alert on.
     async fn collect_bag(
         &self,
         bag_label: &'static str,
         bag_id: ObjectID,
         expected_size: u64,
         out: &mut Vec<(ObjectID, DBSuiEvent)>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let mut page_token = None;
         let mut listed: u64 = 0;
         loop {
@@ -205,20 +305,52 @@ impl BagEventPump {
                 None => break,
             }
         }
-        if self.detect_omission && listed < expected_size {
-            warn!(
-                bag = bag_label,
-                listed,
-                expected_size,
-                "bag walk returned fewer children than verified parent claims; suspected omission \
-                 (or a benign mid-walk removal)"
-            );
+        let suspected = self.detect_omission && listed < expected_size;
+        if suspected {
             self.metrics
                 .bag_omission_suspected_total
                 .with_label_values(&[bag_label])
                 .inc();
+            debug!(
+                bag = bag_label,
+                listed,
+                expected_size,
+                "bag walk returned fewer children than verified parent claims this tick"
+            );
         }
-        Ok(())
+        Ok(suspected)
+    }
+
+    /// Escalate the omission log by streak length: a single warn on the first
+    /// suspected tick, a single error once suspicion is *sustained* (likely a
+    /// relay withholding entries — rotate it / investigate), an info on
+    /// recovery, and silence in between. The per-tick
+    /// `bag_omission_suspected_total` metric ticks throughout regardless; this
+    /// only governs the (rate-limited) log. Consensus catch-up backstops
+    /// liveness, so this is an alerting signal, not a fail-stop.
+    fn note_bag_omission(&mut self, suspected: bool) {
+        let (n, action) = omission_escalation(
+            self.consecutive_omission_ticks,
+            suspected,
+            SUSTAINED_OMISSION_TICKS,
+        );
+        self.consecutive_omission_ticks = n;
+        match action {
+            OmissionEscalation::Quiet => {}
+            OmissionEscalation::FirstSuspected => warn!(
+                "suspected session_events bag omission (or a benign mid-walk removal); \
+                 watching for persistence"
+            ),
+            OmissionEscalation::Sustained => error!(
+                consecutive_ticks = n,
+                "session_events bag omission SUSTAINED — the serving relay is likely \
+                 withholding entries; rotate the relay / investigate (consensus catch-up \
+                 still backstops liveness)"
+            ),
+            OmissionEscalation::Cleared { after } => {
+                info!(after_ticks = after, "session_events bag omission cleared")
+            }
+        }
     }
 }
 
@@ -244,4 +376,65 @@ fn decode_session_event(verified: &VerifiedObject) -> Option<DBSuiEvent> {
         // not delivered as a Sui event stream — so this is a "pulled" event.
         pulled: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omission_escalation_warns_once_errors_when_sustained_then_clears() {
+        let sustained = 3;
+        // First suspected tick → one warn.
+        assert_eq!(
+            omission_escalation(0, true, sustained),
+            (1, OmissionEscalation::FirstSuspected)
+        );
+        // Inside the streak, before the threshold → quiet (no per-tick spam).
+        assert_eq!(
+            omission_escalation(1, true, sustained),
+            (2, OmissionEscalation::Quiet)
+        );
+        // Reaching the threshold → exactly one error.
+        assert_eq!(
+            omission_escalation(2, true, sustained),
+            (3, OmissionEscalation::Sustained)
+        );
+        // Past the threshold → quiet again; the error fires once, not every tick.
+        assert_eq!(
+            omission_escalation(3, true, sustained),
+            (4, OmissionEscalation::Quiet)
+        );
+        // Clean tick after a sustained streak → an info recovery line.
+        assert_eq!(
+            omission_escalation(4, false, sustained),
+            (0, OmissionEscalation::Cleared { after: 4 })
+        );
+        // Clean tick after a SHORT (sub-threshold) streak → quiet, no info spam.
+        assert_eq!(
+            omission_escalation(2, false, sustained),
+            (0, OmissionEscalation::Quiet)
+        );
+        // Clean tick with no prior streak → quiet.
+        assert_eq!(
+            omission_escalation(0, false, sustained),
+            (0, OmissionEscalation::Quiet)
+        );
+    }
+
+    #[test]
+    fn pump_backoff_grows_from_poll_interval_and_caps() {
+        let poll = Duration::from_millis(50);
+        // From zero, the first backoff is the poll interval, doubled.
+        let b1 = next_pump_backoff(Duration::ZERO, poll);
+        assert_eq!(b1, Duration::from_millis(100));
+        // Exponential growth.
+        assert_eq!(next_pump_backoff(b1, poll), Duration::from_millis(200));
+        // Caps at MAX_PUMP_BACKOFF (20s * 2 = 40s → clamped to 30s).
+        assert_eq!(
+            next_pump_backoff(Duration::from_secs(20), poll),
+            MAX_PUMP_BACKOFF
+        );
+        assert_eq!(next_pump_backoff(MAX_PUMP_BACKOFF, poll), MAX_PUMP_BACKOFF);
+    }
 }

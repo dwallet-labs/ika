@@ -26,13 +26,14 @@ synthesized. 27 agents; 14 raw findings, **11 survived** verification, 3 refuted
 
 The findings below were written at `72e3c76f78`; each was re-checked against the
 current tree. **The one MUST-FIX (`mpc-consensus-1`) is resolved** (`ff3feba0f6`).
-Tally (updated 2026-06-26 after the cleanup pass): **7 fixed · 1 partially fixed · 4
-open** — the whole pre-merge cleanup bundle (`ocs-verifier-core-1`, `spec-conformance-1`,
-`authority-epoch-1`, `node-config-2`, `ocs-transport-1`) plus `ocs-binding-1` landed
-(commits `857ffdd645`..`ade5d7cd55`, tracked in
-[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md)).
-Remaining: only `ocs-ingest-2`+`ocs-wiring-1` (open, LOW, "eventually") — not
-merge-blocking. (`network-mirror-1` + `network-mirror-2` + `ocs-cache-committee-1` done.) (`ocs-binding-1` was itself added 2026-06-26 from the read-path
+Tally (updated 2026-06-26 after the cleanup + fast-follow passes): **ALL 12
+findings now fixed** — the pre-merge cleanup bundle (`ocs-verifier-core-1`,
+`spec-conformance-1`, `authority-epoch-1`, `node-config-2`, `ocs-transport-1`) +
+`ocs-binding-1` landed (`857ffdd645`..`ade5d7cd55`), and the fast-follow /
+"eventually" set is now done too: `network-mirror-1`, `network-mirror-2`,
+`ocs-cache-committee-1`, and `ocs-ingest-2`+`ocs-wiring-1`. Tracked in
+[`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md).
+Nothing left open. (`ocs-binding-1` was itself added 2026-06-26 from the read-path
 binding review.) Landed *since* the original review and
 **not** covered by it (all green): continuous trusted-peer discovery, the
 changeset-stream currency gate (now live on mirrored/peer-only nodes), and the
@@ -133,7 +134,7 @@ PR #1744  (feat/ocs-grpc-migration)
 | `network-mirror-1` `submit_transaction` removed + every served read capped | DIRECT serving side | ✅ fixed | MED | small | done (`550db6ba2f`) |
 | `network-mirror-2` consumer doesn't bound response length | ① read | ✅ fixed | LOW | small | done |
 | `ocs-cache-committee-1` `prune_floor` clamp → retain window no-op | ① cache | ✅ fixed | MED | small | done |
-| `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | open | LOW | small | eventually (1 change) |
+| `ocs-ingest-2` + `ocs-wiring-1` bag-pump omission + 20 Hz warn | ① ingest / pump | ✅ fixed | LOW | small | done |
 
 **My recommendation** (tracked as a checklist in
 [`../plans/ocs-1744-pre-merge-cleanup.md`](../plans/ocs-1744-pre-merge-cleanup.md))**.**
@@ -154,8 +155,8 @@ high-value cluster worth landing first:
   cache `prune_floor` decoupling (`ocs-cache-committee-1` — the slow-onset object-id leak;
   the object floor now follows the window, the anchor clamp kept only for served
   end-of-epoch checkpoints).
-- **Eventually:** the bag-pump failure/omission discipline (`ocs-ingest-2` +
-  `ocs-wiring-1` — defense-in-depth + log hygiene; omitted sessions are already caught by
+- **Eventually (now done):** the bag-pump failure/omission discipline (`ocs-ingest-2` +
+  `ocs-wiring-1` — backoff + warn→error escalation; omitted sessions are already caught by
   the consensus catch-up backstop).
 
 ---
@@ -243,15 +244,17 @@ These two share a theme — **the serving/consuming relay surface lacks resource
 
 ## OCS ingest / pump (mirrored-node hardening)
 
-### `ocs-ingest-2` — Relay omitting `session_events` bag entries only bumps a metric; the omitted session is never ingested locally
+### `ocs-ingest-2` — Relay omitting `session_events` bag entries only bumps a metric; the omitted session is never ingested locally — **FIXED**
 - **Severity: LOW (verified real).** Not blocking.
+- **STATUS: ✅ FIXED** (with `ocs-wiring-1`, one change). Omission now escalates across ticks via `note_bag_omission`/`omission_escalation`: one warn on the first suspected tick, one error once *sustained* (≈100 ticks ≈ 5 s — surfaces a relay that's actually withholding, with a rotate-relay hint), info on recovery, quiet in between. Still non-fatal (consensus catch-up backstops liveness), so it's an alerting signal, not a fail-stop. The escalation decision is a pure, unit-tested helper.
 - **File:** `crates/ika-core/src/sui_connector/bag_event_pump.rs:183-222`
 - **Mechanism (plain terms):** `collect_bag` compares accumulated `listed` against the authenticated `Bag.size`; when `detect_omission` (mirrored node) and `listed < expected_size`, it emits `warn!` + increments `bag_omission_suspected_total` but does **not** fail/retry the tick. `advance()` then diffs/broadcasts only the under-served set and commits it to `self.seen`. Per-entry proofs attest authenticity, not membership completeness (the bag parent isn't fetchable). A relay cannot forge the count to hide a session (binding/currency checks reject substitutes), so omission reliably trips the warning — but the response is non-fatal.
 - **Why low:** On a mirrored/peer-only node the bag pump is a low-latency live-start optimization; an omitted session is still picked up via the consensus catch-up backstop. The gap is defense-in-depth.
 - **Suggested fix:** On *sustained* omission (suspicion persisting across N ticks), escalate — rotate relay/peer and/or surface a fatal-tier alert — rather than logging indefinitely. Low priority.
 
-### `ocs-wiring-1` — `BagEventPump` warns at 20 Hz with no backoff on sustained tick failure
-- **Severity: LOW (verified real).** Not blocking. **Shares root with `ocs-ingest-2`** (same loop's failure-response discipline; fix them together).
+### `ocs-wiring-1` — `BagEventPump` warns at 20 Hz with no backoff on sustained tick failure — **FIXED**
+- **Severity: LOW (verified real).** Not blocking. **Shares root with `ocs-ingest-2`** (same loop's failure-response discipline; fixed together).
+- **STATUS: ✅ FIXED.** The run loop applies exponential backoff (`next_pump_backoff`: poll-interval → 30 s cap, mirroring `verified_read_retry_backoff`) and escalates `advance()`-failure logging warn→error after 5 consecutive failures, after which the grown backoff throttles the rate to ~1 line/30 s instead of ~20/s. Resets + info-logs on recovery. Backoff growth is a pure, unit-tested helper.
 - **File:** `crates/ika-core/src/sui_connector/bag_event_pump.rs:96-99`
 - **Mechanism (plain terms):** `loop { tick.tick().await; if let Err(e) = self.advance().await { warn!(...) } }` at a 50 ms interval with no backoff. On a genuine relay/proof outage, `advance()` errs every tick → ~20 warn lines/sec for the whole outage, drowning logs, with no relay relief. The not-yet-available-coordinator case returns `Ok` (only `debug!`), so it doesn't flood — only real relay/proof errors do. Contrast the executor's `verified_read_retry_backoff` (1s→30s escalation); the pump has none.
 - **Suggested fix:** Add exponential backoff + log-severity escalation (and a rate-limit on the warn) on the failure path, mirroring `verified_read_retry_backoff`. Combine with `ocs-ingest-2` into one "pump failure/omission response" change.

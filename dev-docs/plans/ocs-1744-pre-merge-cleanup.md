@@ -2,7 +2,7 @@
 
 **Status:** active — pre-merge cleanup (items 1–5) + `ocs-binding-1` **landed
 2026-06-26** (commits `857ffdd645`..`41ff40f586`, each with a test where meaningful);
-only the bag-pump hygiene (`ocs-ingest-2`/`ocs-wiring-1`) remains.
+all review items (incl. the bag-pump hygiene) are now closed.
 **Branch:** feat/ocs-grpc-migration (#1744).
 
 The actionable checklist derived from the pre-merge review
@@ -79,10 +79,13 @@ technically unblocked; the cheap cluster below is worth landing first.
 
 ## Eventually (defense-in-depth / hygiene)
 
-- [ ] **`ocs-ingest-2` + `ocs-wiring-1`** (same `BagEventPump` loop) — add exponential backoff +
-      log-severity escalation on `advance()` failure (mirror `verified_read_retry_backoff`), and
-      escalate on *sustained* bag omission (rotate relay / fatal alert) instead of warning at
-      ~20 Hz forever. One combined change (`bag_event_pump.rs:96-99`, `183-222`).
+- [x] **`ocs-ingest-2` + `ocs-wiring-1`** (same `BagEventPump` loop) — DONE. The run loop now
+      applies exponential backoff (`next_pump_backoff`: poll-interval → 30s cap, mirroring
+      `verified_read_retry_backoff`) and escalates `advance()` failure logging warn→error after
+      5 consecutive failures (then the grown backoff throttles to ~1/30s). Omission escalates
+      across ticks (`omission_escalation` / `note_bag_omission`): one warn on the first suspected
+      tick, one error once *sustained* (~100 ticks ≈ 5s — rotate-relay hint), info on recovery,
+      quiet in between (the per-tick metric still ticks). Both decision helpers unit-tested.
 
 ## Done
 
