@@ -8,14 +8,11 @@
 //!   the consumer uses (see `OcsVerifiedReader`).
 //! - [`SuiMirrorTransport`] implements [`SuiTransport`] for the
 //!   committee-ratchet primitives (full-checkpoint fetch, end-of-epoch
-//!   resolution, tx→checkpoint lookup) and peer-only tx submission
-//!   (`execute_transaction` — forward our own signed tx to a direct peer;
-//!   its `SubmittedTransaction` return is `Deserialize`, so it relays).
-//!   The non-ratchet reads error out: `get_object` (use the proof-bearing
-//!   surface instead), and `get_committee` / `get_transaction` /
-//!   `list_owned_gas_coins` (served by the direct fallback — only
-//!   `get_transaction`'s `ExecutedTransaction` return is genuinely
-//!   non-`Deserialize`).
+//!   resolution). Every other `SuiTransport` method errors out: object reads
+//!   use the proof-bearing surface instead; `get_committee` / `get_transaction`
+//!   / `list_owned_gas_coins` are served by the direct fallback; and
+//!   `execute_transaction` is fail-closed (a relay must never return unverified
+//!   effects — writes are notifier-gated to a direct uplink).
 //!
 //! Both adapters share an identical multi-peer health strategy: try
 //! peers in order, demote on failure.
@@ -48,8 +45,8 @@ use crate::proof_provider::{
 
 use super::{
     BatchVerifiedObjectsRequest, ChangesetPageRequest, ChangesetPageResponse,
-    GetCheckpointSummaryByDigestRequest, GetFullCheckpointRequest, GetTransactionCheckpointRequest,
-    LastCheckpointOfEpochRequest, SuiStateMirrorClient, VerifiedObjectRequest,
+    GetCheckpointSummaryByDigestRequest, GetFullCheckpointRequest, LastCheckpointOfEpochRequest,
+    SuiStateMirrorClient, VerifiedObjectRequest,
 };
 
 /// Per-peer, per-request deadline for relay reads. anemo configures no
@@ -409,18 +406,6 @@ impl SuiTransport for SuiMirrorTransport {
             .try_peers("last_checkpoint_of_epoch", move |c| {
                 let req = Request::new(LastCheckpointOfEpochRequest { epoch });
                 Box::pin(async move { c.last_checkpoint_of_epoch(req).await })
-            })
-            .await
-    }
-
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError> {
-        self.peers
-            .try_peers("get_transaction_checkpoint", move |c| {
-                let req = Request::new(GetTransactionCheckpointRequest { tx });
-                Box::pin(async move { c.get_transaction_checkpoint(req).await })
             })
             .await
     }

@@ -528,12 +528,6 @@ mod tests {
         ) -> Result<ExecutedTransaction, TransportError> {
             unimplemented!()
         }
-        async fn get_transaction_checkpoint(
-            &self,
-            _tx: TransactionDigest,
-        ) -> Result<CheckpointSequenceNumber, TransportError> {
-            unimplemented!()
-        }
         async fn execute_transaction(
             &self,
             _tx: &Transaction,

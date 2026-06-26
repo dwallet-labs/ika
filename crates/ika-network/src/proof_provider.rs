@@ -38,6 +38,7 @@ use sui_types::messages_checkpoint::{
 };
 use sui_types::object::Object;
 
+use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 
 /// Serving-side cap on the number of object ids one `BatchVerifiedObjects`
@@ -409,14 +410,19 @@ impl ProofCache {
 }
 
 pub struct LocalProofProvider {
-    raw: Arc<dyn SuiTransport>,
+    /// The node's own direct gRPC client. Concrete (not `Arc<dyn SuiTransport>`)
+    /// because proof building needs `get_transaction_checkpoint`, which is an
+    /// inherent `SuiGrpcClient` method rather than part of the relay-able
+    /// `SuiTransport` surface. A `LocalProofProvider` only ever runs on a
+    /// sui-state-direct node over its own fullnode, so the concrete type fits.
+    raw: Arc<SuiGrpcClient>,
     cache: ProofCache,
     metrics: Arc<ProofProviderMetrics>,
 }
 
 impl LocalProofProvider {
     pub fn new(
-        raw: Arc<dyn SuiTransport>,
+        raw: Arc<SuiGrpcClient>,
         cfg: &ProofCacheConfig,
         metrics: Arc<ProofProviderMetrics>,
     ) -> Self {

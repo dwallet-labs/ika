@@ -46,6 +46,25 @@ impl SuiGrpcClient {
         &self.endpoint
     }
 
+    /// Returns the checkpoint sequence in which `tx` was committed; errors if
+    /// the tx isn't yet finalized in any checkpoint. Deliberately *not* part of
+    /// [`SuiTransport`] — a relay can't meaningfully serve it, and the only
+    /// caller is the direct proof builder (`LocalProofProvider`), which locates
+    /// an object's last-modifying checkpoint from its `previous_transaction`.
+    pub async fn get_transaction_checkpoint(
+        &self,
+        tx: TransactionDigest,
+    ) -> Result<CheckpointSequenceNumber, TransportError> {
+        let mut rpc = self.rpc.clone();
+        let executed = rpc
+            .get_transaction(&tx)
+            .await
+            .map_err(Self::rpc_status_err)?;
+        executed.checkpoint.ok_or_else(|| {
+            TransportError::NotFound(format!("tx {tx} not yet committed in any checkpoint"))
+        })
+    }
+
     fn rpc_err(s: impl ToString) -> TransportError {
         TransportError::Network(s.to_string())
     }
@@ -339,20 +358,6 @@ impl SuiTransport for SuiGrpcClient {
     ) -> Result<ExecutedTransaction, TransportError> {
         let mut rpc = self.rpc.clone();
         rpc.get_transaction(&tx).await.map_err(Self::rpc_status_err)
-    }
-
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError> {
-        let mut rpc = self.rpc.clone();
-        let executed = rpc
-            .get_transaction(&tx)
-            .await
-            .map_err(Self::rpc_status_err)?;
-        executed.checkpoint.ok_or_else(|| {
-            TransportError::NotFound(format!("tx {tx} not yet committed in any checkpoint"))
-        })
     }
 
     async fn execute_transaction(

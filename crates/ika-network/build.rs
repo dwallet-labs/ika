@@ -226,15 +226,12 @@ fn build_anemo_services(out_dir: &Path) {
                 .codec_path(codec_path)
                 .build(),
         )
-        .method(
-            anemo_build::manual::Method::builder()
-                .name("get_transaction_checkpoint")
-                .route_name("GetTransactionCheckpoint")
-                .request_type("crate::sui_state_mirror::GetTransactionCheckpointRequest")
-                .response_type("sui_types::messages_checkpoint::CheckpointSequenceNumber")
-                .codec_path(codec_path)
-                .build(),
-        )
+        // NOTE: no `get_transaction_checkpoint` RPC. It was only ever reached
+        // by `get_events_by_tx_digest` (the notifier's removed tx-commit gate);
+        // the committee ratchet uses `last_checkpoint_of_epoch` /
+        // `get_current_epoch` / `get_full_checkpoint`, not this. The
+        // `SuiTransport` trait method survives for *direct* proof building
+        // (`LocalProofProvider` over the node's own gRPC), which never relays.
         // Verified-read surface (the hot path for consumers). Each response
         // carries the object, the BLS-signed summary at the checkpoint
         // where the object was last modified, and an OCSInclusionProof

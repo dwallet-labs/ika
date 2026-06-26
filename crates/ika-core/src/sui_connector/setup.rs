@@ -252,7 +252,10 @@ pub async fn build_sui_connector_stack(
         .ok_or(SetupError::MissingDataSource)?
     {
         SuiDataSource::SuiStateDirect { url, .. } => {
-            let grpc: Arc<dyn SuiTransport> = Arc::new(
+            // Concrete `SuiGrpcClient`: the proof builder needs
+            // `get_transaction_checkpoint`, an inherent gRPC method (not part of
+            // the relay-able `SuiTransport` surface).
+            let grpc = Arc::new(
                 SuiGrpcClient::new(url)
                     .await
                     .map_err(|e| SetupError::Transport(format!("connect {url}: {e}")))?,
@@ -268,6 +271,7 @@ pub async fn build_sui_connector_stack(
                 .role_info
                 .with_label_values(&["sui_state_direct"])
                 .set(1);
+            let grpc: Arc<dyn SuiTransport> = grpc;
             (grpc.clone(), provider, true, Some(grpc), None)
         }
         SuiDataSource::SuiStateMirrored { fallback_grpc_url } => {

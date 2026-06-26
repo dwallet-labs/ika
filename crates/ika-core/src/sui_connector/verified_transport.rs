@@ -31,7 +31,7 @@
 //!   `batch_get_objects`, so layering the stock backend over this transport
 //!   yields verified high-level reads for free.
 //! - **chain metadata + checkpoints** (`get_chain_identifier`,
-//!   `get_reference_gas_price`, the checkpoint lookups, `get_transaction_checkpoint`)
+//!   `get_reference_gas_price`, the committee-ratchet checkpoint lookups)
 //!   pass through to the relay transport (`SuiMirrorTransport`), which already
 //!   serves them.
 //!
@@ -199,12 +199,6 @@ impl SuiTransport for VerifiedSuiTransport {
     ) -> Result<ExecutedTransaction, TransportError> {
         Err(Self::unreachable("get_transaction"))
     }
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError> {
-        self.relay.get_transaction_checkpoint(tx).await
-    }
     async fn execute_transaction(
         &self,
         _tx: &Transaction,
@@ -331,12 +325,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unreachable!("relay must not be hit by this test")
-        }
-        async fn get_transaction_checkpoint(
-            &self,
-            _tx: TransactionDigest,
-        ) -> Result<CheckpointSequenceNumber, TransportError> {
             unreachable!("relay must not be hit by this test")
         }
         async fn execute_transaction(

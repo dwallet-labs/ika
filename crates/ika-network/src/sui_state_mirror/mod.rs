@@ -16,8 +16,8 @@
 //! receiver consumes is checked against the local
 //! `CommitteeStore`. We never ship full `CheckpointData` over this
 //! service; the few RPCs that still return one
-//! (`get_full_checkpoint`, `last_checkpoint_of_epoch`,
-//! `get_transaction_checkpoint`) are committee-ratchet plumbing.
+//! (`get_full_checkpoint`, `last_checkpoint_of_epoch`) are committee-ratchet
+//! plumbing.
 
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/ika.SuiStateMirror.rs"));
@@ -32,7 +32,7 @@ use anemo::{PeerId, Request, Response, rpc::Status, types::response::StatusCode}
 use anemo_tower::inflight_limit;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 use serde::{Deserialize, Serialize};
-use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber, TransactionDigest};
+use sui_types::base_types::{ObjectDigest, ObjectID, SequenceNumber};
 use sui_types::digests::CheckpointDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
@@ -60,11 +60,6 @@ pub struct GetFullCheckpointRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LastCheckpointOfEpochRequest {
     pub epoch: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetTransactionCheckpointRequest {
-    pub tx: TransactionDigest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,18 +261,6 @@ impl SuiStateMirror for Server {
             .map_err(map_err)?;
         Ok(Response::new(v))
     }
-    async fn get_transaction_checkpoint(
-        &self,
-        request: Request<GetTransactionCheckpointRequest>,
-    ) -> Result<Response<CheckpointSequenceNumber>, Status> {
-        let v = self
-            .transport
-            .get_transaction_checkpoint(request.into_inner().tx)
-            .await
-            .map_err(map_err)?;
-        Ok(Response::new(v))
-    }
-
     async fn verified_object(
         &self,
         request: Request<VerifiedObjectRequest>,
@@ -330,8 +313,8 @@ const INFLIGHT_BATCH_VERIFIED_OBJECTS: usize = 64;
 const INFLIGHT_VERIFIED_DYNAMIC_FIELDS_PAGE: usize = 64;
 const INFLIGHT_GET_FULL_CHECKPOINT: usize = 32;
 const INFLIGHT_CHANGESET_PAGE: usize = 16;
-/// The checkpoint/transaction lookups a peer-only node's committee ratchet makes
-/// over the relay (`last_checkpoint_of_epoch`, `get_transaction_checkpoint`,
+/// The checkpoint lookups a peer-only node's committee ratchet makes
+/// over the relay (`last_checkpoint_of_epoch`,
 /// `get_checkpoint_summary_by_digest`, `get_latest_checkpoint`) — each a
 /// fullnode/store round-trip, so bound like the other heavy reads.
 const INFLIGHT_CHECKPOINT_READ: usize = 64;
@@ -374,9 +357,8 @@ pub fn make_server(
         ))
         .add_layer_for_get_full_checkpoint(inflight!(INFLIGHT_GET_FULL_CHECKPOINT))
         .add_layer_for_changeset_page(inflight!(INFLIGHT_CHANGESET_PAGE))
-        // committee-ratchet checkpoint / transaction lookups (were uncapped)
+        // committee-ratchet checkpoint lookups (were uncapped)
         .add_layer_for_last_checkpoint_of_epoch(inflight!(INFLIGHT_CHECKPOINT_READ))
-        .add_layer_for_get_transaction_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
         .add_layer_for_get_checkpoint_summary_by_digest(inflight!(INFLIGHT_CHECKPOINT_READ))
         .add_layer_for_get_latest_checkpoint(inflight!(INFLIGHT_CHECKPOINT_READ))
         // cheap metadata reads (were uncapped)

@@ -27,11 +27,10 @@ use ika_types::sui::staking::StakingPool;
 use ika_types::sui::system_inner_v1::DWalletCoordinatorInnerV1;
 use itertools::Itertools;
 use sui_json_rpc_types::{
-    EventFilter, EventPage, SuiEvent, SuiTransactionBlockEffects, SuiTransactionBlockResponse,
+    EventFilter, EventPage, SuiTransactionBlockEffects, SuiTransactionBlockResponse,
 };
 use sui_types::base_types::{EpochId, ObjectID, ObjectRef, SuiAddress};
 use sui_types::collection_types::Table;
-use sui_types::digests::TransactionDigest;
 use sui_types::dynamic_field::Field;
 use sui_types::event::EventID;
 use sui_types::object::{Object, Owner};
@@ -182,25 +181,6 @@ impl SuiClientInner for GrpcSuiClient {
              ingests events via BagEventPump"
                 .into(),
         ))
-    }
-
-    /// Existence check for a committed transaction. The only OCS caller
-    /// (`submit_tx_to_sui`) uses this to learn whether the previously
-    /// submitted tx has been processed and ignores the event contents, so
-    /// we return an empty vec on success rather than reconstructing each
-    /// `SuiEvent` (which would need a Move type layout we don't fetch).
-    ///
-    /// Uses `get_transaction_checkpoint` (relay-friendly) rather than
-    /// `get_transaction` (whose `ExecutedTransaction` response is
-    /// Serialize-only and can't traverse the relay), so this works on a
-    /// peer-only validator. NotFound (not yet committed) maps to `Err`, the
-    /// same signal the caller's `is_err()` retry loop expects.
-    async fn get_events_by_tx_digest(
-        &self,
-        tx_digest: TransactionDigest,
-    ) -> Result<Vec<SuiEvent>, Self::Error> {
-        let _ = self.transport.get_transaction_checkpoint(tx_digest).await?;
-        Ok(vec![])
     }
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {

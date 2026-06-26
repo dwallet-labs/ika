@@ -123,12 +123,6 @@ impl SuiTransport for RetainedFullnodeTransport {
     ) -> Result<ExecutedTransaction, TransportError> {
         self.inner.get_transaction(tx).await
     }
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError> {
-        self.inner.get_transaction_checkpoint(tx).await
-    }
     async fn execute_transaction(
         &self,
         tx: &Transaction,
@@ -248,12 +242,6 @@ mod tests {
         ) -> Result<ExecutedTransaction, TransportError> {
             unimplemented!()
         }
-        async fn get_transaction_checkpoint(
-            &self,
-            _tx: TransactionDigest,
-        ) -> Result<CheckpointSequenceNumber, TransportError> {
-            unimplemented!()
-        }
         async fn execute_transaction(
             &self,
             _tx: &Transaction,
@@ -368,12 +356,6 @@ mod tests {
             &self,
             _tx: TransactionDigest,
         ) -> Result<ExecutedTransaction, TransportError> {
-            unimplemented!()
-        }
-        async fn get_transaction_checkpoint(
-            &self,
-            _tx: TransactionDigest,
-        ) -> Result<CheckpointSequenceNumber, TransportError> {
             unimplemented!()
         }
         async fn execute_transaction(

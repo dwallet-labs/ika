@@ -235,12 +235,6 @@ pub trait SuiTransport: Send + Sync {
         &self,
         tx: TransactionDigest,
     ) -> Result<ExecutedTransaction, TransportError>;
-    /// Convenience: returns the checkpoint sequence in which `tx` was committed.
-    /// Errors if the tx isn't yet finalized in any checkpoint.
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError>;
     async fn execute_transaction(
         &self,
         tx: &Transaction,

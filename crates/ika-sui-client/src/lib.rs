@@ -44,7 +44,6 @@ use sui_types::transaction::Transaction;
 use sui_types::{
     Identifier,
     base_types::{ObjectID, SuiAddress},
-    digests::TransactionDigest,
     event::EventID,
 };
 use tokio::sync::OnceCell;
@@ -218,13 +217,6 @@ where
             .current
             .pricing_map
             .contents
-    }
-
-    pub async fn get_events_by_tx_digest(
-        &self,
-        tx_digest: TransactionDigest,
-    ) -> anyhow::Result<Vec<SuiEvent>> {
-        Ok(self.inner.get_events_by_tx_digest(tx_digest).await?)
     }
 
     /// Remaining sessions not processed during previous Epochs.
@@ -943,11 +935,6 @@ pub trait SuiClientInner: Send + Sync {
         cursor: Option<EventID>,
     ) -> Result<EventPage, Self::Error>;
 
-    async fn get_events_by_tx_digest(
-        &self,
-        tx_digest: TransactionDigest,
-    ) -> Result<Vec<SuiEvent>, Self::Error>;
-
     async fn get_chain_identifier(&self) -> Result<String, Self::Error>;
 
     async fn get_reference_gas_price(&self) -> Result<u64, Self::Error>;
@@ -1061,13 +1048,6 @@ impl SuiClientInner for SuiSdkClient {
         self.event_api()
             .query_events(query, cursor, None, false)
             .await
-    }
-
-    async fn get_events_by_tx_digest(
-        &self,
-        tx_digest: TransactionDigest,
-    ) -> Result<Vec<SuiEvent>, Self::Error> {
-        self.event_api().get_events(tx_digest).await
     }
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {
@@ -1712,13 +1692,6 @@ impl SuiClientInner for SuiBackend {
         cursor: Option<EventID>,
     ) -> Result<EventPage, Self::Error> {
         dispatch_backend!(self, query_events(query, cursor))
-    }
-
-    async fn get_events_by_tx_digest(
-        &self,
-        tx_digest: TransactionDigest,
-    ) -> Result<Vec<SuiEvent>, Self::Error> {
-        dispatch_backend!(self, get_events_by_tx_digest(tx_digest))
     }
 
     async fn get_chain_identifier(&self) -> Result<String, Self::Error> {

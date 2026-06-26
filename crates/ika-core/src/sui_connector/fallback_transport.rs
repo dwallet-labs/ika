@@ -109,12 +109,6 @@ impl SuiTransport for FallbackTransport {
             .list_dynamic_fields(parent, page_size, page_token)
             .await
     }
-    async fn get_transaction_checkpoint(
-        &self,
-        tx: TransactionDigest,
-    ) -> Result<CheckpointSequenceNumber, TransportError> {
-        self.primary.get_transaction_checkpoint(tx).await
-    }
 
     // -- direct-gRPC fallback (routed directly, not over the relay) -----------------------
     async fn get_committee(
@@ -244,12 +238,6 @@ mod tests {
         ) -> Result<DynamicFieldPage, TransportError> {
             self.record("list_dynamic_fields")
         }
-        async fn get_transaction_checkpoint(
-            &self,
-            _tx: TransactionDigest,
-        ) -> Result<CheckpointSequenceNumber, TransportError> {
-            self.record("get_transaction_checkpoint")
-        }
         async fn get_transaction(
             &self,
             _tx: TransactionDigest,
@@ -298,9 +286,6 @@ mod tests {
         let _ = transport
             .list_dynamic_fields(ObjectID::random(), None, None)
             .await;
-        let _ = transport
-            .get_transaction_checkpoint(TransactionDigest::random())
-            .await;
 
         let relayed: Vec<&str> = vec![
             "get_chain_identifier",
@@ -314,7 +299,6 @@ mod tests {
             "get_object_with_version",
             "batch_get_objects",
             "list_dynamic_fields",
-            "get_transaction_checkpoint",
         ];
         assert_eq!(*primary_log.lock().unwrap(), relayed);
         assert!(
