@@ -7,10 +7,19 @@ use std::path::Path;
 use typed_store::traits::Map;
 
 use crate::authority::epoch_start_configuration::EpochStartConfiguration;
+use crate::sui_connector::verified_state_cache::VerifiedSnapshot;
 use ika_network::mpc_artifacts::mpc_data_blob_hash;
 use ika_types::handoff::CertifiedHandoffAttestation;
 use ika_types::messages_dwallet_mpc::SessionIdentifier;
+use sui_types::base_types::TransactionDigest as SuiTransactionDigest;
+use sui_types::committee::Committee as SuiCommittee;
+use sui_types::full_checkpoint_content::CheckpointData;
+use sui_types::messages_checkpoint::{
+    CertifiedCheckpointSummary as SuiCertifiedCheckpointSummary,
+    CheckpointSequenceNumber as SuiCheckpointSequenceNumber,
+};
 use typed_store::DBMapUtils;
+use typed_store::TypedStoreError;
 use typed_store::rocks::{DBBatch, DBMap, MetricConf};
 use typed_store::rocksdb::Options;
 
@@ -74,6 +83,60 @@ pub struct AuthorityPerpetualTables {
     /// historical slice stays available for late handoff retries.
     pub(crate) network_reconfiguration_output_digest_by_epoch_and_key:
         DBMap<(EpochId, ObjectID), [u8; 32]>,
+
+    // -- OCS verifier (Sui state ingest) ----------------------------------------------------
+    /// Sui committees with NO backing end-of-epoch summary: the bootstrap
+    /// base committee and any unverified-fallback installs. Sparse — every
+    /// other committee is derived on demand from `sui_committee_summaries`
+    /// (see `CommitteeStore`). Survives Ika epoch boundaries.
+    pub(crate) sui_committees: DBMap<u64, SuiCommittee>,
+
+    /// Highest Sui epoch we hold a (derivable) committee for — the ratchet
+    /// head. Advanced by `record_sui_committee_transition` (verified path) or
+    /// `install_sui_committee` (no-summary path).
+    pub(crate) sui_committee_head: DBMap<(), u64>,
+
+    /// Verified end-of-epoch `CertifiedCheckpointSummary` keyed by the epoch
+    /// it terminates. The summary at epoch E proves the transition to
+    /// committee[E+1]. Sparse: only present for epochs whose end-of-epoch
+    /// summary we've actually seen (the trusted anchor's epoch + every
+    /// epoch the ratchet has walked through).
+    pub(crate) sui_committee_summaries: DBMap<u64, SuiCertifiedCheckpointSummary>,
+
+    /// Last checkpoint sequence number of each Sui epoch. Used by the ratchet
+    /// to fetch the right end-of-epoch CheckpointData without re-querying the
+    /// `LedgerService::GetEpoch` RPC.
+    pub(crate) sui_end_of_epoch_seqs: DBMap<u64, SuiCheckpointSequenceNumber>,
+
+    /// Retained full end-of-epoch `CheckpointData`, keyed by its sequence
+    /// number. A sui-state-direct node persists each one as the pusher streams
+    /// past it (`RetainedFullnodeTransport`), so it can serve a mirrored peer's
+    /// committee ratchet the end-of-epoch checkpoint *after* its own Sui fullnode
+    /// has pruned it. Heavier than the summary alone but sparse (one per epoch);
+    /// pruned with the verified-cache retention floor.
+    pub(crate) sui_end_of_epoch_checkpoints: DBMap<SuiCheckpointSequenceNumber, CheckpointData>,
+
+    /// TX digest → checkpoint sequence index. Avoids a `get_transaction` round-trip
+    /// when verifying repeat reads of objects whose `previous_transaction` we've seen before.
+    pub(crate) sui_tx_to_checkpoint: DBMap<SuiTransactionDigest, SuiCheckpointSequenceNumber>,
+
+    /// Highest Sui checkpoint sequence number the sui-state-direct pusher has considered.
+    /// Persisted so that a restart resumes pushing where it left off rather than
+    /// jumping to `latest` and silently leaving a gap during downtime.
+    pub(crate) sui_pusher_last_seq: DBMap<(), SuiCheckpointSequenceNumber>,
+
+    /// Durable copy of the OCS-verified state cache (`VerifiedStateCache`):
+    /// `ObjectID → VerifiedSnapshot { object, proof, summary, source seq }`.
+    /// Written through on every checkpoint the pusher folds, so a restart
+    /// rehydrates the cache from here instead of re-fetching from the (possibly
+    /// pruned) Sui fullnode. The parent→children index is rebuilt from the
+    /// objects' owners on load, not persisted.
+    pub(crate) verified_object_cache: DBMap<ObjectID, VerifiedSnapshot>,
+
+    /// Highest checkpoint sequence the `verified_object_cache` reflects — the
+    /// cache head, restored on load so the staleness tripwire isn't tricked
+    /// into treating a freshly-rehydrated cache as stale.
+    pub(crate) verified_object_cache_head: DBMap<(), SuiCheckpointSequenceNumber>,
 }
 
 impl AuthorityPerpetualTables {
@@ -342,6 +405,299 @@ impl AuthorityPerpetualTables {
             .safe_iter()
             .map(|res| res.map_err(IkaError::from))
     }
+
+    // -- Sui-side state (consumed by ika-core/sui_connector) --------------------------------
+
+    pub fn get_sui_committee(&self, sui_epoch: u64) -> IkaResult<Option<SuiCommittee>> {
+        Ok(self.sui_committees.get(&sui_epoch)?)
+    }
+
+    pub fn highest_sui_committee_epoch(&self) -> IkaResult<Option<u64>> {
+        Ok(self.sui_committee_head.get(&())?)
+    }
+
+    /// The lowest-epoch retained end-of-epoch summary (the bootstrap anchor's),
+    /// if any. Its checkpoint is the deepest the node can committee-verify, so a
+    /// changeset backfill can fold no earlier than `seq + 1`.
+    pub fn oldest_sui_committee_summary(&self) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
+        match self.sui_committee_summaries.safe_iter().next() {
+            Some(res) => Ok(Some(res.map_err(IkaError::from)?.1)),
+            None => Ok(None),
+        }
+    }
+
+    /// Install a Sui committee directly, bumping `sui_committee_head` to
+    /// `committee.epoch`. Used only for committees with no backing
+    /// end-of-epoch summary — the bootstrap genesis committee and
+    /// unverified-fallback installs. Verified transitions instead persist the
+    /// summary via [`Self::record_sui_committee_transition`] and derive the
+    /// committee from it.
+    pub fn install_sui_committee(&self, committee: &SuiCommittee) -> IkaResult {
+        let epoch = committee.epoch;
+        let mut wb = self.sui_committees.batch();
+        wb.insert_batch(&self.sui_committees, [(epoch, committee.clone())])?;
+        // Non-regressing head: a staggered lower install must not clobber a
+        // higher persisted head (it would survive restart and force a network
+        // re-walk that can ProofChainBroken if the boundary checkpoint was
+        // pruned). `CommitteeStore` serializes installs so this read-max-write
+        // is atomic.
+        if self
+            .sui_committee_head
+            .get(&())?
+            .is_none_or(|cur| epoch > cur)
+        {
+            wb.insert_batch(&self.sui_committee_head, [((), epoch)])?;
+        }
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Record a verified end-of-epoch summary for epoch `E` and advance
+    /// `sui_committee_head` to `E+1` in the same batch. Recording the
+    /// transition summary *is* the head advance: `committee[E+1]` is derived
+    /// from this summary's `next_epoch_committee` on demand, so there is no
+    /// separate per-epoch committee write.
+    pub fn record_sui_committee_transition(
+        &self,
+        summary: &SuiCertifiedCheckpointSummary,
+    ) -> IkaResult {
+        let next_epoch = summary.epoch() + 1;
+        let mut wb = self.sui_committee_summaries.batch();
+        wb.insert_batch(
+            &self.sui_committee_summaries,
+            [(summary.epoch(), summary.clone())],
+        )?;
+        // Non-regressing head (see `install_sui_committee`).
+        if self
+            .sui_committee_head
+            .get(&())?
+            .is_none_or(|cur| next_epoch > cur)
+        {
+            wb.insert_batch(&self.sui_committee_head, [((), next_epoch)])?;
+        }
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_committee_summary(
+        &self,
+        sui_epoch: u64,
+    ) -> IkaResult<Option<SuiCertifiedCheckpointSummary>> {
+        Ok(self.sui_committee_summaries.get(&sui_epoch)?)
+    }
+
+    pub fn get_sui_end_of_epoch_seq(
+        &self,
+        sui_epoch: u64,
+    ) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_end_of_epoch_seqs.get(&sui_epoch)?)
+    }
+
+    pub fn put_sui_end_of_epoch_seq(
+        &self,
+        sui_epoch: u64,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_seqs.batch();
+        wb.insert_batch(&self.sui_end_of_epoch_seqs, [(sui_epoch, seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_end_of_epoch_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult<Option<CheckpointData>> {
+        Ok(self.sui_end_of_epoch_checkpoints.get(&seq)?)
+    }
+
+    pub fn put_sui_end_of_epoch_checkpoint(
+        &self,
+        seq: SuiCheckpointSequenceNumber,
+        checkpoint: &CheckpointData,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_checkpoints.batch();
+        wb.insert_batch(
+            &self.sui_end_of_epoch_checkpoints,
+            [(seq, checkpoint.clone())],
+        )?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Persist an end-of-epoch checkpoint AND its epoch→seq index entry in ONE
+    /// batch, so a crash can't leave the `sui_end_of_epoch_seqs` mapping without
+    /// its backing `CheckpointData` in `sui_end_of_epoch_checkpoints` (or vice
+    /// versa). Both serve a mirrored peer's committee ratchet; a dangling half
+    /// would just force a fullnode fallback, but keeping them atomic avoids that.
+    pub fn put_sui_end_of_epoch(
+        &self,
+        sui_epoch: u64,
+        seq: SuiCheckpointSequenceNumber,
+        checkpoint: &CheckpointData,
+    ) -> IkaResult {
+        let mut wb = self.sui_end_of_epoch_seqs.batch();
+        wb.insert_batch(&self.sui_end_of_epoch_seqs, [(sui_epoch, seq)])?;
+        wb.insert_batch(
+            &self.sui_end_of_epoch_checkpoints,
+            [(seq, checkpoint.clone())],
+        )?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Drop retained end-of-epoch checkpoints below `floor` (the verified-cache
+    /// retention floor) — a mirrored peer cannot bootstrap below it anyway.
+    pub fn retain_sui_end_of_epoch_checkpoints(
+        &self,
+        floor: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let stale: Vec<SuiCheckpointSequenceNumber> = self
+            .sui_end_of_epoch_checkpoints
+            .safe_iter()
+            .filter_map(|item| item.ok().map(|(seq, _)| seq).filter(|seq| *seq < floor))
+            .collect();
+        if stale.is_empty() {
+            return Ok(());
+        }
+        let mut wb = self.sui_end_of_epoch_checkpoints.batch();
+        wb.delete_batch(&self.sui_end_of_epoch_checkpoints, stale)?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_tx_checkpoint(
+        &self,
+        tx: &SuiTransactionDigest,
+    ) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_tx_to_checkpoint.get(tx)?)
+    }
+
+    pub fn put_sui_tx_checkpoint(
+        &self,
+        tx: SuiTransactionDigest,
+        seq: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.sui_tx_to_checkpoint.batch();
+        wb.insert_batch(&self.sui_tx_to_checkpoint, [(tx, seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    pub fn get_sui_pusher_last_seq(&self) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.sui_pusher_last_seq.get(&())?)
+    }
+
+    pub fn put_sui_pusher_last_seq(&self, seq: SuiCheckpointSequenceNumber) -> IkaResult {
+        let mut wb = self.sui_pusher_last_seq.batch();
+        wb.insert_batch(&self.sui_pusher_last_seq, [((), seq)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// All persisted verified-state-cache snapshots, for rehydrating
+    /// `VerifiedStateCache` on boot. Returns the raw `TypedStoreError` (rather
+    /// than the stringified `IkaError`) so the caller can distinguish a
+    /// `SerializationError` — a stale on-disk format after a Sui upgrade, which
+    /// is recoverable by wiping and rebuilding — from a transient RocksDB IO
+    /// error, which is not.
+    pub fn load_verified_object_cache(
+        &self,
+    ) -> Result<Vec<(ObjectID, VerifiedSnapshot)>, TypedStoreError> {
+        let mut out = Vec::new();
+        for item in self.verified_object_cache.safe_iter() {
+            out.push(item?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_verified_object_cache_head(&self) -> IkaResult<Option<SuiCheckpointSequenceNumber>> {
+        Ok(self.verified_object_cache_head.get(&())?)
+    }
+
+    /// Write a checkpoint's folded snapshots and the new cache head through in
+    /// one batch.
+    pub fn write_verified_object_cache(
+        &self,
+        snapshots: Vec<(ObjectID, VerifiedSnapshot)>,
+        head: SuiCheckpointSequenceNumber,
+    ) -> IkaResult {
+        let mut wb = self.verified_object_cache.batch();
+        wb.insert_batch(&self.verified_object_cache, snapshots)?;
+        wb.insert_batch(&self.verified_object_cache_head, [((), head)])?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Drop the given keys from the persisted verified-state cache (retention
+    /// pruning). The head is left untouched — pruning never lowers it.
+    pub fn delete_verified_object_cache_keys(&self, ids: &[ObjectID]) -> IkaResult {
+        let mut wb = self.verified_object_cache.batch();
+        wb.delete_batch(&self.verified_object_cache, ids.iter())?;
+        wb.write()?;
+        Ok(())
+    }
+
+    /// Reset the direct-node verified-cache cursors so the node boots cold after
+    /// the persisted cache fails to deserialize — a Sui version upgrade changed
+    /// the on-disk BCS layout of `Object` / `CertifiedCheckpointSummary`. Only the
+    /// singleton cache head and pusher cursor are deleted (reliable point
+    /// deletes). The `verified_object_cache` value entries themselves are left in
+    /// place: they no longer decode, so they're simply not loaded (`open` returns
+    /// empty) and the pusher re-folds from the node's own re-verified Sui access,
+    /// overwriting live entries. A physical wipe of the arbitrary-`ObjectID`-keyed
+    /// column isn't possible here — this typed_store build's range deletes are
+    /// no-ops, and the keys can't be enumerated once the values stop decoding — so
+    /// persistence is degraded (re-fold from the fullnode each boot) until the
+    /// operator clears the OCS cache, but the node BOOTS, which is the point.
+    /// Trust is unaffected: every re-folded object is re-verified.
+    pub fn reset_direct_cache_for_format_recovery(&self) -> IkaResult {
+        let mut batch = self.verified_object_cache_head.batch();
+        batch.delete_batch(&self.verified_object_cache_head, std::iter::once(()))?;
+        batch.delete_batch(&self.sui_pusher_last_seq, std::iter::once(()))?;
+        batch.write()?;
+        Ok(())
+    }
+
+    /// Wipe the Sui committee trust columns (committees, summaries, head) so the
+    /// next bootstrap re-anchors from the operator-pinned trust anchor. Used only
+    /// by the opt-in `auto_reanchor_on_format_change` recovery after a committee
+    /// value fails to deserialize on boot. Sui epochs are small and sequential, so
+    /// the committee columns are swept by point-deleting their known key space
+    /// `0..=head` (this typed_store build's range deletes are no-ops); the
+    /// singleton head is reset too. Reads only the head (a stable `u64`); never
+    /// deserializes the stale committee values.
+    pub fn wipe_sui_committee_state_for_format_recovery(&self) -> IkaResult {
+        let head = self.sui_committee_head.get(&())?.unwrap_or(0);
+        let mut batch = self.sui_committees.batch();
+        batch.delete_batch(&self.sui_committees, 0..=head)?;
+        batch.delete_batch(&self.sui_committee_summaries, 0..=head)?;
+        batch.delete_batch(&self.sui_committee_head, std::iter::once(()))?;
+        batch.write()?;
+        Ok(())
+    }
+
+    /// Probe whether the persisted head Sui committee still deserializes. Returns
+    /// `Ok(())` when there is no committee state, or when the head committee
+    /// (stored directly, or derived from the prior epoch's end-of-epoch summary)
+    /// decodes. Surfaces a `TypedStoreError::SerializationError` (distinct from a
+    /// transient `RocksDBError`) when the on-disk format is stale after a Sui
+    /// upgrade, so the caller can tell a format break from an IO error. Mirrors
+    /// `CommitteeStore::resolve_committee`'s read path. (Release-build behavior:
+    /// in debug, `DBMap::get`'s `debug_fatal!` panics first — an acceptable loud
+    /// dev signal.)
+    pub fn probe_head_committee_readable(&self) -> Result<(), TypedStoreError> {
+        let Some(head) = self.sui_committee_head.get(&())? else {
+            return Ok(());
+        };
+        if self.sui_committees.get(&head)?.is_some() {
+            return Ok(());
+        }
+        if let Some(prev) = head.checked_sub(1) {
+            self.sui_committee_summaries.get(&prev)?;
+        }
+        Ok(())
+    }
 }
 
 /// Adapter so the Anemo `validator_metadata` server can read certs
@@ -500,5 +856,63 @@ mod tests {
                 .is_none(),
             "rejected insert must not write the blob"
         );
+    }
+
+    // -- OCS stale-format recovery (the N1 boot-halt fix) ---------------------
+
+    #[tokio::test]
+    async fn reset_direct_cache_for_format_recovery_resets_the_cursors() {
+        let (_dir, tables) = open_tables();
+        tables.put_sui_pusher_last_seq(4242).unwrap();
+        assert_eq!(tables.get_sui_pusher_last_seq().unwrap(), Some(4242));
+
+        tables.reset_direct_cache_for_format_recovery().unwrap();
+
+        assert_eq!(
+            tables.get_sui_pusher_last_seq().unwrap(),
+            None,
+            "the pusher cursor is reset so the cold cache re-folds from the start"
+        );
+        assert!(
+            tables.get_verified_object_cache_head().unwrap().is_none(),
+            "the cache head is reset so the staleness tripwire isn't seeded stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn wipe_sui_committee_state_empties_the_head_and_committees() {
+        let (_dir, tables) = open_tables();
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee();
+        let epoch = committee.epoch;
+        tables.install_sui_committee(&committee).unwrap();
+        assert_eq!(tables.highest_sui_committee_epoch().unwrap(), Some(epoch));
+        assert!(tables.get_sui_committee(epoch).unwrap().is_some());
+
+        tables
+            .wipe_sui_committee_state_for_format_recovery()
+            .unwrap();
+
+        // With the committee state gone, `highest_sui_committee_epoch()` is None,
+        // so the next bootstrap re-anchors from the configured trust anchor.
+        assert_eq!(tables.highest_sui_committee_epoch().unwrap(), None);
+        assert!(tables.get_sui_committee(epoch).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn probe_head_committee_readable_ok_on_empty_and_on_valid_state() {
+        let (_dir, tables) = open_tables();
+        // No committee state yet → nothing to read → Ok.
+        tables
+            .probe_head_committee_readable()
+            .expect("empty committee state is readable");
+        // A directly-installed committee decodes → Ok. (A SerializationError can
+        // only arise from a genuinely stale on-disk format, which can't be
+        // injected here without raw-byte access — that end-to-end recovery path
+        // is exercised by the release-mode setup/cache recovery tests.)
+        let (committee, _keys) = SuiCommittee::new_simple_test_committee();
+        tables.install_sui_committee(&committee).unwrap();
+        tables
+            .probe_head_committee_readable()
+            .expect("valid committee state is readable");
     }
 }

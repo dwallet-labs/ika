@@ -9,10 +9,13 @@ inherited.
 
 ## Where the source is
 
-- **Pinned version:** the `mainnet-v1.70.2` tag of
-  `https://github.com/MystenLabs/sui` (sometimes a `testnet-v*` tag —
-  check the `tag = "..."` in the root `Cargo.toml`). Always read the
-  version ika actually pins; older/newer Sui differs.
+- **Pinned version:** whatever release tag the root `Cargo.toml` pins —
+  read it there (`grep 'tag = ' Cargo.toml`); it's a `mainnet-v*`
+  (sometimes `testnet-v*`) tag of `https://github.com/MystenLabs/sui`.
+  This page deliberately doesn't restate the number, so it can't drift out
+  of sync: `Cargo.toml` is the source of truth (with a human-readable note
+  in `CLAUDE.md`). Older/newer Sui differs, so always read the version ika
+  actually pins.
 - **Browse online:** github.com/MystenLabs/sui at that tag — the stable
   way to reference a specific file/line.
 - **Local checkout** (fetched by cargo for the git dependencies):

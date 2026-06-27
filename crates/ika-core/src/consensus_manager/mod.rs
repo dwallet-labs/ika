@@ -35,6 +35,18 @@ enum Running {
     False,
 }
 
+/// Build the consensus-core [`ConsensusProtocolConfig`] from ika's
+/// [`ProtocolConfig`].
+///
+/// **Keep this in lockstep with Sui's `to_consensus_protocol_config`**
+/// (`sui-core/src/consensus_manager/mod.rs`). Every value consensus reads is
+/// sourced from the protocol config (so it is version-gated and changes only via
+/// a protocol upgrade, never an ad-hoc constant), in the same order and from the
+/// same getters as upstream. On every Sui version bump, diff this against
+/// upstream and wire through any field consensus newly reads — see
+/// `dev-docs/conventions/sui-version-bump.md`. The lone exception is the inline
+/// constant noted below, which mirrors what upstream itself hardcodes at the
+/// pinned version.
 fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> ConsensusProtocolConfig {
     let chain_type = match chain {
         Chain::Mainnet => ChainType::Mainnet,
@@ -51,6 +63,24 @@ fn to_consensus_protocol_config(config: &ProtocolConfig, chain: Chain) -> Consen
         config.mysticeti_fastpath(),
         config.mysticeti_num_leaders_per_round(),
         config.consensus_bad_nodes_stake_threshold(),
+        // `enable_v3`: hardcoded `false` to match upstream exactly. At the
+        // pinned mainnet-v1.73.2, Sui's own `to_consensus_protocol_config` also
+        // hardcodes `/* enable_v3 */ false` — it is NOT yet exposed by
+        // `sui_protocol_config::ProtocolConfig`, so there is no version-gated
+        // getter to source it from. When Sui gates it behind the protocol config
+        // (watch for it on the next version bump), or if we want to enable v3 via
+        // an ika protocol upgrade first, add a version-gated getter to ika's
+        // protocol config and source it here — do NOT just flip this constant,
+        // since an un-gated change would fork consensus mid-epoch.
+        false,
+        // `leader_schedule_window_size` / `leader_schedule_update_interval`:
+        // hardcoded to match upstream's `to_consensus_protocol_config` at the
+        // pinned mainnet-v1.73.2 (300 / 12). These only take effect under the
+        // Mysticeti v3 leader schedule, which is gated off above (`enable_v3 =
+        // false`), so they are inert today; mirror upstream exactly so enabling
+        // v3 later (via a version-gated getter) does not silently fork.
+        300,
+        12,
     )
 }
 
@@ -148,7 +178,10 @@ impl ConsensusManager {
         };
 
         let own_protocol_key = self.protocol_keypair.public();
-        let (own_index, _) = committee
+        // `own_index` is no longer passed to `ConsensusAuthority::start`
+        // (dropped in mainnet-v1.73.2), but we keep this lookup for its
+        // side-effect: asserting our authority is in the committee.
+        let (_own_index, _) = committee
             .authorities()
             .find(|(_, a)| a.protocol_key == own_protocol_key)
             .expect("Own authority should be among the consensus authorities!");
@@ -202,11 +235,14 @@ impl ConsensusManager {
         let authority = ConsensusAuthority::start(
             NetworkType::Tonic,
             epoch_store.epoch_start_config().epoch_start_timestamp_ms(),
-            own_index,
+            // `own_index` was dropped from `ConsensusAuthority::start` in
+            // mainnet-v1.73.2 (the node derives it from the committee +
+            // protocol keypair). `protocol_keypair` is now optional
+            // (observer nodes pass `None`); validators pass `Some`.
             committee.clone(),
             parameters.clone(),
             to_consensus_protocol_config(ika_protocol_config, chain),
-            self.protocol_keypair.clone(),
+            Some(self.protocol_keypair.clone()),
             self.network_keypair.clone(),
             Arc::new(Clock::default()),
             Arc::new(tx_validator.clone()),

@@ -177,9 +177,21 @@ impl<const STRENGTH: bool> StakeAggregator<AuthoritySignInfo, STRENGTH> {
                                         bad_authorities.push(*name);
                                     }
                                 }
-                                InsertResult::NotEnoughVotes {
-                                    bad_votes,
-                                    bad_authorities,
+                                // After evicting invalid sigs, the remaining valid sigs may
+                                // still constitute a quorum on their own.
+                                if self.total_votes >= self.committee.threshold::<STRENGTH>() {
+                                    match AuthorityQuorumSignInfo::<STRENGTH>::new_from_auth_sign_infos(
+                                        self.data.values().cloned().collect(),
+                                        self.committee(),
+                                    ) {
+                                        Ok(aggregated) => InsertResult::QuorumReached(aggregated),
+                                        Err(error) => InsertResult::Failed { error },
+                                    }
+                                } else {
+                                    InsertResult::NotEnoughVotes {
+                                        bad_votes,
+                                        bad_authorities,
+                                    }
                                 }
                             }
                         }
@@ -386,4 +398,89 @@ fn test_votes_per_authority() {
     let key3: &str = "key3";
     agg.insert(authority1, key3);
     assert_eq!(agg.votes_for_authority(authority1), 2);
+}
+
+#[cfg(test)]
+mod quorum_after_bad_sig_eviction_tests {
+    use super::*;
+    use fastcrypto::traits::KeyPair;
+    use ika_types::crypto::random_committee_key_pairs_of_size;
+    use ika_types::messages_system_checkpoints::SystemCheckpointMessage;
+
+    /// Regression test: after the batch-verify fallback evicts an invalid
+    /// signature, the *surviving* signatures may still form a quorum on their
+    /// own. The aggregator must then report `QuorumReached` rather than
+    /// discarding a reachable quorum with `NotEnoughVotes`.
+    ///
+    /// Mirrors the upstream Sui fix in `sui-core`'s `stake_aggregator.rs`.
+    /// Scenario: a low-stake validator signs the wrong message (below quorum on
+    /// its own), then a high-stake validator whose weight alone meets the strong
+    /// quorum signs the real message. Inserting the second crosses the threshold
+    /// and triggers batch verification, which fails on the stored bad signature;
+    /// once the bad signer is evicted the high-stake validator alone still meets
+    /// quorum.
+    #[test]
+    fn quorum_survives_eviction_of_a_bad_signature() {
+        // Two validators with raw (un-normalized) weights 7 and 3 and a strong
+        // quorum threshold of 7, so validator 0 alone meets quorum while
+        // validator 1 alone does not. Built via `Committee::new` directly: the
+        // normalized test helper would flatten 7:3 to 1:1 (equal weight), which
+        // can't express "one validator's stake alone clears the threshold".
+        let keys = random_committee_key_pairs_of_size(2);
+        let auth_high = AuthorityName::from(keys[0].public());
+        let auth_low = AuthorityName::from(keys[1].public());
+        let committee = Arc::new(Committee::new(
+            0,
+            vec![(auth_high, 7), (auth_low, 3)],
+            HashMap::new(),
+            /* quorum_threshold */ 7,
+            /* validity_threshold */ 3,
+        ));
+
+        // Two distinct messages (different sequence numbers => different signed
+        // bytes), so a signature over `bad_message` fails to verify against
+        // `good_message`.
+        let good_message = SystemCheckpointMessage::new(0, 1, vec![]);
+        let bad_message = SystemCheckpointMessage::new(0, 2, vec![]);
+
+        let mut aggregator: StakeAggregator<AuthoritySignInfo, true> =
+            StakeAggregator::new(committee);
+
+        // The low-stake validator signs the WRONG message. On its own (weight 3)
+        // it is below the quorum threshold (7), so no verification runs yet and
+        // the bad signature is simply stored.
+        let bad_envelope = Envelope::<SystemCheckpointMessage, AuthoritySignInfo>::new(
+            0,
+            bad_message,
+            &keys[1],
+            auth_low,
+        );
+        assert!(
+            matches!(
+                aggregator.insert(bad_envelope),
+                InsertResult::NotEnoughVotes { .. }
+            ),
+            "low-stake validator alone must not reach quorum",
+        );
+
+        // The high-stake validator signs the REAL message. Total stored weight
+        // (10) crosses the threshold and triggers batch verification, which
+        // fails because the stored low-stake signature is over a different
+        // message. The bad signer is evicted; the high-stake validator alone
+        // (weight 7) still meets the quorum threshold, so the result must be
+        // `QuorumReached`, not `NotEnoughVotes`.
+        let good_envelope = Envelope::<SystemCheckpointMessage, AuthoritySignInfo>::new(
+            0,
+            good_message,
+            &keys[0],
+            auth_high,
+        );
+        assert!(
+            matches!(
+                aggregator.insert(good_envelope),
+                InsertResult::QuorumReached(_)
+            ),
+            "surviving high-stake signature must still form a quorum after the bad signature is evicted",
+        );
+    }
 }

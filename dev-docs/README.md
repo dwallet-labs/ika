@@ -47,6 +47,11 @@ them has a bug — determine which before changing either.
   off-chain transport, the V3 presign/sign flow, the
   `fast_schnorr_supported` gate, and what is internal-NOA-only vs. the
   still-gated external path.
+- [`specs/trusted-peer-discovery.md`](specs/trusted-peer-discovery.md) —
+  how a peer-only validator gets dialed and boots with no static seed
+  peers: the continuous feed of active/next/previous committee +
+  `pending_active_set` into anemo `known_peers`, the inbound-dial
+  bootstrap, and the `ExtendedField` BCS framing the read depends on.
 
 ### playbooks/ — how to run and debug this system
 - [`playbooks/ci-suites.md`](playbooks/ci-suites.md) — running the heavy

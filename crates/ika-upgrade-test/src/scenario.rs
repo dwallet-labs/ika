@@ -16,12 +16,14 @@
 //!     .run().await?;
 //! ```
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use ika_protocol_config::ProtocolVersion;
 use ika_swarm_config::sui_client::GenesisGlobalPresignConfig;
+use tokio::time::sleep;
 
 use crate::DEFAULT_EPOCH_DURATION_MS;
 use crate::binary::{BinaryResolver, BinarySpec};
@@ -49,6 +51,10 @@ pub enum Step {
     /// spawn its process on the given binary. It enters the active committee
     /// at the next epoch boundary.
     JoinValidator(BinarySpec),
+    /// Like [`Step::JoinValidator`], but the joiner boots peer-only
+    /// `SuiStateMirrored`, reading verified Sui state through the scenario's
+    /// `direct_validators` relay servers.
+    JoinValidatorMirrored(BinarySpec),
     /// Submit on-chain removal for the validator at `index`. It leaves the
     /// committee at the next epoch boundary; its process keeps running until
     /// an explicit `StopValidator`.
@@ -87,6 +93,35 @@ pub enum Step {
     },
 }
 
+impl std::fmt::Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Step::StartAll(spec) => write!(f, "start_all({})", spec.label()),
+            Step::WaitForEpoch(e) => write!(f, "wait_for_epoch({e})"),
+            Step::StopAndSwap { validators, to } => {
+                write!(f, "stop_and_swap({validators:?} -> {})", to.label())
+            }
+            Step::SetBufferStake { buffer_bps } => write!(f, "set_buffer_stake({buffer_bps})"),
+            Step::ExpectProtocolVersionAtLeast(v) => {
+                write!(f, "expect_protocol_version_at_least({v})")
+            }
+            Step::JoinValidator(spec) => write!(f, "join_validator({})", spec.label()),
+            Step::JoinValidatorMirrored(spec) => {
+                write!(f, "join_validator_mirrored({})", spec.label())
+            }
+            Step::RemoveValidator { index } => write!(f, "remove_validator({index})"),
+            Step::StopValidator { index } => write!(f, "stop_validator({index})"),
+            Step::ExpectCommitteeSize(n) => write!(f, "expect_committee_size({n})"),
+            Step::SetGlobalPresignConfig => write!(f, "set_global_presign_config"),
+            Step::RecordMpcTimings { label } => write!(f, "record_mpc_timings({label:?})"),
+            Step::RunWorkload { label } => write!(f, "run_workload({label:?})"),
+            Step::ExpectMaliciousActorsAtLeast { min_total } => {
+                write!(f, "expect_malicious_actors_at_least({min_total})")
+            }
+        }
+    }
+}
+
 /// What a scenario run produced beyond pass/fail: the labeled MPC timing
 /// snapshots, in recording order. The comparison between consecutive
 /// snapshots is printed by `run` itself; tests can also inspect the raw
@@ -121,6 +156,12 @@ pub struct Scenario {
     /// mainnet-v1.1.8 state) plus a [`Step::SetGlobalPresignConfig`] after
     /// the upgrade.
     pub genesis_global_presign_config: GenesisGlobalPresignConfig,
+    /// Indices of validators kept on the DIRECT gRPC path (serving the
+    /// `SuiStateMirror` relay). At a `stop_and_swap`, every OTHER swapped
+    /// validator is flipped to peer-only `SuiStateMirrored` reading through
+    /// these; joiners added via `join_validator_mirrored` mirror through them
+    /// too. Empty (default) = every validator reads Sui directly.
+    pub direct_validators: Vec<usize>,
 }
 
 impl Scenario {
@@ -142,6 +183,7 @@ impl Scenario {
             min_validator_count: None,
             ika_cli: None,
             genesis_global_presign_config: GenesisGlobalPresignConfig::Full,
+            direct_validators: Vec::new(),
         }
     }
 
@@ -199,6 +241,31 @@ impl Scenario {
 
     pub fn join_validator(mut self, spec: BinarySpec) -> Self {
         self.steps.push(Step::JoinValidator(spec));
+        self
+    }
+
+    /// Join a brand-new validator that boots peer-only `SuiStateMirrored`,
+    /// reading verified Sui state through the `direct_validators` relay servers
+    /// (set via [`Self::with_direct_validators`]).
+    pub fn join_validator_mirrored(mut self, spec: BinarySpec) -> Self {
+        self.steps.push(Step::JoinValidatorMirrored(spec));
+        self
+    }
+
+    /// Designate the relay-server (direct) validators by index; every other
+    /// validator that runs v4 is flipped to peer-only `SuiStateMirrored`
+    /// reading through them — at a [`Self::stop_and_swap`] (the split
+    /// materializes at the upgrade swap) or when added via
+    /// [`Self::join_validator_mirrored`]. The `SUI_STATE_DIRECT_COUNT` env var
+    /// truncates this set (default: all of `indices`, clamped to >= 1), so one
+    /// dispatch can test a single direct relay and another can test several.
+    pub fn with_direct_validators(mut self, indices: &[usize]) -> Self {
+        let count = std::env::var("SUI_STATE_DIRECT_COUNT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(indices.len())
+            .clamp(1, indices.len().max(1));
+        self.direct_validators = indices.iter().copied().take(count).collect();
         self
     }
 
@@ -271,8 +338,16 @@ impl Scenario {
         let resolver = BinaryResolver::new(self.repo.clone(), BinaryResolver::default_cache_root());
         let mut cluster: Option<ClusterOfProcesses> = None;
         let mut timing_snapshots: Vec<TimingSnapshot> = Vec::new();
+        // Validators with an on-chain removal already submitted. They stay on
+        // the direct path through a `stop_and_swap` (no point flipping a node
+        // that's leaving) instead of being auto-mirrored.
+        let mut removed_indices: HashSet<usize> = HashSet::new();
 
-        for step in &self.steps {
+        let total = self.steps.len();
+        for (index, step) in self.steps.iter().enumerate() {
+            let step_number = index + 1;
+            let step_started = std::time::Instant::now();
+            tracing::info!("[flow {step_number}/{total}] >>> {step}");
             match step {
                 Step::StartAll(spec) => {
                     let validator_binary = resolve(&resolver, spec).await?;
@@ -301,25 +376,56 @@ impl Scenario {
                 }
                 Step::StopAndSwap { validators, to } => {
                     let new_binary = resolve(&resolver, to).await?;
+                    let split_configured = !self.direct_validators.is_empty();
+                    // With a direct/mirror split configured, every swapped
+                    // validator that is NOT a direct relay server and is NOT
+                    // already leaving flips to peer-only SuiStateMirrored
+                    // (reading through the direct validators) as it comes up on
+                    // the new binary — the split materializes exactly at the
+                    // upgrade swap. Partition so the relay servers swap FIRST:
+                    // a mirrored validator must not restart before the servers
+                    // it reads through are back up on the new binary.
+                    let (to_mirror, to_direct): (Vec<usize>, Vec<usize>) =
+                        validators.iter().copied().partition(|idx| {
+                            split_configured
+                                && !self.direct_validators.contains(idx)
+                                && !removed_indices.contains(idx)
+                        });
                     let c = cluster.as_mut().context("StopAndSwap before StartAll")?;
-                    for &idx in validators {
-                        let proc = c
-                            .validators
+                    let mirror_peers = if split_configured {
+                        c.peer_ids_of(&self.direct_validators)?
+                    } else {
+                        Vec::new()
+                    };
+                    for idx in to_direct {
+                        c.validators
                             .get_mut(idx)
-                            .with_context(|| format!("validator index {idx} out of range"))?;
-                        proc.swap_binary(new_binary.clone()).await?;
+                            .with_context(|| format!("validator index {idx} out of range"))?
+                            .swap_binary(new_binary.clone())
+                            .await?;
+                    }
+                    for idx in to_mirror {
+                        c.swap_and_mirror(idx, new_binary.clone(), mirror_peers.clone())
+                            .await?;
                     }
                 }
                 Step::SetBufferStake { buffer_bps } => {
                     let c = cluster.as_ref().context("SetBufferStake before StartAll")?;
+                    // `current_epoch` is the on-chain counter, which ticks before
+                    // validators locally reconfigure; retry the override across
+                    // that lag so it isn't rejected for a stale local epoch.
                     let epoch = c.current_epoch().await?;
                     for proc in &c.validators {
                         if proc.is_running() {
-                            proc.set_buffer_stake(epoch, *buffer_bps)
-                                .await
-                                .with_context(|| {
-                                    format!("set buffer stake on validator {}", proc.index)
-                                })?;
+                            proc.set_buffer_stake_when_at_epoch(
+                                epoch,
+                                *buffer_bps,
+                                Duration::from_secs(120),
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("set buffer stake on validator {}", proc.index)
+                            })?;
                         }
                     }
                     tracing::info!(epoch, buffer_bps, "buffer stake override applied");
@@ -344,11 +450,27 @@ impl Scenario {
                     let index = c.add_joiner_validator(binary).await?;
                     tracing::info!(index, spec = %spec.label(), "joiner validator spawned");
                 }
+                Step::JoinValidatorMirrored(spec) => {
+                    let binary = resolve(&resolver, spec).await?;
+                    let c = cluster
+                        .as_mut()
+                        .context("JoinValidatorMirrored before StartAll")?;
+                    ensure!(
+                        !self.direct_validators.is_empty(),
+                        "join_validator_mirrored requires with_direct_validators(...) \
+                         (a mirrored joiner needs at least one direct relay server)"
+                    );
+                    let index = c
+                        .add_joiner_validator_mirrored(binary, &self.direct_validators)
+                        .await?;
+                    tracing::info!(index, spec = %spec.label(), "mirrored joiner validator spawned");
+                }
                 Step::RemoveValidator { index } => {
                     let c = cluster
                         .as_mut()
                         .context("RemoveValidator before StartAll")?;
                     c.remove_validator(*index).await?;
+                    removed_indices.insert(*index);
                 }
                 Step::StopValidator { index } => {
                     let c = cluster.as_mut().context("StopValidator before StartAll")?;
@@ -411,13 +533,36 @@ impl Scenario {
                     )
                     .await
                     .context("build workload driver")?;
-                    let outcome = driver
-                        .run_dwallet_lifecycle()
-                        .await
-                        .with_context(|| format!("workload [{label}]"))?;
-                    tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
+                    // Debug aid: HOLD_CLUSTER holds the cluster up with the
+                    // driver's config paths printed so `ika dwallet` can be
+                    // driven by hand (fast iteration vs. ~6-min test cycles)
+                    // instead of running the lifecycle.
+                    if std::env::var("HOLD_CLUSTER").is_ok() {
+                        eprintln!("HOLD_CLUSTER: cluster up at workload [{label}]. Run e.g.:");
+                        eprintln!(
+                            "  ika --json --client.config {} --ika-config {} dwallet create --curve secp256k1 --output-secret /tmp/s.bin",
+                            driver.client_config_path().display(),
+                            driver.ika_config_path().display(),
+                        );
+                        eprintln!("user_address={}", driver.user_address());
+                        sleep(Duration::from_secs(3600)).await;
+                    } else {
+                        let outcome = driver
+                            .run_dwallet_lifecycle()
+                            .await
+                            .with_context(|| format!("workload [{label}]"))?;
+                        ensure!(
+                            !outcome.sign_digest.is_empty(),
+                            "workload [{label}]: lifecycle completed but produced no signature digest"
+                        );
+                        tracing::info!(label = %label, ?outcome, "workload lifecycle completed");
+                    }
                 }
             }
+            tracing::info!(
+                "[flow {step_number}/{total}] <<< {step} done in {:.1}s",
+                step_started.elapsed().as_secs_f64()
+            );
         }
         if timing_snapshots.len() >= 2 {
             println!("{}", mpc_timings::render_comparison(&timing_snapshots));

@@ -25,6 +25,7 @@ tokio = { workspace = true, features = ["full"] }
 
 shared-crypto.workspace = true
 ika-config.workspace = true
+ika-sui-client.workspace = true
 sui-macros.workspace = true
 ika-protocol-config.workspace = true
 ika-types.workspace = true

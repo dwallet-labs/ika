@@ -137,6 +137,26 @@ rule, not the instance.
   acquire handles on demand (inside each poll tick / scoped to one
   statement); never bind one across a `stop()`/`start()` of its node.
 
+## Sui types & encoding
+
+- **An "empty" Move struct is one BCS byte, not zero — verify wrapper layouts
+  against on-chain bytes.** A marker struct like
+  `ika_common::extended_field::Key` reads as empty (`Key()` / no fields), but the
+  Move compiler still gives it a `bool` dummy field, so it serializes to a single
+  `0x00` byte. Reading the value of an `ExtendedField<V>` means decoding its backing
+  `Field<Key, V>` dynamic-field object — `id: UID`(32) ++ `name: Key` ++ `value` — so
+  the value sits behind a **33-byte** header (`Field<u8, V>`), NOT 32
+  (`Field<(), V>`). The unit-name decode short-reads by exactly one byte and fails
+  with bcs "unexpected end of input"; because the value-decode runs out before
+  completing, it *looks* like a value/layout mismatch and sends you hunting in the
+  wrong struct. The actual cause was found only by dumping the raw on-chain bytes and
+  finding a clean parse at offset 33. (Cost: three CI cycles of framing guesses on
+  the `pending_active_set` read; `ika-sui-client` `decode_pending_active_set`.)
+  → Rule: never trust an assumed BCS wrapper layout — round-trip-decode it against
+  real on-chain bytes in a unit test before relying on it, and when a strict decoder
+  reports "unexpected end of input", suspect a too-short *header* (off-by-a-name)
+  before re-checking the value struct.
+
 ## Dead code & dependencies
 
 - **In a library workspace the `dead_code` lint is nearly blind.** rustc

@@ -787,8 +787,10 @@ impl ProtocolConfig {
     /// presign pools filled instead of pegging the CPU and stalling epoch
     /// advance. No-op (production sizes retained) when the
     /// `IKA_DISABLE_SMALL_PRESIGN_POOLS` env var is set, so a local network can
-    /// still exercise production-scale pools. Validator binaries never call it,
-    /// so testnet/mainnet are unaffected.
+    /// still exercise production-scale pools. The real validator/notifier
+    /// entrypoint (`run_node_with_name`) DOES reach this, so it is gated there on
+    /// the explicit `IKA_ENABLE_SMALL_PRESIGN_POOLS=1` sentinel — testnet/mainnet
+    /// are unaffected unless that sentinel is set.
     pub fn enable_small_presign_pools_for_local_swarm() {
         if std::env::var("IKA_DISABLE_SMALL_PRESIGN_POOLS").is_ok() {
             info!(

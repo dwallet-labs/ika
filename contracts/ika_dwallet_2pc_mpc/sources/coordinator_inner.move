@@ -1882,7 +1882,7 @@ public(package) fun request_dwallet_network_encryption_key_dkg(
                 reconfiguration_public_outputs: sui::table::new(ctx),
                 network_dkg_public_output: table_vec::empty(ctx),
                 dkg_params_for_network: params_for_network,
-                supported_curves: vector::empty(),
+                supported_curves: vector[],
                 state: DWalletNetworkEncryptionKeyState::AwaitingNetworkDKG,
             },
         );

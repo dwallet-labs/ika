@@ -92,7 +92,10 @@ pub(crate) struct CryptographicComputationsOrchestrator {
 
 impl CryptographicComputationsOrchestrator {
     /// Creates a new orchestrator for cryptographic computations.
-    pub(crate) fn try_new(root_seed: RootSeed) -> DwalletMPCResult<Self> {
+    pub(crate) fn try_new(
+        root_seed: RootSeed,
+        max_computation_cores: Option<usize>,
+    ) -> DwalletMPCResult<Self> {
         let (report_computation_completed_sender, report_computation_completed_receiver) =
             tokio::sync::mpsc::channel(COMPUTATION_UPDATE_CHANNEL_SIZE);
         let mut available_cores_for_computations =
@@ -104,8 +107,15 @@ impl CryptographicComputationsOrchestrator {
                 .map_err(|e| DwalletMPCError::FailedToGetAvailableParallelism(e.to_string()))?
                 .into();
         }
+        // Operator override (`NodeConfig::max_mpc_computation_cores`): cap the
+        // concurrent-computation budget below the host core count. Bounds peak
+        // CPU + memory when validators are co-located (e.g. CI test clusters).
+        if let Some(max) = max_computation_cores {
+            available_cores_for_computations = available_cores_for_computations.min(max).max(1);
+        }
         info!(
             available_cores_for_computations =? available_cores_for_computations,
+            ?max_computation_cores,
             "Available CPU cores for Rayon cryptographic computations"
         );
 
@@ -316,12 +326,20 @@ impl CryptographicComputationsOrchestrator {
             rayon::spawn_fifo(move || {
                 let advance_start_time = Instant::now();
 
-                let computation_result = computation_request.compute(
-                    computation_id,
-                    root_seed,
-                    vss_hpke_secret_key,
-                    dwallet_mpc_metrics.clone(),
-                );
+                // Catch a panic in `compute()` so this rayon closure does NOT
+                // unwind: an unwound closure skips the `handle.spawn` send below,
+                // so the completion update is never produced and the core slot
+                // reserved at the end of this method is never reclaimed — leaking
+                // it for the rest of the epoch until MPC wedges. A panic becomes
+                // a failed result that is delivered like any other.
+                let computation_result = compute_catching_panic(computation_id, move || {
+                    computation_request.compute(
+                        computation_id,
+                        root_seed,
+                        vss_hpke_secret_key,
+                        dwallet_mpc_metrics,
+                    )
+                });
 
                 let elapsed = advance_start_time.elapsed();
                 let elapsed_ms = elapsed.as_millis();
@@ -347,5 +365,115 @@ impl CryptographicComputationsOrchestrator {
             .insert(computation_id);
 
         true
+    }
+}
+
+/// Run `compute` under a panic boundary, converting a panic into a failed
+/// `DwalletMPCResult` instead of letting it unwind the caller.
+///
+/// `compute()` dispatches into the external 2PC-MPC / class-groups `advance()`
+/// (and in-tree `unreachable!()`/unwrap sites) on inputs aggregated from other,
+/// possibly malicious, parties — so it can panic. Left unguarded that panic
+/// either aborts the whole validator under `[profile.release] panic = "abort"`,
+/// or — on an unwinding build (tests / simulator) — unwinds the orchestrator's
+/// rayon closure so the `ComputationCompletionUpdate` is never sent and the
+/// reserved core slot is never reclaimed, eventually wedging all MPC for the
+/// epoch. Returning a failed result lets the caller send a completion update
+/// unconditionally, so the slot is reclaimed and the session's error path runs.
+///
+/// `catch_unwind` only intercepts on an unwinding profile; under
+/// `panic = "abort"` the abort stands (a fail-loud crash-restart, not a silent
+/// wedge), which is this guard's deliberate boundary. The msim path runs
+/// `compute()` inline and is intentionally left to die with its node (see the
+/// caller), so it does not route through here.
+fn compute_catching_panic(
+    computation_id: ComputationId,
+    compute: impl FnOnce() -> DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult>,
+) -> DwalletMPCResult<mpc::GuaranteedOutputDeliveryRoundResult> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(compute)).unwrap_or_else(|panic| {
+        let reason = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        error!(
+            session_identifier = ?computation_id.session_identifier,
+            mpc_round = ?computation_id.mpc_round,
+            attempt_number = computation_id.attempt_number,
+            reason = %reason,
+            "cryptographic computation panicked; converting to a failed result so the core slot is reclaimed"
+        );
+        Err(DwalletMPCError::MPCSessionError {
+            session_identifier: computation_id.session_identifier,
+            error: format!("cryptographic computation panicked: {reason}"),
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+
+    fn test_computation_id() -> ComputationId {
+        ComputationId {
+            session_identifier: SessionIdentifier::new(SessionType::System, [7u8; 32]),
+            mpc_round: Some(1),
+            attempt_number: 0,
+            consensus_round: 0,
+        }
+    }
+
+    /// A panic inside `compute()` (e.g. an `unreachable!()`/unwrap in the
+    /// external 2PC-MPC advance on adversarial input) must surface as a failed
+    /// result rather than unwinding the orchestrator's rayon closure — an
+    /// unwound closure would skip the completion update and permanently leak the
+    /// reserved core slot. (Removing the `catch_unwind` in
+    /// `compute_catching_panic` makes this test itself panic, so it genuinely
+    /// guards the property.)
+    #[test]
+    fn panic_in_compute_becomes_a_failed_result() {
+        let id = test_computation_id();
+        let err = compute_catching_panic(id, || panic!("boom inside advance()"))
+            .err()
+            .expect("a panic must surface as a failed result, not Ok");
+        match err {
+            DwalletMPCError::MPCSessionError {
+                error,
+                session_identifier,
+            } => {
+                assert_eq!(session_identifier, id.session_identifier);
+                assert!(
+                    error.contains("panicked"),
+                    "error should name the panic: {error}"
+                );
+                assert!(
+                    error.contains("boom inside advance()"),
+                    "panic message should be preserved: {error}"
+                );
+            }
+            other => panic!("expected MPCSessionError, got {other:?}"),
+        }
+    }
+
+    /// An ordinary (non-panicking) failure is passed through verbatim, not
+    /// rewrapped as a panic.
+    #[test]
+    fn ordinary_failure_passes_through() {
+        let id = test_computation_id();
+        let err = compute_catching_panic(id, || {
+            Err(DwalletMPCError::MPCSessionError {
+                session_identifier: id.session_identifier,
+                error: "ordinary failure".to_string(),
+            })
+        })
+        .err()
+        .expect("the closure returned Err");
+        match err {
+            DwalletMPCError::MPCSessionError { error, .. } => {
+                assert_eq!(error, "ordinary failure");
+            }
+            other => panic!("expected the original error, got {other:?}"),
+        }
     }
 }

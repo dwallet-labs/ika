@@ -152,8 +152,11 @@ cargo test --release
 cargo test --release -p ika-core           # Single crate
 cargo test --release -- --test-threads=1   # Sequential execution
 
-# Integration tests
-cargo test --release -p ika-core dwallet_mpc::integration_tests
+# Integration tests — CPU-bound (real class-groups MPC). Heavy MPC tests
+# flake under default parallelism, so filter to your target and/or limit
+# threads; never infer a regression from a failure inside a full -p ika-core
+# run. CI runs them as a separate test_threads=4 job.
+cargo test --release -p ika-core dwallet_mpc::integration_tests -- --test-threads=4
 
 # Simtest (manual; see dev-docs/conventions/simtest.md for what this is)
 MSIM_DISABLE_WATCHDOG=1 cargo simtest --package ika-test-cluster -- test_swarm_reaches_epoch_2
@@ -255,7 +258,7 @@ already validated, branch names, and in-flight CI run IDs/URLs.
   at its root) and browsable at github.com/MystenLabs/sui at the pinned
   tag. How to locate it + what to read for what:
   `dev-docs/reference/sui-upstream.md`.
-- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.70.2`;
+- **Sui version is pinned in MULTIPLE places** (currently `mainnet-v1.73.2`;
   sometimes a `testnet-v*` tag): when bumping it, bump EVERYWHERE in one
   PR — root `Cargo.toml` (~90 tag pins), excluded wasm workspace locks,
   the sui-binary downloads in the TS CI workflows, this file, and every

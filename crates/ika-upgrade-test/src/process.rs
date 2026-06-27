@@ -11,12 +11,33 @@
 
 use std::fs::File;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use ika_config::node::{NodeConfig, SuiDataSource};
 use tokio::process::{Child, Command};
+
+/// Rewrite a validator's on-disk YAML config so the node reads Sui over the
+/// verified mirror relay: `sui-data-source` becomes peer-only `SuiStateMirrored`
+/// (no `fallback-grpc-url`, so every read crosses the relay) and
+/// `sui-state-mirror-peers` is set to `mirror_peers` (hex anemo PeerIds of the
+/// direct validators). Everything else — keys, ports, the OCS trust anchor — is
+/// preserved by round-tripping the whole `NodeConfig`.
+fn rewrite_config_to_mirrored(config_path: &Path, mirror_peers: Vec<String>) -> Result<()> {
+    let yaml = std::fs::read_to_string(config_path)
+        .with_context(|| format!("read {}", config_path.display()))?;
+    let mut config: NodeConfig = serde_yaml::from_str(&yaml).context("parse node config")?;
+    config.sui_connector_config.sui_data_source = Some(SuiDataSource::SuiStateMirrored {
+        fallback_grpc_url: None,
+    });
+    config.sui_connector_config.sui_state_mirror_peers = mirror_peers;
+    let yaml = serde_yaml::to_string(&config).context("serialize node config")?;
+    std::fs::write(config_path, yaml)
+        .with_context(|| format!("write {}", config_path.display()))?;
+    Ok(())
+}
 
 /// Handle to one running (or stopped) validator process.
 pub struct ValidatorProcess {
@@ -161,6 +182,33 @@ impl ValidatorProcess {
         Ok(())
     }
 
+    /// Like [`Self::swap_binary`], but first rewrites the on-disk config to read
+    /// Sui over the verified mirror relay — peer-only `SuiStateMirrored` reading
+    /// from `mirror_peers` (the direct validators' hex anemo PeerIds). Use to
+    /// flip a validator direct -> mirrored exactly at an upgrade swap: the
+    /// old/pre-swap phase keeps the direct config it booted with, and the new
+    /// binary picks up the mirrored config on restart.
+    pub async fn swap_binary_mirrored(
+        &mut self,
+        new_binary: PathBuf,
+        mirror_peers: Vec<String>,
+    ) -> Result<()> {
+        tracing::info!(
+            index = self.index,
+            from = %self.binary.display(),
+            to = %new_binary.display(),
+            mirror_peers = mirror_peers.len(),
+            "swapping validator binary + flipping to peer-only SuiStateMirrored",
+        );
+        self.stop().await?;
+        rewrite_config_to_mirrored(&self.config_path, mirror_peers).with_context(|| {
+            format!("rewrite config {} to mirrored", self.config_path.display())
+        })?;
+        self.binary = new_binary;
+        self.start().await?;
+        Ok(())
+    }
+
     /// `GET /capabilities` — this node's view of received `AuthorityCapabilitiesV1`,
     /// as the admin server's debug text (one capability per line).
     pub async fn capabilities(&self) -> Result<String> {
@@ -183,6 +231,43 @@ impl ValidatorProcess {
             "set-override-buffer-stake?buffer_bps={buffer_bps}&epoch={epoch}"
         ))
         .await
+    }
+
+    /// Like [`set_buffer_stake`], but tolerant of the validator's local epoch
+    /// lagging the on-chain epoch right after a boundary. The admin handler
+    /// checks the requested `epoch` against the node's *local* `epoch_store`
+    /// and returns a 500 `WrongEpoch` until the node has reconfigured into
+    /// `epoch` — but the on-chain counter (what callers read to pick `epoch`)
+    /// advances first, so a POST fired the instant the counter ticks races the
+    /// node's reconfiguration. Retry across that window until the override
+    /// lands, or `timeout` elapses. Only the wrong-epoch rejection is retried;
+    /// any other error returns immediately.
+    pub async fn set_buffer_stake_when_at_epoch(
+        &self,
+        epoch: u64,
+        buffer_bps: u64,
+        timeout: Duration,
+    ) -> Result<String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(200);
+        loop {
+            match self.set_buffer_stake(epoch, buffer_bps).await {
+                Ok(body) => return Ok(body),
+                Err(error) => {
+                    let local_epoch_lagging = error.to_string().contains("wrong epoch");
+                    if !local_epoch_lagging || tokio::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    tracing::info!(
+                        index = self.index,
+                        target_epoch = epoch,
+                        "buffer-stake override rejected; local epoch still catching up, retrying",
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(2));
+                }
+            }
+        }
     }
 
     pub fn is_running(&self) -> bool {
