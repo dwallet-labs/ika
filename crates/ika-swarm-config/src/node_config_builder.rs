@@ -58,6 +58,11 @@ pub struct ValidatorConfigBuilder {
     /// Required for sui-state-mirrored; hex-encoded anemo peer ids of the
     /// sui-state-direct validators this node reads Sui state from.
     sui_state_mirror_peers_override: Option<Vec<String>>,
+    /// Optional path to a Sui genesis blob, pasted into
+    /// `NodeConfig.sui_connector_config.sui_genesis`. When set, the validator
+    /// genesis-bootstraps the OCS committee chain from it (preferred over the
+    /// unsafe-genesis-committee path).
+    sui_genesis: Option<PathBuf>,
 }
 
 impl ValidatorConfigBuilder {
@@ -107,6 +112,11 @@ impl ValidatorConfigBuilder {
 
     pub fn with_unsafe_genesis_committee(mut self, committee: Committee) -> Self {
         self.unsafe_genesis_committee = Some(committee);
+        self
+    }
+
+    pub fn with_sui_genesis(mut self, sui_genesis: PathBuf) -> Self {
+        self.sui_genesis = Some(sui_genesis);
         self
     }
 
@@ -197,9 +207,7 @@ impl ValidatorConfigBuilder {
                     .unwrap_or_default(),
                 sui_trusted_anchor: self.trusted_anchor,
                 sui_unsafe_genesis_committee: self.unsafe_genesis_committee.clone(),
-                // Wired to the swarm's Sui genesis blob in the localnet phase;
-                // None keeps the existing unsafe-genesis bootstrap for now.
-                sui_genesis: None,
+                sui_genesis: self.sui_genesis.clone(),
                 allow_unverified_committee_fallback: false,
                 auto_reanchor_on_format_change: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
