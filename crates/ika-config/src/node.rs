@@ -395,24 +395,23 @@ pub struct SuiConnectorConfig {
     pub sui_state_mirror_peers: Vec<String>,
     /// Genesis bootstrap committee for chains that haven't reached
     /// their first end-of-epoch yet (brand-new localnets, fresh-init
-    /// testnet). Used as `committee[0]`. Mutually exclusive with
-    /// `sui_trusted_anchor`; startup errors if both are set.
+    /// testnet). Used as `committee[0]`. `sui_genesis` takes priority over
+    /// this when both are set.
     ///
-    /// **UNSAFE for production.** Bypasses the digest-anchored trust
-    /// model — the operator pins the committee directly, with no
-    /// digest cross-check. Production deployments should always use
-    /// `sui_trusted_anchor`. The `unsafe_` prefix is the universal
-    /// convention for "this opt-out skips a safety property."
+    /// **UNSAFE for production.** Bypasses the genesis-blob trust root — the
+    /// operator pins the committee directly, with no cross-check against the
+    /// compiled-in chain identifier. Production deployments should always use
+    /// `sui_genesis`. The `unsafe_` prefix is the universal convention for
+    /// "this opt-out skips a safety property."
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
-    /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root that
-    /// supersedes `sui_trusted_anchor`. On boot the node loads this blob,
-    /// recomputes its genesis checkpoint digest, verifies it against the
-    /// compiled-in chain identifier for `sui_chain_identifier`, and bootstraps
-    /// `committee[0]` from it (the OCS ratchet then walks the end-of-epoch
-    /// chain forward). Takes priority over `sui_trusted_anchor` when set. The
-    /// trust root is the 32-byte compiled-in chain identifier; the blob is
-    /// verified against it, never trusted wholesale.
+    /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root. On
+    /// boot the node loads this blob, recomputes its genesis checkpoint digest,
+    /// verifies it against the compiled-in chain identifier for
+    /// `sui_chain_identifier`, and bootstraps `committee[0]` from it (the OCS
+    /// ratchet then walks the end-of-epoch chain forward). The trust root is
+    /// the 32-byte compiled-in chain identifier; the blob is verified against
+    /// it, never trusted wholesale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_genesis: Option<PathBuf>,
     /// Optional Sui checkpoint archive used as a *verified fallback* source of

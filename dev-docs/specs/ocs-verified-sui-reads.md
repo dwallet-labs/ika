@@ -1,14 +1,15 @@
 # OCS verified Sui reads (object-checkpoint-state)
 
-Status: active for nodes that opt in with a Sui trust anchor (the
-"new-style" `sui-data-source` config). The opt-in is a NODE choice, not
-an ika protocol version: transport selection keys off config SHAPE so a
-protocol flag can never halt running validators en masse at an upgrade
-boundary. Requires the upstream Sui chain to run protocol **v122+** with
-`include_checkpoint_artifacts_digest_in_summary` — without the artifacts
-digest in the checkpoint summary there is nothing to prove against, and
-startup refuses (`probe_artifacts_digest`). Nodes without an anchor stay
-on the legacy JSON-RPC read path.
+Status: active for nodes that opt in with the "new-style" `sui-data-source`
+config and a Sui committee trust root (a `sui_genesis` blob — the
+genesis-rooted trust root that replaced the old operator-pinned end-of-epoch
+anchor). The opt-in is a NODE choice, not an ika protocol version: transport
+selection keys off config SHAPE so a protocol flag can never halt running
+validators en masse at an upgrade boundary. Requires the upstream Sui chain
+to run protocol **v122+** with `include_checkpoint_artifacts_digest_in_summary`
+— without the artifacts digest in the checkpoint summary there is nothing to
+prove against, and startup refuses (`probe_artifacts_digest`). Nodes without a
+trust root stay on the legacy JSON-RPC read path.
 
 ## Problem
 
@@ -219,29 +220,34 @@ orthogonal to whether OCS is on. Transport is chosen by config shape:
 | absent | absent | error: no Sui endpoint |
 | absent | present | old-style: validators → legacy JSON-RPC; notifier/fullnode → gRPC at `sui-rpc-url` |
 | present | present | new-style wins; info log to drop `sui-rpc-url` |
-| present | — | new-style: gRPC + OCS; a **validator** additionally requires a trust anchor |
+| present | — | new-style: gRPC + OCS; a **validator** additionally requires a Sui committee trust root |
 
-`has_anchor` is a 4-way OR: persisted committees OR `sui_trusted_anchor`
-OR `sui_unsafe_genesis_committee` OR `compiled_in_trusted_anchor(chain)`
-(the last returns `None` for every chain today). A new-style validator
-without any anchor is rejected — on the gRPC path it has no MPC event
-source (no JSON-RPC `query_events`; the verified `BagEventPump` needs
-the anchor). `SuiDataSource` must carry `rename_all_fields = "kebab-case"`
-so `fallback-grpc-url` is not silently dropped (a dropped field flips a
-mirrored validator into peer-only).
+`has_anchor` (the gRPC/OCS opt-in) is: persisted committees OR a configured
+`sui_genesis` blob OR `sui_unsafe_genesis_committee` (localnet). A new-style
+validator without any of these is rejected — on the gRPC path it has no MPC
+event source (no JSON-RPC `query_events`; the verified `BagEventPump` needs
+the committee chain). `SuiDataSource` must carry `rename_all_fields =
+"kebab-case"` so `fallback-grpc-url` is not silently dropped (a dropped field
+flips a mirrored validator into peer-only).
 
 ## Bootstrap and the committee ratchet
 
-The trust root is a single operator-pinned **end-of-epoch checkpoint
-digest** (`sui_trusted_anchor`), or an unsafe genesis committee on
-private nets. At boot the fetched anchor summary's recomputed digest
-must equal the pinned digest byte-for-byte and be end-of-epoch; from it
-the node installs `committee[E+1]` (the anchor epoch's own committee is
-never installed — trust flows from the pinned digest, not from holding
-`committee[E]`).
+The trust root is the **Sui genesis blob** (`sui_genesis`). At boot the node
+loads it, recomputes the genesis checkpoint digest, and asserts it equals the
+binary's **compiled-in chain identifier** for the configured chain
+(`get_mainnet_chain_identifier` / `get_testnet_chain_identifier` — the chain
+identifier *is* the genesis checkpoint digest). On a public chain a
+swapped/forged blob fails this check; on `Custom`/`Devnet` localnets there is
+no compiled-in identifier, so the blob's own digest is the root (the
+swarm/operator supplies a trusted blob). `committee[0]` is extracted from the
+verified genesis and the ratchet walks forward from there. So the trust root
+shrinks to a **32-byte compiled-in constant** — no weak-subjectivity anchor,
+no out-of-band digest. (`sui_unsafe_genesis_committee` remains a localnet/test
+seed that installs `committee[0]` directly from the chain's epoch-0
+committee.)
 
 **Perpetual state always wins**: once any committee is persisted, the
-configured anchor/genesis is ignored on every later boot. Re-anchoring
+configured genesis seed is ignored on every later boot. Re-bootstrapping
 requires manually clearing the OCS committee tables.
 
 The ratchet advances the trusted head strictly **+1 per step** up to the
@@ -254,11 +260,16 @@ relay never chooses the install key. Only one ratchet runs at a time
 (concurrent callers coalesce).
 
 If the end-of-epoch checkpoint has been pruned upstream (`NotFound`), the
-behavior forks on `allow_unverified_committee_fallback` (default
-**false**): false → terminal `ProofChainBroken` (operator must re-anchor
-nearer the head and clear tables); true → a degraded direct
-`get_committee(head+1)` fetch, gated by an explicit `epoch == head + 1`
-check (`FallbackEpochMismatch` otherwise), logged security-critical.
+ratchet first tries a configured **Sui checkpoint archive**
+(`sui_checkpoint_archive`): it fetches the end-of-epoch checkpoint from the
+object store (`epochs.json` + `{seq}.binpb.zst`) and BLS-verifies it the same
+way — a *verified* fallback (a forged archive summary fails closed; the
+`epochs.json` enumeration is an untrusted hint, so omission/reorder can stall
+but never forge). Only if no archive is configured (or it also lacks the
+checkpoint) does the legacy `allow_unverified_committee_fallback` path apply
+(default **false** → terminal `ProofChainBroken`; true → a degraded direct
+`get_committee(head+1)` fetch, gated by `epoch == head + 1`, logged
+security-critical).
 
 ## Freshness and rollback protection
 
@@ -533,20 +544,25 @@ over the relay and re-verifying it per read.
 ## Residuals and known gaps
 
 - **Eclipse on a fresh node** (above): a lone malicious relay can pin a
-  cold-started node to a stale-but-real snapshot. The changeset-stream
-  currency gate (now live on the per-read path) narrows this — the relay
-  must withhold the whole stream consistently, and contiguity makes a silent
-  gap detectable — but does not fully close it; the absolute mitigations
-  (an enabled freshness bound, multiple independent relays) are still not
-  active today.
-- **`compiled_in_trusted_anchor`** returns `None` for all chains; when
-  release tooling fills it, every old-style config on that chain would
-  gain `has_anchor` and trip the anchor-without-data-source guard —
-  the compiled-in contribution should be gated on `sui-data-source`
-  being present.
+  cold-started node to a stale-but-real snapshot. The committee chain itself
+  is now genesis-rooted and unforgeable (each end-of-epoch checkpoint is
+  BLS-verified back to the genesis blob), so a relay can only stall the head,
+  never forge a committee. The changeset-stream currency gate narrows the
+  head-staleness window — the relay must withhold the whole stream
+  consistently, and contiguity makes a silent gap detectable — but does not
+  fully close it; the absolute mitigations (an enabled freshness bound,
+  multiple independent relays) are still not active today.
+- **Embedded mainnet/testnet genesis blob**: the trust root is the Sui
+  genesis blob verified against the compiled-in chain identifier. Until the
+  release embeds the per-chain `genesis.blob` (an `include_bytes!` seam),
+  operators supply a `sui_genesis` path. The chain-identifier verification
+  (recomputed genesis digest == compiled-in constant) is now live, closing
+  the former trusted-as-claimed `get_chain_identifier` gap.
 - The verified ratchet path relies on the structural uniqueness of an
-  epoch's end-of-epoch checkpoint for `next.epoch == head + 1`; the
-  explicit assertion exists only on the unverified fallback path.
+  epoch's end-of-epoch checkpoint for `next.epoch == head + 1`; this is now
+  asserted explicitly on the verified install path
+  (`install_next_from_verified_summary`), not only on the unverified
+  fallback.
 
 Code anchors: `crates/ika-core/src/sui_connector/` — `verified_reader.rs`
 (verification, freshness/high-water, bag-membership binding),
