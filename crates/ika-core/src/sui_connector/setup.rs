@@ -45,6 +45,7 @@ use ika_network::sui_state_mirror::{
     self, Server as SuiStateMirrorImpl, SuiMirrorPeers, SuiMirrorProofProvider, SuiMirrorTransport,
     SuiStateMirrorServer,
 };
+use ika_sui_client::genesis::load_and_verify_sui_genesis;
 use ika_sui_client::grpc::SuiGrpcClient;
 use ika_sui_client::transport::SuiTransport;
 use tracing::{info, warn};
@@ -133,6 +134,10 @@ pub enum SetupError {
     PersistedCommitteeUnreadable(String),
     #[error("transport: {0}")]
     Transport(String),
+    #[error("Sui genesis bootstrap: {0}")]
+    Genesis(#[from] ika_sui_client::genesis::GenesisError),
+    #[error("BootstrapPlan::Genesis resolved but no sui_genesis path is configured")]
+    GenesisPathMissing,
     #[error(transparent)]
     Ocs(#[from] OcsError),
     #[error(transparent)]
@@ -150,6 +155,10 @@ pub enum BootstrapPlan {
     Hydrated,
     Anchor(CheckpointDigest),
     UnsafeGenesis(sui_types::committee::Committee),
+    /// Genesis-rooted: load the configured `sui_genesis` blob, verify its
+    /// genesis checkpoint digest against the compiled-in chain identifier, and
+    /// install `committee[0]`. Supersedes the anchor; the caller does the I/O.
+    Genesis,
 }
 
 pub fn resolve_bootstrap_plan(
@@ -178,6 +187,12 @@ pub fn resolve_bootstrap_plan(
             );
         }
         return Ok(BootstrapPlan::Hydrated);
+    }
+    // Genesis-rooted bootstrap supersedes the (legacy weak-subjectivity) anchor
+    // when a genesis blob is configured: it is the stronger trust root, verified
+    // against the compiled-in chain identifier. The caller loads + verifies it.
+    if cfg.sui_genesis.is_some() {
+        return Ok(BootstrapPlan::Genesis);
     }
     let override_anchor = cfg.sui_trusted_anchor;
     let unsafe_genesis = cfg.sui_unsafe_genesis_committee.clone();
@@ -364,6 +379,20 @@ pub async fn build_sui_connector_stack(
                  trust model. This MUST NOT be used in production."
             );
             Some(CommitteeBootstrap::UnsafeGenesis(committee))
+        }
+        BootstrapPlan::Genesis => {
+            let path = cfg
+                .sui_genesis
+                .as_ref()
+                .ok_or(SetupError::GenesisPathMissing)?;
+            let boot = load_and_verify_sui_genesis(path, cfg.sui_chain_identifier)?;
+            info!(
+                epoch = boot.committee.epoch,
+                chain_identifier = %boot.chain_identifier.base58_encode(),
+                "OCS bootstrap: genesis-rooted committee[0] loaded; Sui chain identifier \
+                 verified against the compiled-in constant"
+            );
+            Some(CommitteeBootstrap::UnsafeGenesis(boot.committee))
         }
     };
     let committees = Arc::new(CommitteeStore::open(perpetual.clone(), bootstrap)?);
@@ -621,6 +650,7 @@ mod tests {
             sui_state_mirror_peers: vec![],
             sui_trusted_anchor,
             sui_unsafe_genesis_committee: None,
+            sui_genesis: None,
             allow_unverified_committee_fallback: false,
             auto_reanchor_on_format_change: false,
             sui_chain_identifier: SuiChainIdentifier::Custom,

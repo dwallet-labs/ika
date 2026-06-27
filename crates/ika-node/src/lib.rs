@@ -379,6 +379,10 @@ impl IkaNode {
                 .sui_connector_config
                 .sui_unsafe_genesis_committee
                 .is_some()
+            // Genesis-rooted bootstrap: a configured Sui genesis blob is a trust
+            // root (verified against the compiled-in chain identifier), so it
+            // enables OCS the same way an anchor does.
+            || config.sui_connector_config.sui_genesis.is_some()
             // The compiled-in anchor is a binary default, not operator intent.
             // Gate it on a new-style config: otherwise, once release tooling
             // bakes a digest for this chain, every old-style (JSON-RPC) node

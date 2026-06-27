@@ -426,6 +426,16 @@ pub struct SuiConnectorConfig {
     /// convention for "this opt-out skips a safety property."
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
+    /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root that
+    /// supersedes `sui_trusted_anchor`. On boot the node loads this blob,
+    /// recomputes its genesis checkpoint digest, verifies it against the
+    /// compiled-in chain identifier for `sui_chain_identifier`, and bootstraps
+    /// `committee[0]` from it (the OCS ratchet then walks the end-of-epoch
+    /// chain forward). Takes priority over `sui_trusted_anchor` when set. The
+    /// trust root is the 32-byte compiled-in chain identifier; the blob is
+    /// verified against it, never trusted wholesale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_genesis: Option<PathBuf>,
     /// When the committee ratchet reaches an end-of-epoch checkpoint that the
     /// upstream has pruned, it cannot BLS-verify the `committee[E] →
     /// committee[E+1]` transition. If this is `true` it falls back to fetching

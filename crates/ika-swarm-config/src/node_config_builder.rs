@@ -197,6 +197,9 @@ impl ValidatorConfigBuilder {
                     .unwrap_or_default(),
                 sui_trusted_anchor: self.trusted_anchor,
                 sui_unsafe_genesis_committee: self.unsafe_genesis_committee.clone(),
+                // Wired to the swarm's Sui genesis blob in the localnet phase;
+                // None keeps the existing unsafe-genesis bootstrap for now.
+                sui_genesis: None,
                 allow_unverified_committee_fallback: false,
                 auto_reanchor_on_format_change: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
@@ -440,6 +443,7 @@ impl FullnodeConfigBuilder {
                 sui_state_mirror_peers: Vec::new(),
                 sui_trusted_anchor: None,
                 sui_unsafe_genesis_committee: None,
+                sui_genesis: None,
                 allow_unverified_committee_fallback: false,
                 auto_reanchor_on_format_change: false,
                 sui_chain_identifier: SuiChainIdentifier::Custom,
