@@ -50,6 +50,7 @@ use tokio::sync::OnceCell;
 use tracing::{debug, error, info, warn};
 
 pub mod anchor;
+pub mod archive;
 pub mod genesis;
 pub mod grpc;
 pub mod grpc_backend;
