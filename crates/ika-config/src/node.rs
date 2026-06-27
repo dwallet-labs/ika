@@ -174,11 +174,12 @@ pub const LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL: &str = "http://127.0.0.1:9000";
 pub const LOCAL_DEFAULT_SUI_FAUCET_URL: &str = "http://127.0.0.1:9123/gas";
 
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum SuiChainIdentifier {
     Mainnet,
     Testnet,
+    Devnet,
     Custom,
 }
 
@@ -187,7 +188,187 @@ impl fmt::Display for SuiChainIdentifier {
         match self {
             SuiChainIdentifier::Mainnet => write!(f, "Mainnet"),
             SuiChainIdentifier::Testnet => write!(f, "Testnet"),
+            SuiChainIdentifier::Devnet => write!(f, "Devnet"),
             SuiChainIdentifier::Custom => write!(f, "Custom"),
+        }
+    }
+}
+
+/// Returns the binary's compiled-in trusted anchor digest for a given
+/// chain, if any. Production validators paste a fresh anchor in their
+/// node config; this is the fallback for testnet/devnet release builds
+/// shipped with a known-good digest.
+///
+/// Mainnet: `None` until Sui mainnet enables
+/// `include_checkpoint_artifacts_digest_in_summary` (currently on
+/// protocol v121, the flag lands in v122). When that ships, CI
+/// regenerates this with a real digest.
+///
+/// Testnet/Devnet: `None` for now — to be filled in by release tooling
+/// that queries the upstream Sui RPC for a recent end-of-epoch
+/// checkpoint and bakes the digest here. Operators use the
+/// `sui_trusted_anchor` config field to provide their own digest in the
+/// meantime.
+pub fn compiled_in_trusted_anchor(
+    _chain: SuiChainIdentifier,
+) -> Option<sui_types::digests::CheckpointDigest> {
+    // TODO(release-eng): generate per-chain digests via CI from a known-good Sui RPC.
+    None
+}
+
+/// Where this validator gets Sui state from.
+///
+/// `SuiStateDirect` runs against a Sui fullnode reachable over gRPC, and
+/// (by default) also exposes a [`SuiStateMirror`](../../../ika-network)
+/// service to peers — making this validator a *source* of verified
+/// Sui state for the cluster.
+///
+/// `SuiStateMirrored` reads Sui state through the mirror service of a
+/// peer instead of connecting to Sui directly. Reads are still verified
+/// end-to-end via OCS, so the relayer is untrusted; an optional
+/// `fallback_grpc_url` supplies a direct uplink for the methods the mirror
+/// doesn't serve — `get_transaction` (genuinely un-relayable: its
+/// `ExecutedTransaction` return isn't `Deserialize`), `get_committee` /
+/// `list_owned_gas_coins`, and transaction submission (which a peer-only
+/// node relays, but a fallback-equipped node sends over its own uplink).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+// `rename_all` covers the variant tags; `rename_all_fields` is required to also
+// kebab-case the fields *inside* struct variants (e.g. `fallback-grpc-url`).
+// Without it those fields stay snake_case while every other config key is
+// kebab-case, so an operator writing `fallback-grpc-url` would have it silently
+// dropped — flipping a mirrored validator into peer-only.
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    tag = "kind"
+)]
+pub enum SuiDataSource {
+    SuiStateDirect {
+        /// gRPC URL of a Sui fullnode this validator can reach directly.
+        url: String,
+        /// If true, expose `SuiStateMirror` to Ika peers so other validators
+        /// can read Sui state through us. Defaults to true.
+        #[serde(default = "default_true")]
+        serve_mirror: bool,
+    },
+    SuiStateMirrored {
+        /// Optional Sui gRPC URL used as a fallback for transaction submission
+        /// and `get_transaction`. Trust unaffected — OCS verifies regardless.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fallback_grpc_url: Option<String>,
+    },
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The Sui read-transport a node boots, decided by [`select_sui_transport`]
+/// purely from config shape + role — never from chain state, so a protocol
+/// flag can't halt running validators en masse at an upgrade boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuiTransportPlan {
+    /// Old-style config (no `sui-data-source`) on a validator: the deprecated
+    /// JSON-RPC read path — the only one that serves `query_events`, which a
+    /// validator needs for MPC event ingestion. Sui is sunsetting JSON-RPC.
+    LegacyJsonRpc,
+    /// `sui-state-mirrored` with no `fallback-grpc-url`: the node has no direct
+    /// Sui uplink, so every read crosses the verified OCS relay.
+    PeerOnlyRelay,
+    /// A direct gRPC uplink: `sui-state-direct`, `sui-state-mirrored` with a
+    /// fallback, or a notifier/fullnode on an old-style config (Sui fullnodes
+    /// serve gRPC at the same endpoint as JSON-RPC).
+    Grpc,
+}
+
+/// Decide the Sui read-transport from a node's config shape and role, rejecting
+/// the invalid combinations. Pure so it can be exhaustively unit-tested; the
+/// `ika-node` boot path executes the returned plan (build the client, stand up
+/// the relay, …).
+///
+/// The choice keys off the SHAPE of the node's own config, never off chain
+/// state — both read paths consume the same on-chain state, and transport must
+/// stay node-local so a protocol flag can't halt running validators at an
+/// upgrade boundary. Inputs:
+/// - `data_source`: the `sui-data-source` section, if present (new-style).
+/// - `sui_rpc_url_present`: whether the legacy `sui-rpc-url` field is set. Only
+///   consulted on an old-style config; ignored (but loggable) once
+///   `data_source` is present.
+/// - `has_anchor`: whether a Sui trust anchor is configured (enables OCS).
+/// - `mode`: the node's role. A validator runs MPC and needs a Sui event
+///   source; a notifier submits transactions; a fullnode does neither.
+pub fn select_sui_transport(
+    data_source: Option<&SuiDataSource>,
+    sui_rpc_url_present: bool,
+    has_anchor: bool,
+    mode: NodeMode,
+) -> Result<SuiTransportPlan, String> {
+    match data_source {
+        // Old-style config (no `sui-data-source` section).
+        None => {
+            if !sui_rpc_url_present {
+                // No endpoint at all — fail closed rather than guess.
+                return Err(
+                    "no Sui endpoint configured: set `sui-data-source` (gRPC; the \
+                     supported path) — the legacy `sui-rpc-url` field alone selects the \
+                     deprecated JSON-RPC path"
+                        .to_string(),
+                );
+            }
+            if has_anchor {
+                return Err(
+                    "a Sui trust anchor is configured but `sui-data-source` is not; the \
+                     anchor-verified OCS path runs over gRPC — add a sui-data-source section"
+                        .to_string(),
+                );
+            }
+            // A validator reads MPC events over JSON-RPC `query_events` (gRPC
+            // cannot serve them); notifiers/fullnodes run no event ingestion and
+            // read gRPC at the same fullnode endpoint.
+            Ok(if mode.is_validator() {
+                SuiTransportPlan::LegacyJsonRpc
+            } else {
+                SuiTransportPlan::Grpc
+            })
+        }
+        // New-style config (`sui-data-source` present): all Sui I/O over gRPC.
+        Some(source) => {
+            if mode.is_validator() && !has_anchor {
+                return Err(
+                    "`sui-data-source` is set but no Sui trust anchor is configured: a \
+                     validator on the gRPC path has no MPC event source without one (no JSON-RPC \
+                     `query_events`, and the verified BagEventPump requires the anchor); set \
+                     sui_trusted_anchor (or sui_unsafe_genesis_committee on private nets)"
+                        .to_string(),
+                );
+            }
+            // A notifier is the only role that submits transactions. Peer-only
+            // (`sui-state-mirrored` with no fallback) has no direct Sui uplink:
+            // its relayed submission path returns *unverified* effects bytes, so
+            // the design assumes notifiers never run peer-only. Enforce it here
+            // rather than let a misconfigured notifier submit through that path.
+            if mode.is_notifier()
+                && matches!(
+                    source,
+                    SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: None
+                    }
+                )
+            {
+                return Err(
+                    "a notifier is configured peer-only (`sui-state-mirrored` with no \
+                     `fallback-grpc-url`), but a notifier submits transactions and a peer-only \
+                     node has no direct Sui uplink — its relayed submission returns unverified \
+                     effects; set `fallback-grpc-url`, or use `sui-state-direct`"
+                        .to_string(),
+                );
+            }
+            Ok(match source {
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                } => SuiTransportPlan::PeerOnlyRelay,
+                _ => SuiTransportPlan::Grpc,
+            })
         }
     }
 }
@@ -196,9 +377,76 @@ impl fmt::Display for SuiChainIdentifier {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct SuiConnectorConfig {
-    /// Rpc url for Sui fullnode, used for query stuff and submit transactions.
-    #[serde(default = "default_sui_rpc_url")]
-    pub sui_rpc_url: String,
+    /// Legacy JSON-RPC url of a Sui fullnode (old-style configs). Ignored
+    /// whenever [`SuiConnectorConfig::sui_data_source`] is present, and
+    /// optional so a migrated config can DROP this field entirely. At least
+    /// one of the two must be set; a config with neither has no Sui endpoint
+    /// and is rejected at startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_rpc_url: Option<String>,
+    /// Source of Sui state and tx-submission for this node — the new-style
+    /// gRPC config that replaces `sui_rpc_url`. Its PRESENCE is what selects
+    /// the read path: a config without it is an old-style (pre-OCS) config,
+    /// and a validator on one keeps the DEPRECATED legacy JSON-RPC path
+    /// (Sui is sunsetting JSON-RPC — migrate by adding this section plus a
+    /// trust anchor). When present, all Sui I/O runs over gRPC and a
+    /// validator must also configure a trust anchor (its MPC event source on
+    /// this path is the anchor-verified `BagEventPump`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sui_data_source: Option<SuiDataSource>,
+    /// Optional pinned list of Ika peer ids that expose `SuiStateMirror`.
+    /// If empty when reading over the mirror (`SuiDataSource::SuiStateMirrored`),
+    /// the connector will try every connected peer (relying on those that
+    /// don't implement the service to error fast).
+    #[serde(default)]
+    pub sui_state_mirror_peers: Vec<String>,
+    /// Trust anchor: digest of an end-of-epoch
+    /// `CertifiedCheckpointSummary`. At boot the validator looks the
+    /// summary up by digest, asserts `summary.digest() == this`,
+    /// extracts `committee[E+1]` from `end_of_epoch_data`, and
+    /// installs it. The value is the digest of an end-of-epoch
+    /// `CertifiedCheckpointSummary`; obtain it from a trusted Sui fullnode
+    /// (the last checkpoint of a recent epoch).
+    ///
+    /// Ignored when the perpetual `sui_committees` table already
+    /// contains entries (we've already verified past this point). To
+    /// force re-anchoring, wipe the perpetual
+    /// `sui_committees`/`sui_committee_head` columns first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_trusted_anchor: Option<sui_types::digests::CheckpointDigest>,
+    /// Genesis bootstrap committee for chains that haven't reached
+    /// their first end-of-epoch yet (brand-new localnets, fresh-init
+    /// testnet). Used as `committee[0]`. Mutually exclusive with
+    /// `sui_trusted_anchor`; startup errors if both are set.
+    ///
+    /// **UNSAFE for production.** Bypasses the digest-anchored trust
+    /// model — the operator pins the committee directly, with no
+    /// digest cross-check. Production deployments should always use
+    /// `sui_trusted_anchor`. The `unsafe_` prefix is the universal
+    /// convention for "this opt-out skips a safety property."
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
+    /// When the committee ratchet reaches an end-of-epoch checkpoint that the
+    /// upstream has pruned, it cannot BLS-verify the `committee[E] →
+    /// committee[E+1]` transition. If this is `true` it falls back to fetching
+    /// `committee[E+1]` directly from the (untrusted) endpoint — trust degrades
+    /// to "what the endpoint says." Default `false`: the ratchet instead returns
+    /// `OcsError::ProofChainBroken` and the operator must re-anchor closer to
+    /// the current epoch. Only enable on chains/operators that accept the
+    /// degraded trust to preserve liveness from a stale anchor.
+    #[serde(default)]
+    pub allow_unverified_committee_fallback: bool,
+    /// When the persisted OCS committee state cannot be deserialized on boot —
+    /// typically after a Sui version upgrade changed its on-disk BCS layout —
+    /// automatically wipe the committee tables and re-anchor from the configured
+    /// `sui_trusted_anchor` (digest-gated) instead of failing to boot. Default
+    /// `false`: rebuilding the trust root is normally a deliberate operator
+    /// action (clear the OCS committee tables, then restart so the next boot
+    /// re-seeds from the anchor). Requires a trust anchor to be configured. The
+    /// rebuildable verified-object cache always self-recovers regardless of this
+    /// flag; only the committee trust chain is gated by it.
+    #[serde(default)]
+    pub auto_reanchor_on_format_change: bool,
     /// The expected sui chain identifier connecting to.
     pub sui_chain_identifier: SuiChainIdentifier,
     /// The move package ID of ika (IKA) on sui.
@@ -216,6 +464,17 @@ pub struct SuiConnectorConfig {
     /// The object id of ika_dwallet_coordinator on sui.
     pub ika_dwallet_coordinator_object_id: ObjectID,
 
+    /// How many checkpoints of OCS-verified state the direct-node cache retains
+    /// (the prune window for the perpetual `verified_object_cache`, and the
+    /// depth a mirrored peer can bootstrap from this node). Snapshots more than
+    /// this many checkpoints behind the head are dropped; never prunes below the
+    /// oldest committee-verifiable checkpoint. Defaults to
+    /// `DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS` (~a few epochs) when unset;
+    /// larger = deeper history served to peers and answerable after the fullnode
+    /// prunes, at more DB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_cache_retention_checkpoints: Option<u64>,
+
     /// Only for sui connector notifiers, don't set `notifier_client_key_pair` otherwise.
     /// Path of the file where sui client key (any SuiKeyPair) is stored.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +489,19 @@ pub struct SuiConnectorConfig {
     /// Otherwise, it will miss one event because of fullnode Event query semantics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_ika_system_module_last_processed_event_id_override: Option<EventID>,
+}
+
+/// Checkpoints of OCS-verified state the direct-node cache retains by default
+/// (~a few epochs): wide enough that idle Ika objects — the System / Coordinator
+/// inner, modified only at epoch boundaries — stay covered, while bounding the
+/// perpetual `verified_object_cache` and the in-memory map. Tune per chain.
+pub const DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS: u64 = 432_000;
+
+impl SuiConnectorConfig {
+    pub fn verified_cache_retention_checkpoints(&self) -> u64 {
+        self.verified_cache_retention_checkpoints
+            .unwrap_or(DEFAULT_VERIFIED_CACHE_RETENTION_CHECKPOINTS)
+    }
 }
 
 #[serde_as]
@@ -310,6 +582,14 @@ pub struct NodeConfig {
     /// one hour when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authority_db_pruner_period_secs: Option<u64>,
+
+    /// Cap on the number of concurrent dwallet-MPC cryptographic computations
+    /// (the orchestrator's core budget). `None` (default) uses the host core
+    /// count. Set this low to bound a validator's CPU + peak memory when many
+    /// validators are co-located on one machine — e.g. CI test clusters, where
+    /// each unbounded validator's class-groups crypto otherwise starves the pod.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_mpc_computation_cores: Option<usize>,
 }
 
 /// Keep the current epoch plus this many prior per-epoch authority store
@@ -318,10 +598,6 @@ pub struct NodeConfig {
 /// default (retention 0), so retention here is the conservative side of an
 /// existing policy, not a new one.
 pub const DEFAULT_AUTHORITY_DB_RETENTION_EPOCHS: u64 = 2;
-
-fn default_sui_rpc_url() -> String {
-    LOCAL_DEFAULT_SUI_FULLNODE_RPC_URL.to_string()
-}
 
 fn default_grpc_address() -> Multiaddr {
     "/ip4/0.0.0.0/tcp/8080".parse().unwrap()
@@ -770,5 +1046,320 @@ impl RootSeedWithPath {
                 RootSeed::from_file(path.clone()).unwrap()
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn direct() -> SuiDataSource {
+        SuiDataSource::SuiStateDirect {
+            url: "http://direct:9000".to_string(),
+            serve_mirror: true,
+        }
+    }
+    fn mirrored_with_fallback() -> SuiDataSource {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: Some("http://fallback:9000".to_string()),
+        }
+    }
+    fn peer_only_source() -> SuiDataSource {
+        SuiDataSource::SuiStateMirrored {
+            fallback_grpc_url: None,
+        }
+    }
+
+    const ALL_MODES: [NodeMode; 3] = [NodeMode::Validator, NodeMode::Fullnode, NodeMode::Notifier];
+
+    // ---- old-style config (no `sui-data-source`) ----
+
+    /// No endpoint at all is rejected before anything else — independent of
+    /// anchor/role, the operator gets the "no Sui endpoint" error.
+    #[test]
+    fn no_endpoint_is_rejected() {
+        for has_anchor in [false, true] {
+            for mode in ALL_MODES {
+                let err = select_sui_transport(None, false, has_anchor, mode).unwrap_err();
+                assert!(
+                    err.contains("no Sui endpoint configured"),
+                    "anchor={has_anchor} mode={mode}: {err}"
+                );
+            }
+        }
+    }
+
+    /// An old-style validator (only `sui-rpc-url`, no anchor) keeps the
+    /// deprecated JSON-RPC path; a notifier/fullnode on the same config reads
+    /// gRPC at that endpoint.
+    #[test]
+    fn old_style_routes_by_role() {
+        assert_eq!(
+            select_sui_transport(None, true, false, NodeMode::Validator),
+            Ok(SuiTransportPlan::LegacyJsonRpc)
+        );
+        assert_eq!(
+            select_sui_transport(None, true, false, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(None, true, false, NodeMode::Notifier),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// A trust anchor without a `sui-data-source` section is rejected (the
+    /// anchor-verified OCS path runs over gRPC) — for every role.
+    #[test]
+    fn anchor_without_data_source_is_rejected() {
+        for mode in ALL_MODES {
+            let err = select_sui_transport(None, true, true, mode).unwrap_err();
+            assert!(
+                err.contains("trust anchor is configured but `sui-data-source` is not"),
+                "mode={mode}: {err}"
+            );
+        }
+    }
+
+    // ---- new-style config (`sui-data-source` present) ----
+
+    /// A validator on the gRPC path with no anchor has no MPC event source —
+    /// rejected for every data-source variant.
+    #[test]
+    fn new_style_validator_without_anchor_is_rejected() {
+        for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
+            let err =
+                select_sui_transport(Some(&source), false, false, NodeMode::Validator).unwrap_err();
+            assert!(
+                err.contains("no Sui trust anchor is configured"),
+                "{source:?}: {err}"
+            );
+        }
+    }
+
+    /// Direct and mirrored-with-fallback both use a direct gRPC uplink.
+    #[test]
+    fn direct_and_mirrored_with_fallback_use_grpc() {
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Validator),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(
+                Some(&mirrored_with_fallback()),
+                false,
+                true,
+                NodeMode::Validator
+            ),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// `sui-state-mirrored` with no fallback is the peer-only relay path for a
+    /// validator or a fullnode (neither submits transactions).
+    #[test]
+    fn peer_only_uses_the_relay() {
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Validator),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+    }
+
+    /// A notifier submits transactions, which a peer-only node can't do safely
+    /// (its relayed submission returns unverified effects) — so a notifier
+    /// configured peer-only is rejected, while a notifier with a fallback (or
+    /// direct) uplink is fine.
+    #[test]
+    fn a_notifier_configured_peer_only_is_rejected() {
+        let err = select_sui_transport(Some(&peer_only_source()), false, true, NodeMode::Notifier)
+            .unwrap_err();
+        assert!(
+            err.contains("notifier") && err.contains("peer-only"),
+            "{err}"
+        );
+        assert_eq!(
+            select_sui_transport(
+                Some(&mirrored_with_fallback()),
+                false,
+                true,
+                NodeMode::Notifier
+            ),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, true, NodeMode::Notifier),
+            Ok(SuiTransportPlan::Grpc)
+        );
+    }
+
+    /// A fullnode is exempt from the anchor requirement and routes purely on the
+    /// data-source variant — including peer-only, which it may use (it never
+    /// submits).
+    #[test]
+    fn a_fullnode_is_exempt_from_the_anchor_requirement() {
+        assert_eq!(
+            select_sui_transport(Some(&direct()), false, false, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::Grpc)
+        );
+        assert_eq!(
+            select_sui_transport(Some(&peer_only_source()), false, false, NodeMode::Fullnode),
+            Ok(SuiTransportPlan::PeerOnlyRelay)
+        );
+    }
+
+    /// Once `sui-data-source` is present, the legacy `sui-rpc-url` field never
+    /// changes the decision — the new-style section always wins, for every role.
+    #[test]
+    fn data_source_presence_ignores_the_legacy_rpc_url() {
+        for source in [direct(), mirrored_with_fallback(), peer_only_source()] {
+            for mode in ALL_MODES {
+                assert_eq!(
+                    select_sui_transport(Some(&source), true, true, mode),
+                    select_sui_transport(Some(&source), false, true, mode),
+                    "{source:?} mode={mode}: rpc-url presence must not matter"
+                );
+            }
+        }
+    }
+
+    // ---- `SuiDataSource` serde shape (kebab-case wire format) ----
+
+    /// The on-disk node config is YAML and every key is kebab-case. The
+    /// `SuiDataSource` enum is internally tagged on `kind`, and
+    /// `rename_all_fields = "kebab-case"` is what makes the *fields inside*
+    /// struct variants kebab-case too. This test pins the whole wire contract:
+    ///
+    /// - `kind: sui-state-mirrored` + `fallback-grpc-url: ...` deserializes into
+    ///   `SuiStateMirrored { fallback_grpc_url: Some(..) }`.
+    /// - `kind: sui-state-direct` + `serve-mirror: false` deserializes into
+    ///   `SuiStateDirect { serve_mirror: false }`.
+    /// - Serializing back round-trips to the kebab-case keys (`kind`,
+    ///   `fallback-grpc-url`, `serve-mirror`), not snake_case.
+    /// - The silent-default risk: a *snake_case* `fallback_grpc_url` key is an
+    ///   unknown field to the kebab-case-renamed variant, so it is dropped and
+    ///   the field stays `None` — exactly the misconfig the `rename_all_fields`
+    ///   comment in the production code warns about (a mirrored validator
+    ///   silently flips to peer-only). `SuiDataSource` has no
+    ///   `deny_unknown_fields`, and serde does not support it on internally
+    ///   tagged enum variants, so the parse *succeeds* with the field unset
+    ///   rather than erroring — this test documents that behavior.
+    #[test]
+    fn sui_data_source_deserializes_kebab_case_fields() {
+        // sui-state-mirrored with a kebab-case fallback-grpc-url populates the field.
+        let mirrored: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-mirrored\nfallback-grpc-url: http://fallback:9000\n",
+        )
+        .expect("kebab-case mirrored config must deserialize");
+        assert!(
+            matches!(
+                &mirrored,
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: Some(url),
+                } if url == "http://fallback:9000"
+            ),
+            "expected SuiStateMirrored with the fallback set, got {mirrored:?}"
+        );
+
+        // sui-state-direct with serve-mirror: false parses serve_mirror = false
+        // (and the kebab-case `url` field).
+        let direct_no_mirror: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-direct\nurl: http://direct:9000\nserve-mirror: false\n",
+        )
+        .expect("kebab-case direct config must deserialize");
+        assert!(
+            matches!(
+                &direct_no_mirror,
+                SuiDataSource::SuiStateDirect {
+                    url,
+                    serve_mirror: false,
+                } if url == "http://direct:9000"
+            ),
+            "expected SuiStateDirect {{ serve_mirror: false }}, got {direct_no_mirror:?}"
+        );
+
+        // Serialize back: keys must be kebab-case, not snake_case.
+        let mirrored_yaml =
+            serde_yaml::to_string(&mirrored).expect("serialize mirrored back to yaml");
+        assert!(
+            mirrored_yaml.contains("kind: sui-state-mirrored"),
+            "serialized tag must be kebab-case: {mirrored_yaml}"
+        );
+        assert!(
+            mirrored_yaml.contains("fallback-grpc-url:"),
+            "serialized field must round-trip to kebab-case: {mirrored_yaml}"
+        );
+        assert!(
+            !mirrored_yaml.contains("fallback_grpc_url"),
+            "serialized field must NOT be snake_case: {mirrored_yaml}"
+        );
+
+        let direct_yaml =
+            serde_yaml::to_string(&direct_no_mirror).expect("serialize direct back to yaml");
+        assert!(
+            direct_yaml.contains("kind: sui-state-direct") && direct_yaml.contains("serve-mirror:"),
+            "serialized direct must use kebab-case keys: {direct_yaml}"
+        );
+        assert!(
+            !direct_yaml.contains("serve_mirror"),
+            "serialized field must NOT be snake_case: {direct_yaml}"
+        );
+
+        // Full structural round-trip: re-parsing the serialized form yields the
+        // same variant + field values.
+        let mirrored_round: SuiDataSource =
+            serde_yaml::from_str(&mirrored_yaml).expect("re-parse serialized mirrored");
+        assert!(matches!(
+            mirrored_round,
+            SuiDataSource::SuiStateMirrored {
+                fallback_grpc_url: Some(url),
+            } if url == "http://fallback:9000"
+        ));
+
+        // Silent-default risk: a snake_case `fallback_grpc_url` key does NOT
+        // populate the field. The variant's fields are kebab-case-renamed, so
+        // `fallback_grpc_url` is an unrecognized key; with no
+        // `deny_unknown_fields` (unsupported on internally tagged enums) the
+        // parse succeeds and the field stays None — flipping a would-be
+        // mirrored-with-fallback validator into peer-only.
+        let snake: SuiDataSource = serde_yaml::from_str(
+            "kind: sui-state-mirrored\nfallback_grpc_url: http://fallback:9000\n",
+        )
+        .expect("snake_case key is silently ignored, not an error");
+        assert!(
+            matches!(
+                snake,
+                SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                }
+            ),
+            "snake_case `fallback_grpc_url` must be dropped, leaving the field None \
+             (documents the silent-default misconfig risk)"
+        );
+    }
+
+    /// An old-style config (no `sui-data-source`) that nonetheless carries a Sui
+    /// trust anchor is a misconfiguration: the anchor enables the OCS path, which
+    /// runs over gRPC and therefore requires a `sui-data-source` section. With
+    /// `sui-rpc-url` present (so we get past the no-endpoint check) and
+    /// `has_anchor = true`, `select_sui_transport` rejects this for *every* role
+    /// with a message that names the anchor-without-data-source mismatch.
+    #[test]
+    fn old_style_config_with_anchor_is_rejected_message() {
+        for mode in ALL_MODES {
+            let err = select_sui_transport(None, true, true, mode)
+                .expect_err("anchor without sui-data-source must be rejected");
+            assert!(
+                err.contains("trust anchor is configured but `sui-data-source` is not"),
+                "mode={mode}: error must flag the anchor-without-data-source misconfig, got: {err}"
+            );
+            assert!(
+                err.contains("OCS"),
+                "mode={mode}: error should mention the OCS path, got: {err}"
+            );
+        }
     }
 }

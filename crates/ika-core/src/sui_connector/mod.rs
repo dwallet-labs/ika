@@ -3,15 +3,16 @@
 
 use crate::dwallet_checkpoints::DWalletCheckpointStore;
 use crate::dwallet_session_request::DWalletSessionRequest;
+use crate::sui_connector::bag_event_pump::BagEventPump;
 use crate::sui_connector::metrics::SuiConnectorMetrics;
 use crate::sui_connector::sui_executor::{StopReason, SuiExecutor};
 use crate::sui_connector::sui_syncer::SuiSyncer;
+use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::system_checkpoints::SystemCheckpointStore;
 use anyhow::anyhow;
 use async_trait::async_trait;
-use futures::{StreamExt, future};
 use ika_config::node::{NodeMode, RunWithRange, SuiChainIdentifier, SuiConnectorConfig};
-use ika_sui_client::{SuiClient, SuiClientInner};
+use ika_sui_client::{SuiBackend, SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, CommitteeMembership, EpochId};
 use ika_types::error::IkaResult;
 use ika_types::messages_consensus::MovePackageDigest;
@@ -22,9 +23,6 @@ use shared_crypto::intent::{Intent, IntentMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use sui_json_rpc_types::Coin;
-use sui_sdk::SuiClient as SuiSdkClient;
-use sui_sdk::apis::CoinReadApi;
 use sui_types::base_types::{ObjectID, ObjectRef, SuiAddress};
 use sui_types::crypto::{Signature, SuiKeyPair};
 use sui_types::digests::{get_mainnet_chain_identifier, get_testnet_chain_identifier};
@@ -32,13 +30,28 @@ use sui_types::transaction::{ProgrammableTransaction, Transaction, TransactionDa
 use tokio::sync::watch;
 use tokio::sync::watch::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::info;
+use tracing::{info, warn};
 
+pub mod bag_event_pump;
+pub mod changeset_receiver;
+pub mod committee_follower;
+pub mod committee_store;
+pub mod fallback_transport;
 pub mod metrics;
+pub mod ocs_currency;
+pub mod ocs_metrics;
+pub mod ocs_verifier;
 pub mod pubkey_provider_updater;
+pub mod push_worker;
+pub mod retained_transport;
+pub mod setup;
 mod sui_event_into_request;
 pub mod sui_executor;
 pub mod sui_syncer;
+pub mod trusted_peer_updater;
+pub mod verified_reader;
+pub mod verified_state_cache;
+pub mod verified_transport;
 
 pub struct SuiNotifier {
     sui_key: SuiKeyPair,
@@ -46,8 +59,8 @@ pub struct SuiNotifier {
 }
 
 pub struct SuiConnectorService {
-    sui_client: Arc<SuiClient<SuiSdkClient>>,
-    sui_executor: SuiExecutor<SuiSdkClient>,
+    sui_client: Arc<SuiClient<SuiBackend>>,
+    sui_executor: SuiExecutor<SuiBackend>,
     network_keys_receiver: Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
     // todo(zeev): this needs a refactor.
     #[allow(dead_code)]
@@ -73,7 +86,7 @@ impl SuiConnectorService {
     pub async fn new(
         checkpoint_store: Arc<DWalletCheckpointStore>,
         system_checkpoint_store: Arc<SystemCheckpointStore>,
-        sui_client: Arc<SuiClient<SuiSdkClient>>,
+        sui_client: Arc<SuiClient<SuiBackend>>,
         sui_connector_config: SuiConnectorConfig,
         sui_connector_metrics: Arc<SuiConnectorMetrics>,
         mode: NodeMode,
@@ -90,6 +103,12 @@ impl SuiConnectorService {
         last_session_to_complete_in_current_epoch_sender: Sender<(EpochId, u64)>,
         uncompleted_requests_sender: Sender<(Vec<DWalletSessionRequest>, EpochId)>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
+        // OCS verified-read surface. `Some` when the OCS stack was built
+        // (a trust anchor is configured); `None` otherwise. Its presence is
+        // the node-level switch between the OCS `BagEventPump` and the legacy
+        // JSON-RPC event path — see `run_legacy_event_ingestion` below.
+        reader: Option<Arc<OcsVerifiedReader>>,
+        ocs_metrics: Arc<crate::sui_connector::ocs_metrics::OcsMetrics>,
     ) -> anyhow::Result<(
         Arc<Self>,
         watch::Receiver<Arc<HashMap<ObjectID, DWalletNetworkEncryptionKeyData>>>,
@@ -113,6 +132,7 @@ impl SuiConnectorService {
             system_checkpoint_store.clone(),
             sui_notifier,
             sui_client.clone(),
+            reader.clone(),
             sui_connector_metrics.clone(),
         );
 
@@ -124,6 +144,28 @@ impl SuiConnectorService {
                 Box<dyn crate::validator_metadata::OffChainCommitteeMpcDataSource>,
             >,
         > = Arc::new(arc_swap::ArcSwapOption::empty());
+
+        // Node-level gate. When a trust anchor is configured the OCS stack was
+        // built and `reader` is `Some`, so the OCS `BagEventPump` is the MPC
+        // event source; otherwise the legacy JSON-RPC syncer event path runs.
+        // `watch::Sender` (uncompleted_requests_sender) isn't `Clone`, so the
+        // two event senders belong to exactly one path: hand them to whichever
+        // is active.
+        let run_legacy_event_ingestion = reader.is_none();
+        let (syncer_new_requests, syncer_uncompleted, pump_senders) = if run_legacy_event_ingestion
+        {
+            (
+                Some(new_requests_sender),
+                Some(uncompleted_requests_sender),
+                None,
+            )
+        } else {
+            (
+                None,
+                None,
+                Some((new_requests_sender, uncompleted_requests_sender)),
+            )
+        };
 
         let sui_modules_to_watch = vec![SESSIONS_MANAGER_MODULE_NAME.to_owned()];
         let task_handles = SuiSyncer::new(
@@ -138,19 +180,73 @@ impl SuiConnectorService {
             current_epoch_mpc_keys_sender,
             next_epoch_mpc_keys_sender,
             mode,
+            run_legacy_event_ingestion,
             system_object_receiver,
-            dwallet_coordinator_receiver,
+            dwallet_coordinator_receiver.clone(),
             network_keys_sender,
-            new_requests_sender,
+            syncer_new_requests,
             end_of_publish_sender,
             last_session_to_complete_in_current_epoch_sender,
-            uncompleted_requests_sender,
+            syncer_uncompleted,
             noa_checkpoints_finalized,
             network_key_blob_source.clone(),
             off_chain_mpc_data_source.clone(),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to start sui syncer: {e}"))?;
+
+        // v4 only: validators feed the MPC engine from the OCS-verified bag
+        // walker instead of the legacy event path. Fullnodes/notifiers don't
+        // run MPC sessions and don't need the pump.
+        if let Some((new_requests_sender, uncompleted_requests_sender)) = pump_senders {
+            if mode.is_validator() {
+                let reader = reader.ok_or_else(|| {
+                    // Unreachable: this branch only runs when
+                    // `run_legacy_event_ingestion` is false, i.e. `reader` is
+                    // `Some`. Kept as a defensive guard rather than `expect`.
+                    anyhow!(
+                        "OcsVerifiedReader missing while OCS event ingestion is active; \
+                         this is a wiring bug (reader presence gates this path)."
+                    )
+                })?;
+                let pump = BagEventPump::new(
+                    reader,
+                    sui_client.ika_network_config.clone(),
+                    dwallet_coordinator_receiver,
+                    new_requests_sender,
+                    uncompleted_requests_sender,
+                    ocs_metrics,
+                    // 50 ms tick. Bandwidth dropped ~3 orders of magnitude when
+                    // we moved from full-checkpoint shipping to inclusion proofs,
+                    // so the relay can absorb 20 Hz polling cleanly. Drives MPC
+                    // session-start latency down from ~1 s to ~50 ms worst-case.
+                    Duration::from_millis(50),
+                );
+                tokio::spawn(pump.run());
+            } else {
+                // `reader.is_some()` (OCS configured) but this node's mode is not
+                // Validator, so the `BagEventPump` — the only MPC event source on
+                // the OCS path — is not spawned and these two non-`Clone` senders
+                // are dropped. Harmless for a pure fullnode/notifier that runs no
+                // MPC; but the MPC service is built on committee membership
+                // (`AuthorityState::is_validator`), a different predicate than the
+                // config-derived `mode`. A node that is a committee member yet
+                // configured without `consensus_config` (so `mode != Validator`)
+                // would then consume a closed channel and silently receive no
+                // sessions. Surface it loudly rather than drop in silence.
+                warn!(
+                    ?mode,
+                    "OCS reader configured but node mode is not Validator: the \
+                     BagEventPump is not spawned and the MPC event senders are \
+                     dropped. Harmless for a pure fullnode/notifier; if this node is \
+                     a committee member, it is a misconfiguration (committee key \
+                     without consensus_config) and MPC will not receive sessions — \
+                     run a committee member in Validator mode."
+                );
+                drop((new_requests_sender, uncompleted_requests_sender));
+            }
+        }
+
         Ok((
             Arc::new(Self {
                 sui_client,
@@ -197,7 +293,7 @@ impl SuiConnectorService {
 
     async fn prepare_for_sui(
         sui_connector_config: SuiConnectorConfig,
-        sui_client: Arc<SuiClient<SuiSdkClient>>,
+        sui_client: Arc<SuiClient<SuiBackend>>,
         _sui_connector_metrics: Arc<SuiConnectorMetrics>,
     ) -> anyhow::Result<Option<SuiNotifier>> {
         let Some(sui_key_path) = sui_connector_config.notifier_client_key_pair else {
@@ -298,36 +394,6 @@ pub(crate) async fn build_sui_transaction<C: SuiClientInner>(
     );
 
     Transaction::from_data(tx_data, vec![signature])
-}
-
-pub async fn pick_highest_balance_coin(
-    coin_read_api: &CoinReadApi,
-    address: SuiAddress,
-    minimal_amount: u64,
-) -> anyhow::Result<Coin> {
-    let mut highest_balance = 0;
-    let mut highest_balance_coin = None;
-    coin_read_api
-        .get_coins_stream(address, None)
-        .for_each(|coin: Coin| {
-            if coin.balance > highest_balance {
-                highest_balance = coin.balance;
-                highest_balance_coin = Some(coin.clone());
-            }
-            future::ready(())
-        })
-        .await;
-    if highest_balance_coin.is_none() {
-        return Err(anyhow!("No Sui coins found for address {:?}", address));
-    }
-    if highest_balance < minimal_amount {
-        return Err(anyhow!(
-            "Found no single coin that has >= {} balance Sui for address {:?}",
-            minimal_amount,
-            address,
-        ));
-    }
-    Ok(highest_balance_coin.unwrap())
 }
 
 #[cfg(test)]

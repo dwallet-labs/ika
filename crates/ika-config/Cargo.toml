@@ -31,3 +31,4 @@ dwallet-mpc-types.workspace = true
 
 [dev-dependencies]
 sui-types = { workspace = true }
+serde_yaml.workspace = true

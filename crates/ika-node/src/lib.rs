@@ -162,7 +162,9 @@ use ika_core::epoch_tasks::end_of_publish_sender::EndOfPublishSender;
 use ika_core::noa_checkpoints::{LogOnlyChainSubmitter, NOAChainSubmitter, NOACheckpointHandler};
 use ika_core::sui_connector::SuiConnectorService;
 use ika_core::sui_connector::metrics::SuiConnectorMetrics;
+use ika_core::sui_connector::setup as sui_connector_setup;
 use ika_core::sui_connector::sui_executor::StopReason;
+use ika_core::sui_connector::verified_transport::VerifiedSuiTransport;
 use ika_core::system_checkpoints::system_checkpoint_output::{
     CertifiedSystemCheckpointOutput, SystemCheckpointOutput as SystemCheckpointOutputTrait,
 };
@@ -350,14 +352,293 @@ impl IkaNode {
             },
         };
 
-        let sui_client = Arc::new(
-            SuiClient::new(
-                &config.sui_connector_config.sui_rpc_url,
-                sui_client_metrics,
-                ika_network_config,
-            )
-            .await?,
+        // Perpetual tables are opened here (rather than after the sui_client)
+        // because the OCS-mode decision below needs to know whether we've
+        // already verified past a committee head.
+        let perpetual_tables_options =
+            default_db_options().optimize_db_for_write_throughput(4, false);
+        let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(
+            &config.db_path().join("store"),
+            Some(perpetual_tables_options.options),
+        ));
+
+        // OCS mode (`has_anchor`) drives ALL Sui I/O through gRPC instead of
+        // JSON-RPC. The decision mirrors `ocs_enabled` further down and must
+        // be made before constructing `sui_client` so the right backend is
+        // built. See the OCS startup comment below for the data-source modes.
+        use ika_config::node::{
+            SuiDataSource, SuiTransportPlan, compiled_in_trusted_anchor, select_sui_transport,
+        };
+        let perpetual_has_committees = perpetual_tables
+            .highest_sui_committee_epoch()
+            .map_err(|e| anyhow!("read sui_committee_head: {e}"))?
+            .is_some();
+        let has_anchor = perpetual_has_committees
+            || config.sui_connector_config.sui_trusted_anchor.is_some()
+            || config
+                .sui_connector_config
+                .sui_unsafe_genesis_committee
+                .is_some()
+            // The compiled-in anchor is a binary default, not operator intent.
+            // Gate it on a new-style config: otherwise, once release tooling
+            // bakes a digest for this chain, every old-style (JSON-RPC) node
+            // would silently gain an anchor and trip the no-data-source boot
+            // guard. The explicit anchors above still force OCS regardless — an
+            // operator who sets one on an old-style config *should* be told to
+            // add a sui-data-source.
+            || (config.sui_connector_config.sui_data_source.is_some()
+                && compiled_in_trusted_anchor(config.sui_connector_config.sui_chain_identifier)
+                    .is_some());
+
+        // --- Read-independent boot infrastructure, hoisted above the Sui
+        // bootstrap reads below. A peer-only validator (sui-state-mirrored with
+        // no fallback_grpc_url) has no direct uplink, so it must stand up its
+        // p2p network + OCS relay reader — and from them a verified
+        // `sui_client` — *before* it can read any Sui state (which it can only
+        // do over that relay). None of these bindings depend on the bootstrap
+        // reads; they key off config, perpetual storage, and the metrics
+        // registry, so hoisting them is behavior-preserving for every node. ---
+        let committee_store = Arc::new(CommitteeStore::new(config.db_path().join("epochs"), None));
+        let chain_identifier =
+            ChainIdentifier::from(config.sui_connector_config.ika_system_object_id);
+        let dwallet_checkpoint_store =
+            DWalletCheckpointStore::new(&config.db_path().join("dwallet_checkpoints"));
+        let system_checkpoint_store =
+            SystemCheckpointStore::new(&config.db_path().join("system_checkpoints"));
+        let state_sync_store = RocksDbStore::new(
+            committee_store.clone(),
+            dwallet_checkpoint_store.clone(),
+            system_checkpoint_store.clone(),
         );
+        let authority_name = config.protocol_public_key();
+        let archive_readers =
+            ArchiveReaderBalancer::new(config.archive_reader_config(), &prometheus_registry)?;
+        let (trusted_peer_change_tx, trusted_peer_change_rx) = watch::channel(Default::default());
+
+        // Shared metrics for the OCS subsystem. Created here so all consumers
+        // (verifier, pusher, push handler) report into the same registry.
+        let ocs_metrics =
+            ika_core::sui_connector::ocs_metrics::OcsMetrics::new(&prometheus_registry);
+        let proof_provider_metrics =
+            ika_network::proof_provider::ProofProviderMetrics::new(&prometheus_registry);
+
+        // OCS verified reads are a *node-level* choice (a configured trust
+        // anchor), not a protocol feature; without one a node uses the legacy
+        // JSON-RPC event path. `has_anchor` is computed above.
+        let ocs_enabled = has_anchor;
+        let proof_cache_cfg = ika_network::proof_provider::ProofCacheConfig::default();
+        let is_sui_state_direct = ocs_enabled
+            && matches!(
+                config.sui_connector_config.sui_data_source,
+                Some(SuiDataSource::SuiStateDirect { .. })
+            );
+        let is_sui_state_mirrored = ocs_enabled
+            && matches!(
+                config.sui_connector_config.sui_data_source,
+                Some(SuiDataSource::SuiStateMirrored { .. })
+            );
+        if !ocs_enabled {
+            info!(
+                has_anchor,
+                "OCS verifier not active (no trust anchor configured); \
+                 using the legacy JSON-RPC event-ingestion path."
+            );
+        }
+
+        // `sui_client` transport selection, keyed off the SHAPE of the node's
+        // own config — old-style vs new-style — never off chain state (a
+        // protocol flag must not be able to halt running validators en masse
+        // at an upgrade boundary; transport choice is node-local, and both
+        // read paths consume the same on-chain state):
+        //
+        //   * Old-style config (no `sui-data-source` section): the node
+        //     predates the OCS rollout and its only configured endpoint is
+        //     `sui_rpc_url`. A VALIDATOR on such a config keeps the legacy
+        //     JSON-RPC read path — its MPC events come from `query_events`,
+        //     which gRPC cannot serve. DEPRECATED: Sui is sunsetting JSON-RPC;
+        //     migrate by adding `sui-data-source` plus a trust anchor.
+        //     Notifiers and fullnodes run no event ingestion, so even on an
+        //     old-style config they read gRPC at the same endpoint (Sui
+        //     fullnodes serve both APIs on one port).
+        //
+        //   * New-style config (`sui-data-source` present): all Sui I/O runs
+        //     over gRPC — direct, mirrored-with-fallback, or peer-only over
+        //     the verified relay (built after the OCS reader + p2p network
+        //     exist; peer-only nodes never submit transactions, so they need
+        //     no direct uplink). Notifiers — the only nodes that submit
+        //     transactions (gas + writes) — always use a direct gRPC uplink.
+        //
+        // Transition state: both endpoints configured — the new-style
+        // `sui-data-source` always wins and the legacy field is ignored, so
+        // tell the operator it's safe to delete.
+        if config.sui_connector_config.sui_data_source.is_some()
+            && config.sui_connector_config.sui_rpc_url.is_some()
+        {
+            info!(
+                "`sui-data-source` is set, so the legacy `sui-rpc-url` field is ignored and can \
+                 be removed from the node config"
+            );
+        }
+        // Mixed/invalid shapes fail closed inside `select_sui_transport`; it
+        // returns the plan the branches below execute.
+        let plan = select_sui_transport(
+            config.sui_connector_config.sui_data_source.as_ref(),
+            config.sui_connector_config.sui_rpc_url.is_some(),
+            has_anchor,
+            mode,
+        )
+        .map_err(|e| anyhow!(e))?;
+        let legacy_json_rpc = matches!(plan, SuiTransportPlan::LegacyJsonRpc);
+        let peer_only = matches!(plan, SuiTransportPlan::PeerOnlyRelay);
+        // A peer-only validator stands up its p2p network + OCS stack inside the
+        // transport gate below (it needs them to read any Sui state), then
+        // reuses them — the normal post-read network/stack builds are skipped.
+        let mut peer_only_p2p: Option<P2pComponents> = None;
+        let mut peer_only_stack: Option<sui_connector_setup::SuiConnectorStack> = None;
+        let sui_client = if legacy_json_rpc {
+            warn!(
+                "DEPRECATED: old-style config (no sui-data-source) — this validator reads Sui \
+                 over JSON-RPC, which Sui is sunsetting; migrate by adding sui-data-source plus \
+                 a trust anchor"
+            );
+            let rpc_url = config
+                .sui_connector_config
+                .sui_rpc_url
+                .as_ref()
+                .expect("the no-endpoint guard above ensures sui_rpc_url on the legacy path");
+            Arc::new(SuiClient::new(rpc_url, sui_client_metrics, ika_network_config).await?)
+        } else if peer_only {
+            // Peer-only (sui-state-mirrored, no fallback_grpc_url): no direct
+            // Sui uplink. Stand up the p2p network + OCS relay stack now, then
+            // serve every `sui_client` read — including the committee/epoch
+            // bootstrap just below — over the relay through a verified
+            // `sui_client`. Network + stack are stashed and reused below.
+            //
+            // `is_notifier` here gates state_sync's *pull* behavior: when true
+            // the node actively pulls checkpoint summaries from peers (what
+            // non-committee nodes need — committee members get them via
+            // consensus). The normal path derives it from committee
+            // membership (`!authority_exists`), but the committee isn't
+            // readable yet at this point — reading it is exactly what this
+            // network is being built for. `mode.is_notifier()` (false for a
+            // validator) assumes the peer-only validator IS in the committee,
+            // which holds for every supported peer-only deployment today; a
+            // peer-only *joiner* (not yet in the committee) would need
+            // pull-mode state sync and is not supported on this path yet.
+            // No mirror server: peer-only nodes consume the relay, they
+            // don't serve it.
+            let p2p = Self::create_p2p_network(
+                &config,
+                state_sync_store.clone(),
+                chain_identifier,
+                trusted_peer_change_rx.clone(),
+                archive_readers.clone(),
+                &prometheus_registry,
+                mode.is_notifier(),
+                perpetual_tables.clone(),
+                None,
+            )?;
+            // Anemo dials seed peers asynchronously; `build_sui_connector_stack`
+            // probes the relay at construction, so wait for a configured mirror
+            // peer to be reachable first (as the sui-state-mirrored path does).
+            let mirror_peer_ids =
+                sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
+            Self::wait_for_specific_peers(
+                &p2p.p2p_network,
+                &mirror_peer_ids,
+                std::time::Duration::from_secs(60),
+            )
+            .await;
+            info!(
+                peer_count = p2p.p2p_network.peers().len(),
+                "Building OCS verifier stack (peer-only, p2p relay; no direct uplink)"
+            );
+            let mut stack = sui_connector_setup::build_sui_connector_stack(
+                &config.sui_connector_config,
+                perpetual_tables.clone(),
+                Some(p2p.p2p_network.clone()),
+                proof_cache_cfg.clone(),
+                ocs_metrics.clone(),
+                proof_provider_metrics.clone(),
+            )
+            .await
+            .map_err(|e| anyhow!("build OCS connector stack (peer-only): {e}"))?;
+            // Keep the reader's currency index caught up to the relay (the
+            // index gates verified reads; the loop is the only writer).
+            if let Some(receiver) = stack.changeset_receiver.take() {
+                tokio::spawn(async move { receiver.run().await });
+            }
+            // A peer-only node cannot read any Sui state until its committee
+            // head is current: the bootstrap reads below verify every object
+            // against the committee store, and the periodic ratchet task is
+            // only spawned after those reads complete — so a stale head here
+            // has nothing to heal it and the reads retry forever. (The
+            // mirrored-with-fallback path tolerates a failed initial ratchet
+            // because its bootstrap reads go over direct gRPC instead.)
+            // Retry *transient* (transport) failures with capped backoff — the
+            // relay peer was reachable moments ago in wait_for_specific_peers,
+            // so a flake should clear. But a non-retryable result (a broken or
+            // pruned proof chain, a checkpoint that fails BLS verification or
+            // isn't end-of-epoch, a wrong-epoch fallback, a missing committee)
+            // cannot be healed by retrying — spinning on it is exactly the
+            // silent boot hang we are guarding against. Fail boot with an
+            // actionable error so the operator can re-anchor instead.
+            let mut ratchet_backoff = std::time::Duration::from_secs(1);
+            loop {
+                match stack.ratchet.ratchet_to_current_epoch().await {
+                    Ok(()) => break,
+                    Err(e) if !e.is_retryable() => {
+                        return Err(anyhow!(
+                            "initial ratchet to current epoch (peer-only) hit a permanent error \
+                             that retrying cannot heal; the node cannot boot as peer-only until it \
+                             is resolved (typically re-anchor): {e}"
+                        ));
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = ?e,
+                            retry_in = ?ratchet_backoff,
+                            "initial ratchet to current epoch (peer-only) failed (transient); \
+                             retrying"
+                        );
+                        tokio::time::sleep(ratchet_backoff).await;
+                        ratchet_backoff =
+                            (ratchet_backoff * 2).min(std::time::Duration::from_secs(10));
+                    }
+                }
+            }
+            let relay = stack.ratchet.transport().clone();
+            let verified: Arc<dyn ika_sui_client::transport::SuiTransport> =
+                Arc::new(VerifiedSuiTransport::new(stack.reader.clone(), relay));
+            let client = Arc::new(
+                SuiClient::new_grpc_with_transport(
+                    verified,
+                    sui_client_metrics,
+                    ika_network_config,
+                )
+                .await?,
+            );
+            peer_only_p2p = Some(p2p);
+            peer_only_stack = Some(stack);
+            client
+        } else {
+            let grpc_url =
+                match &config.sui_connector_config.sui_data_source {
+                    Some(SuiDataSource::SuiStateDirect { url, .. }) => url.clone(),
+                    Some(SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: Some(url),
+                    }) => url.clone(),
+                    Some(SuiDataSource::SuiStateMirrored {
+                        fallback_grpc_url: None,
+                    }) => unreachable!("peer_only is handled in the branch above"),
+                    // Old-style config on a notifier/fullnode: Sui fullnodes
+                    // serve gRPC on the same endpoint as JSON-RPC.
+                    None => config.sui_connector_config.sui_rpc_url.clone().expect(
+                        "the no-endpoint guard above ensures sui_rpc_url on old-style configs",
+                    ),
+                };
+            Arc::new(SuiClient::new_grpc(&grpc_url, sui_client_metrics, ika_network_config).await?)
+        };
 
         let (_, latest_system_inner) = sui_client.must_get_system_inner_object().await;
         let previous_epoch_last_system_checkpoint_sequence_number =
@@ -375,16 +656,6 @@ impl IkaNode {
         let committee_arc = Arc::new(committee.clone());
 
         let secret = Arc::pin(config.protocol_key_pair().copy());
-        let committee_store = Arc::new(CommitteeStore::new(config.db_path().join("epochs"), None));
-        let perpetual_tables_options =
-            default_db_options().optimize_db_for_write_throughput(4, false);
-        let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(
-            &config.db_path().join("store"),
-            Some(perpetual_tables_options.options),
-        ));
-
-        let chain_identifier =
-            ChainIdentifier::from(config.sui_connector_config.ika_system_object_id);
 
         let epoch_start_configuration = EpochStartConfiguration::new(epoch_start_system_state)
             .expect("EpochStartConfiguration construction cannot fail");
@@ -472,30 +743,87 @@ impl IkaNode {
             );
         }
 
-        info!("creating checkpoint store");
+        // OCS connector startup is two-phased to handle both data-source modes.
+        //
+        // sui-state-direct: the OCS stack is built up-front and produces a
+        // `SuiStateMirrorServer` that must be registered on the anemo router
+        // at construction time:
+        //   build OCS (no network) → pre-network ratchet → bind network with mirror_server.
+        //
+        // sui-state-mirrored: the OCS stack's transport is `SuiMirrorTransport`,
+        // which needs the live anemo network to reach peers. There's no mirror
+        // server to register. Order:
+        //   bind network (no mirror_server) → build OCS → post-network ratchet.
+        //
+        // The pre-network ratchet on sui-state-direct prevents a window where
+        // the push handler is reachable while our committee head is still at
+        // the trust anchor's epoch (which would reject every push as
+        // `missing_committee` until the first periodic ratchet tick).
+        //
+        // `has_anchor` is computed earlier (it selects the gRPC vs JSON-RPC
+        // `sui_client` backend); reuse it here.
+        // OCS verified reads are a *node-level* choice, not a protocol
+        // feature: both paths read the same on-chain state (the
+        // `session_events` bag and the emitted event are written together,
+        // unconditionally, by the contract), so which one a node uses can't
+        // desync the network. A node opts in by configuring a trust anchor
+        // (`has_anchor`); without one it uses the legacy JSON-RPC event path.
+        // This is independent of `off_chain_validator_metadata_enabled`,
+        // which still gates the v4 metadata-v2 pipeline (handoff, MPC-data
+        // announcements, peer-blob fetch, ...) further down.
 
-        let dwallet_checkpoint_store =
-            DWalletCheckpointStore::new(&config.db_path().join("dwallet_checkpoints"));
-        let system_checkpoint_store =
-            SystemCheckpointStore::new(&config.db_path().join("system_checkpoints"));
+        let (
+            mut reader_opt,
+            mut ratchet_opt,
+            sui_state_mirror_server,
+            raw_transport_for_pushing,
+            mut state_cache_opt,
+        ) = {
+            // Spread a built stack into the individually-wired component
+            // slots the rest of boot threads around.
+            let unpack = |stack: sui_connector_setup::SuiConnectorStack| {
+                (
+                    Some(stack.reader),
+                    Some(stack.ratchet),
+                    stack.mirror_server,
+                    stack.raw_transport_for_pushing,
+                    Some(stack.state_cache),
+                )
+            };
+            if is_sui_state_direct {
+                info!("Building OCS verifier stack (sui-state-direct, direct gRPC)");
+                let stack = sui_connector_setup::build_sui_connector_stack(
+                    &config.sui_connector_config,
+                    perpetual_tables.clone(),
+                    None,
+                    proof_cache_cfg.clone(),
+                    ocs_metrics.clone(),
+                    proof_provider_metrics.clone(),
+                )
+                .await
+                .map_err(|e| anyhow!("build OCS connector stack: {e}"))?;
+                match stack.ratchet.ratchet_to_current_epoch().await {
+                    Ok(()) => info!(
+                        head_epoch = stack.ratchet.committees().head_epoch(),
+                        "Sui committee ratchet caught up before binding p2p"
+                    ),
+                    Err(e) => warn!(
+                        error = ?e,
+                        "initial ratchet to current epoch failed; periodic ratchet will retry"
+                    ),
+                }
+                unpack(stack)
+            } else if peer_only {
+                // Built before the bootstrap reads (see the transport gate); reuse.
+                let stack = peer_only_stack
+                    .take()
+                    .expect("peer-only OCS stack built in the transport gate above");
+                unpack(stack)
+            } else {
+                (None, None, None, None, None)
+            }
+        };
 
-        info!("Creating state sync store");
-        let state_sync_store = RocksDbStore::new(
-            committee_store.clone(),
-            dwallet_checkpoint_store.clone(),
-            system_checkpoint_store.clone(),
-        );
-
-        info!("creating archive reader");
-        // Create network
-        // TODO only configure validators as seed/preferred peers for validators and not for
-        // fullnodes once we've had a chance to re-work fullnode configuration generation.
-
-        let authority_name = config.protocol_public_key();
-
-        let archive_readers =
-            ArchiveReaderBalancer::new(config.archive_reader_config(), &prometheus_registry)?;
-        let (trusted_peer_change_tx, trusted_peer_change_rx) = watch::channel(Default::default());
         let P2pComponents {
             p2p_network,
             known_peers,
@@ -503,16 +831,161 @@ impl IkaNode {
             state_sync_handle,
             mpc_announcement_relay,
             mpc_data_blob_store,
-        } = Self::create_p2p_network(
-            &config,
-            state_sync_store.clone(),
-            chain_identifier,
-            trusted_peer_change_rx,
-            archive_readers.clone(),
-            &prometheus_registry,
-            !epoch_store.committee().authority_exists(&authority_name),
-            perpetual_tables.clone(),
-        )?;
+        } = if let Some(p2p) = peer_only_p2p.take() {
+            // Built before the bootstrap reads (see the transport gate); reuse.
+            p2p
+        } else {
+            Self::create_p2p_network(
+                &config,
+                state_sync_store.clone(),
+                chain_identifier,
+                trusted_peer_change_rx,
+                archive_readers.clone(),
+                &prometheus_registry,
+                !epoch_store.committee().authority_exists(&authority_name),
+                perpetual_tables.clone(),
+                sui_state_mirror_server,
+            )?
+        };
+
+        if is_sui_state_mirrored && !peer_only {
+            // sui-state-mirrored *with* a fallback URL: the OCS stack is built
+            // here, after the network is up. (Peer-only — mirrored with no
+            // fallback — already built it in the transport gate above.)
+            //
+            // Anemo connects to seed peers asynchronously. `build_sui_connector_stack`
+            // probes the transport (`get_latest_checkpoint`) at construction; if it
+            // runs before any configured sui-state-direct mirror peer is reachable
+            // the probe fails with "no peers reachable". Wait specifically for one
+            // of the configured `sui_state_mirror_peers` to come online.
+            let mirror_peer_ids =
+                sui_connector_setup::configured_mirror_peer_ids(&config.sui_connector_config);
+            Self::wait_for_specific_peers(
+                &p2p_network,
+                &mirror_peer_ids,
+                std::time::Duration::from_secs(60),
+            )
+            .await;
+            info!(
+                peer_count = p2p_network.peers().len(),
+                "Building OCS verifier stack (sui-state-mirrored, p2p relay)"
+            );
+            let mut stack = sui_connector_setup::build_sui_connector_stack(
+                &config.sui_connector_config,
+                perpetual_tables.clone(),
+                Some(p2p_network.clone()),
+                proof_cache_cfg,
+                ocs_metrics.clone(),
+                proof_provider_metrics.clone(),
+            )
+            .await
+            .map_err(|e| anyhow!("build OCS connector stack (sui-state-mirrored): {e}"))?;
+            // Keep the reader's currency index caught up to the relay (the
+            // index gates verified reads; the loop is the only writer).
+            if let Some(receiver) = stack.changeset_receiver.take() {
+                tokio::spawn(async move { receiver.run().await });
+            }
+            if let Err(e) = stack.ratchet.ratchet_to_current_epoch().await {
+                warn!(
+                    error = ?e,
+                    "initial ratchet to current epoch (sui-state-mirrored) failed; periodic ratchet will retry"
+                );
+            }
+            reader_opt = Some(stack.reader);
+            ratchet_opt = Some(stack.ratchet);
+            state_cache_opt = Some(stack.state_cache);
+        }
+
+        // Periodic Sui-committee ratchet + a task mirroring the committee
+        // head into the ocs_metrics gauge.
+        if let Some(ratchet) = ratchet_opt.clone() {
+            let metrics_for_head = ocs_metrics.clone();
+            let ratchet_for_head = ratchet.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(10));
+                loop {
+                    tick.tick().await;
+                    metrics_for_head
+                        .committee_head_epoch
+                        .set(ratchet_for_head.committees().head_epoch() as i64);
+                }
+            });
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tick.tick().await;
+                    if let Err(e) = ratchet.ratchet_to_current_epoch().await {
+                        warn!(error = ?e, "Sui committee ratchet failed; will retry");
+                    }
+                }
+            });
+        }
+
+        // sui-state-direct only: spawn the checkpoint pusher now that the anemo
+        // network is up. It fans out Ika-relevant CheckpointData + all
+        // end-of-epoch checkpoints to peers via SuiStateMirror.
+        if let Some(raw_transport) = raw_transport_for_pushing {
+            // Committee follower: a decoupled, summary-only subscription to the
+            // Sui checkpoint stream that captures each committee[E+1] the moment
+            // its end-of-epoch summary streams by — keeping the committee head
+            // current without ever reaching back for a (possibly object-pruned)
+            // full checkpoint. The background ratchet stays the catch-up
+            // backstop. Present on sui-state-direct (the branch that set
+            // `raw_transport_for_pushing`).
+            {
+                use ika_core::sui_connector::committee_follower::CommitteeFollower;
+                let follower_transport = raw_transport.clone();
+                let follower_committees = ratchet_opt
+                    .as_ref()
+                    .expect("ratchet present on sui-state-direct")
+                    .committees()
+                    .clone();
+                tokio::spawn(CommitteeFollower::new(follower_transport, follower_committees).run());
+            }
+
+            let cache_for_push = state_cache_opt
+                .clone()
+                .expect("state_cache present on sui-state-direct (set in the same branch)");
+            let packages = ika_types::messages_dwallet_mpc::IkaPackageConfig {
+                ika_package_id: config.sui_connector_config.ika_package_id,
+                ika_common_package_id: config.sui_connector_config.ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id,
+                ika_dwallet_2pc_mpc_package_id_v2: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id_v2,
+                ika_system_package_id: config.sui_connector_config.ika_system_package_id,
+            };
+            let perpetual_for_push = perpetual_tables.clone();
+            let metrics_for_push = ocs_metrics.clone();
+            // Shared committee chain: the pusher captures each end-of-epoch
+            // committee as it streams past, so the chain isn't forced to reach
+            // back for a pruned end-of-epoch checkpoint. Present on
+            // sui-state-direct (same branch that set `raw_transport_for_pushing`).
+            let committees_for_push = ratchet_opt
+                .as_ref()
+                .expect("ratchet present on sui-state-direct")
+                .committees()
+                .clone();
+            tokio::spawn(async move {
+                use ika_core::sui_connector::push_worker::IkaCheckpointPusher;
+                match IkaCheckpointPusher::new(
+                    raw_transport,
+                    perpetual_for_push,
+                    metrics_for_push,
+                    &packages,
+                    std::time::Duration::from_secs(2),
+                    cache_for_push,
+                    committees_for_push,
+                )
+                .await
+                {
+                    Ok(pusher) => pusher.run().await,
+                    Err(e) => warn!(error = ?e, "checkpoint folder failed to start"),
+                }
+            });
+        }
 
         // We must explicitly send this instead of relying on the initial value to trigger
         // watch value change, so that state-sync is able to process it.
@@ -595,6 +1068,8 @@ impl IkaNode {
             last_session_to_complete_in_current_epoch_sender,
             uncompleted_requests_sender,
             noa_checkpoints_finalized,
+            reader_opt.clone(),
+            ocs_metrics.clone(),
         )
         .await?;
 
@@ -725,6 +1200,7 @@ impl IkaNode {
         let node = Arc::new(node);
         let node_copy = node.clone();
         let sui_client_clone = sui_client.clone();
+        let trusted_peer_sui_client = sui_client.clone();
 
         // Joiner-side announcement fan-out: a node selected into the
         // next-epoch committee but not yet in the current one isn't a
@@ -757,6 +1233,22 @@ impl IkaNode {
             if let Err(error) = result {
                 warn!("Reconfiguration finished with error {:?}", error);
             }
+        });
+
+        // Continuously feed the p2p trusted-peer set from the on-chain
+        // {active, next, previous} committee + pending_active_set, refreshed
+        // every few seconds so the pending/next sets stay current mid-epoch.
+        // This is what makes a DIRECT validator dial a registered-but-not-yet-
+        // active joiner (inbound), so a peer-only joiner boots without static
+        // seed peers. Runs on every node for its lifetime.
+        let trusted_peer_node = node.clone();
+        spawn_monitored_task!(async move {
+            ika_core::sui_connector::trusted_peer_updater::refresh_trusted_peers_loop(
+                trusted_peer_sui_client,
+                trusted_peer_node.trusted_peer_change_tx.clone(),
+                trusted_peer_node.config.protocol_public_key(),
+            )
+            .await;
         });
 
         Ok(node)
@@ -953,6 +1445,36 @@ impl IkaNode {
         }
     }
 
+    /// Block until at least one of `wanted` peers is connected, or `timeout`
+    /// elapses. Used by sui-state-mirrored startup so the OCS stack's transport
+    /// probe doesn't run before a sui-state-direct mirror peer is reachable.
+    async fn wait_for_specific_peers(
+        network: &anemo::Network,
+        wanted: &[PeerId],
+        timeout: std::time::Duration,
+    ) {
+        if wanted.is_empty() {
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        loop {
+            if wanted.iter().any(|p| network.peer(*p).is_some()) {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                warn!(
+                    timeout_secs = timeout.as_secs(),
+                    wanted_count = wanted.len(),
+                    "no configured sui-state-direct peer connected within timeout; proceeding anyway \
+                     (sui-state-mirrored OCS build is likely to fail and the node will exit)"
+                );
+                return;
+            }
+            interval.tick().await;
+        }
+    }
+
     fn create_p2p_network(
         config: &NodeConfig,
         state_sync_store: RocksDbStore,
@@ -962,6 +1484,11 @@ impl IkaNode {
         prometheus_registry: &Registry,
         is_notifier: bool,
         perpetual_tables: Arc<AuthorityPerpetualTables>,
+        sui_state_mirror_server: Option<
+            ika_network::sui_state_mirror::SuiStateMirrorServer<
+                ika_network::sui_state_mirror::Server,
+            >,
+        >,
     ) -> Result<P2pComponents> {
         let (state_sync, state_sync_server) = state_sync::Builder::new()
             .config(config.p2p_config.state_sync.clone().unwrap_or_default())
@@ -1019,10 +1546,14 @@ impl IkaNode {
             .collect();
 
         let p2p_network = {
-            let routes = anemo::Router::new()
+            let mut routes = anemo::Router::new()
                 .add_rpc_service(discovery_server)
                 .add_rpc_service(state_sync_server)
                 .add_rpc_service(validator_metadata_server);
+            // sui-state-direct validators serve the OCS verified-read relay.
+            if let Some(mirror_server) = sui_state_mirror_server {
+                routes = routes.add_rpc_service(mirror_server);
+            }
             let inbound_network_metrics =
                 mysten_network::metrics::NetworkMetrics::new("ika", "inbound", prometheus_registry);
             let outbound_network_metrics = mysten_network::metrics::NetworkMetrics::new(
@@ -2041,12 +2572,28 @@ impl IkaNode {
                                     );
                                     let _ = fail_closed_shutdown.send(None);
                                 }
-                                // Benign: no peer served a cert within the
-                                // attempt budget (propagation lag) — already
-                                // logged inside `run()`; the anchor is merely
-                                // unconfirmed, not contradicted.
+                                // The attempt budget was exhausted with no peer
+                                // serving a cert. Usually propagation lag (the
+                                // anchor is merely unconfirmed, not
+                                // contradicted) — but it is ALSO the visible
+                                // symptom of #1736: if the epoch closed without a
+                                // handoff-cert quorum the cert was minted on NO
+                                // validator and will never become available, so
+                                // this epoch stalls at the prepare-then-start
+                                // barrier. Surface it loudly (alertable) instead
+                                // of silently benign so an operator can tell lag
+                                // from a missing cert.
                                 BootstrapOutcome::Unavailable => {
                                     bootstrap_outcomes.with_label_values(&["unavailable"]).inc();
+                                    warn!(
+                                        prior_epoch,
+                                        "cross-epoch bootstrap obtained no handoff cert from any \
+                                         peer within the attempt budget — likely propagation lag, \
+                                         but if it persists the cert may have been minted on no \
+                                         validator (epoch closed without a handoff-cert quorum, \
+                                         #1736) and this epoch will stall at the prepare-then-start \
+                                         barrier"
+                                    );
                                 }
                             }
                         }))

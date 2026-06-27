@@ -18,8 +18,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use ika_config::initiation::InitiationParameters;
-use ika_config::node::NodeConfig;
+use ika_config::node::{NodeConfig, SuiDataSource};
 use ika_protocol_config::ProtocolVersion;
+use ika_sui_client::SuiBackend;
 use ika_sui_client::SuiClient as IkaClient;
 use ika_sui_client::metrics::SuiClientMetrics;
 use ika_swarm_config::node_config_builder::{FullnodeConfigBuilder, ValidatorConfigBuilder};
@@ -32,10 +33,10 @@ use ika_swarm_config::sui_client::{
 use ika_swarm_config::validator_initialization_config::{
     ValidatorInitializationConfig, ValidatorInitializationConfigBuilder,
 };
+use ika_types::crypto::KeypairTraits;
 use ika_types::messages_dwallet_mpc::IkaNetworkConfig;
 use ika_types::sui::SystemInner;
 use rand::rngs::OsRng;
-use sui_sdk::SuiClient as SuiSdkClient;
 use sui_sdk::SuiClientBuilder;
 use sui_sdk::wallet_context::WalletContext;
 use sui_types::base_types::{ObjectID, SuiAddress};
@@ -53,7 +54,7 @@ pub struct ClusterOfProcesses {
     pub validators: Vec<ValidatorProcess>,
     pub notifier: ValidatorProcess,
     network_config: IkaNetworkConfig,
-    ika_client: IkaClient<SuiSdkClient>,
+    ika_client: IkaClient<SuiBackend>,
     rpc_url: String,
     /// The genesis publisher's Sui key — funded with SUI + the initial IKA
     /// supply. The workload driver reuses it as the user paying session fees.
@@ -62,6 +63,10 @@ pub struct ClusterOfProcesses {
     /// `validators` by index. Joiners append; removal leaves the slot in
     /// place (the cap stays valid, the process is just stopped).
     committee: Vec<ValidatorSlot>,
+    /// hex-encoded anemo `PeerId` (network public key) of each validator,
+    /// aligned with `validators` by index; joiners append. A mirrored
+    /// validator's `sui_state_mirror_peers` is built from these.
+    validator_peer_ids: Vec<String>,
     /// Bootstrap package state (`ika_supply_id` funds joiner stakes).
     packages: PublishedIkaPackages,
     /// Bootstrap system state (`init_system_shared_version` is needed by
@@ -181,6 +186,14 @@ impl ClusterBuilder {
     }
 
     pub async fn build(self) -> Result<ClusterOfProcesses> {
+        let genesis_version = self
+            .genesis_protocol_version
+            .unwrap_or(ProtocolVersion::MIN);
+        tracing::info!(
+            "[flow] bringing up {} validators (genesis v{})",
+            self.num_validators,
+            genesis_version.as_u64()
+        );
         let base_dir = match &self.base_dir {
             Some(p) => {
                 std::fs::create_dir_all(p)?;
@@ -264,27 +277,56 @@ impl ClusterBuilder {
             })
             .collect();
 
+        // hex anemo PeerId of each validator (its network pubkey) — the same
+        // derivation the p2p layer uses; a mirrored validator's
+        // `sui_state_mirror_peers` is built from these.
+        let validator_peer_ids: Vec<String> = validator_init_configs
+            .iter()
+            .map(|init| hex::encode(init.network_key_pair.public().0.to_bytes()))
+            .collect();
+
+        // OCS verified-reads path (protocol v4): a validator with `sui-data-source`
+        // set refuses to boot without a Sui trust anchor. Seed every validator
+        // with the Sui localnet's epoch-0 committee as the `unsafe_genesis_committee`
+        // anchor (the private-net path), mirroring IkaTestClusterBuilder. Harmless
+        // pre-v4 (the field is unused on the JSON-RPC path).
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&rpc_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("fetch Sui genesis committee for OCS anchor: {e}"))?;
+
         // 4. Per-validator NodeConfig on a persistent data dir, written to YAML.
         // Bound every co-located node's crypto rayon pool to a fair share of the
         // host so the validators + notifier don't oversubscribe the CPU (see
         // `rayon_threads_per_node`).
         let rayon_threads = rayon_threads_per_node(self.num_validators + 1);
+        // Optional cap on each validator's concurrent dwallet-MPC computations
+        // (NodeConfig.max_mpc_computation_cores). Set MAX_MPC_COMPUTATION_CORES
+        // low to bound peak MEMORY when many validators are co-located on one CI
+        // pod — the class-groups crypto state of concurrent computations, not
+        // the thread count, is what OOMs the runner. Unset = node default.
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
         let mut validators = Vec::with_capacity(self.num_validators);
         for (i, init) in validator_init_configs.iter().enumerate() {
             let data_dir = base.join(format!("validator-{i}"));
             std::fs::create_dir_all(&data_dir)?;
-            let node_config = ValidatorConfigBuilder::new()
+            let mut builder = ValidatorConfigBuilder::new()
                 .with_config_directory(data_dir.clone())
-                .build(
-                    init,
-                    rpc_url.clone(),
-                    ika_package_id,
-                    ika_common_package_id,
-                    ika_dwallet_2pc_mpc_package_id,
-                    ika_system_package_id,
-                    ika_system_object_id,
-                    ika_dwallet_coordinator_object_id,
-                );
+                .with_unsafe_genesis_committee(genesis_committee.clone());
+            if let Some(cores) = max_mpc_computation_cores {
+                builder = builder.with_max_mpc_computation_cores(cores);
+            }
+            let node_config = builder.build(
+                init,
+                rpc_url.clone(),
+                ika_package_id,
+                ika_common_package_id,
+                ika_dwallet_2pc_mpc_package_id,
+                ika_system_package_id,
+                ika_system_object_id,
+                ika_dwallet_coordinator_object_id,
+            );
             let proc = spawn_node(
                 i,
                 self.validator_binary.clone(),
@@ -351,6 +393,7 @@ impl ClusterBuilder {
             rpc_url,
             publisher_keypair,
             committee,
+            validator_peer_ids,
             packages: bootstrap.packages,
             system: bootstrap.system,
             wallet: bootstrap.wallet_context,
@@ -438,6 +481,7 @@ impl ClusterOfProcesses {
     /// network DKG (which runs during epoch 1) has completed — rather than
     /// polling the network-key state directly.
     pub async fn wait_for_epoch(&self, target: u64, timeout: Duration) -> Result<()> {
+        tracing::info!("[flow] waiting for epoch {target} (timeout {timeout:?})");
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // A failed read is treated as "not there yet" so a transient RPC
@@ -480,7 +524,7 @@ impl ClusterOfProcesses {
         &self.publisher_keypair
     }
 
-    pub fn ika_client(&self) -> &IkaClient<SuiSdkClient> {
+    pub fn ika_client(&self) -> &IkaClient<SuiBackend> {
         &self.ika_client
     }
 
@@ -505,6 +549,32 @@ impl ClusterOfProcesses {
     ///
     /// Returns the new validator's index in `validators`.
     pub async fn add_joiner_validator(&mut self, binary: PathBuf) -> Result<usize> {
+        self.add_joiner_validator_inner(binary, None).await
+    }
+
+    /// Like [`Self::add_joiner_validator`], but the joiner boots peer-only
+    /// `SuiStateMirrored`, reading verified Sui state through the validators at
+    /// `direct_indices` (the relay servers) instead of a direct uplink. It has
+    /// no static p2p seed peers: the running validators continuously feed the
+    /// on-chain `pending_active_set` into their trusted peers, so a direct
+    /// validator dials this registered-but-not-yet-active joiner (inbound),
+    /// which is what its `wait_for_specific_peers` boot gate needs.
+    pub async fn add_joiner_validator_mirrored(
+        &mut self,
+        binary: PathBuf,
+        direct_indices: &[usize],
+    ) -> Result<usize> {
+        let mirror_peers = self.peer_ids_of(direct_indices)?;
+        self.add_joiner_validator_inner(binary, Some(mirror_peers))
+            .await
+    }
+
+    async fn add_joiner_validator_inner(
+        &mut self,
+        binary: PathBuf,
+        mirror_peers: Option<Vec<String>>,
+    ) -> Result<usize> {
+        tracing::info!("[flow] joining new validator (candidate -> stake -> activate)");
         let index = self.validators.len();
         let mut rng = OsRng;
         let mut init = ValidatorInitializationConfigBuilder::new().build(&mut rng);
@@ -567,18 +637,43 @@ impl ClusterOfProcesses {
 
         let data_dir = self.base.join(format!("validator-{index}"));
         std::fs::create_dir_all(&data_dir)?;
-        let node_config = ValidatorConfigBuilder::new()
+        // Same OCS v4 trust anchor as the genesis validators (see `build`): the
+        // epoch-0 committee is immutable, so re-fetch it for the joiner.
+        let genesis_committee = ika_sui_client::anchor::fetch_genesis_committee(&self.rpc_url)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("fetch Sui genesis committee for joiner OCS anchor: {e}")
+            })?;
+        // Same MPC-computation-core cap as the genesis validators (see `build`).
+        let max_mpc_computation_cores = std::env::var("MAX_MPC_COMPUTATION_CORES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok());
+        let mut builder = ValidatorConfigBuilder::new()
             .with_config_directory(data_dir.clone())
-            .build(
-                &init,
-                self.rpc_url.clone(),
-                self.packages.ika_package_id,
-                self.packages.ika_common_package_id,
-                self.packages.ika_dwallet_2pc_mpc_package_id,
-                self.packages.ika_system_package_id,
-                self.system.ika_system_object_id,
-                self.system.ika_dwallet_coordinator_object_id,
-            );
+            .with_unsafe_genesis_committee(genesis_committee);
+        if let Some(cores) = max_mpc_computation_cores {
+            builder = builder.with_max_mpc_computation_cores(cores);
+        }
+        // A mirrored joiner reads Sui peer-only over the relay (no direct
+        // uplink) from the given direct validators, instead of the default
+        // `SuiStateDirect` path.
+        if let Some(mirror_peers) = &mirror_peers {
+            builder = builder
+                .with_sui_data_source(SuiDataSource::SuiStateMirrored {
+                    fallback_grpc_url: None,
+                })
+                .with_sui_state_mirror_peers(mirror_peers.clone());
+        }
+        let node_config = builder.build(
+            &init,
+            self.rpc_url.clone(),
+            self.packages.ika_package_id,
+            self.packages.ika_common_package_id,
+            self.packages.ika_dwallet_2pc_mpc_package_id,
+            self.packages.ika_system_package_id,
+            self.system.ika_system_object_id,
+            self.system.ika_dwallet_coordinator_object_id,
+        );
         let proc = spawn_node(
             index,
             binary,
@@ -594,7 +689,41 @@ impl ClusterOfProcesses {
             validator_id,
             validator_cap_id,
         });
+        self.validator_peer_ids
+            .push(hex::encode(init.network_key_pair.public().0.to_bytes()));
         Ok(index)
+    }
+
+    /// The hex anemo PeerIds of the validators at `indices` — used as a
+    /// mirrored validator's `sui_state_mirror_peers` (its set of relay
+    /// servers).
+    pub fn peer_ids_of(&self, indices: &[usize]) -> Result<Vec<String>> {
+        indices
+            .iter()
+            .map(|&i| {
+                self.validator_peer_ids
+                    .get(i)
+                    .cloned()
+                    .with_context(|| format!("peer id for validator {i} out of range"))
+            })
+            .collect()
+    }
+
+    /// Swap the validator at `index` to `new_binary` AND rewrite its config to
+    /// read Sui peer-only over the verified relay from `mirror_peers`. Flips a
+    /// validator direct -> mirrored at an upgrade swap (see
+    /// [`ValidatorProcess::swap_binary_mirrored`]).
+    pub async fn swap_and_mirror(
+        &mut self,
+        index: usize,
+        new_binary: PathBuf,
+        mirror_peers: Vec<String>,
+    ) -> Result<()> {
+        self.validators
+            .get_mut(index)
+            .with_context(|| format!("validator index {index} out of range"))?
+            .swap_binary_mirrored(new_binary, mirror_peers)
+            .await
     }
 
     /// Submit `system::request_remove_validator` for the validator at
@@ -713,8 +842,35 @@ async fn spawn_node(
 /// async/IO work across all the processes — the out-of-process analogue of the
 /// in-process swarm's core reserve.
 fn rayon_threads_per_node(node_count: usize) -> usize {
-    let cores = std::thread::available_parallelism()
+    // The pod's REAL CPU budget is the cgroup v2 CFS quota (`cpu.max` =
+    // "<quota> <period>"); on a throttled CI runner this is below the host core
+    // count that `available_parallelism()` reports, and sizing the per-node
+    // thread bound off host cores oversubscribes the pod. Prefer the quota.
+    let available = std::thread::available_parallelism()
         .map(usize::from)
         .unwrap_or(4);
-    ((cores * 3 / 4) / node_count.max(1)).max(1)
+    let cgroup_quota = std::fs::read_to_string("/sys/fs/cgroup/cpu.max")
+        .ok()
+        .and_then(|raw| {
+            let mut parts = raw.split_whitespace();
+            let quota = parts.next()?;
+            let period: usize = parts.next()?.parse().ok()?;
+            if quota == "max" || period == 0 {
+                return None;
+            }
+            Some((quota.parse::<usize>().ok()? / period).max(1))
+        });
+    let cores = cgroup_quota.map_or(available, |q| q.min(available));
+    let threads = ((cores * 3 / 4) / node_count.max(1)).max(1);
+    // Log both so the cores-vs-quota gap is visible in CI. Fires at cluster
+    // build (early), before the heavy crypto / any runner death.
+    tracing::warn!(
+        available_parallelism = available,
+        cgroup_cpu_quota = ?cgroup_quota,
+        effective_cores = cores,
+        node_count,
+        rayon_threads_per_node = threads,
+        "upgrade-test rayon budget: available_parallelism vs cgroup cpu.max"
+    );
+    threads
 }

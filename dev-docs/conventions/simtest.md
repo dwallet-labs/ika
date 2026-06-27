@@ -62,6 +62,53 @@ gh workflow run simtest.yaml --ref <branch>
 Driver: `scripts/simtest/cargo-simtest`. Smoke entry point:
 `crates/ika-test-cluster/` (`IkaTestCluster` + `IkaTestClusterBuilder`).
 
+## Short Sui epochs in cluster tests
+
+`ika-test-cluster` runs TWO epoch clocks, and they are independent:
+
+- **ika epoch** — set by `IkaTestClusterBuilder::with_sui_epoch_duration_ms`'s sibling
+  `with_epoch_duration_ms` (default `DEFAULT_EPOCH_DURATION_MS`), written into the
+  on-chain `InitiationParameters`. This is what `wait_for_epoch(n)` tracks.
+- **Sui epoch** — the underlying in-process Sui localnet's own committee clock.
+
+By default the test never sets the Sui clock, so the Sui `TestClusterBuilder` inherits
+`GenesisConfig::for_local_testing`'s **24-hour** epoch: Sui sits at epoch 0 for the
+entire run and its validator committee never rotates. That is fine for tests that only
+care about ika reconfiguration — but the **OCS verifier ratchets the SUI committee**
+(`get_current_epoch()` returns the *Sui* epoch). With Sui frozen at 0 the ratchet loop
+`while head < target` never executes, so a test that claims to cross Sui committee
+boundaries (a late joiner ratcheting from a stale anchor; a peer-only validator
+surviving many boundaries) passes **vacuously** — it stays green even if the
+`committee[E+1]` derivation is broken. This bit `ocs_verifier.rs`'s two ratchet tests:
+they advanced ika epochs while the Sui committee they claimed to ratchet sat still.
+
+To make Sui's committee actually rotate:
+
+```rust
+let mut cluster = IkaTestClusterBuilder::new()
+    .with_epoch_duration_ms(60_000)        // ika epoch
+    .with_sui_epoch_duration_ms(30_000)    // Sui epoch — Sui enforces a 10s floor
+    // ...
+    .build().await?;
+
+// Gate on the SUI epoch (bounded), so a dropped with_sui_epoch_duration_ms fails
+// LOUDLY here instead of letting the rest of the test pass vacuously:
+tokio::time::timeout(Duration::from_secs(180), cluster.wait_for_sui_epoch(3))
+    .await
+    .expect("Sui did not cross committee boundaries — short Sui epochs not in effect");
+```
+
+Rules:
+- Sui's swarm builder hard-asserts `>= 10_000` ms; below that, reconfiguration is flaky.
+- Prefer the LONGEST Sui epoch that still crosses "a few" boundaries within the test
+  (30s, not 10s). Sui rotating every 10s on top of ika reconfiguration + MPC is heavy
+  load; the relay-topology tests are already flake-sensitive under contention, and a
+  too-aggressive Sui clock manufactures thread stalls. 30s Sui vs 60s ika crosses ~2
+  Sui boundaries per ika epoch — enough.
+- This is the absolute-vs-compressed-window trap again, one level down — see
+  [`../learnings/pitfalls.md`](../learnings/pitfalls.md) ("Time-compressed epoch
+  tests").
+
 ## Gotcha catalogue
 
 - **Move build under msim** breaks the moment it touches sui-framework

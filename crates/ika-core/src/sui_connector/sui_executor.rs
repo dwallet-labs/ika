@@ -41,7 +41,7 @@ use sui_json_rpc_types::SuiTransactionBlockEffectsAPI;
 use sui_json_rpc_types::{SuiExecutionStatus, SuiTransactionBlockResponse};
 use sui_macros::fail_point_async;
 use sui_types::MOVE_STDLIB_PACKAGE_ID;
-use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress, TransactionDigest};
+use sui_types::base_types::{ObjectID, ObjectRef, SequenceNumber, SuiAddress};
 use sui_types::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use sui_types::transaction::{Argument, CallArg, Transaction};
 use tokio::sync::watch;
@@ -57,21 +57,20 @@ pub enum StopReason {
 
 const ONE_HOUR_IN_SECONDS: u64 = 60 * 60;
 
-/// Serialized submission state for the notifier's single Sui address.
+/// Submission state for the notifier's single Sui address.
 ///
-/// `last_tx_digest` gates submission ordering (wait for the previous tx
-/// to be observed before sending the next). `gas_coins` caches the gas
-/// `ObjectRef` carried by the previous tx's effects so the next tx is
-/// built against the *authoritative* post-tx gas version rather than the
-/// notifier fullnode's `get_gas_objects` view, which lags the validators
-/// by hundreds of versions under checkpoint-heavy load and otherwise
-/// produces "transaction needs to be rebuilt (stale object version)"
-/// rejections that stall epoch advance. Submission is serial (the lock is
-/// held across each `submit_tx_to_sui`), so the cached ref is always the
-/// exact current version when the next tx is built.
+/// `gas_coins` caches the gas `ObjectRef` carried by the previous tx's effects
+/// so the next tx is built against the *authoritative* post-tx gas version
+/// rather than the notifier fullnode's `get_gas_objects` view, which lags the
+/// validators by hundreds of versions under checkpoint-heavy load and otherwise
+/// produces "transaction needs to be rebuilt (stale object version)" rejections
+/// that stall epoch advance. Submission is serial (the lock is held across each
+/// `submit_tx_to_sui`), so the cached ref is always the exact current version
+/// when the next tx is built — the prior tx is also already finalized on the
+/// validators by then (every caller awaits its `WaitForEffectsCert`/finalized
+/// response), so no separate fullnode observability wait is needed.
 #[derive(Default)]
 struct NotifierSubmitState {
-    last_tx_digest: Option<TransactionDigest>,
     gas_coins: Option<Vec<ObjectRef>>,
     /// The gas ref(s) handed to the most recent submission, so a failure can
     /// learn which version was rejected without threading it back through the
@@ -111,6 +110,17 @@ impl NotifierSubmitState {
 /// outer `retry_with_max_elapsed_time!` re-attempts). 60 × 500ms = 30s.
 const MAX_GAS_REFETCH_ATTEMPTS: u32 = 60;
 
+/// Backoff for the mandatory verified inner reads: 1s, 2s, 4s, 8s, 16s, then
+/// capped at 30s. These reads are not optional (the MPC pipeline needs the
+/// current System / Coordinator inner), so they can't degrade to a fallback the
+/// way the per-read currency gate does — but a sustained failure is the
+/// finding-17 retention gap (the object's last-modifying checkpoint was pruned
+/// upstream and isn't in the verified cache), so back off and escalate the log
+/// instead of spinning at 1/s and flooding the logs while the operator acts.
+fn verified_read_retry_backoff(attempts: u32) -> Duration {
+    Duration::from_secs((1u64 << attempts.saturating_sub(1).min(5)).min(30))
+}
+
 pub struct SuiExecutor<C> {
     system_object_sender: Sender<Option<(System, SystemInner)>>,
     dwallet_coordinator_object_sender:
@@ -119,6 +129,11 @@ pub struct SuiExecutor<C> {
     system_checkpoint_store: Arc<SystemCheckpointStore>,
     sui_notifier: Option<SuiNotifier>,
     sui_client: Arc<SuiClient<C>>,
+    /// OCS-verified reader for coordinator/system polls. `Some` on
+    /// validators (where OCS is required); `None` on notifier-only nodes
+    /// that don't run an OCS verifier — they fall back to the legacy
+    /// JSON-RPC path on `sui_client`.
+    reader: Option<Arc<crate::sui_connector::verified_reader::OcsVerifiedReader>>,
     metrics: Arc<SuiConnectorMetrics>,
     notifier_tx_lock: Arc<tokio::sync::Mutex<NotifierSubmitState>>,
 }
@@ -144,6 +159,7 @@ where
         system_checkpoint_store: Arc<SystemCheckpointStore>,
         sui_notifier: Option<SuiNotifier>,
         sui_client: Arc<SuiClient<C>>,
+        reader: Option<Arc<crate::sui_connector::verified_reader::OcsVerifiedReader>>,
         metrics: Arc<SuiConnectorMetrics>,
     ) -> Self {
         Self {
@@ -153,9 +169,109 @@ where
             system_checkpoint_store,
             sui_notifier,
             sui_client,
+            reader,
             metrics,
             notifier_tx_lock: Arc::new(tokio::sync::Mutex::new(NotifierSubmitState::default())),
         }
+    }
+
+    /// Retrieve the System wrapper + its inner. OCS-verified when a
+    /// reader is wired in; falls back to the legacy JSON-RPC read on
+    /// validators without OCS (notifier nodes). Retries forever — same
+    /// semantics as the underlying `SuiClient::must_get_system_inner_object`.
+    async fn must_get_system_inner(&self) -> (System, SystemInner) {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_system_object_id;
+            let mut attempts: u32 = 0;
+            loop {
+                match reader.verified_system_inner(id).await {
+                    Ok(v) => return v,
+                    Err(e) => {
+                        attempts += 1;
+                        let backoff = verified_read_retry_backoff(attempts);
+                        if attempts <= 3 {
+                            warn!(error = ?e, attempts, "verified_system_inner failed; retrying");
+                        } else {
+                            warn!(
+                                error = ?e,
+                                attempts,
+                                backoff_secs = backoff.as_secs(),
+                                "verified_system_inner still failing — likely a pruned-and-uncached \
+                                 anchor (Sui-fullnode retention gap); raise fullnode retention or re-anchor"
+                            );
+                        }
+                        tokio::time::sleep(backoff).await;
+                    }
+                }
+            }
+        }
+        self.sui_client.must_get_system_inner_object().await
+    }
+
+    /// Retrieve the DWalletCoordinator wrapper + its inner. OCS-verified
+    /// when a reader is wired in; falls back to legacy on notifiers.
+    async fn must_get_dwallet_coordinator_inner(
+        &self,
+    ) -> (DWalletCoordinator, DWalletCoordinatorInner) {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_dwallet_coordinator_object_id;
+            let mut attempts: u32 = 0;
+            loop {
+                match reader.verified_dwallet_coordinator_inner(id).await {
+                    Ok(v) => return v,
+                    Err(e) => {
+                        attempts += 1;
+                        let backoff = verified_read_retry_backoff(attempts);
+                        if attempts <= 3 {
+                            warn!(error = ?e, attempts, "verified_dwallet_coordinator_inner failed; retrying");
+                        } else {
+                            warn!(
+                                error = ?e,
+                                attempts,
+                                backoff_secs = backoff.as_secs(),
+                                "verified_dwallet_coordinator_inner still failing — likely a \
+                                 pruned-and-uncached anchor (Sui-fullnode retention gap); raise \
+                                 fullnode retention or re-anchor"
+                            );
+                        }
+                        tokio::time::sleep(backoff).await;
+                    }
+                }
+            }
+        }
+        self.sui_client.must_get_dwallet_coordinator_inner().await
+    }
+
+    /// Single-shot variant of [`Self::must_get_dwallet_coordinator_inner`].
+    /// Used by `run_epoch_switch` where blocking the caller on retries
+    /// would interfere with timing-sensitive epoch logic; the caller
+    /// returns early on Err and the next tick retries the whole flow.
+    async fn try_get_dwallet_coordinator_inner(
+        &self,
+    ) -> anyhow::Result<(DWalletCoordinator, DWalletCoordinatorInner)> {
+        if let Some(reader) = &self.reader {
+            let id = self
+                .sui_client
+                .ika_network_config
+                .objects
+                .ika_dwallet_coordinator_object_id;
+            return reader
+                .verified_dwallet_coordinator_inner(id)
+                .await
+                .map_err(|e| anyhow::anyhow!("verified_dwallet_coordinator_inner: {e}"));
+        }
+        self.sui_client
+            .get_dwallet_coordinator_inner()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_dwallet_coordinator_inner: {e}"))
     }
 
     /// Checks whether `process_mid_epoch`, `lock_last_active_session_sequence_number`, or
@@ -212,7 +328,7 @@ where
             epoch_switch_state.ran_mid_epoch = true;
         }
         let Ok((dwallet_coordinator, dwallet_coordinator_inner)) =
-            self.sui_client.get_dwallet_coordinator_inner().await
+            self.try_get_dwallet_coordinator_inner().await
         else {
             error!("failed to get dwallet coordinator inner when running epoch switch");
             return;
@@ -454,7 +570,7 @@ where
 
         loop {
             interval.tick().await;
-            let (system, system_inner) = self.sui_client.must_get_system_inner_object().await;
+            let (system, system_inner) = self.must_get_system_inner().await;
             let ika_system_package_id = system.package_id;
             let _ = self
                 .system_object_sender
@@ -473,7 +589,7 @@ where
                 error!("epoch_on_sui cannot be less than epoch");
             }
             let (dwallet_coordinator, dwallet_coordinator_inner) =
-                self.sui_client.must_get_dwallet_coordinator_inner().await;
+                self.must_get_dwallet_coordinator_inner().await;
             let ika_dwallet_2pc_mpc_package_id = dwallet_coordinator.package_id;
             let _ = self.dwallet_coordinator_object_sender.send(Some((
                 dwallet_coordinator,
@@ -589,7 +705,7 @@ where
                 {
                     self.metrics
                         .system_checkpoint_sequence
-                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                        .set(next_system_checkpoint_sequence_number as i64);
 
                     let active_members: BlsCommittee =
                         system_inner.validator_set().clone().active_committee;
@@ -625,7 +741,7 @@ where
                     self.metrics.system_checkpoint_writes_success_total.inc();
                     self.metrics
                         .last_written_system_checkpoint_sequence
-                        .set(next_dwallet_checkpoint_sequence_number as i64);
+                        .set(next_system_checkpoint_sequence_number as i64);
                     last_submitted_system_checkpoint = Some(next_system_checkpoint_sequence_number);
                     debug!(
                         "Sui transaction successfully executed for system_checkpoint sequence number: {}",
@@ -833,26 +949,18 @@ where
         sui_client: &Arc<SuiClient<C>>,
     ) -> DwalletMPCResult<SuiTransactionBlockResponse> {
         let mut state = notifier_tx_lock.lock().await;
-        if let Some(prev_digest) = state.last_tx_digest {
-            while sui_client
-                .get_events_by_tx_digest(prev_digest)
-                .await
-                .is_err()
-            {
-                debug!(
-                    transaction_digest = ?prev_digest,
-                    "The last submitted transaction has not been processed yet, retrying..."
-                );
-                // Small delay to avoid spamming the node.
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-
-            debug!(
-            transaction_digest = ?prev_digest,
-            "The last submitted transaction has been processed, submitting the next one",
-                        );
-        }
-
+        // No pre-wait on the prior tx's observability. `execute_transaction`
+        // below drives the tx through the validator transaction-driver and
+        // returns only on FINALIZED effects, and every caller awaits that before
+        // building the next tx — so the prior tx is already final on the
+        // validators (the authoritative source) when this one is submitted, and
+        // the gas ref this tx carries is the cached post-prior-tx ref from those
+        // effects. The previous gate spun on `get_events_by_tx_digest` (a
+        // `get_transaction_checkpoint` read) against the notifier's own fullnode,
+        // which lags the validators by minutes under sustained checkpoint load
+        // and is itself prune-prone — throttling write-back to <1/min, which
+        // freezes dwallet advancement under heavy sequential load. The stale-gas
+        // recovery below stays as the safety net for a rare cached-ref miss.
         debug!(
             transaction_digest = ?transaction.digest(),
             "Submitting a transaction to Sui"
@@ -930,7 +1038,6 @@ where
             .into());
         };
 
-        state.last_tx_digest = Some(tx_response.digest);
         Ok(tx_response)
     }
 
@@ -1299,5 +1406,22 @@ where
                 Err(err.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_read_backoff_doubles_then_caps_at_30s() {
+        assert_eq!(verified_read_retry_backoff(1), Duration::from_secs(1));
+        assert_eq!(verified_read_retry_backoff(2), Duration::from_secs(2));
+        assert_eq!(verified_read_retry_backoff(3), Duration::from_secs(4));
+        assert_eq!(verified_read_retry_backoff(4), Duration::from_secs(8));
+        assert_eq!(verified_read_retry_backoff(5), Duration::from_secs(16));
+        // 1<<5 == 32, capped to 30, and stays capped for all higher attempts.
+        assert_eq!(verified_read_retry_backoff(6), Duration::from_secs(30));
+        assert_eq!(verified_read_retry_backoff(1000), Duration::from_secs(30));
     }
 }

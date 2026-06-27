@@ -185,6 +185,7 @@ impl DWalletMPCService {
         let schnorr_presign_second_round_delay =
             protocol_config.schnorr_presign_second_round_delay();
 
+        let max_mpc_computation_cores = node_config.max_mpc_computation_cores;
         let root_seed = match node_config.root_seed_key_pair {
             None => {
                 error!("root_seed is not set in the node config, cannot start DWallet MPC service");
@@ -206,6 +207,7 @@ impl DWalletMPCService {
             protocol_config.clone(),
             epoch_store.clone(),
             network_owned_address_sign_output_sender,
+            max_mpc_computation_cores,
         );
 
         Self {
@@ -293,6 +295,7 @@ impl DWalletMPCService {
                 ProtocolConfig::get_for_max_version_UNSAFE(),
                 epoch_store,
                 network_owned_address_sign_output_sender,
+                None,
             ),
             exit: watch::channel(()).1,
             end_of_publish: false,

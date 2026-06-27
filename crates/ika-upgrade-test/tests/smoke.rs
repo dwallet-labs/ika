@@ -20,10 +20,9 @@
 //! ```
 
 use std::path::PathBuf;
-use std::time::Duration;
 
-use ika_protocol_config::ProtocolVersion;
-use ika_upgrade_test::cluster::ClusterBuilder;
+use ika_upgrade_test::binary::BinarySpec;
+use ika_upgrade_test::scenario::Scenario;
 
 fn bin_from_env(var: &str, default: &str) -> PathBuf {
     PathBuf::from(std::env::var(var).unwrap_or_else(|_| default.to_string()))
@@ -40,9 +39,20 @@ async fn smoke_four_validators_reach_epoch_two() {
         .with_env()
         .init();
 
-    let validator = bin_from_env("IKA_VALIDATOR_BIN", "target/release/ika-validator");
+    let validator = BinarySpec::Path(bin_from_env(
+        "IKA_VALIDATOR_BIN",
+        "target/release/ika-validator",
+    ));
     let notifier = bin_from_env("IKA_NOTIFIER_BIN", "target/release/ika-notifier");
     let sui = bin_from_env("SUI_BIN", "sui");
+    // Only used to resolve git-ref binaries; this test uses a path binary, so
+    // it's never built from — point it at the workspace root like the others.
+    let repo = std::env::current_dir()
+        .expect("cwd")
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
 
     // Persistent base on the big disk (rootfs is small and crashes validators
     // under disk pressure).
@@ -52,30 +62,18 @@ async fn smoke_four_validators_reach_epoch_two() {
     );
     let _ = std::fs::remove_dir_all(&base);
 
-    let cluster = ClusterBuilder::new(validator, notifier, sui)
-        .with_num_validators(4)
-        .with_epoch_duration_ms(60_000)
-        .with_genesis_protocol_version(ProtocolVersion::MIN)
+    // The whole go/no-go flow via the Scenario DSL: bring up 4 same-binary
+    // validators at genesis v3 on a 60s epoch and confirm the epoch advances
+    // on-chain to 2. Progress shows as `[flow N/total]` lines from the
+    // scenario executor (no per-phase logging needed in the test).
+    Scenario::new(4, repo, sui, notifier)
         .with_base_dir(base)
-        .build()
+        .with_epoch_duration_ms(60_000)
+        .start_all(validator)
+        .wait_for_epoch(2)
+        .run()
         .await
-        .expect("cluster bring-up");
-
-    let start_epoch = cluster.current_epoch().await.expect("read epoch");
-    let start_version = cluster
-        .current_protocol_version()
-        .await
-        .expect("read protocol version");
-    tracing::info!(
-        start_epoch,
-        start_version,
-        "cluster up; waiting for epoch 2"
-    );
-
-    cluster
-        .wait_for_epoch(2, Duration::from_secs(900))
-        .await
-        .expect("reach epoch 2");
+        .expect("smoke: out-of-process cluster reaches epoch 2");
 
     tracing::info!("go/no-go PASSED: out-of-process cluster reached epoch 2");
 }

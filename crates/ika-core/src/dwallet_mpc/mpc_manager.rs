@@ -320,6 +320,7 @@ impl DWalletMPCManager {
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
+        max_computation_cores: Option<usize>,
     ) -> Self {
         Self::try_new(
             validator_name,
@@ -334,6 +335,7 @@ impl DWalletMPCManager {
             protocol_config,
             epoch_store,
             network_owned_address_sign_output_sender,
+            max_computation_cores,
         )
         .unwrap_or_else(|err| {
             error!(error=?err, "Failed to create DWalletMPCManager.");
@@ -355,11 +357,14 @@ impl DWalletMPCManager {
         protocol_config: ProtocolConfig,
         epoch_store: Arc<dyn AuthorityPerEpochStoreTrait>,
         network_owned_address_sign_output_sender: Sender<NetworkOwnedAddressSignOutput>,
+        max_computation_cores: Option<usize>,
     ) -> DwalletMPCResult<Self> {
         let access_structure = generate_access_structure_from_committee(&committee)?;
 
-        let mpc_computations_orchestrator =
-            CryptographicComputationsOrchestrator::try_new(root_seed.clone())?;
+        let mpc_computations_orchestrator = CryptographicComputationsOrchestrator::try_new(
+            root_seed.clone(),
+            max_computation_cores,
+        )?;
         let party_id = authority_name_to_party_id_from_committee(&committee, &validator_name)?;
 
         // Derive ALL of this validator's MPC key material once from the seed:

@@ -15,6 +15,7 @@ use fastcrypto::hash::{HashFunction, Keccak256};
 use fastcrypto::traits::{KeyPair as _, Signer, ToFromBytes};
 use ika_config::initiation::InitiationParameters;
 use ika_config::local_ip_utils;
+use ika_config::node::SuiDataSource;
 use ika_node::IkaNodeHandle;
 use ika_protocol_config::{Chain, ProtocolVersion};
 use ika_sui_client::SuiConnectorClient;
@@ -99,6 +100,12 @@ pub struct IkaTestCluster {
     /// Next deterministic ika-node port index. Initial validators take
     /// `[0, num_validators)`; each joiner claims the next slot.
     pub next_ika_node_index: AtomicU16,
+    /// The localnet genesis committee the initial validators were anchored
+    /// on (when `ocs_genesis_anchor` was set). Joiner validators spawned via
+    /// `add_joiner_validator` are seeded with the same anchor so they boot
+    /// the OCS stack too — an anchorless validator fails boot on a
+    /// protocol-v4 chain.
+    pub ocs_genesis_committee: Option<sui_types::committee::Committee>,
 }
 
 /// Handle to a validator that joined the network after the initial
@@ -195,6 +202,15 @@ impl IkaTestCluster {
             .next()
             .ok_or_else(|| anyhow::anyhow!("swarm has no validator nodes"))?;
         Ok(handle.with(|node| node.current_epoch_for_testing()))
+    }
+
+    /// Wait until the underlying **Sui** localnet reconfigures to (at least)
+    /// `target` Sui epoch. Only makes progress when the cluster was built with
+    /// [`IkaTestClusterBuilder::with_sui_epoch_duration_ms`]; with Sui's default
+    /// 24h epoch this would hang, so callers must pair the two. Distinct from
+    /// [`Self::wait_for_epoch`], which tracks the ika epoch.
+    pub async fn wait_for_sui_epoch(&self, target: u64) {
+        self.test_cluster.wait_for_epoch(Some(target)).await;
     }
 
     /// Generate a fresh validator config, run the full candidate →
@@ -303,7 +319,11 @@ impl IkaTestCluster {
             .await
         );
 
-        let validator_config = ValidatorConfigBuilder::new().build(
+        let mut joiner_builder = ValidatorConfigBuilder::new();
+        if let Some(committee) = &self.ocs_genesis_committee {
+            joiner_builder = joiner_builder.with_unsafe_genesis_committee(committee.clone());
+        }
+        let validator_config = joiner_builder.build(
             &joiner_init,
             self.sui_rpc_url.clone(),
             self.packages.ika_package_id,
@@ -984,11 +1004,44 @@ pub async fn wait_for_node_epoch(node_handle: &IkaNodeHandle, target_epoch: u64)
 pub struct IkaTestClusterBuilder {
     num_validators: usize,
     epoch_duration_ms: Option<u64>,
+    /// Epoch duration of the underlying **Sui** localnet (NOT ika's epoch). When
+    /// `None` (default) Sui keeps its 24h `for_local_testing` epoch, so the Sui
+    /// validator committee never rotates during a test and the OCS Sui-committee
+    /// ratchet is a no-op. Set a short value (Sui enforces a 10s floor) to make
+    /// Sui cross real epoch boundaries — required to exercise the OCS verifier's
+    /// committee handoff and a late joiner ratcheting from a stale genesis anchor.
+    sui_epoch_duration_ms: Option<u64>,
     protocol_version: Option<ProtocolVersion>,
     /// Per-validator `SupportedProtocolVersions` overrides (indexed). When
     /// `None`, every validator uses `SupportedProtocolVersions::SYSTEM_DEFAULT`.
     /// `Some(v)` must have length `num_validators`.
     per_validator_supported_protocol_versions: Option<Vec<SupportedProtocolVersions>>,
+    /// When true (the default), seed every validator's
+    /// `sui_unsafe_genesis_committee` with the running Sui localnet's epoch-0
+    /// committee, so the OCS verifier bootstraps and validators ingest MPC
+    /// session events via the OCS `BagEventPump`. On by default because the
+    /// node refuses to run a validator on the deprecated legacy JSON-RPC
+    /// path against a protocol-v4 chain — an anchorless validator at v4
+    /// fails boot. Opt out (`with_ocs_genesis_anchor(false)`) only for
+    /// pre-v4 protocol versions.
+    ocs_genesis_anchor: bool,
+    /// Split the OCS read topology: when `Some(k)`, validators `0..k` read Sui
+    /// state directly over gRPC (and serve the `SuiStateMirror` relay), while
+    /// validators `k..num_validators` are `SuiStateMirrored` — they read
+    /// *verified* Sui state through one of the direct validators' anemo relay
+    /// (`SuiMirrorTransport`) instead of their own gRPC connection. Only
+    /// meaningful together with `with_ocs_genesis_anchor(true)`. `None` (the
+    /// default) leaves every validator on the direct path.
+    sui_state_direct_count: Option<usize>,
+    /// When true, the `SuiStateMirrored` validators (those at index
+    /// `>= sui_state_direct_count`) are configured *peer-only*: their
+    /// `fallback_grpc_url` is `None`, so they have no direct Sui uplink at all
+    /// and must serve every `sui_client` read — including the boot-time
+    /// committee/epoch bootstrap — over the relay through the verified
+    /// `VerifiedSuiTransport`. Only meaningful together with
+    /// `with_sui_state_direct_count(_)`. Off by default (mirrored validators
+    /// keep a direct gRPC fallback).
+    peer_only_mirrored: bool,
 }
 
 /// Cross-process mutex for the port-sensitive boot window. The Sui and
@@ -1039,9 +1092,45 @@ impl IkaTestClusterBuilder {
         Self {
             num_validators: DEFAULT_NUM_VALIDATORS,
             epoch_duration_ms: None,
+            sui_epoch_duration_ms: None,
             protocol_version: None,
             per_validator_supported_protocol_versions: None,
+            ocs_genesis_anchor: true,
+            sui_state_direct_count: None,
+            peer_only_mirrored: false,
         }
+    }
+
+    /// Activate the OCS verified-state path: seed validators with the
+    /// localnet genesis committee as their `sui_unsafe_genesis_committee`
+    /// trust anchor. Combine with `with_protocol_version(4)` (or the default
+    /// MAX) so `off_chain_validator_metadata_enabled()` is on and the OCS
+    /// `BagEventPump` becomes the MPC event source.
+    pub fn with_ocs_genesis_anchor(mut self, enabled: bool) -> Self {
+        self.ocs_genesis_anchor = enabled;
+        self
+    }
+
+    /// Run the first `direct_count` validators on the direct gRPC path (serving
+    /// the `SuiStateMirror` relay) and the remaining validators as
+    /// `SuiStateMirrored`, reading verified Sui state through the direct
+    /// validators' anemo relay. Exercises `SuiMirrorTransport` /
+    /// `SuiMirrorProofProvider` end-to-end. Requires `with_ocs_genesis_anchor(true)`
+    /// and `direct_count` in `1..num_validators` (at least one server and one
+    /// mirror). With the default (unset) every validator reads directly.
+    pub fn with_sui_state_direct_count(mut self, direct_count: usize) -> Self {
+        self.sui_state_direct_count = Some(direct_count);
+        self
+    }
+
+    /// Make the `SuiStateMirrored` validators *peer-only*: no `fallback_grpc_url`,
+    /// hence no direct Sui uplink. They read all Sui state — including the
+    /// boot-time committee/epoch bootstrap — over the relay via the verified
+    /// reader. Requires `with_sui_state_direct_count(_)` (there must be at least
+    /// one direct validator serving the relay).
+    pub fn with_peer_only_mirrored(mut self, enabled: bool) -> Self {
+        self.peer_only_mirrored = enabled;
+        self
     }
 
     pub fn with_num_validators(mut self, num_validators: usize) -> Self {
@@ -1051,6 +1140,18 @@ impl IkaTestClusterBuilder {
 
     pub fn with_epoch_duration_ms(mut self, epoch_duration_ms: u64) -> Self {
         self.epoch_duration_ms = Some(epoch_duration_ms);
+        self
+    }
+
+    /// Set a short epoch duration for the underlying **Sui** localnet so its
+    /// validator committee actually rotates during the test. Sui enforces a 10s
+    /// (`10_000` ms) floor; values below it panic the swarm builder. Use this to
+    /// drive the OCS Sui-committee ratchet across real epoch boundaries (e.g. a
+    /// late joiner that must ratchet `committee[0] -> committee[N]` from its
+    /// stale genesis anchor). Leave unset for tests that don't care about Sui
+    /// epoch transitions — those keep Sui's default 24h epoch.
+    pub fn with_sui_epoch_duration_ms(mut self, sui_epoch_duration_ms: u64) -> Self {
+        self.sui_epoch_duration_ms = Some(sui_epoch_duration_ms);
         self
     }
 
@@ -1105,9 +1206,14 @@ impl IkaTestClusterBuilder {
                     .build(&mut sui_validator_rng)
             })
             .collect::<Vec<_>>();
-        let sui_network_config = ConfigBuilder::new_with_temp_dir()
-            .with_validators(sui_validators)
-            .build();
+        let mut sui_config_builder =
+            ConfigBuilder::new_with_temp_dir().with_validators(sui_validators);
+        if let Some(sui_epoch_duration_ms) = self.sui_epoch_duration_ms {
+            // Make Sui's own committee rotate during the test (default is 24h,
+            // i.e. never). Sui's swarm builder asserts a 10s floor.
+            sui_config_builder = sui_config_builder.with_epoch_duration(sui_epoch_duration_ms);
+        }
+        let sui_network_config = sui_config_builder.build();
         let mut test_cluster = TestClusterBuilder::new()
             .set_network_config(sui_network_config)
             .with_fullnode_rpc_port(port_base + SUI_FULLNODE_RPC_PORT_OFFSET)
@@ -1211,6 +1317,52 @@ impl IkaTestClusterBuilder {
                 validator_initialization_configs.len(),
             );
         }
+        // OCS trust anchor: when requested, every validator boots from the
+        // Sui localnet's epoch-0 committee (the unsafe-genesis path). This is
+        // what makes `has_anchor` true so the OCS stack is built at v4.
+        let ocs_genesis_committee = if self.ocs_genesis_anchor {
+            Some(
+                ika_sui_client::anchor::fetch_genesis_committee(&sui_rpc_url)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("fetch genesis committee for OCS anchor: {e}"))?,
+            )
+        } else {
+            None
+        };
+
+        // OCS read topology: when a direct/mirror split is requested, the first
+        // `direct_count` validators read Sui directly (and serve the relay) and
+        // the rest read verified state through their anemo relay. A mirrored
+        // validator's `sui_state_mirror_peers` is the hex-encoded anemo
+        // `PeerId` (its network public key) of each direct validator — the same
+        // derivation the p2p layer uses (`anemo::PeerId(network_pubkey.0.to_bytes())`).
+        let direct_count = self.sui_state_direct_count;
+        if let Some(direct_count) = direct_count {
+            anyhow::ensure!(
+                self.ocs_genesis_anchor,
+                "with_sui_state_direct_count requires with_ocs_genesis_anchor(true)"
+            );
+            anyhow::ensure!(
+                direct_count >= 1 && direct_count < validator_initialization_configs.len(),
+                "sui_state_direct_count ({direct_count}) must be in 1..num_validators ({})",
+                validator_initialization_configs.len()
+            );
+        }
+        anyhow::ensure!(
+            !self.peer_only_mirrored || direct_count.is_some(),
+            "with_peer_only_mirrored requires with_sui_state_direct_count(_) \
+             (peer-only validators need at least one direct validator serving the relay)"
+        );
+        let direct_mirror_peer_ids: Vec<String> = direct_count
+            .map(|direct_count| {
+                validator_initialization_configs
+                    .iter()
+                    .take(direct_count)
+                    .map(|v| hex::encode(v.network_key_pair.public().0.to_bytes()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let validator_configs: Vec<_> = validator_initialization_configs
             .iter()
             .enumerate()
@@ -1220,18 +1372,36 @@ impl IkaTestClusterBuilder {
                     .as_ref()
                     .map(|per_validator| per_validator[i])
                     .unwrap_or(SupportedProtocolVersions::SYSTEM_DEFAULT);
-                ValidatorConfigBuilder::new()
-                    .with_supported_protocol_versions(supported_versions)
-                    .build(
-                        v,
-                        sui_rpc_url.clone(),
-                        packages.ika_package_id,
-                        packages.ika_common_package_id,
-                        packages.ika_dwallet_2pc_mpc_package_id,
-                        packages.ika_system_package_id,
-                        system.ika_system_object_id,
-                        system.ika_dwallet_coordinator_object_id,
-                    )
+                let mut builder = ValidatorConfigBuilder::new()
+                    .with_supported_protocol_versions(supported_versions);
+                if let Some(committee) = &ocs_genesis_committee {
+                    builder = builder.with_unsafe_genesis_committee(committee.clone());
+                }
+                // Validators at index >= direct_count read through the relay.
+                if let Some(direct_count) = direct_count
+                    && i >= direct_count
+                {
+                    // Peer-only: no fallback uplink, reads go entirely over the
+                    // relay. Otherwise keep a direct gRPC fallback.
+                    let fallback_grpc_url = if self.peer_only_mirrored {
+                        None
+                    } else {
+                        Some(sui_rpc_url.clone())
+                    };
+                    builder = builder
+                        .with_sui_data_source(SuiDataSource::SuiStateMirrored { fallback_grpc_url })
+                        .with_sui_state_mirror_peers(direct_mirror_peer_ids.clone());
+                }
+                builder.build(
+                    v,
+                    sui_rpc_url.clone(),
+                    packages.ika_package_id,
+                    packages.ika_common_package_id,
+                    packages.ika_dwallet_2pc_mpc_package_id,
+                    packages.ika_system_package_id,
+                    system.ika_system_object_id,
+                    system.ika_dwallet_coordinator_object_id,
+                )
             })
             .collect();
         // Record the validators' protocol public keys in their configured
@@ -1315,6 +1485,7 @@ impl IkaTestClusterBuilder {
             // Initial validators consumed indices [0, num_validators); joiners
             // claim the next deterministic slots.
             next_ika_node_index: AtomicU16::new(self.num_validators as u16),
+            ocs_genesis_committee,
         })
     }
 }

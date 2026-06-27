@@ -191,7 +191,13 @@ Always get the latest IDs from the canonical source files in the repo:
 # Mainnet validator must have:
 sui-connector-config:
   sui-chain-identifier: mainnet
-  sui-rpc-url: 'http://<your-sui-fullnode>:9000'
+  # NEW-STYLE gRPC (replaces deprecated sui-rpc-url). A validator on this path
+  # MUST also set sui-trusted-anchor (see references/configuration.md).
+  sui-data-source:
+    kind: sui-state-direct
+    url: 'http://<your-sui-fullnode>:9000'
+    serve-mirror: true
+  sui-trusted-anchor: '<end-of-epoch checkpoint digest from a trusted fullnode>'
   # Get all IDs from deployed_contracts/mainnet/address.yaml
   ika-package-id: '<from address.yaml>'
   ika-dwallet-coordinator-object-id: '<from address.yaml>'

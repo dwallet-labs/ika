@@ -133,6 +133,15 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         // default min_validator_count = 4 would reject it at genesis.
         .with_min_validator_count(3)
         .with_ika_cli(ika_cli)
+        // OCS read topology: keep validators 1 and 2 on the direct gRPC path
+        // (serving the SuiStateMirror relay); flip validator 0 to peer-only
+        // SuiStateMirrored at the swap and bring both joiners up mirrored, all
+        // reading verified Sui state through 1 and 2. The split materializes at
+        // the v3->v4 swap (the v3 phase stays all-direct), departing validator
+        // 3 stays direct until it leaves, and the final 5->4 removal drops a
+        // mirrored node so the relay servers stay up. SUI_STATE_DIRECT_COUNT=1
+        // narrows the relay set to a single server (just validator 1).
+        .with_direct_validators(&[1, 2])
         // Empty config at genesis: routes the v3 workload's presign
         // per-dWallet — the harness's only targeted-presign coverage. A
         // harness arrangement, not the mainnet state (the mainnet-shape
@@ -176,8 +185,8 @@ async fn cross_binary_rolling_upgrade_with_committee_churn() {
         // spawned on the NEW binary. Active at the epoch-4 boundary — the
         // reshare into epoch 4 must encrypt shares to a 5-member committee
         // including two parties that never held the key.
-        .join_validator(new.clone())
-        .join_validator(new)
+        .join_validator_mirrored(new.clone())
+        .join_validator_mirrored(new)
         .wait_for_epoch(4)
         .expect_committee_size(5)
         // dWallet lifecycle on the NEW binary at v4 with the churned

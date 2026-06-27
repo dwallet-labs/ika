@@ -70,9 +70,19 @@ per-push gate. The contract it verifies is
 [`../specs/cross-binary-upgrade.md`](../specs/cross-binary-upgrade.md).
 
 ```bash
-# Pick one scenario via `test`. smoke/workload need only the current build;
-# cross_binary/v118_upgrade also build an OLD binary from `old_ref` in a
-# worktree (at that ref's own toolchain) and run --test-threads=1.
+# `test` selects scenarios: 'all' (the default) fans EVERY scenario out as its
+# own matrix job on its own runner, in parallel (fail-fast off, so one
+# scenario's failure/runner-death doesn't cancel the others). Pass a
+# comma-separated subset to run several, or a single name to run one. Each
+# scenario's artifacts/logs are suffixed with its name. smoke/workload need
+# only the current build; cross_binary/v118_upgrade/v118_churn also build an OLD
+# binary from `old_ref` in a worktree (own toolchain) and run --test-threads=1.
+# NOTE: per-run overrides (old_ref/old_max_protocol_version) apply to EVERY
+# selected scenario — leave them empty unless you scope `test` to one scenario.
+
+# Everything in parallel (default), or a subset:
+gh workflow run upgrade-test.yaml --ref <branch>                       # = test=all
+gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke,cross_binary,v118_churn
 
 # Plumbing go/no-go (fastest): 4 same-binary processes reach epoch 2.
 gh workflow run upgrade-test.yaml --ref <branch> -f test=smoke
@@ -99,8 +109,144 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
 
 # Artifacts: upgrade-test-log-<test>-<attempt> (test stdout),
 # upgrade-test-node-logs-<test>-<attempt> (per-validator *.log),
-# cpu-sampler-<test>-<attempt>.
+# resource-sampler-<test>-<attempt> (15s CPU+memory samples; recovered only on
+# runs that FINISH — a runner death drops it like every other artifact).
 ```
+
+### Scenario differences — `cross_binary` vs `v118_upgrade` (and the rest)
+
+All four scenarios genesis at **protocol v3** (a v4 *genesis* DKG is rejected
+forever — the network must upgrade *into* v4) with one notifier + a validator
+committee. They differ in the OLD binary, how it is swapped, and what
+continuity they prove:
+
+| | `smoke` | `workload` | `cross_binary` | `v118_upgrade` |
+|---|---|---|---|---|
+| OLD binary | current build | current build | **this branch pinned to `MAX_PROTOCOL_VERSION=3`** (one-line patch, current toolchain) | **the literal `mainnet-v1.1.8` `ika-node`** from the tag (old toolchain, `--no-default-features`) |
+| Binary swap | none | none | **rolling** — one at a time; mixed-binary committees exchange consensus + MPC mid-epoch | **atomic** — all validators at once |
+| Committee churn | no | no | **yes** — 4 → 3 → 5 → 4 across epochs (remove, join 2 brand-new validators, remove); a real reshare to a different party set at every boundary | **no** — fixed 4 |
+| `GlobalPresignConfig` | n/a | full | **empty** (harness arrangement → routes presign per-dWallet; exercises targeted-presign) | **populated** (mainnet-faithful → global presign; exercises the pre-activation fallback / upgrade-window deadlock guard) |
+| Proves | 4 validators reach epoch 2 | one full DKG→Presign→Sign lifecycle | wire-compat + on-disk compat + reshare/churn **between two builds of the same branch** | the **real mainnet 1.1.8 → current upgrade**: local boots against RocksDB **written by 1.1.8**, reshares a key whose DKG bytes were **produced by 1.1.8's crypto**, 1.1.8 dWallets stay usable, global-presign pre-activation fallback (no deadlock) |
+
+**Why the swap style differs:** `cross_binary`'s two binaries are the same
+branch differing only in advertised protocol version, so they are
+MPC-wire-compatible and a *rolling* swap with mixed committees is valid.
+`v118_upgrade` can't do that — this branch single-pins `cryptography-private`,
+so a mixed 1.1.8/local committee can't exchange MPC messages; it must swap
+**atomically** (a coordinated full-network restart). A *rolling* `cross_binary`
+from 1.1.8 is therefore invalid; to get churn from a real 1.1.8 origin you swap
+atomically first, then churn — which is exactly **`v118_churn`** (`v118_upgrade`
++ one post-swap joiner: the v4 reshare of the 1.1.8-origin network key then
+includes a party that never held it, with no mixed committee).
+
+**Which to use:** `v118_upgrade` is the pre-mainnet-upgrade rehearsal (real
+release, real on-disk + crypto continuity); `v118_churn` is the same plus one
+joiner. The OCS joiner-anchor path (`add_joiner_validator`) is exercised by two
+scenarios — `cross_binary` (synthetic, between two builds of this branch;
+**heaviest**: 5-member peak + two MPC lifecycles + multiple joiners) and
+`v118_churn` (a single join from a genuine 1.1.8 origin — lighter, and the more
+faithful test). All churn scenarios peak at ≥5 validators, so they hit the
+runner-resource ceiling below.
+
+### CI runner resources & the `cross_binary` runner-death failure mode
+
+`cross_binary` co-locates 5–6 `ika-validator` processes (4 → 5 with the joiner,
++ notifier), each doing class-groups DKG/presign, on one self-hosted pod — by
+far the heaviest upgrade-test. On the current `ika-k8s-large` pods the
+**runner "loses communication" and dies**: the job fails with **0 artifacts**
+and `Run cross_binary` + all `if: always()` steps **blank** (distinct from a
+real nextest failure, which leaves artifacts + exit 100). The *same* death
+reproduces on a clean `dev` checkout, so it is the **pod, not any branch's
+code**. The mechanism is now proven — a cgroup OOM-kill at the pod's 96 GiB
+memory limit (`OOMKilled`/137); see the findings and the fix below.
+
+What the surviving **"Runner resources"** step reports on these pods (it runs
+*before* the test, so its log survives the death):
+
+| | value |
+|---|---|
+| `nproc` (host cores) | **96** |
+| `cgroup cpu.max` (CFS quota) | `8000000 100000` → **80 effective CPUs** |
+| `cgroup memory.max` | **96 GiB** |
+| swap | **0** |
+
+**What a 2026-06 forensic pass (run 28048024508 + 12 prior `cross_binary`
+jobs) actually established — read this before "fixing" it again. Several
+earlier confident claims here were wrong:**
+
+- **The death is a deterministic test phase, not an external timer.** Build /
+  setup time varies between jobs, yet the job is marked failed at a
+  near-constant **~29 min into the *Run* step** (≈1760 s). One job with +108 s
+  longer setup still died at the same *run-relative* time — so it tracks the
+  scenario, not pod age. Refinement from `kubectl`: the **actual OOM is ~20 min
+  into the Run step** (peak 5→4 reshare / second MPC lifecycle); GitHub's "lost
+  communication" then **lags the real kill by ~9–10 min** (its heartbeat-loss
+  timeout), which is the ~29 min figure. Rules out a max-lifetime/eviction timer.
+- **CPU starvation is refuted.** The sampler shows the heavy scenarios peak at
+  **~13 of the 80-CPU quota** with **zero in-window CFS throttling**
+  (`nr_throttled` flat). The runner agent always had schedulable CPU;
+  `rayon_threads_per_node` (#1770) already keeps threads well under quota.
+- **Memory-OOM is CONFIRMED (2026-06, via `kubectl`).** The runner pod ends
+  `State: Terminated, Reason: OOMKilled, Exit Code: 137` — the kernel OOM-killer
+  fired at the pod's **own 96 GiB cgroup limit** (`limits.memory=96Gi` on the
+  ARC runner). "Runner lost communication" is just the downstream symptom (the
+  OOM killed the runner container). It is **not** node pressure: the node
+  (`ika-worker-8`, 125 GiB) was at 17 %. `kubectl top` traced the climb to the
+  kill (steady ~24–36 GiB through the churn, then 24→54→56→66 GiB in the final
+  5 min). Note `top` reports `working_set`, which under-reads the cgroup
+  `memory.current` that triggers OOM, so its ~64 GiB peak is low — the
+  `OOMKilled`/137 status is ground truth that `memory.current` hit 96 GiB.
+- **`max_mpc_computation_cores` is NOT a proven fix, and is a CPU lever, not a
+  memory one.** It caps *concurrent* dwallet-MPC computations
+  (`currently_running < available`, orchestrator.rs) — but each computation
+  already fans out across the whole rayon pool (the `parallel` crypto
+  feature), so the cap bounds concurrent pool-saturating fan-outs (CPU
+  contention), not memory directly. Empirically it changes nothing observable:
+  **`v118_upgrade` passes with the cap unset (run 27954982236) and set (run
+  28048024508), and `cross_binary` dies either way.** Its earlier billing as
+  "the memory axis, complementary to #1770's CPU axis" was wrong — both act on
+  CPU. Keep it as a cheap knob; don't rely on it to fix the death.
+
+**How it was confirmed — `kubectl`, not on-pod (every on-pod channel is wiped by
+the death):** the in-pod sampler measured **each `ika-validator` ≈ 7.5–8 GB RSS**
+(idle, from a surviving `smoke` run), but the death itself can't be read on the
+pod — a runner death **wipes the job's runner-emitted `::warning::` annotations**
+(a surviving `smoke` shows the sampler's startup line; a dead `cross_binary` with
+the identical line shows none — only GitHub's backend "lost communication"
+annotation remains), and drops the artifacts + job log too. The off-pod read is
+the one that works: with `kubectl` on the runners' cluster (`ika-prod-netbird` —
+NetBird must be up),
+
+```bash
+# while the cross_binary job runs, find its ephemeral runner pod + node:
+kubectl get pods -n github-actions -o wide | grep ika-k8s-large
+# trace memory live (metrics-server; survives the pod death):
+kubectl top pod -n github-actions <pod>       # poll every ~20s
+# after death — the smoking gun:
+kubectl describe pod -n github-actions <pod> | grep -A3 'Last State'
+#   -> State: Terminated  Reason: OOMKilled  Exit Code: 137
+```
+
+`OOMKilled`/137 at the pod's **96 GiB cgroup limit** is the confirmed cause; the
+node (125 GiB, 17 % used) had headroom, so it is the pod limit, not eviction.
+`max_mpc_computation_cores=1` + 10 min epochs **still OOM'd** (run 28062374647) —
+the pressure is the **baseline per-validator footprint × 5–6 validators**, not
+MPC transient, so the cap can't fix it.
+
+**The fix (infra — the ARC `ika-k8s-large` `AutoscalingRunnerSet` in
+`github-actions`):** the runner template is `requests.memory=16Gi
+limits.memory=96Gi`, no `nodeSelector`, max 8 runners. cross_binary's peak demand
+is **> 96 GiB** (it died *at* the limit; true peak unmeasured). Because the
+*request* is only 16 GiB the scheduler can pack several bursting runners onto one
+125 GiB node, so **raising the limit alone risks a node-level OOM** — raise the
+*request* too (so heavy runners don't co-schedule), or pin cross_binary to the
+**377 GiB node `ika-worker-51`** (the rest are 125 GiB) via `nodeSelector` and a
+~150 GiB limit (which also reveals the true peak). Until then, `v118_churn` (one
+joiner from a real 1.1.8 origin) already passes and covers the OCS joiner-anchor
+path, so only cross_binary's heavier synthetic coverage is blocked. Note: on a
+runner death, artifacts, the live step log, **and** runner-emitted annotations
+are all lost — only pre-test step logs survive, and the live `kubectl top` /
+post-mortem `describe` above are the diagnostic channels.
 
 ## Facts that save debugging time
 
@@ -114,12 +260,27 @@ gh workflow run upgrade-test.yaml --ref <branch> -f test=v118_upgrade
   steps run when a job is cancelled (so cancelling a doomed run still
   yields artifacts), but a runner-pod death ("The self-hosted runner lost
   communication with the server", log cut off, zero artifacts) skips
-  everything — the live step log is the only surviving evidence. That is
+  everything — the live step log is lost too (the job-log blob 404s), and
+  even runner-emitted **`::warning::` annotations are wiped** (only GitHub's
+  own backend "lost communication" annotation remains; proven by a surviving
+  vs dead run emitting the identical startup warning). The **only** channels
+  that survive a death are pre-test step logs and anything pushed OFF the pod
+  before it dies (kubelet/dmesg on the node, or a token-push). That is also
   why failure replays stay inline in the cluster workflow.
 - **`exit code 100`** from the cluster job is nextest's tests-failed
   code (real failures, artifacts present) — distinct from runner death.
 - **Cluster parallelism is memory-bound**: 4-way is the validated
   default; 8-way OOM-kills the 96Gi pod and presents as runner death.
+- **dwallet-MPC integration tests are CPU-bound — isolate them locally**:
+  each `dwallet_mpc::integration_tests` case drives real class-groups MPC
+  across an in-process committee, so run alongside the rest of a
+  `cargo test -p ika-core` suite under default parallelism they fail
+  spuriously (proven: 24 "failures" in a full-crate run, all green run
+  isolated — likely CPU oversubscription starving the MPC round timers,
+  NOT a `--features test-utils` issue). CI dodges this with the separate
+  `test_threads=4` job above; locally, filter to the target test(s) or
+  pass `--test-threads=N`, and never read a regression from a heavy-MPC
+  failure inside a full-crate run.
 - **TS suite known flake**: the pre-existing epoch-entry stale-mpc_data
   race (issue #1736) can wedge a localnet mid-suite. Before attributing
   a TS failure to your change, run the

@@ -2439,7 +2439,11 @@ impl AuthorityPerEpochStore {
         }
         let aggregator_signer_count = aggregator.signer_count();
         let aggregator_stake = aggregator.accumulated_stake();
-        let replay_certified_epoch = aggregator.certified().map(|cert| cert.attestation.epoch);
+        // Capture the full cert (not just the epoch) BEFORE the aggregator
+        // moves into the guard, so a cert re-minted during replay can be
+        // persisted below — it did not go through `record_handoff_signature`'s
+        // `Certified` arm, which is otherwise the only persist path.
+        let replay_cert = aggregator.certified().cloned();
         *guard = Some(aggregator);
         drop(guard);
         // Positive baseline record of what this validator attested to —
@@ -2460,14 +2464,29 @@ impl AuthorityPerEpochStore {
         self.metrics
             .dwallet_handoff_signatures_stake
             .set(aggregator_stake as i64);
-        // A restart past quorum re-mints the cert in memory during the
-        // replay above without going through `record_handoff_signature`'s
-        // `Certified` arm — re-seed the gauge here so a restart doesn't
-        // false-fire the cert-lag alert.
-        if let Some(cert_epoch) = replay_certified_epoch {
+        // A restart (or buffered-quorum) past quorum re-mints the cert in
+        // memory during the replay above without going through
+        // `record_handoff_signature`'s `Certified` arm. Re-seed the gauge so a
+        // restart doesn't false-fire the cert-lag alert AND persist the cert: it
+        // was minted here, not via the only other persist path, so without this
+        // a validator that crossed quorum via replay holds the cert in memory
+        // only, and a later restart or joiner-bootstrap read misses it (#1736:
+        // persist on every mint path).
+        if let Some(cert) = &replay_cert {
             self.metrics
                 .dwallet_handoff_cert_epoch
-                .set(cert_epoch as i64);
+                .set(cert.attestation.epoch as i64);
+            if let Some(perpetual) = self.perpetual_tables_for_handoff.load_full() {
+                if let Err(e) =
+                    perpetual.insert_certified_handoff_attestation(cert.attestation.epoch, cert)
+                {
+                    warn!(
+                        error = ?e,
+                        epoch = cert.attestation.epoch,
+                        "failed to persist replay-minted handoff cert — cert remains in-memory only"
+                    );
+                }
+            }
         }
         // Drain peer V2 signatures that arrived before this
         // attestation was installed. Each goes through
@@ -3144,6 +3163,61 @@ impl AuthorityPerEpochStore {
             .map(|authority| committee.weight(authority))
             .sum();
         Ok(stake >= committee.quorum_threshold())
+    }
+
+    /// Deterministic, consensus-sequenced check that a stake quorum of valid
+    /// handoff signatures has been recorded this epoch — i.e. a certified
+    /// handoff attestation can be minted. Sums the `handoff_signatures` table
+    /// (written only for signatures that validated against the expected
+    /// attestation) the same way `local_blob_coverage_meets_quorum` sums blob
+    /// coverage, so every validator evaluates the same value at the same
+    /// commit. Gates the epoch close (#1736): closing before this holds lets
+    /// the epoch close while no validator can mint the cert the next epoch's
+    /// prepare-then-start barrier requires.
+    pub fn handoff_signatures_meet_quorum(&self) -> IkaResult<bool> {
+        let committee = self.committee();
+        let stake: u64 = self
+            .tables()?
+            .handoff_signatures
+            .safe_iter()
+            .filter_map(Result::ok)
+            .map(|(signer, _)| committee.weight(&signer))
+            .sum();
+        Ok(stake >= committee.quorum_threshold())
+    }
+
+    /// Pure v4 epoch-close decision (#1736), factored out so the handoff-cert
+    /// coupling is unit-tested independently of the consensus machinery.
+    /// Returns `None` to keep waiting, `Some(false)` for a normal close
+    /// (handoff-cert quorum reached), `Some(true)` for a liveness-backstop close
+    /// (the quorum could not form within the bounded backstop window).
+    ///
+    /// The close requires the existing EndOfPublish readiness (`eop_ready` = all
+    /// voted, or the grace elapsed) AND a handoff-cert quorum — EXCEPT after the
+    /// backstop (a small multiple of the EndOfPublish grace), which closes
+    /// regardless to preserve liveness against a genuinely non-signing
+    /// validator. The close never fires before EndOfPublish readiness.
+    fn decide_v4_epoch_close(
+        eop_ready: bool,
+        handoff_cert_quorum: bool,
+        rounds_since_quorum: u64,
+        end_of_publish_grace_rounds: u64,
+    ) -> Option<bool> {
+        /// How many EndOfPublish-grace windows to wait for the handoff-cert
+        /// quorum before closing on the liveness backstop.
+        const HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER: u64 = 4;
+        if !eop_ready {
+            return None;
+        }
+        if handoff_cert_quorum {
+            Some(false)
+        } else if rounds_since_quorum
+            >= end_of_publish_grace_rounds.saturating_mul(HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER)
+        {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// Records an `EpochMpcDataReadySignal`. A signer's signal may
@@ -4094,9 +4168,44 @@ impl AuthorityPerEpochStore {
                 // fixed +1 per commit — rounds skip when a leader is not
                 // committed — so the grace is measured as the leader-round
                 // DELTA since quorum (robust to skips), not a commit count.
-                let grace_elapsed = consensus_commit_info.round.saturating_sub(quorum_round)
-                    >= self.protocol_config().end_of_publish_grace_rounds();
-                if all_voted || grace_elapsed {
+                let rounds_since_quorum = consensus_commit_info.round.saturating_sub(quorum_round);
+                let grace_elapsed =
+                    rounds_since_quorum >= self.protocol_config().end_of_publish_grace_rounds();
+                let eop_ready = all_voted || grace_elapsed;
+
+                // #1736: the next epoch's prepare-then-start barrier (ika-node)
+                // blocks until it holds a certified handoff attestation — a
+                // stake quorum of valid handoff signatures, carried in the
+                // sequenced `EndOfPublishV2` bundles and recorded in
+                // `handoff_signatures`. The EndOfPublish *vote* is counted even
+                // when a validator's bundled handoff signature is REJECTED, so
+                // closing on the EndOfPublish grace alone can close the epoch
+                // while the handoff cert is born on NO validator — every
+                // validator then blocks at the barrier and the chain wedges.
+                // Require the handoff-cert quorum before closing. NOTE: this gate
+                // is NOT a pure consensus function. The `handoff_signatures` table
+                // is written in consensus order, but WHETHER a row exists at a
+                // given round also depends on off-consensus state — this
+                // validator's `expected_handoff_attestation` install and its
+                // consensus-pubkey provider (a ~5s background Sui poll); until
+                // both are present, sequenced `EndOfPublishV2` bundles buffer and
+                // write no row. So close-determinism does NOT come from this gate
+                // being a deterministic function of the sequence; it comes from
+                // buffered-quorum adoption (a lagging validator reaches quorum
+                // from peers' signatures at the same sequenced bundle index) plus
+                // the `grace*4` liveness backstop in `decide_v4_epoch_close`.
+                let handoff_cert_quorum = self.handoff_signatures_meet_quorum()?;
+
+                // The close decision (and the liveness backstop for a genuinely
+                // non-signing validator) is the pure, unit-tested
+                // `decide_v4_epoch_close`: `Some(on_backstop)` closes, `None`
+                // keeps waiting for the handoff-cert quorum.
+                if let Some(backstop_close) = Self::decide_v4_epoch_close(
+                    eop_ready,
+                    handoff_cert_quorum,
+                    rounds_since_quorum,
+                    self.protocol_config().end_of_publish_grace_rounds(),
+                ) {
                     let (dwallet_close_messages, system_close_messages) =
                         self.build_epoch_close_checkpoint_messages()?;
                     for message in dwallet_close_messages {
@@ -4109,13 +4218,25 @@ impl AuthorityPerEpochStore {
                     // restart cannot re-emit the close set at a later commit.
                     output.set_epoch_close_emitted();
                     self.reconfig_state.write().status = ReconfigCertStatus::RejectAllTx;
-                    info!(
-                        validator = ?self.name,
-                        quorum_round,
-                        close_round = consensus_commit_info.round,
-                        all_voted,
-                        "EndOfPublish grace elapsed — closing the epoch",
-                    );
+                    if backstop_close {
+                        warn!(
+                            validator = ?self.name,
+                            quorum_round,
+                            close_round = consensus_commit_info.round,
+                            "closing the epoch on the handoff-cert liveness backstop WITHOUT a \
+                             handoff-cert quorum — the next epoch may stall at the \
+                             prepare-then-start barrier; investigate validators that did not \
+                             contribute a valid handoff signature",
+                        );
+                    } else {
+                        info!(
+                            validator = ?self.name,
+                            quorum_round,
+                            close_round = consensus_commit_info.round,
+                            all_voted,
+                            "EndOfPublish + handoff-cert quorum reached — closing the epoch",
+                        );
+                    }
                 }
             }
         }
@@ -5204,13 +5325,458 @@ impl From<LockDetails> for LockDetailsWrapper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
+    use crate::dwallet_checkpoints::DWalletCheckpointService;
+    use crate::handoff_cert::{
+        StaticConsensusPubkeyProvider, build_handoff_attestation, sign_handoff_attestation,
+    };
     use dwallet_mpc_types::dwallet_mpc::DWalletSignatureAlgorithm;
+    use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PrivateKey, Ed25519Signature};
+    use fastcrypto::traits::{KeyPair, ToFromBytes};
     use ika_types::messages_dwallet_mpc::{SessionIdentifier, SessionType};
+    use prometheus::Registry;
     use sui_types::base_types::ObjectID;
 
     fn create_tables() -> AuthorityEpochTables {
         let dir = tempfile::tempdir().unwrap();
         AuthorityEpochTables::open(0, dir.path(), None)
+    }
+
+    /// #1736: the v4 epoch close must require a handoff-cert quorum (not just
+    /// EndOfPublish readiness), with a bounded liveness backstop.
+    #[test]
+    fn v4_epoch_close_requires_handoff_cert_quorum() {
+        let grace = 50u64;
+        let backstop = grace * 4; // HANDOFF_CERT_BACKSTOP_GRACE_MULTIPLIER
+        let decide = AuthorityPerEpochStore::decide_v4_epoch_close;
+
+        // Not EndOfPublish-ready: never close, regardless of the cert quorum or
+        // how many rounds have passed.
+        assert_eq!(decide(false, false, 0, grace), None);
+        assert_eq!(decide(false, true, backstop, grace), None);
+
+        // EndOfPublish-ready AND handoff-cert quorum: normal close.
+        assert_eq!(decide(true, true, 0, grace), Some(false));
+        assert_eq!(decide(true, true, grace, grace), Some(false));
+
+        // THE #1736 GUARANTEE: EndOfPublish-ready but NO handoff-cert quorum —
+        // do NOT close before the backstop, however long the EndOfPublish grace
+        // alone has elapsed. (Pre-fix this closed at `grace`, with no cert.)
+        assert_eq!(decide(true, false, grace, grace), None);
+        assert_eq!(decide(true, false, backstop - 1, grace), None);
+
+        // Backstop reached without a handoff-cert quorum: close on the backstop
+        // (liveness), flagged as a backstop close.
+        assert_eq!(decide(true, false, backstop, grace), Some(true));
+        assert_eq!(decide(true, false, backstop + 100, grace), Some(true));
+
+        // Quorum arriving exactly at the backstop round is a normal close, not a
+        // backstop close.
+        assert_eq!(decide(true, true, backstop, grace), Some(false));
+
+        // Degenerate zero-grace config collapses the backstop to 0: close as
+        // soon as EndOfPublish-ready, never blocking.
+        assert_eq!(decide(true, false, 0, 0), Some(true));
+    }
+
+    /// #1736 WIRING test: drives the REAL v4 epoch-close path through
+    /// `process_consensus_transactions` (not the pure decision in isolation).
+    /// With EndOfPublish at quorum and the grace elapsed — but NOT all-voted —
+    /// the close must DEFER while `handoff_signatures` is sub-quorum, and FIRE
+    /// once the handoff-cert quorum forms. This proves the close is coupled to
+    /// the handoff-cert quorum, not EndOfPublish readiness alone.
+    ///
+    /// This DISCRIMINATES the fix from base: base closes on
+    /// `all_voted || grace_elapsed` with no handoff-cert gate, so it would close
+    /// at STEP 1 (reconfig flips to `RejectAllTx`, an `EndOfPublish` close
+    /// message is emitted) and FAIL the STEP 1 assertions.
+    #[tokio::test]
+    async fn v4_epoch_close_wiring_defers_until_handoff_cert_quorum() {
+        // Four equal-weight validators: quorum_threshold = 3, validity = 2.
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        // The tempdir must outlive the store (RocksDB needs the path live).
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        // The whole close block is gated on this protocol flag; assert it so a
+        // protocol-version drift fails loudly here, not silently.
+        assert!(
+            epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled(),
+            "off-chain-metadata gate must be on (protocol >= 4), else the close \
+             block is never reached"
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(
+            grace > 0,
+            "grace must be positive for this test to be meaningful"
+        );
+
+        // EndOfPublish at quorum but NOT all-voted (3 of 4): the close block
+        // reads the in-memory aggregator, which `record_end_of_publish_vote`
+        // does not populate, so seed it directly. 3 < 4 ⇒ all_voted = false, so
+        // EndOfPublish readiness hinges purely on the grace.
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(
+                end_of_publish.has_quorum(),
+                "EndOfPublish at quorum (3 of 4)"
+            );
+            assert_eq!(end_of_publish.keys().count(), 3, "not all-voted (3 < 4)");
+        }
+
+        // Anchor the grace countdown so the commit we drive is exactly
+        // grace-elapsed (rounds_since_quorum == grace ⇒ grace_elapsed) but below
+        // the backstop (grace < 4*grace) — the precise window where base closes
+        // and the fix defers.
+        let anchor = 100u64;
+        epoch_store
+            .tables()
+            .unwrap()
+            .end_of_publish_quorum_round
+            .insert(&0u64, &anchor)
+            .unwrap();
+        let close_window_round = anchor + grace;
+        let commit_info = ConsensusCommitInfo::new_for_test(close_window_round, 0, true);
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // Handoff signatures SUB-quorum (2 of 4 = validity threshold, < quorum
+        // 3). Only the signer KEYS are summed by weight, so the signature value
+        // is irrelevant to `handoff_signatures_meet_quorum`.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(2) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures must start sub-quorum (2 of 4)"
+        );
+
+        // STEP 1: EndOfPublish-ready (grace elapsed) + handoff sub-quorum.
+        // Fix: decide_v4_epoch_close(true, false, grace, grace) == None ⇒ defer.
+        // Base: `all_voted || grace_elapsed` == true ⇒ close (fails here).
+        let mut output = ConsensusCommitOutput::new(close_window_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "#1736: with the handoff-cert quorum missing the close must DEFER — \
+             reconfig must remain open (base closes here)"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736: no EndOfPublish close message may be emitted while the close \
+             is deferred (base emits one here)"
+        );
+
+        // STEP 2: bring the handoff signatures to quorum (the 3rd signer).
+        epoch_store
+            .tables()
+            .unwrap()
+            .handoff_signatures
+            .insert(&names[2], &dummy_signature)
+            .unwrap();
+        assert!(
+            epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures now at quorum (3 of 4)"
+        );
+
+        // Fix: decide_v4_epoch_close(true, true, grace, grace) == Some(false) ⇒
+        // close. A fresh output per commit (the output is a per-commit batch).
+        let mut output = ConsensusCommitOutput::new(close_window_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !epoch_store.should_accept_tx(),
+            "#1736: once EndOfPublish-ready AND the handoff-cert quorum holds, \
+             the close must fire — reconfig flips to RejectAllTx"
+        );
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736: the close must emit the EndOfPublish close message once both \
+             conditions hold"
+        );
+    }
+
+    /// #1736 LIVENESS BACKSTOP (wiring): EndOfPublish-ready but the handoff-cert
+    /// quorum never forms (handoff_signatures stays 2/4). The close must still
+    /// FIRE at the backstop (rounds_since_quorum == grace * 4) so a genuinely
+    /// non-signing validator cannot wedge the epoch open forever. Drives the
+    /// real `process_consensus_transactions` path, not the pure decision.
+    ///
+    /// Regression guard, not a fix/base discriminator (base also closes in this
+    /// window, earlier at `grace`): it fails loudly if the backstop is removed
+    /// or its multiplier changed — either of which would turn a permanently
+    /// missing cert quorum into an indefinite epoch hang.
+    #[tokio::test]
+    async fn v4_epoch_close_backstop_fires_without_handoff_cert_quorum() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        assert!(
+            epoch_store
+                .protocol_config()
+                .off_chain_validator_metadata_enabled(),
+            "off-chain-metadata gate must be on (protocol >= 4)"
+        );
+        let grace = epoch_store.protocol_config().end_of_publish_grace_rounds();
+        assert!(
+            grace > 0,
+            "grace must be positive for this test to be meaningful"
+        );
+
+        // EndOfPublish at quorum but not all-voted (3 of 4): readiness hinges on
+        // the grace. Seed the in-memory aggregator directly.
+        {
+            let mut end_of_publish = epoch_store.end_of_publish.lock();
+            for name in names.iter().take(3) {
+                end_of_publish.insert_generic(*name, ());
+            }
+            assert!(
+                end_of_publish.has_quorum(),
+                "EndOfPublish at quorum (3 of 4)"
+            );
+            assert_eq!(end_of_publish.keys().count(), 3, "not all-voted (3 < 4)");
+        }
+
+        let anchor = 100u64;
+        epoch_store
+            .tables()
+            .unwrap()
+            .end_of_publish_quorum_round
+            .insert(&0u64, &anchor)
+            .unwrap();
+
+        // Handoff signatures SUB-quorum (2 of 4) — and they STAY there: the
+        // quorum never forms in this test.
+        let dummy_signature = Ed25519Signature::from_bytes(&[0u8; 64]).unwrap();
+        for name in names.iter().take(2) {
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &dummy_signature)
+                .unwrap();
+        }
+        assert!(
+            !epoch_store.handoff_signatures_meet_quorum().unwrap(),
+            "handoff signatures stay sub-quorum (2 of 4) for the whole test"
+        );
+        let authority_metrics = Arc::new(AuthorityMetrics::new(&Registry::new()));
+
+        // One round BEFORE the backstop boundary (which is at
+        // rounds_since_quorum == grace*4, inclusive): must still DEFER.
+        let pre_backstop_round = anchor + grace * 4 - 1;
+        let commit_info = ConsensusCommitInfo::new_for_test(pre_backstop_round, 0, true);
+        let mut output = ConsensusCommitOutput::new(pre_backstop_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            epoch_store.should_accept_tx(),
+            "one round before the backstop the close must still DEFER"
+        );
+        assert!(
+            !dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "no EndOfPublish may be emitted before the backstop"
+        );
+
+        // AT the backstop (anchor + grace*4): the close must FIRE even though
+        // the handoff-cert quorum is permanently missing (a close at sub-quorum
+        // is necessarily the backstop close).
+        let backstop_round = anchor + grace * 4;
+        let commit_info = ConsensusCommitInfo::new_for_test(backstop_round, 0, true);
+        let mut output = ConsensusCommitOutput::new(backstop_round);
+        let (dwallet_messages, _system_messages, _notify_keys) = epoch_store
+            .process_consensus_transactions::<DWalletCheckpointService>(
+                &mut output,
+                &[],
+                &None,
+                &None::<Arc<SystemCheckpointService>>,
+                &commit_info,
+                &authority_metrics,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !epoch_store.should_accept_tx(),
+            "#1736 backstop: with the handoff-cert quorum permanently missing the \
+             close must FIRE at rounds_since_quorum == grace*4 (liveness)"
+        );
+        assert!(
+            dwallet_messages
+                .iter()
+                .any(|message| matches!(message, DWalletCheckpointMessageKind::EndOfPublish)),
+            "#1736 backstop: the backstop close must emit the EndOfPublish message"
+        );
+    }
+
+    /// #1736 (cert persistence): `install_expected_handoff_attestation` rebuilds
+    /// the aggregator from the persisted `handoff_signatures` table on install.
+    /// When that replay crosses quorum it mints the cert WITHOUT going through
+    /// `record_handoff_signature`'s `Certified` arm (the only other persist
+    /// path), so the install path must itself persist the replay-minted cert —
+    /// otherwise a validator that crossed quorum via replay holds the cert in
+    /// memory only and a later restart / joiner read misses it.
+    ///
+    /// Discriminates the fix from base: pre-fix the cert was minted in memory on
+    /// this path but never persisted, so the perpetual read below returned None.
+    #[tokio::test]
+    async fn install_expected_handoff_attestation_persists_replay_minted_cert() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        let committee = Arc::new(committee);
+        let names: Vec<AuthorityName> = committee.names().copied().collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let epoch_start_configuration =
+            EpochStartConfiguration::new(EpochStartSystem::new_for_testing_with_epoch(0)).unwrap();
+        let epoch_store = AuthorityPerEpochStore::new(
+            names[0],
+            committee.clone(),
+            dir.path(),
+            None,
+            EpochMetrics::new(&Registry::new()),
+            epoch_start_configuration,
+            ChainIdentifier::default(),
+            IkaNetworkConfig::new_for_testing(),
+        )
+        .unwrap();
+
+        // Deterministic Ed25519 consensus keypairs (seeded — avoids the
+        // multiple-rand-version conflict that bites direct generate() in
+        // ika-core tests), one per validator, mapped to the committee names so
+        // the replay's signature re-verification accepts them.
+        let consensus_keypairs: Vec<Ed25519KeyPair> = (0..names.len())
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = (i + 1) as u8;
+                Ed25519KeyPair::from(Ed25519PrivateKey::from_bytes(&seed).unwrap())
+            })
+            .collect();
+        let provider = StaticConsensusPubkeyProvider::from_iter(
+            names
+                .iter()
+                .zip(&consensus_keypairs)
+                .map(|(name, keypair)| (*name, keypair.public().clone())),
+        );
+        epoch_store.install_consensus_pubkey_provider(Box::new(provider));
+
+        // Perpetual tables in their own tempdir, installed the way node startup
+        // does — without this the replay-mint persist is a silent no-op.
+        let perpetual_dir = tempfile::tempdir().unwrap();
+        let perpetual_tables = Arc::new(AuthorityPerpetualTables::open(perpetual_dir.path(), None));
+        epoch_store.install_perpetual_tables_for_handoff(perpetual_tables.clone());
+
+        // The attestation this validator expects to certify (empty items: only
+        // the persistence round-trip is under test).
+        let epoch = 0u64;
+        let attestation = build_handoff_attestation(epoch, [0xABu8; 32], vec![]).unwrap();
+
+        // Persist a quorum (3 of 4) of REAL handoff signatures over it. install
+        // replays these into a fresh aggregator; at the 3rd it crosses quorum and
+        // mints the cert during replay.
+        for (name, keypair) in names.iter().zip(&consensus_keypairs).take(3) {
+            let message = sign_handoff_attestation(attestation.clone(), *name, keypair);
+            epoch_store
+                .tables()
+                .unwrap()
+                .handoff_signatures
+                .insert(name, &message.signature)
+                .unwrap();
+        }
+
+        assert!(
+            perpetual_tables
+                .get_certified_handoff_attestation(epoch)
+                .unwrap()
+                .is_none(),
+            "no cert should be persisted before install"
+        );
+
+        epoch_store
+            .install_expected_handoff_attestation(attestation)
+            .unwrap();
+
+        assert!(
+            perpetual_tables
+                .get_certified_handoff_attestation(epoch)
+                .unwrap()
+                .is_some(),
+            "#1736: install_expected_handoff_attestation must persist the cert it \
+             mints during signature replay (pre-fix it stayed in memory only)"
+        );
     }
 
     fn make_session_id(preimage: [u8; 32]) -> SessionIdentifier {

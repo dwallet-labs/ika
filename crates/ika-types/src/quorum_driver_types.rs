@@ -12,12 +12,20 @@ use strum::AsRefStr;
 use sui_types::base_types::{AuthorityName, EpochId, ObjectRef, TransactionDigest};
 use sui_types::crypto::{AuthorityStrongQuorumSignInfo, ConciseAuthorityPublicKeyBytes};
 use sui_types::effects::{
-    CertifiedTransactionEffects, TransactionEffects, TransactionEvents,
-    VerifiedCertifiedTransactionEffects,
+    TransactionEffects, TransactionEffectsEnvelope, TransactionEvents,
+    VerifiedTransactionEffectsEnvelope,
 };
 use sui_types::object::Object;
 use sui_types::transaction::{Transaction, VerifiedTransaction};
 use thiserror::Error;
+
+// `CertifiedTransactionEffects` / `VerifiedCertifiedTransactionEffects` were
+// removed from `sui_types::effects` in mainnet-v1.73.2 (Sui's quorum driver no
+// longer produces certified effects). ika still models them in its quorum-driver
+// types, so define the same aliases over the still-present envelope types.
+pub type CertifiedTransactionEffects = TransactionEffectsEnvelope<AuthorityStrongQuorumSignInfo>;
+pub type VerifiedCertifiedTransactionEffects =
+    VerifiedTransactionEffectsEnvelope<AuthorityStrongQuorumSignInfo>;
 
 pub type QuorumDriverResult = Result<QuorumDriverResponse, QuorumDriverError>;
 
