@@ -35,9 +35,7 @@
 use std::sync::Arc;
 
 use anemo::PeerId;
-use ika_config::node::{
-    SuiChainIdentifier, SuiConnectorConfig, SuiDataSource, compiled_in_trusted_anchor,
-};
+use ika_config::node::{SuiConnectorConfig, SuiDataSource};
 use ika_network::proof_provider::{
     LocalProofProvider, ProofCacheConfig, ProofProvider, ProofProviderMetrics,
 };
@@ -63,8 +61,6 @@ use crate::sui_connector::verified_reader::OcsVerifiedReader;
 use crate::sui_connector::verified_state_cache::{SharedVerifiedStateCache, VerifiedStateCache};
 use parking_lot::RwLock;
 use std::time::Duration;
-use sui_types::digests::CheckpointDigest;
-use sui_types::messages_checkpoint::CertifiedCheckpointSummary;
 
 pub struct SuiConnectorStack {
     /// Verified-read surface used by all consumers.
@@ -111,25 +107,11 @@ pub enum SetupError {
     )]
     ArtifactsDigestUnsupported,
     #[error(
-        "both `sui_trusted_anchor` and `sui_unsafe_genesis_committee` are set; \
-         these are mutually exclusive"
-    )]
-    BothBootstrapsSet,
-    #[error(
-        "anchor digest mismatch: fetched summary at digest {fetched:?} but config pinned {pinned:?}"
-    )]
-    AnchorDigestMismatch {
-        fetched: CheckpointDigest,
-        pinned: CheckpointDigest,
-    },
-    #[error("anchor summary at digest {0:?} is not end-of-epoch (no end_of_epoch_data)")]
-    AnchorNotEndOfEpoch(CheckpointDigest),
-    #[error(
         "persisted OCS committee state could not be deserialized ({0}); this usually \
          means a Sui version upgrade changed its on-disk format. To recover, clear the \
-         node's OCS committee tables and restart with the trust anchor configured so it \
-         re-anchors and re-ratchets — or set `auto_reanchor_on_format_change = true` to \
-         do this automatically."
+         node's OCS committee tables and restart so it re-bootstraps from the genesis \
+         blob and re-ratchets — or set `auto_reanchor_on_format_change = true` to do \
+         this automatically."
     )]
     PersistedCommitteeUnreadable(String),
     #[error("transport: {0}")]
@@ -153,87 +135,48 @@ pub enum SetupError {
 /// - `UnsafeGenesis(committee)`: install this committee[0] directly.
 pub enum BootstrapPlan {
     Hydrated,
-    Anchor(CheckpointDigest),
+    /// Localnet/test: install this epoch-0 committee directly.
     UnsafeGenesis(sui_types::committee::Committee),
     /// Genesis-rooted: load the configured `sui_genesis` blob, verify its
     /// genesis checkpoint digest against the compiled-in chain identifier, and
-    /// install `committee[0]`. Supersedes the anchor; the caller does the I/O.
+    /// install `committee[0]`. The caller does the I/O.
     Genesis,
 }
 
 pub fn resolve_bootstrap_plan(
     cfg: &SuiConnectorConfig,
-    chain: SuiChainIdentifier,
     perpetual: &AuthorityPerpetualTables,
 ) -> Result<BootstrapPlan, SetupError> {
     if let Some(head) = perpetual
         .highest_sui_committee_epoch()
         .map_err(SetupError::Ika)?
     {
-        // Perpetual committee state always wins over a configured anchor:
-        // the anchor is a first-boot seed, and configs carry it forever, so
-        // re-reading it on every restart would re-anchor the node each time.
-        // The flip side: an operator re-anchoring to recover from
-        // ProofChainBroken must clear the OCS committee tables for the new
-        // anchor to take effect — say so out loud instead of silently
-        // ignoring their config change.
-        if cfg.sui_trusted_anchor.is_some() || cfg.sui_unsafe_genesis_committee.is_some() {
+        // Perpetual committee state always wins over a configured genesis seed:
+        // the seed is a first-boot bootstrap, and configs carry it forever, so
+        // re-reading it on every restart would re-bootstrap the node each time.
+        // To force a re-bootstrap, clear the OCS committee tables — say so out
+        // loud instead of silently ignoring a config change.
+        if cfg.sui_genesis.is_some() || cfg.sui_unsafe_genesis_committee.is_some() {
             tracing::info!(
                 perpetual_head_epoch = head,
                 "OCS bootstrap: using the perpetual committee chain; the configured \
-                 trust anchor is only read on first boot. To force a re-anchor \
-                 (e.g. after ProofChainBroken), clear the node's OCS committee \
-                 tables so the next boot re-seeds from the configured anchor."
+                 genesis blob is only read on first boot. To re-bootstrap, clear the \
+                 node's OCS committee tables so the next boot re-seeds from genesis."
             );
         }
         return Ok(BootstrapPlan::Hydrated);
     }
-    // Genesis-rooted bootstrap supersedes the (legacy weak-subjectivity) anchor
-    // when a genesis blob is configured: it is the stronger trust root, verified
-    // against the compiled-in chain identifier. The caller loads + verifies it.
+    // Genesis-rooted bootstrap: load + verify the configured genesis blob.
     if cfg.sui_genesis.is_some() {
         return Ok(BootstrapPlan::Genesis);
     }
-    let override_anchor = cfg.sui_trusted_anchor;
-    let unsafe_genesis = cfg.sui_unsafe_genesis_committee.clone();
-    if override_anchor.is_some() && unsafe_genesis.is_some() {
-        return Err(SetupError::BothBootstrapsSet);
-    }
-    if let Some(digest) = override_anchor {
-        return Ok(BootstrapPlan::Anchor(digest));
-    }
-    if let Some(committee) = unsafe_genesis {
+    // Localnet/test: an explicit epoch-0 committee seed.
+    if let Some(committee) = cfg.sui_unsafe_genesis_committee.clone() {
         return Ok(BootstrapPlan::UnsafeGenesis(committee));
-    }
-    if let Some(digest) = compiled_in_trusted_anchor(chain) {
-        return Ok(BootstrapPlan::Anchor(digest));
     }
     // Caller treats this as "no OCS configured; skip" only when the
     // node mode permits it. For validators we error in node startup.
     Ok(BootstrapPlan::Hydrated)
-}
-
-/// Apply the trust-anchor gate to a fetched `CertifiedCheckpointSummary`: the
-/// fetched summary's RECOMPUTED digest is the source of truth. The upstream is
-/// untrusted, so we only accept when the digest matches the operator-pinned
-/// value byte-for-byte, and the summary must be end-of-epoch (it is where
-/// `committee[E+1]` is extracted from). Both gates fail closed; on success the
-/// caller bootstraps the committee store from the summary.
-fn verify_anchor_summary(
-    summary: CertifiedCheckpointSummary,
-    pinned: CheckpointDigest,
-) -> Result<CommitteeBootstrap, SetupError> {
-    let fetched_digest = sui_types::message_envelope::Message::digest(summary.data());
-    if fetched_digest != pinned {
-        return Err(SetupError::AnchorDigestMismatch {
-            fetched: fetched_digest,
-            pinned,
-        });
-    }
-    if summary.data().end_of_epoch_data.is_none() {
-        return Err(SetupError::AnchorNotEndOfEpoch(pinned));
-    }
-    Ok(CommitteeBootstrap::EndOfEpoch(summary))
 }
 
 /// The role-dependent transports + provider resolved from the data source: the
@@ -360,18 +303,9 @@ pub async fn build_sui_connector_stack(
     //    store → ratchet client. The anchor digest is the trust gate;
     //    the fetched summary's digest must match exactly. If unset,
     //    the unsafe-genesis-committee path takes over (localnet only).
-    let plan = resolve_bootstrap_plan(cfg, cfg.sui_chain_identifier, &perpetual)?;
+    let plan = resolve_bootstrap_plan(cfg, &perpetual)?;
     let bootstrap = match plan {
         BootstrapPlan::Hydrated => None,
-        BootstrapPlan::Anchor(digest) => {
-            let summary = raw_for_ratchet
-                .get_checkpoint_summary_by_digest(digest)
-                .await
-                .map_err(|e| {
-                    SetupError::Transport(format!("get_checkpoint_summary_by_digest: {e}"))
-                })?;
-            Some(verify_anchor_summary(summary, digest)?)
-        }
         BootstrapPlan::UnsafeGenesis(committee) => {
             warn!(
                 epoch = committee.epoch,
@@ -611,48 +545,14 @@ async fn probe_artifacts_digest(transport: &Arc<dyn SuiTransport>) -> Result<(),
 mod tests {
     use super::*;
 
-    use ika_config::node::SuiDataSource;
+    use ika_config::node::{SuiChainIdentifier, SuiDataSource};
     use sui_types::base_types::ObjectID;
-    use sui_types::committee::{Committee, ProtocolVersion};
-    use sui_types::crypto::AuthorityKeyPair;
-    use sui_types::gas::GasCostSummary;
-    use sui_types::message_envelope::Message;
-    use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSummary, EndOfEpochData};
-
-    /// A committee-signed `CertifiedCheckpointSummary` at `committee`'s epoch.
-    /// `end_of_epoch` toggles whether it carries `end_of_epoch_data` (and thus
-    /// passes the anchor's end-of-epoch gate). Built the same way as the
-    /// pusher/ratchet tests so the recomputed `Message::digest` is stable.
-    fn signed_summary(
-        committee: &Committee,
-        keys: &[AuthorityKeyPair],
-        end_of_epoch: bool,
-    ) -> CertifiedCheckpointSummary {
-        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
-        let end_of_epoch_data = end_of_epoch.then(|| EndOfEpochData {
-            next_epoch_committee: committee.voting_rights.clone(),
-            next_epoch_protocol_version: ProtocolVersion::MIN,
-            epoch_commitments: vec![],
-        });
-        let summary = CheckpointSummary {
-            epoch: committee.epoch(),
-            sequence_number: 42,
-            network_total_transactions: 0,
-            content_digest: *contents.digest(),
-            previous_digest: None,
-            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
-            timestamp_ms: 0,
-            checkpoint_commitments: vec![],
-            end_of_epoch_data,
-            version_specific_data: Vec::new(),
-        };
-        CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee)
-    }
+    use sui_types::committee::Committee;
 
     /// Minimal `SuiConnectorConfig` for `resolve_bootstrap_plan`: only the
-    /// anchor / unsafe-genesis / chain-identifier fields it reads matter; the
-    /// rest are filler. (Mirrors the swarm node-config builder's construction.)
-    fn config_with_anchor(sui_trusted_anchor: Option<CheckpointDigest>) -> SuiConnectorConfig {
+    /// genesis / unsafe-genesis / chain-identifier fields it reads matter; the
+    /// rest are filler.
+    fn minimal_config(sui_genesis: Option<std::path::PathBuf>) -> SuiConnectorConfig {
         SuiConnectorConfig {
             sui_rpc_url: None,
             sui_data_source: Some(SuiDataSource::SuiStateDirect {
@@ -660,9 +560,8 @@ mod tests {
                 serve_mirror: false,
             }),
             sui_state_mirror_peers: vec![],
-            sui_trusted_anchor,
             sui_unsafe_genesis_committee: None,
-            sui_genesis: None,
+            sui_genesis,
             sui_checkpoint_archive: None,
             allow_unverified_committee_fallback: false,
             auto_reanchor_on_format_change: false,
@@ -680,58 +579,38 @@ mod tests {
         }
     }
 
-    /// The anchor trust gate accepts a fetched summary ONLY when its RECOMPUTED
-    /// digest matches the operator-pinned value byte-for-byte. A summary whose
-    /// real digest differs from the pinned digest is rejected with
-    /// `AnchorDigestMismatch` (and no committee is installed -- the caller never
-    /// reaches `CommitteeStore::open`).
-    #[test]
-    fn anchor_digest_mismatch_is_rejected() {
-        let (committee, keys) = Committee::new_simple_test_committee();
-        let summary = signed_summary(&committee, &keys, true);
-        let real_digest = Message::digest(summary.data());
-        // Pin a different digest than the summary actually hashes to.
-        let pinned = CheckpointDigest::random();
-        assert_ne!(real_digest, pinned);
-
-        // Avoid `unwrap_err` (the Ok type `CommitteeBootstrap` isn't `Debug`).
-        match verify_anchor_summary(summary, pinned) {
-            Err(SetupError::AnchorDigestMismatch { fetched, pinned: p }) => {
-                assert_eq!(fetched, real_digest, "reports the recomputed digest");
-                assert_eq!(p, pinned, "reports the operator-pinned digest");
-            }
-            Err(other) => panic!("expected AnchorDigestMismatch, got {other:?}"),
-            Ok(_) => panic!("a digest-mismatched anchor must be rejected"),
-        }
+    /// A fresh node (no perpetual committees) with a configured `sui_genesis`
+    /// blob resolves to the genesis-rooted bootstrap plan.
+    #[tokio::test]
+    async fn fresh_node_with_genesis_resolves_to_genesis_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = AuthorityPerpetualTables::open(dir.path(), None);
+        let cfg = minimal_config(Some(std::path::PathBuf::from("/unused/genesis.blob")));
+        let plan = resolve_bootstrap_plan(&cfg, &perpetual).unwrap();
+        assert!(
+            matches!(plan, BootstrapPlan::Genesis),
+            "a configured genesis blob must resolve to the genesis bootstrap"
+        );
     }
 
-    /// Even when the digest matches the pin, the anchor MUST be an end-of-epoch
-    /// summary (that is where `committee[E+1]` is extracted from). A digest-
-    /// matching summary with `end_of_epoch_data = None` is rejected with
-    /// `AnchorNotEndOfEpoch`.
-    #[test]
-    fn anchor_not_end_of_epoch_is_rejected() {
-        let (committee, keys) = Committee::new_simple_test_committee();
-        let summary = signed_summary(&committee, &keys, false);
-        // Pin the summary's REAL digest so the digest gate passes and the
-        // end-of-epoch gate is the one that fires.
-        let pinned = Message::digest(summary.data());
-        assert!(summary.data().end_of_epoch_data.is_none());
-
-        match verify_anchor_summary(summary, pinned) {
-            Err(SetupError::AnchorNotEndOfEpoch(d)) => assert_eq!(d, pinned),
-            Err(other) => panic!("expected AnchorNotEndOfEpoch, got {other:?}"),
-            Ok(_) => panic!("a non-end-of-epoch anchor must be rejected"),
-        }
+    /// A fresh node with neither a genesis blob nor an unsafe-genesis committee
+    /// is `Hydrated` (the caller decides whether that's an error for its role).
+    #[tokio::test]
+    async fn fresh_node_without_bootstrap_is_hydrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = AuthorityPerpetualTables::open(dir.path(), None);
+        let cfg = minimal_config(None);
+        let plan = resolve_bootstrap_plan(&cfg, &perpetual).unwrap();
+        assert!(matches!(plan, BootstrapPlan::Hydrated));
     }
 
     /// Invariant: perpetual committee state ALWAYS wins over a configured
-    /// anchor. With a committee already installed (head set), resolving the
-    /// bootstrap plan with a DIFFERENT `sui_trusted_anchor` set returns
-    /// `Hydrated` -- the anchor is a first-boot seed and is ignored once the
-    /// node has verified past it (re-anchoring requires wiping the tables).
+    /// genesis seed. With a committee already installed, resolving the bootstrap
+    /// plan returns `Hydrated` even with `sui_genesis` set — the seed is a
+    /// first-boot bootstrap, ignored once the node has verified past it
+    /// (re-bootstrapping requires wiping the tables).
     #[tokio::test]
-    async fn perpetual_state_overrides_reconfigured_anchor() {
+    async fn perpetual_state_overrides_configured_genesis() {
         let dir = tempfile::tempdir().unwrap();
         let perpetual = AuthorityPerpetualTables::open(dir.path(), None);
         // Install a committee -> head is set, so the node is "hydrated".
@@ -742,12 +621,12 @@ mod tests {
             Some(committee.epoch)
         );
 
-        // A different anchor in the config must NOT re-anchor.
-        let cfg = config_with_anchor(Some(CheckpointDigest::random()));
-        let plan = resolve_bootstrap_plan(&cfg, cfg.sui_chain_identifier, &perpetual).unwrap();
+        // A configured genesis blob must NOT re-bootstrap.
+        let cfg = minimal_config(Some(std::path::PathBuf::from("/unused/genesis.blob")));
+        let plan = resolve_bootstrap_plan(&cfg, &perpetual).unwrap();
         assert!(
             matches!(plan, BootstrapPlan::Hydrated),
-            "perpetual committee state must override the reconfigured anchor"
+            "perpetual committee state must override the configured genesis"
         );
     }
 }

@@ -366,33 +366,22 @@ impl IkaNode {
         // JSON-RPC. The decision mirrors `ocs_enabled` further down and must
         // be made before constructing `sui_client` so the right backend is
         // built. See the OCS startup comment below for the data-source modes.
-        use ika_config::node::{
-            SuiDataSource, SuiTransportPlan, compiled_in_trusted_anchor, select_sui_transport,
-        };
+        use ika_config::node::{SuiDataSource, SuiTransportPlan, select_sui_transport};
         let perpetual_has_committees = perpetual_tables
             .highest_sui_committee_epoch()
             .map_err(|e| anyhow!("read sui_committee_head: {e}"))?
             .is_some();
+        // A node runs the OCS (gRPC) path once it has a Sui committee trust
+        // root: an already-verified perpetual committee chain, a configured
+        // genesis blob (the genesis-rooted root, verified against the compiled-in
+        // chain identifier), or — on localnet/test — an explicit epoch-0
+        // committee.
         let has_anchor = perpetual_has_committees
-            || config.sui_connector_config.sui_trusted_anchor.is_some()
+            || config.sui_connector_config.sui_genesis.is_some()
             || config
                 .sui_connector_config
                 .sui_unsafe_genesis_committee
-                .is_some()
-            // Genesis-rooted bootstrap: a configured Sui genesis blob is a trust
-            // root (verified against the compiled-in chain identifier), so it
-            // enables OCS the same way an anchor does.
-            || config.sui_connector_config.sui_genesis.is_some()
-            // The compiled-in anchor is a binary default, not operator intent.
-            // Gate it on a new-style config: otherwise, once release tooling
-            // bakes a digest for this chain, every old-style (JSON-RPC) node
-            // would silently gain an anchor and trip the no-data-source boot
-            // guard. The explicit anchors above still force OCS regardless — an
-            // operator who sets one on an old-style config *should* be told to
-            // add a sui-data-source.
-            || (config.sui_connector_config.sui_data_source.is_some()
-                && compiled_in_trusted_anchor(config.sui_connector_config.sui_chain_identifier)
-                    .is_some());
+                .is_some();
 
         // --- Read-independent boot infrastructure, hoisted above the Sui
         // bootstrap reads below. A peer-only validator (sui-state-mirrored with

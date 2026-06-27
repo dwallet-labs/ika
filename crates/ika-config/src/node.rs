@@ -194,28 +194,6 @@ impl fmt::Display for SuiChainIdentifier {
     }
 }
 
-/// Returns the binary's compiled-in trusted anchor digest for a given
-/// chain, if any. Production validators paste a fresh anchor in their
-/// node config; this is the fallback for testnet/devnet release builds
-/// shipped with a known-good digest.
-///
-/// Mainnet: `None` until Sui mainnet enables
-/// `include_checkpoint_artifacts_digest_in_summary` (currently on
-/// protocol v121, the flag lands in v122). When that ships, CI
-/// regenerates this with a real digest.
-///
-/// Testnet/Devnet: `None` for now — to be filled in by release tooling
-/// that queries the upstream Sui RPC for a recent end-of-epoch
-/// checkpoint and bakes the digest here. Operators use the
-/// `sui_trusted_anchor` config field to provide their own digest in the
-/// meantime.
-pub fn compiled_in_trusted_anchor(
-    _chain: SuiChainIdentifier,
-) -> Option<sui_types::digests::CheckpointDigest> {
-    // TODO(release-eng): generate per-chain digests via CI from a known-good Sui RPC.
-    None
-}
-
 /// Where this validator gets Sui state from.
 ///
 /// `SuiStateDirect` runs against a Sui fullnode reachable over gRPC, and
@@ -415,20 +393,6 @@ pub struct SuiConnectorConfig {
     /// don't implement the service to error fast).
     #[serde(default)]
     pub sui_state_mirror_peers: Vec<String>,
-    /// Trust anchor: digest of an end-of-epoch
-    /// `CertifiedCheckpointSummary`. At boot the validator looks the
-    /// summary up by digest, asserts `summary.digest() == this`,
-    /// extracts `committee[E+1]` from `end_of_epoch_data`, and
-    /// installs it. The value is the digest of an end-of-epoch
-    /// `CertifiedCheckpointSummary`; obtain it from a trusted Sui fullnode
-    /// (the last checkpoint of a recent epoch).
-    ///
-    /// Ignored when the perpetual `sui_committees` table already
-    /// contains entries (we've already verified past this point). To
-    /// force re-anchoring, wipe the perpetual
-    /// `sui_committees`/`sui_committee_head` columns first.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sui_trusted_anchor: Option<sui_types::digests::CheckpointDigest>,
     /// Genesis bootstrap committee for chains that haven't reached
     /// their first end-of-epoch yet (brand-new localnets, fresh-init
     /// testnet). Used as `committee[0]`. Mutually exclusive with

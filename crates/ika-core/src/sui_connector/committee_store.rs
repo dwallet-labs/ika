@@ -99,14 +99,13 @@ pub enum CommitteeTransitionError {
 }
 
 pub enum CommitteeBootstrap {
-    /// Production path: a `CertifiedCheckpointSummary` whose digest the
-    /// caller has already validated against the operator-pinned anchor.
-    /// Must be end-of-epoch — `committee[E+1]` is derived from
-    /// `summary.end_of_epoch_data`.
-    EndOfEpoch(CertifiedCheckpointSummary),
-    /// Localnet/test path: explicit epoch-0 committee. Skips the
-    /// digest-anchored trust gate entirely; only used when the chain
-    /// hasn't reached its first end-of-epoch.
+    /// Install `committee[0]` directly. The committee comes from a verified Sui
+    /// genesis blob (the genesis-rooted production path) or, on localnet/test,
+    /// from the chain's epoch-0 committee fetched over RPC. The OCS ratchet then
+    /// walks the end-of-epoch checkpoint chain forward from here. (The name is
+    /// retained from the pre-genesis-blob era; on a public chain the genesis
+    /// blob is verified against the compiled-in chain identifier, so it is no
+    /// longer unsafe.)
     UnsafeGenesis(SuiCommittee),
 }
 
@@ -161,15 +160,11 @@ impl CommitteeStore {
                 let bootstrap = bootstrap.ok_or_else(|| {
                     IkaError::SuiClientInternalError(
                         "OCS verifier needs bootstrap material: perpetual Sui committee state is \
-                         empty and no `sui_trusted_anchor` / `sui_unsafe_genesis_committee` was \
-                         provided"
+                         empty and no `sui_genesis` / `sui_unsafe_genesis_committee` was provided"
                             .to_string(),
                     )
                 })?;
                 match bootstrap {
-                    CommitteeBootstrap::EndOfEpoch(summary) => {
-                        store.install_end_of_epoch(&summary)?
-                    }
                     CommitteeBootstrap::UnsafeGenesis(committee) => {
                         store.install_unsafe_genesis(committee)?
                     }
@@ -179,39 +174,7 @@ impl CommitteeStore {
         Ok(store)
     }
 
-    /// End-of-epoch bootstrap: the caller has digest-verified the summary,
-    /// asserted `end_of_epoch_data.is_some()`, and is handing us a trusted
-    /// summary at epoch `E`. We persist it; `committee[E+1]` is derived from
-    /// `next_epoch_committee` and head sits at `E+1`. `committee[E]` itself
-    /// isn't installed — the ratchet doesn't verify older summaries, and we
-    /// trust the operator-pinned digest, not a BLS chain through `committee[E]`.
-    fn install_end_of_epoch(&self, summary: &CertifiedCheckpointSummary) -> IkaResult<()> {
-        let next_committee = extract_new_committee_info(summary).map_err(|e| {
-            IkaError::SuiClientInternalError(format!(
-                "trusted-anchor summary marked end-of-epoch but next_epoch_committee missing: {e}"
-            ))
-        })?;
-        let summary_epoch = summary.epoch();
-        let head_epoch = summary_epoch + 1;
-        // Records the summary AND advances head to summary.epoch()+1. The
-        // install lock makes the persisted-head read-max-write atomic vs the
-        // other concurrent installers; `fetch_max` keeps the in-memory head
-        // monotonic so a staggered lower install can never regress it.
-        let _install = self
-            .install_lock
-            .lock()
-            .expect("committee install lock poisoned");
-        self.tables.record_sui_committee_transition(summary)?;
-        self.head.fetch_max(head_epoch, Ordering::Relaxed);
-        self.cache_committee(head_epoch, next_committee);
-        info!(
-            anchor_epoch = summary_epoch,
-            head_epoch, "installed Sui trusted anchor (digest-verified end-of-epoch summary)"
-        );
-        Ok(())
-    }
-
-    /// Unsafe-genesis bootstrap: install the operator-supplied `committee[0]`
+    /// Genesis bootstrap: install the supplied `committee[0]`
     /// directly (it has no preceding summary to derive from). The ratchet
     /// picks up `committee[1]` once the chain's first end-of-epoch summary
     /// appears upstream. Localnet/test only.
