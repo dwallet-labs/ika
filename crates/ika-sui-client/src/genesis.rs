@@ -178,6 +178,23 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_genesis_bytes_fail_closed() {
+        // Garbage / truncated bytes must not deserialize into a Genesis — the
+        // loader fails closed rather than bootstrapping from junk.
+        let garbage = b"not a valid Sui genesis blob";
+        let err = load_and_verify_sui_genesis_bytes(garbage, SuiChainIdentifier::Custom)
+            .expect_err("garbage bytes must be rejected");
+        assert!(matches!(err, GenesisError::Decode(_)), "got {err:?}");
+
+        // A truncated prefix of a real blob is also rejected.
+        let real = std::fs::read(FIXTURE).unwrap();
+        let truncated = &real[..real.len() / 2];
+        let err = load_and_verify_sui_genesis_bytes(truncated, SuiChainIdentifier::Custom)
+            .expect_err("a truncated blob must be rejected");
+        assert!(matches!(err, GenesisError::Decode(_)), "got {err:?}");
+    }
+
+    #[test]
     fn compiled_in_identifiers_map_public_chains_only() {
         assert_eq!(
             compiled_in_chain_identifier(SuiChainIdentifier::Mainnet),
