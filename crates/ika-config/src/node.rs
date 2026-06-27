@@ -263,6 +263,21 @@ fn default_true() -> bool {
     true
 }
 
+/// A Sui checkpoint **archive** used as a verified fallback source of
+/// end-of-epoch checkpoints (object store: `epochs.json` + `{seq}.binpb.zst`).
+/// Everything fetched is BLS-verified against the committee chain, so the
+/// archive is an untrusted availability source — never a trust source.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SuiCheckpointArchiveConfig {
+    /// Object-store URL: `https://`, `s3://`, `gs://`, or `file://`.
+    pub url: String,
+    /// Backend credentials/flags, e.g. `("aws-region", "us-west-2")` or
+    /// `("no-sign-request", "true")`.
+    #[serde(default)]
+    pub options: Vec<(String, String)>,
+}
+
 /// The Sui read-transport a node boots, decided by [`select_sui_transport`]
 /// purely from config shape + role — never from chain state, so a protocol
 /// flag can't halt running validators en masse at an upgrade boundary.
@@ -436,6 +451,12 @@ pub struct SuiConnectorConfig {
     /// verified against it, never trusted wholesale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_genesis: Option<PathBuf>,
+    /// Optional Sui checkpoint archive used as a *verified fallback* source of
+    /// end-of-epoch checkpoints when the upstream fullnode has pruned them (and
+    /// for cold genesis bootstrap). Verified, never trusted — see
+    /// [`SuiCheckpointArchiveConfig`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_checkpoint_archive: Option<SuiCheckpointArchiveConfig>,
     /// When the committee ratchet reaches an end-of-epoch checkpoint that the
     /// upstream has pruned, it cannot BLS-verify the `committee[E] →
     /// committee[E+1]` transition. If this is `true` it falls back to fetching

@@ -396,12 +396,24 @@ pub async fn build_sui_connector_stack(
         }
     };
     let committees = Arc::new(CommitteeStore::open(perpetual.clone(), bootstrap)?);
-    let ratchet = Arc::new(OcsVerifyingClient::new(
-        raw_for_ratchet,
-        committees.clone(),
-        metrics.clone(),
-        cfg.allow_unverified_committee_fallback,
-    ));
+    // Verified-fallback end-of-epoch checkpoint archive (object store). Used by
+    // the ratchet when the upstream fullnode has pruned an end-of-epoch
+    // checkpoint; every byte is BLS-verified, so the archive is untrusted.
+    let archive = cfg.sui_checkpoint_archive.as_ref().map(|a| {
+        Arc::new(ika_sui_client::archive::SuiCheckpointArchive::new(
+            a.url.clone(),
+            a.options.clone(),
+        ))
+    });
+    let ratchet = Arc::new(
+        OcsVerifyingClient::new(
+            raw_for_ratchet,
+            committees.clone(),
+            metrics.clone(),
+            cfg.allow_unverified_committee_fallback,
+        )
+        .with_archive(archive),
+    );
 
     // Mirrored / peer-only currency: a changeset index the reader consults,
     // folded by a background `ChangesetReceiver` that pulls committee-signed
@@ -651,6 +663,7 @@ mod tests {
             sui_trusted_anchor,
             sui_unsafe_genesis_committee: None,
             sui_genesis: None,
+            sui_checkpoint_archive: None,
             allow_unverified_committee_fallback: false,
             auto_reanchor_on_format_change: false,
             sui_chain_identifier: SuiChainIdentifier::Custom,
