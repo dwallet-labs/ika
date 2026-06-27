@@ -271,6 +271,16 @@ post-mortem `describe` above are the diagnostic channels.
   code (real failures, artifacts present) — distinct from runner death.
 - **Cluster parallelism is memory-bound**: 4-way is the validated
   default; 8-way OOM-kills the 96Gi pod and presents as runner death.
+- **dwallet-MPC integration tests are CPU-bound — isolate them locally**:
+  each `dwallet_mpc::integration_tests` case drives real class-groups MPC
+  across an in-process committee, so run alongside the rest of a
+  `cargo test -p ika-core` suite under default parallelism they fail
+  spuriously (proven: 24 "failures" in a full-crate run, all green run
+  isolated — likely CPU oversubscription starving the MPC round timers,
+  NOT a `--features test-utils` issue). CI dodges this with the separate
+  `test_threads=4` job above; locally, filter to the target test(s) or
+  pass `--test-threads=N`, and never read a regression from a heavy-MPC
+  failure inside a full-crate run.
 - **TS suite known flake**: the pre-existing epoch-entry stale-mpc_data
   race (issue #1736) can wedge a localnet mid-suite. Before attributing
   a TS failure to your change, run the
