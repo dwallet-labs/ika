@@ -110,31 +110,33 @@ pub struct NetworkEncryptionKeyPublicData {
     /// On first instance it will be equal to `latest_public_output`.
     pub network_dkg_output: VersionedNetworkDkgOutput,
 
-    /// Forward-looking full-shape (V3) network DKG output, reconstructed in
-    /// memory from [`Self::network_dkg_output`] and the latest reconfiguration
-    /// output.
+    /// Full-shape (V3) network DKG output, reconstructed in memory from
+    /// [`Self::network_dkg_output`] and the latest reconfiguration output.
     ///
-    /// The deployed network key's DKG output is a V2 (backward-compatible)
-    /// `PublicOutputCore`, which lacks the trailing
+    /// The deployed (mainnet-v1.1.8-origin) network key's DKG output is a V2
+    /// (backward-compatible) `PublicOutputCore`, which lacks the trailing
     /// `threshold_encryption_to_sharing_output` that the full V3
     /// `decentralized_party::dkg::PublicOutput` carries. That field is produced
     /// only by the threshold-encryption-to-sharing sub-protocol, which the
-    /// backward-compatible reconfiguration predates. Once a reconfiguration
+    /// backward-compatible reconfiguration predates. Once a v4 reconfiguration
     /// produces a full V3 reconfiguration output, the field becomes available
     /// and the full V3 DKG output is reconstructed by combining the V2 output's
     /// reconfiguration-invariant class-group DKG output with the V3
     /// reconfiguration output.
     ///
-    /// `Some` only when [`Self::network_dkg_output`] is V2 AND a V3
-    /// reconfiguration output is available; `None` otherwise (a natively-V3 DKG
+    /// `Some` only at the one-time migration epoch — when
+    /// [`Self::network_dkg_output`] is still V2 AND a V3 reconfiguration output
+    /// is available; `None` otherwise (a natively-V3 or already-migrated DKG
     /// output needs no reconstruction, and a V2-only reconfiguration output
     /// lacks the trailing field).
     ///
-    /// In-memory-only and NOT a consensus anchor: [`Self::network_dkg_output`]
-    /// feeds the internal-presign / sign session identifiers and the
-    /// cross-epoch handoff digest and MUST stay the V2 bytes. This
-    /// reconstruction exists for a future network-owned-address Shamir-sharing
-    /// consumer.
+    /// This `Some` value DRIVES the one-time canonical V2->V3 migration: the
+    /// instantiation-completion path mirrors it via `cache_network_dkg_output`,
+    /// which flips the perpetual digest mirror and persists the V3 blob, after
+    /// which the off-chain overlay (and hence [`Self::network_dkg_output`]
+    /// itself) resolves V3 and this becomes `None`. Session identifiers are
+    /// keyed on the migration-invariant `NetworkKeyId`, not these bytes, so the
+    /// flip does not perturb them.
     pub reconstructed_full_network_dkg_output: Option<VersionedNetworkDkgOutput>,
     pub secp256k1_protocol_public_parameters:
         Arc<twopc_mpc::secp256k1::class_groups::ProtocolPublicParameters>,

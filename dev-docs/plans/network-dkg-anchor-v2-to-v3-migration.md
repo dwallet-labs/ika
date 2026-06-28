@@ -1,8 +1,11 @@
 # Making the V3 network DKG output canonical (within v4 off-chain)
 
-Status: active — 2026-06-21, design agreed (v4 + epoch-alignment),
-implementation starting, no PR yet. Consensus-critical. The in-memory V3
-reconstruction this builds on landed in `013cb1b75f`.
+Status: active — implementation complete and validated end-to-end (2026-06-28),
+PR #1758 (into `dev`, ready for review); flip to `landed` on merge.
+Consensus-critical. Builds on the in-memory V3 reconstruction (`013cb1b75f`).
+The durable behavioral contract — the `NetworkDkgOutput` item's one-time V2->V3
+migration and the adoption tolerance — now lives in
+`dev-docs/specs/handoff.md`; this plan is the intent/sequencing record.
 
 ## What this is
 
@@ -105,29 +108,42 @@ identity regardless of instantiation timing. Fallback for an unmapped key (no
 `NetworkKeyId` registered yet): keep the current `network_dkg_output` bytes —
 uniform across validators because the mapping is seeded/registered identically.
 
-### 3. Digest-gated dual-accept in adopt
+### 3. Tolerate the one-epoch DKG-digest migration in adopt
 
 Within the flip epoch, after the mirror flips, a later adopt tick reads the
-overlay as V3 while the prior cert still pins V2. Make the reconfigured-branch
-comparison (`mpc_manager.rs:897`) accept when **either** the local canonical
-digest matches the prior cert (steady state) **or** the local digest differs but
-the retained V2 output (resolved by the prior cert's V2 digest from
-`mpc_artifact_blobs`, which we never delete) matches the prior cert — proving
-possession of exactly the V2 the prior committee certified, now migrated to V3.
-This keeps adoption stable across the flip without a spurious mismatch, and it
-cannot mask a genuine steady-state V3-vs-V3 mismatch (which fails both legs).
+overlay as V3 while the prior cert still pins V2. `adopt_cert_verified_keys`
+(reconfigured branch) mirrors its existing reconfiguration-digest handling onto
+the DKG digest: when the overlay DKG digest no longer matches the prior cert but
+the key is **already adopted**, that is the expected one-epoch defer — keep the
+adopted value (debug), do not drop the key; only an **unadopted** key
+contradicting the cert warns. Softening the already-adopted case is safe because
+the output-quorum byte-equality tally remains the guard against a genuinely
+divergent output, and a wrong V3 would require either a cert-mismatching
+reconfiguration output (separately checked at the same site) or a
+non-deterministic reconstruct (impossible — it is a pure function).
+
+(The design considered a stricter "digest-gated dual-accept" that re-derives the
+prior cert's V2 digest from the retained `mpc_artifact_blobs` blob; the shipped
+tolerance is simpler, consistent with the reconfiguration-digest handling, and
+relies on the output-quorum tally for the residual guarantee.)
 
 ## Per-consumer summary
 
-1. **Adopt** (`mpc_manager.rs:808-905`): digest-gated dual-accept; no change to
-   the raw-bytes comparison itself.
-2. **Handoff digest** (`validator_metadata.rs:866`): unchanged code — it reads
-   the mirror, which the flip writes V3. Update the stale `:873` comment.
+1. **Adopt** (`mpc_manager.rs`): tolerate the one-epoch V2->V3 DKG-digest move
+   for an already-adopted key (keep its value, debug not warn), mirroring the
+   reconfiguration-digest handling; the raw-bytes comparison is unchanged.
+2. **Handoff digest** (`validator_metadata.rs`): unchanged code — it reads the
+   mirror, which the flip writes V3. (Stale "stable across epochs" comment
+   updated.)
 3. **Perpetual store**: the flip reuses `cache_network_dkg_output`; no new table.
 4. **Session ids** (`mpc_manager.rs:1443`/`:1518`): re-keyed onto `NetworkKeyId`.
-5. **Joiner** (`ika-node/src/lib.rs:2966`): unchanged — fetches V3 by the
-   cert-pinned digest once the V3 blob is persisted (piece 1).
-6. **Syncer gate** (`sui_syncer.rs:859-863`): unchanged (presence-only).
+5. **Joiner** (`ika-node/src/lib.rs`): unchanged — fetches V3 by the cert-pinned
+   digest once the V3 blob is persisted (piece 1).
+6. **Syncer gate** (`sui_syncer.rs`): unchanged (presence-only).
+7. **Observability**: `ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version`
+   (`IntGauge`) is set at each off-chain instantiation to the version mirrored
+   into the handoff — 2 before the migration, 3 after — so the migration is
+   observable (and asserted by the v118 tests).
 
 No `ika-protocol-config` change.
 
@@ -138,8 +154,9 @@ No `ika-protocol-config` change.
 - **Handoff attestation:** the flip is latched at instantiation (epoch entry)
   from the cert-pinned reconfiguration output, uniform committee-wide; by
   `EndOfPublish` every validator's mirror is V3, so all emit the same digest.
-- **Cross-epoch adopt:** the digest-gated dual-accept bridges the one flip epoch
-  via possession of the retained V2 output.
+- **Cross-epoch adopt:** the already-adopted tolerance bridges the one flip epoch
+  (the key keeps its adopted value while its overlay DKG digest moves past the
+  prior V2 cert); the output-quorum tally guards correctness.
 - **Joiner:** the persisted V3 blob lets a peer serve bytes hashing to the
   cert-pinned V3 digest.
 
@@ -151,15 +168,21 @@ No `ika-protocol-config` change.
 
 ## Scope & tests
 
-- **Crates:** `ika-core` only — `mpc_manager.rs` (flip trigger at instantiation,
-  dual-accept, session-id re-key), `validator_metadata.rs` (comment),
-  `authority_per_epoch_store.rs`/`authority_perpetual_tables.rs` (reused). No
-  `ika-protocol-config`, `ika-node` verify-only.
-- **Tests:**
-  - Unit: the session-id preimage uses `NetworkKeyId` when mapped and falls back
-    otherwise; the dual-accept leg-2 matches a retained V2 output against a V2
-    prior cert.
-  - Cluster/sim: the **v3→v4 upgrade** path is the one that exercises case A — a
-    V2 key read from chain, v4 reconfigurations flipping it to V3, the dual-accept
-    at the flip epoch, and a **joiner** installing the V3 at/after the flip.
-    Genesis-v4 clusters exercise only case B (already V3).
+- **Crates:** `ika-core` (`mpc_manager.rs` — flip trigger at instantiation,
+  adopt tolerance, session-id re-key; `dwallet_mpc_metrics.rs` — the
+  canonical-version gauge; `validator_metadata.rs` — comment;
+  `authority_per_epoch_store.rs`/`authority_perpetual_tables.rs` — reused),
+  `dwallet-mpc-types` (`reconstructed_full_network_dkg_output` field +
+  `VersionedNetworkDkgOutput::version()`), `ika-upgrade-test` (metrics scrape +
+  scenario step + the v118/v118_churn assertions). No `ika-protocol-config`;
+  `ika-node` joiner path verify-only.
+- **Tests (all green):**
+  - Unit/integration: `reconstruct_full_network_dkg_output_gating` (the version
+    gate); `already_adopted_key_survives_dkg_output_migration` (the adopt
+    tolerance); `internal_presign` (validates the session-id re-key); the
+    mainnet-v1.1.8 backward-compat suite incl. `test_v2_to_v3_reconfiguration_migration`.
+  - End-to-end on CI: the **v118 upgrade rehearsal** (literal mainnet-v1.1.8 ->
+    current build, v3->v4) and **v118 churn** (same, with a mirrored joiner added
+    to a 5-member committee) — both assert the canonical DKG-output version
+    reaches 3 across the whole committee after the flip (`got=3 expected=3` in the
+    run logs; the churn run proves it for the cert-bootstrapped joiner).
