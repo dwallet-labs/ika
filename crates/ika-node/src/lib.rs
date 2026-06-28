@@ -306,10 +306,34 @@ impl IkaNode {
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
+        // Genesis-root the chain before resolving the on-chain identity: when a
+        // Sui genesis blob is configured, load + verify it and DERIVE the chain
+        // from its checkpoint digest, then require the declared
+        // `sui_chain_identifier` to match. This roots the compiled-in ika
+        // identity (resolved next) in the cryptographically-verified genesis,
+        // not the operator's declared chain, and fails fast on a mismatch — e.g.
+        // a config that declares `Custom` but supplies a real mainnet/testnet
+        // genesis blob (which the load-and-verify alone would accept).
+        if let Some(genesis_path) = config.sui_connector_config.sui_genesis.clone() {
+            let boot = ika_sui_client::genesis::load_and_verify_sui_genesis(
+                &genesis_path,
+                config.sui_connector_config.sui_chain_identifier,
+            )
+            .map_err(|e| anyhow!("verify Sui genesis blob {}: {e}", genesis_path.display()))?;
+            let derived = boot.chain();
+            if derived != config.sui_connector_config.sui_chain_identifier {
+                anyhow::bail!(
+                    "configured sui_chain_identifier is {} but the genesis blob is for {}",
+                    config.sui_connector_config.sui_chain_identifier,
+                    derived
+                );
+            }
+        }
+
         // Fill any omitted on-chain ika ids (packages + objects) from the
-        // binary's compiled-in per-chain identity, keyed off the configured Sui
-        // chain; explicit config values always win. Subsumes the old per-chain
-        // dwallet-v2 hardcode.
+        // binary's compiled-in per-chain identity, keyed off the now
+        // genesis-verified Sui chain; explicit config values always win.
+        // Subsumes the old per-chain dwallet-v2 hardcode.
         config
             .sui_connector_config
             .resolve_ika_on_chain_identity()?;
