@@ -335,12 +335,13 @@ pub async fn build_sui_connector_stack(
     // Verified-fallback end-of-epoch checkpoint archive (object store). Used by
     // the ratchet when the upstream fullnode has pruned an end-of-epoch
     // checkpoint; every byte is BLS-verified, so the archive is untrusted.
-    let archive = cfg.sui_checkpoint_archive.as_ref().map(|a| {
-        Arc::new(ika_sui_client::archive::SuiCheckpointArchive::new(
-            a.url.clone(),
-            a.options.clone(),
-        ))
-    });
+    let archive: Option<Arc<dyn ika_sui_client::archive::CheckpointArchive>> =
+        cfg.sui_checkpoint_archive.as_ref().map(|a| {
+            Arc::new(ika_sui_client::archive::SuiCheckpointArchive::new(
+                a.url.clone(),
+                a.options.clone(),
+            )) as Arc<dyn ika_sui_client::archive::CheckpointArchive>
+        });
     let ratchet = Arc::new(
         OcsVerifyingClient::new(
             raw_for_ratchet,

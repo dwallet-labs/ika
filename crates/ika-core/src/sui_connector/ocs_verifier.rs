@@ -16,12 +16,13 @@
 //! v121 as of 2026-05.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use ika_sui_client::archive::SuiCheckpointArchive;
+use ika_sui_client::archive::CheckpointArchive;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 
 use crate::sui_connector::committee_store::{
@@ -99,7 +100,13 @@ pub struct OcsVerifyingClient {
     /// checkpoint archive (or configured mirror), BLS-verify it against
     /// `committee[head]`, and install — trust unchanged. Tried *before* the
     /// degraded unverified fallback. `None` until wired (see `with_archive`).
-    archive: Option<Arc<SuiCheckpointArchive>>,
+    archive: Option<Arc<dyn CheckpointArchive>>,
+    /// Whether the one-time cold-bootstrap-from-archive walk has been attempted.
+    /// It runs at the start of the first ratchet, advancing the committee chain
+    /// genesis -> latest purely from the archive (BLS-verifying every summary
+    /// against the running committee); later ratchets skip it and rely on the
+    /// transport plus the per-seq archive fallback.
+    backfill_attempted: AtomicBool,
     /// Coalesces concurrent ratchet calls to one: the periodic ratchet, the
     /// boot ratchet, and the reactive (`missing_committee`) push ratchet all
     /// share this. A caller that finds a ratchet already in flight returns
@@ -121,6 +128,7 @@ impl OcsVerifyingClient {
             metrics,
             allow_unverified_committee_fallback,
             archive: None,
+            backfill_attempted: AtomicBool::new(false),
             ratchet_lock: Mutex::new(()),
         }
     }
@@ -129,7 +137,7 @@ impl OcsVerifyingClient {
     /// the upstream fullnode has pruned an end-of-epoch checkpoint. Everything
     /// fetched from it is BLS-verified before install, so the archive is an
     /// untrusted availability source — never a trust source.
-    pub fn with_archive(mut self, archive: Option<Arc<SuiCheckpointArchive>>) -> Self {
+    pub fn with_archive(mut self, archive: Option<Arc<dyn CheckpointArchive>>) -> Self {
         self.archive = archive;
         self
     }
@@ -140,6 +148,69 @@ impl OcsVerifyingClient {
 
     pub fn committees(&self) -> &Arc<CommitteeStore> {
         &self.committees
+    }
+
+    /// Cold-bootstrap the committee chain from the checkpoint `archive`: walk
+    /// `head → latest` purely from the object store. For each step it reads
+    /// epoch `head`'s end-of-epoch sequence number from the (untrusted)
+    /// `epochs.json` enumeration, fetches that checkpoint, and BLS-verifies its
+    /// summary against `committee[head]` before installing `committee[head+1]`.
+    ///
+    /// Because `head` starts at 0 (the genesis committee) and advances one
+    /// verified epoch at a time, **every** committee is verified from genesis
+    /// forward — the archive is never trusted. A forged, gapped, or reordered
+    /// `epochs.json` is caught by `install_next_from_summary`'s per-summary
+    /// signature check and its `next.epoch == head + 1` contiguity assertion
+    /// (worst case the walk stalls; it can never install a forged committee).
+    ///
+    /// Resumable: the persisted head means a re-run skips the already-installed
+    /// prefix. Past the end of the enumerated (completed) epochs it returns
+    /// `Ok` — the live tail is the transport ratchet's / follower's job.
+    async fn backfill_committee_chain_from_archive(
+        &self,
+        archive: &Arc<dyn CheckpointArchive>,
+    ) -> Result<(), OcsError> {
+        let seqs = archive
+            .enumerate_end_of_epoch_seqs()
+            .await
+            .map_err(|e| OcsError::Ika(format!("archive enumerate epochs.json: {e}")))?;
+        loop {
+            let head = self.committees.head_epoch();
+            let Some(&seq) = seqs.get(head as usize) else {
+                return Ok(());
+            };
+            let (summary, _contents) = archive
+                .fetch_checkpoint(seq)
+                .await
+                .map_err(|e| OcsError::Ika(format!("archive fetch checkpoint {seq}: {e}")))?;
+            match self.committees.install_next_from_summary(&summary) {
+                Ok(CommitteeTransition::Installed(epoch)) => {
+                    info!(epoch, seq, "cold-bootstrapped Sui committee from archive");
+                }
+                // `epochs.json[head]` is not epoch `head`'s end-of-epoch
+                // checkpoint — the enumeration is inconsistent with the verified
+                // chain (gapped/reordered), so we cannot verify past this point.
+                Ok(CommitteeTransition::NotNextTransition) => {
+                    return Err(OcsError::NotEndOfEpoch(seq));
+                }
+                Err(CommitteeTransitionError::MissingCommittee(e)) => {
+                    return Err(OcsError::MissingCommittee(e));
+                }
+                Err(
+                    CommitteeTransitionError::BadSignature { error, .. }
+                    | CommitteeTransitionError::Extract { error, .. },
+                ) => {
+                    return Err(OcsError::BadCheckpointSig(seq, error));
+                }
+                Err(CommitteeTransitionError::EpochMismatch { expected, got }) => {
+                    return Err(OcsError::RatchetEpochMismatch {
+                        requested: expected,
+                        returned: got,
+                    });
+                }
+                Err(CommitteeTransitionError::Store(e)) => return Err(e.into()),
+            }
+        }
     }
 
     /// Walk forward from the current `head_epoch` of [`CommitteeStore`] to the
@@ -163,6 +234,23 @@ impl OcsVerifyingClient {
                 return Ok(());
             }
         };
+        // Cold-bootstrap once from the archive (if configured): walk the
+        // committee chain genesis -> latest purely from the object store before
+        // the transport walk below, BLS-verifying every summary from genesis
+        // forward. Best-effort — failures (no archive, unreachable, pruned tail)
+        // log and fall through to the transport ratchet. Runs only on the first
+        // ratchet; later ratchets rely on the transport + per-seq archive
+        // fallback for the live tail.
+        if let Some(archive) = self.archive.clone() {
+            if !self.backfill_attempted.swap(true, Ordering::Relaxed) {
+                if let Err(e) = self.backfill_committee_chain_from_archive(&archive).await {
+                    warn!(
+                        error = %e,
+                        "archive cold-bootstrap incomplete; continuing with the transport ratchet"
+                    );
+                }
+            }
+        }
         // `get_current_epoch` is a relay-claimed, unverified passthrough, but
         // it only sets the loop's *target* — it can't forge progress. Every
         // step below BLS-verifies the end-of-epoch checkpoint against
@@ -527,6 +615,103 @@ mod tests {
             .unwrap(),
         );
         (dir, store)
+    }
+
+    /// A mock checkpoint archive backed by in-memory signed summaries, so the
+    /// cold-bootstrap loop is tested without a real object store.
+    struct MockArchive {
+        seqs: Vec<CheckpointSequenceNumber>,
+        checkpoints:
+            HashMap<CheckpointSequenceNumber, (CertifiedCheckpointSummary, CheckpointContents)>,
+    }
+
+    #[async_trait]
+    impl CheckpointArchive for MockArchive {
+        async fn enumerate_end_of_epoch_seqs(
+            &self,
+        ) -> Result<Vec<CheckpointSequenceNumber>, ika_sui_client::archive::ArchiveError> {
+            Ok(self.seqs.clone())
+        }
+        async fn fetch_checkpoint(
+            &self,
+            seq: CheckpointSequenceNumber,
+        ) -> Result<
+            (CertifiedCheckpointSummary, CheckpointContents),
+            ika_sui_client::archive::ArchiveError,
+        > {
+            self.checkpoints.get(&seq).cloned().ok_or_else(|| {
+                ika_sui_client::archive::ArchiveError::Fetch {
+                    url: "mock".into(),
+                    seq,
+                    source: anyhow::anyhow!("seq {seq} not in mock archive"),
+                }
+            })
+        }
+    }
+
+    /// Build a mock archive holding the end-of-epoch checkpoint of epochs
+    /// `0..epochs`, each signed by `committee[e]` and committing to
+    /// `committee[e+1]`. `seqs[e]` (the `epochs.json` index) is epoch `e`'s EOP.
+    fn archive_for_chain(base: &Committee, keys: &[AuthorityKeyPair], epochs: u64) -> MockArchive {
+        let mut seqs = Vec::new();
+        let mut checkpoints = HashMap::new();
+        for e in 0..epochs {
+            let seq = 1_000 + e;
+            let committee_e = committee_at_epoch(base, keys, e);
+            let cp = end_of_epoch_checkpoint(&committee_e, keys, seq);
+            seqs.push(seq);
+            checkpoints.insert(seq, (cp.checkpoint_summary, cp.checkpoint_contents));
+        }
+        MockArchive { seqs, checkpoints }
+    }
+
+    fn client_with_store(store: Arc<CommitteeStore>) -> OcsVerifyingClient {
+        OcsVerifyingClient::new(
+            Arc::new(RatchetMock::new(0)),
+            store,
+            OcsMetrics::new_for_testing(),
+            false,
+        )
+    }
+
+    /// Cold-bootstrap walks the whole chain from the archive, BLS-verifying each
+    /// summary against the running committee from genesis (head 0) forward; the
+    /// head advances to the last enumerated epoch.
+    #[tokio::test]
+    async fn archive_backfill_installs_the_full_chain() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee.clone());
+        let archive: Arc<dyn CheckpointArchive> = Arc::new(archive_for_chain(&committee, &keys, 5));
+        let client = client_with_store(store.clone());
+        client
+            .backfill_committee_chain_from_archive(&archive)
+            .await
+            .unwrap();
+        // EOPs for epochs 0..5 -> committee[5] installed; past the list is Ok.
+        assert_eq!(store.head_epoch(), 5);
+    }
+
+    /// An UNTRUSTED `epochs.json` that omits an epoch's end-of-epoch checkpoint
+    /// is caught by the `+1` contiguity check: the walk stops with an error
+    /// rather than installing a shifted/forged committee, and the head holds at
+    /// the gap. (verify everything — the enumeration is only a hint.)
+    #[tokio::test]
+    async fn archive_backfill_rejects_a_gapped_enumeration() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let (_dir, store) = store_with_genesis(committee.clone());
+        let mut mock = archive_for_chain(&committee, &keys, 5);
+        // Drop epoch 2's EOP so `seqs[2]` now points at epoch 3's EOP.
+        let dropped = mock.seqs.remove(2);
+        mock.checkpoints.remove(&dropped);
+        let archive: Arc<dyn CheckpointArchive> = Arc::new(mock);
+        let client = client_with_store(store.clone());
+        let err = client
+            .backfill_committee_chain_from_archive(&archive)
+            .await
+            .unwrap_err();
+        // 0,1 install; at head=2 `seqs[2]` is epoch 3's summary -> NotNextTransition.
+        assert!(matches!(err, OcsError::NotEndOfEpoch(_)), "got {err:?}");
+        assert_eq!(store.head_epoch(), 2, "head stops at the gap");
     }
 
     /// With the unverified fallback enabled, a pruned end-of-epoch checkpoint
