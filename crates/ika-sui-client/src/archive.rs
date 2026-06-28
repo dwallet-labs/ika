@@ -1,15 +1,24 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! OCS checkpoint **archive client** — a verified-fallback source of Sui
-//! end-of-epoch checkpoints over an object store.
+//! OCS checkpoint **archive** — a verified-fallback source of Sui end-of-epoch
+//! checkpoints over an object store.
+//!
+//! This is a thin ika-side wrapper over Sui's own free functions in
+//! [`sui_storage::object_store::util`] (`build_object_store`,
+//! `end_of_epoch_data`, `fetch_checkpoint`); it implements no fetch/decode logic
+//! of its own. Sui exposes no reusable reader/client *type* for this — only
+//! those functions (its own light client wraps them in a private struct, and
+//! `state_sync`/`sui-tool` call them directly), so a small caller-side wrapper
+//! is the idiomatic way to use the API. The wrapper only holds a pre-built
+//! `ObjectStore` (reused across fetches), adds typed errors with `{url, seq}`
+//! context, and carries the trust-model note below.
 //!
 //! Layout mirrors Sui's light-client / public Remote Store (and a local Sui
 //! node's `data-ingestion-dir`): a root `epochs.json` listing the end-of-epoch
 //! checkpoint sequence numbers, plus per-sequence `{seq}.binpb.zst` blobs
-//! (zstd-compressed protobuf checkpoints). Backed by [`sui_storage`]'s object
-//! store helpers, so `https://`, `s3://`, `gs://`, and `file://` URLs all work
-//! (the last is how localnet and tests exercise this exact path).
+//! (zstd-compressed protobuf checkpoints). `https://`, `s3://`, `gs://`, and
+//! `file://` URLs all work (the last is how localnet and tests exercise this).
 //!
 //! Trust placement: **everything fetched here is untrusted.** The caller
 //! BLS-verifies each summary against the committee chain (rooted at the genesis
