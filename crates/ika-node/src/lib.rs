@@ -270,7 +270,7 @@ impl IkaNode {
     /// Start the node in a specific mode with validation.
     /// This method validates that the configuration matches the expected mode.
     pub async fn start_with_mode(
-        config: NodeConfig,
+        mut config: NodeConfig,
         registry_service: RegistryService,
         _software_version: &'static str,
         mode: NodeMode,
@@ -306,33 +306,13 @@ impl IkaNode {
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
-        let mut ika_dwallet_2pc_mpc_package_id_v2 = config
+        // Fill any omitted on-chain ika ids (packages + objects) from the
+        // binary's compiled-in per-chain identity, keyed off the configured Sui
+        // chain; explicit config values always win. Subsumes the old per-chain
+        // dwallet-v2 hardcode.
+        config
             .sui_connector_config
-            .ika_dwallet_2pc_mpc_package_id_v2;
-
-        // Testnet V2
-        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
-            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
-                == ObjectID::from_str(
-                    "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730",
-                )?
-        {
-            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
-                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
-            )?)
-        }
-
-        // Mainnet V2
-        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
-            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
-                == ObjectID::from_str(
-                    "0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317",
-                )?
-        {
-            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
-                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
-            )?)
-        }
+            .resolve_ika_on_chain_identity()?;
 
         let ika_network_config = IkaNetworkConfig {
             packages: IkaPackageConfig {
@@ -341,7 +321,9 @@ impl IkaNode {
                 ika_dwallet_2pc_mpc_package_id: config
                     .sui_connector_config
                     .ika_dwallet_2pc_mpc_package_id,
-                ika_dwallet_2pc_mpc_package_id_v2,
+                ika_dwallet_2pc_mpc_package_id_v2: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             },
             objects: IkaObjectsConfig {
