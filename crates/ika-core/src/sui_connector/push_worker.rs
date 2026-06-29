@@ -18,7 +18,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::transport::SuiTransport;
@@ -421,6 +421,7 @@ impl IkaCheckpointPusher {
         tree: &ModifiedObjectTree,
         folding_objects: bool,
     ) -> anyhow::Result<()> {
+        let started = Instant::now();
         self.committees
             .verify_summary(summary.clone())
             .map_err(|e| {
@@ -439,6 +440,14 @@ impl IkaCheckpointPusher {
                 );
             }
         }
+        // Record only the success path's cost: a rejection (the early returns
+        // above) is a security event surfaced by the caller's log, not a
+        // steady-state latency sample. `_count` then equals the checkpoints
+        // committee-verified before folding, `_sum` the CPU the verify added
+        // to the fold loop.
+        self.metrics
+            .pusher_fold_verify_seconds
+            .observe(started.elapsed().as_secs_f64());
         Ok(())
     }
 }

@@ -11,9 +11,10 @@
 use std::sync::Arc;
 
 use prometheus::{
-    HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry,
-    register_histogram_vec_with_registry, register_int_counter_vec_with_registry,
-    register_int_counter_with_registry, register_int_gauge_with_registry,
+    Histogram, HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry,
+    register_histogram_vec_with_registry, register_histogram_with_registry,
+    register_int_counter_vec_with_registry, register_int_counter_with_registry,
+    register_int_gauge_with_registry,
 };
 
 #[derive(Clone, Debug)]
@@ -39,6 +40,12 @@ pub struct OcsMetrics {
     pub pusher_pushed_total: IntCounter,
     pub pusher_skipped_irrelevant_total: IntCounter,
     pub pusher_fetch_failures_total: IntCounter,
+    /// Latency of the pre-fold committee verification the pusher runs before
+    /// folding a checkpoint into the local cache (committee BLS on the summary
+    /// + artifacts-digest binding). `_count` is the number of checkpoints
+    /// committee-verified before folding, `_sum` the total CPU time spent on
+    /// it — together they quantify the verify's cost on the fold path.
+    pub pusher_fold_verify_seconds: Histogram,
 
     // OcsVerifiedReader (consumer-side proof verification)
     pub proof_verify_total: IntCounterVec, // labels: ["kind"]
@@ -111,6 +118,13 @@ impl OcsMetrics {
             pusher_fetch_failures_total: register_int_counter_with_registry!(
                 "ika_ocs_pusher_fetch_failures_total",
                 "Number of get_full_checkpoint failures during the pusher walk",
+                registry,
+            )
+            .unwrap(),
+            pusher_fold_verify_seconds: register_histogram_with_registry!(
+                "ika_ocs_pusher_fold_verify_seconds",
+                "Latency of the sui-state-direct pusher's pre-fold committee verification (BLS on the summary + artifacts-digest binding); _count is the number of checkpoints committee-verified before folding into the cache",
+                vec![0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
                 registry,
             )
             .unwrap(),
