@@ -448,22 +448,32 @@ verification asymmetry:
 ```
   DIRECT validator                          PEER-ONLY validator
   ────────────────                          ───────────────────
-  fold once (own gRPC) → verify → cache     (no fold, no cache-first)
+  fold once → committee-verify → cache      (no fold, no cache-first)
   cache HIT  → serve, NO re-verify  ◄── asymmetry ──►  EVERY read → verify
   cache MISS / stale → fetch + verify        (committee BLS + Merkle + currency)
-  trust root: own gRPC uplink               trust root: committee signature
+  trust root: committee (verified at fold)   trust root: committee (verified per read)
   ── both: committee ratchet BLS-verified; per-object high-water on every read ──
 ```
+
+The asymmetry is *when* the committee proof runs, not *whether* it does:
+a direct node verifies once at fold time and reuses that result on cache
+hits; a peer-only node verifies on every read. Neither trusts a fullnode's
+word — the trust root on both sides is the Sui committee.
 
 Direct validators run a checkpoint folder (`IkaCheckpointPusher`) that
 folds every Ika-modified object of every checkpoint, in order, into a
 local verified state cache — building each object's inclusion proof from
-the checkpoint's `ModifiedObjectTree`. Direct nodes then serve verified
-reads **cache-first** (with the staleness tripwire above falling through
-to the network when the cache lags). Because the folder reads from the
-node's own authoritative Sui access and folds in order, a cache hit is
-the object's current state up to the poll lag, and may skip re-running
-the proof.
+the checkpoint's `ModifiedObjectTree`. Before anything is folded, the
+folder verifies the checkpoint against its committee (`verify_before_fold`
+→ the shared `verify_summary` chokepoint for the committee BLS, then the
+`checkpoint_artifacts_digest` binding when objects are being folded), so a
+compromised or buggy *own* fullnode cannot seed the cache with forged
+state. A verify failure is refused, not cached: the error propagates and
+the fold cursor stays put, so a transient missing committee self-heals on
+the next poll while a bad signature halts the fold loudly
+(`security_critical`). Because the cache is therefore committee-attested
+and folded in order, a cache hit is the object's current state up to the
+poll lag, and safely skips re-running the proof.
 
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
@@ -534,6 +544,11 @@ over the relay and re-verifying it per read.
 8. Cached state is committee-verified before it enters the cache; the
    cache never holds unverified state, and on a direct node it is folded
    only from the node's own authoritative Sui access, never from peers.
+   The direct-side folder enforces this at fold time
+   (`verify_before_fold`): the committee BLS on the summary plus the
+   artifacts-digest binding run before `absorb_entries`, so a direct
+   node's own fullnode is not in its trust boundary — serving forged state
+   is refused, not cached.
 9. On mirrored/peer-only nodes a verified read additionally passes a
    committee-attested **currency** gate: an authentic-but-superseded object
    is rejected — a read anchored before the object's latest folded
