@@ -302,12 +302,29 @@ impl ValidatorPrivateDecryptionKeyData {
         // nothing: if the network key is pre-V3 OR any per-curve derivation
         // fails, we insert nothing into the cache and VSS sign sites then
         // `?`-propagate `WaitingForNetworkKey` like the AHE wait path.
-        if let Some(vss_cache) = derive_vss_shamir_cache_for_key(
-            &key,
-            self.party_id,
-            &self.validator_pvss_secrets_for_vss,
-            &self.validator_pvss_publics_for_vss,
-        ) {
+        //
+        // The derivation is heavy class-groups crypto (three curves), so run it
+        // off the runtime thread on rayon — mirroring the AHE decrypt above —
+        // rather than inline. On a single-threaded runtime an inline run would
+        // peg the one thread for the whole derivation, freezing this node's
+        // async (including the consensus-commit handler that feeds the MPC
+        // engine) at the epoch boundary with cores idle (see issue #1736).
+        let (vss_sender, vss_receiver) = oneshot::channel();
+        #[cfg(msim)]
+        let originating_sim_node = sui_simulator::runtime::NodeHandle::try_current();
+        let party_id = self.party_id;
+        let secrets = self.validator_pvss_secrets_for_vss.clone();
+        let publics = self.validator_pvss_publics_for_vss.clone();
+        rayon::spawn_fifo(move || {
+            #[cfg(msim)]
+            let _node_guard = originating_sim_node.as_ref().map(|n| n.enter_node());
+
+            let vss_cache = derive_vss_shamir_cache_for_key(&key, party_id, &secrets, &publics);
+            if let Err(err) = vss_sender.send(vss_cache) {
+                error!(error=?err, "failed to send VSS shamir cache");
+            }
+        });
+        if let Some(vss_cache) = vss_receiver.await.map_err(|_| DwalletMPCError::TokioRecv)? {
             self.validator_vss_shamir_cache.insert(key_id, vss_cache);
         }
 

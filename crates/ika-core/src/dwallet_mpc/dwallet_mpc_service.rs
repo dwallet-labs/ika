@@ -75,7 +75,6 @@ use tokio::sync::watch;
 use tokio::sync::watch::Receiver;
 use tracing::{debug, error, info, warn};
 
-const DELAY_NO_ROUNDS_SEC: u64 = 2;
 const READ_INTERVAL_MS: u64 = 20;
 const FIVE_KILO_BYTES: usize = 5 * 1024;
 
@@ -889,8 +888,14 @@ impl DWalletMPCService {
             if let Some(last_consensus_round) = last_consensus_round {
                 last_consensus_round
             } else {
-                info!("No consensus round from DB yet, retrying in {DELAY_NO_ROUNDS_SEC} seconds.");
-                tokio::time::sleep(Duration::from_secs(DELAY_NO_ROUNDS_SEC)).await;
+                // No new-epoch consensus round has committed yet (the transient
+                // window right after epoch entry). Return and let the outer
+                // loop's READ_INTERVAL_MS poll re-check, rather than sleeping
+                // here — that extra sleep added seconds of latency to every
+                // epoch-bootstrap step. Logged at debug so the fast re-check
+                // can't flood the log during a stuck boundary; the
+                // end-of-publish-gate WARN is the wedge signal there.
+                debug!("No consensus round from DB yet; awaiting the first new-epoch round.");
                 return;
             }
         } else {
