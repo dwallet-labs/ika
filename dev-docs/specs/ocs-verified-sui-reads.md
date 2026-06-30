@@ -457,17 +457,27 @@ the proof.
 The two **singleton anchors** — the `System` and `DWalletCoordinator`
 inner objects (and their versioned-child inners) — are served from the
 folded cache **even when the staleness tripwire trips**.
-`verified_anchor_object` prefers the cached snapshot and reaches the
-network only on a genuine cache miss; the per-object version high-water
-still rejects a rollback, and the executor re-reads every ~120 ms so
-staleness stays bounded. The exception exists because these anchors are
-on the MPC hot path: under heavy load the pusher's processed head lags
-the live head past the tripwire bound, and a tripwire-forced reach-back
-on *every* 120 ms tick (each anchor read is the outer wrapper plus its
+`verified_anchor_object` prefers the cached snapshot but **bounds its
+staleness**: it forces a verified network re-read on a genuine cache
+miss *and* at most once per `ANCHOR_REFRESH_INTERVAL` (2 s), serving
+cache in between; the per-object version high-water still rejects a
+rollback. This bypasses the tripwire so these hot-path anchors don't
+reach back on *every* 120 ms tick: under heavy load the pusher's
+processed head lags the live head past the tripwire bound, and a
+per-tick reach-back (each anchor read is the outer wrapper plus its
 versioned-child inner — several fullnode round-trips) slows the pusher
 further and latches the tripwire, a self-reinforcing loop that collapses
-dwallet throughput. Ordinary (non-anchor) reads still fall through to
-the network when the tripwire trips. Cache-served anchors are counted
+dwallet throughput. **The TTL bound is essential, not merely an
+optimization knob:** a rare singleton like the `System` inner is updated
+only at epoch boundaries, so if the pusher *skips* its update (the
+defining checkpoint pruned before the lagging pusher folds it; the
+singleton is never modified again that epoch to re-fold it) the stale
+snapshot would be served *indefinitely* and wedge the epoch — the gate
+that drives epoch advance reads the mid-epoch committee through this
+anchor (#1736). The 2 s interval keeps the refresh well below the
+per-tick rate that latches the loop while bounding staleness to ~2 s.
+Ordinary (non-anchor) reads still fall through to the network when the
+tripwire trips. Cache-served anchors are counted
 `ika_ocs_cache_read_total{outcome="anchor"}`.
 
 The cache is authoritatively populated *only* by the node's own folder —
