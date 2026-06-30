@@ -52,18 +52,52 @@ results sent into a dead handle). Per-validator attribution: re-run with
 sit Active means computations are not SPAWNING — different class than
 hanging.
 
-## 3. Epoch-entry key gap (the stale-mpc_data race, issue #1736)
+## 3. Epoch-entry wedge — "locked but can't close" (issue #1736)
+
+The epoch committed to closing (the last user session is locked) but
+never advances. Start at the end-of-publish gate, which names the
+blocker directly:
 
 ```bash
-grep "Adopted network key epoch does not match" $L | sed -E 's/^([^ ]+).*name=(k#[a-f0-9]{8}).*/\1 \2/'
-grep "Updating network key" $L | sed -E 's/^([^ ]+).*name=(k#[a-f0-9]{8}).*/\1 \2/' | tail -8
+grep "end-of-publish gate STUCK" $L | tail -3              # post-lock stall, re-warned every 60s
+grep "end-of-publish gate not yet satisfied" $L | tail -1  # same per-condition breakdown at debug
 ```
 
-Historically: exactly ONE rejection warn per epoch boundary is routine —
-that validator's presign sessions may be silently dead all epoch
-(invisible at 3-of-4 quorum). TWO at one boundary = quorum death for
-internal presigns = pool starvation = the wedge. Check whether sessions
-created during a validator's key gap ever compute afterwards.
+The gate prints every advance condition as a bool; the `false` one is
+the wedge. (The warn fires only *after* the session lock — pre-lock the
+gate is legitimately unsatisfied for most of the epoch, so it isn't
+counted.) The three roots seen for #1736, keyed by which field is false:
+
+- **`next_epoch_committee_exists=false` — stale System committee anchor.**
+  The notifier writes `next_epoch_committee` on-chain mid-epoch, but each
+  validator reads the `System` inner through the always-cache anchor
+  path, which historically had no staleness bound and served the
+  pre-write snapshot forever, so the new committee was never observed and
+  reconfiguration never started. Fixed by bounding the anchor cache: it
+  forces a verified network re-read on a miss *and* at most once per
+  `ANCHOR_REFRESH_INTERVAL` (2 s) — see `verified_anchor_object` in
+  `sui_connector/verified_reader.rs` and the cache-fast-path section of
+  `../specs/ocs-verified-sui-reads.md`. Confirm by reading the on-chain
+  `next_epoch_committee` (it is set) while the gate still reports it
+  absent.
+- **`all_network_encryption_keys_reconfiguration_completed=false` —
+  reconfiguration MPC stalled.** The network-key reconfiguration never
+  finishes. One cause was a synchronous VSS-cache derive
+  (`derive_vss_shamir_cache_for_key`) running inline on the async runtime
+  and starving every other task on that thread; it is now offloaded to
+  rayon (`network_dkg.rs`). When this field is false, trace the
+  reconfiguration session (check 6) and watch CPU (check 2) — a frozen
+  single thread reads as "Active but zero CPU".
+- **network-key adoption gap (the original stale-mpc_data variant).**
+  ```bash
+  grep "Adopted network key epoch does not match" $L | sed -E 's/^([^ ]+).*name=(k#[a-f0-9]{8}).*/\1 \2/'
+  grep "Updating network key" $L | sed -E 's/^([^ ]+).*name=(k#[a-f0-9]{8}).*/\1 \2/' | tail -8
+  ```
+  Exactly ONE rejection warn per epoch boundary is routine — that
+  validator's presign sessions may be silently dead all epoch (invisible
+  at 3-of-4 quorum). TWO at one boundary = quorum death for internal
+  presigns = pool starvation = the wedge. Check whether sessions created
+  during a validator's key gap ever compute afterwards.
 
 ## 4. Chain counters — the over/undershoot discriminator
 
