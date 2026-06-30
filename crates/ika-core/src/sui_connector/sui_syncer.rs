@@ -1183,12 +1183,9 @@ where
                 && all_noa_checkpoints_finalized
                 && no_pricing_calculation_votes;
             if !ready_to_end_publish {
-                consecutive_unsatisfied += 1;
-                // The epoch cannot end-of-publish (and therefore cannot
-                // advance) until every condition below holds. Logging the
-                // breakdown each tick pinpoints a stuck reconfiguration —
-                // e.g. a restarted validator that left a system session
-                // started-but-not-completed.
+                // The breakdown each tick (debug) pinpoints a stuck
+                // reconfiguration — e.g. a restarted validator that left a
+                // system session started-but-not-completed.
                 debug!(
                     epoch = system_inner_v1.epoch,
                     session_locked,
@@ -1200,28 +1197,37 @@ where
                     no_pricing_calculation_votes,
                     "end-of-publish gate not yet satisfied; epoch cannot advance",
                 );
-                // Once the gate has stayed unsatisfied well past a normal
-                // boundary drain, escalate to WARN (and re-warn at the same
-                // cadence) so a wedged epoch is visible at the default log
-                // level — the false condition(s) below name what is blocking
-                // it, with no debug-level logging to perturb the boundary
-                // timing this race is sensitive to.
-                const STALE_GATE_WARN_TICKS: u64 = 6; // 6 * 10s = 60s; healthy clears < 30s
-                if consecutive_unsatisfied.is_multiple_of(STALE_GATE_WARN_TICKS) {
-                    warn!(
-                        epoch = system_inner_v1.epoch,
-                        stuck_secs = consecutive_unsatisfied * 10,
-                        session_locked,
-                        all_epoch_sessions_finished,
-                        all_immediate_sessions_completed,
-                        next_epoch_committee_exists,
-                        all_network_encryption_keys_reconfiguration_completed,
-                        all_noa_checkpoints_finalized,
-                        no_pricing_calculation_votes,
-                        "end-of-publish gate STUCK: epoch cannot advance; the false \
-                         condition(s) above are blocking it (a persistent \
-                         reconfiguration/session-output stall — see issue #1736)",
-                    );
+                // Escalate to WARN only once the epoch has COMMITTED to closing
+                // (the last user-initiated session is locked) yet the gate still
+                // won't satisfy. Before the lock the gate is legitimately
+                // unsatisfied for most of the epoch, so counting that would be
+                // pure noise; a post-lock stall is the actual wedge — "locked but
+                // can't close" (the #1736 signature) — and the false condition(s)
+                // below name what is blocking advance, at the default log level,
+                // with no debug-level logging to perturb the boundary timing this
+                // race is sensitive to.
+                if session_locked {
+                    consecutive_unsatisfied += 1;
+                    const STALE_GATE_WARN_TICKS: u64 = 6; // 6 * 10s = 60s post-lock
+                    if consecutive_unsatisfied.is_multiple_of(STALE_GATE_WARN_TICKS) {
+                        warn!(
+                            epoch = system_inner_v1.epoch,
+                            stuck_secs = consecutive_unsatisfied * 10,
+                            all_epoch_sessions_finished,
+                            all_immediate_sessions_completed,
+                            next_epoch_committee_exists,
+                            all_network_encryption_keys_reconfiguration_completed,
+                            all_noa_checkpoints_finalized,
+                            no_pricing_calculation_votes,
+                            "end-of-publish gate STUCK after the epoch locked to close: the \
+                             false condition(s) above are blocking advance (a persistent \
+                             reconfiguration/session-output stall — see issue #1736)",
+                        );
+                    }
+                } else {
+                    // Not committed to closing yet (normal mid-epoch) — don't
+                    // accumulate a stall against the gate.
+                    consecutive_unsatisfied = 0;
                 }
             } else {
                 consecutive_unsatisfied = 0;
