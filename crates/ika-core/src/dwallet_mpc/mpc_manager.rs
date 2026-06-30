@@ -51,6 +51,7 @@ use mpc::{MajorityVote, WeightedThresholdAccessStructure};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use sui_types::base_types::ObjectID;
 use tokio::sync::mpsc::Sender;
@@ -105,6 +106,13 @@ pub(crate) struct DWalletMPCManager {
     /// mapping until the epoch advances.
     pub(crate) sessions: HashMap<SessionIdentifier, DWalletSession>,
     pub(crate) epoch_id: EpochId,
+    /// Latches `local_mpc_data_ready_for_frozen_set` once it first returns true.
+    /// The frozen mpc_data input set is epoch-fixed and the manager is per-epoch,
+    /// so once every frozen-set blob is present + valid it stays so — caching the
+    /// result drops a per-tick N RocksDB reads + 2N class-groups BCS decodes (paid
+    /// for every DKG/reconfiguration session on the 20ms service loop) to a single
+    /// atomic load after convergence.
+    local_mpc_data_ready_latched: AtomicBool,
     validator_name: AuthorityPublicKeyBytes,
     pub(crate) committee: Arc<Committee>,
     pub(crate) access_structure: WeightedThresholdAccessStructure,
@@ -401,6 +409,7 @@ impl DWalletMPCManager {
         // We want to "forget" the malicious actors from the previous epoch and start from scratch.
         Ok(Self {
             sessions: HashMap::new(),
+            local_mpc_data_ready_latched: AtomicBool::new(false),
             party_id: authority_name_to_party_id_from_committee(&committee, &validator_name)?,
             epoch_id,
             access_structure,
@@ -1837,6 +1846,11 @@ impl DWalletMPCManager {
     /// is "wait until the next tick"; the rest of the network
     /// proceeds via threshold.
     fn local_mpc_data_ready_for_frozen_set(&self) -> bool {
+        // Once the gate has converged (all frozen-set blobs present + valid) it
+        // stays converged for this epoch, so skip the per-tick reads+decodes.
+        if self.local_mpc_data_ready_latched.load(Ordering::Relaxed) {
+            return true;
+        }
         if !self.epoch_store.off_chain_validator_metadata_enabled() {
             return true;
         }
@@ -1873,6 +1887,10 @@ impl DWalletMPCManager {
                 return false;
             }
         }
+        // Converged: every frozen-set blob is present + valid. Latch so later
+        // ticks short-circuit (monotonic for this epoch's fixed frozen set).
+        self.local_mpc_data_ready_latched
+            .store(true, Ordering::Relaxed);
         true
     }
 
