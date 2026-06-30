@@ -1121,6 +1121,14 @@ where
         end_of_publish_sender: Sender<Option<u64>>,
         noa_checkpoints_finalized: Arc<dyn Fn() -> bool + Send + Sync>,
     ) {
+        // Consecutive ticks the end-of-publish gate has stayed unsatisfied. A
+        // healthy epoch boundary clears it in 1-2 ticks; a wedged reconfiguration
+        // (the #1736 genuine-laggard variant: an epoch's network-key
+        // reconfiguration output, or the tail of locked sessions, never reaching
+        // on-chain quorum) stays stuck indefinitely. This drives the WARN
+        // escalation below so the stall is loud — and names the blocking
+        // condition — at the default log level instead of silent.
+        let mut consecutive_unsatisfied: u64 = 0;
         loop {
             time::sleep(Duration::from_secs(10)).await;
 
@@ -1175,11 +1183,9 @@ where
                 && all_noa_checkpoints_finalized
                 && no_pricing_calculation_votes;
             if !ready_to_end_publish {
-                // The epoch cannot end-of-publish (and therefore cannot
-                // advance) until every condition below holds. Logging the
-                // breakdown each tick pinpoints a stuck reconfiguration —
-                // e.g. a restarted validator that left a system session
-                // started-but-not-completed.
+                // The breakdown each tick (debug) pinpoints a stuck
+                // reconfiguration — e.g. a restarted validator that left a
+                // system session started-but-not-completed.
                 debug!(
                     epoch = system_inner_v1.epoch,
                     session_locked,
@@ -1191,8 +1197,43 @@ where
                     no_pricing_calculation_votes,
                     "end-of-publish gate not yet satisfied; epoch cannot advance",
                 );
-            } else if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
-                error!(error=?err, "failed to send end of publish epoch to the channel");
+                // Escalate to WARN only once the epoch has COMMITTED to closing
+                // (the last user-initiated session is locked) yet the gate still
+                // won't satisfy. Before the lock the gate is legitimately
+                // unsatisfied for most of the epoch, so counting that would be
+                // pure noise; a post-lock stall is the actual wedge — "locked but
+                // can't close" (the #1736 signature) — and the false condition(s)
+                // below name what is blocking advance, at the default log level,
+                // with no debug-level logging to perturb the boundary timing this
+                // race is sensitive to.
+                if session_locked {
+                    consecutive_unsatisfied += 1;
+                    const STALE_GATE_WARN_TICKS: u64 = 6; // 6 * 10s = 60s post-lock
+                    if consecutive_unsatisfied.is_multiple_of(STALE_GATE_WARN_TICKS) {
+                        warn!(
+                            epoch = system_inner_v1.epoch,
+                            stuck_secs = consecutive_unsatisfied * 10,
+                            all_epoch_sessions_finished,
+                            all_immediate_sessions_completed,
+                            next_epoch_committee_exists,
+                            all_network_encryption_keys_reconfiguration_completed,
+                            all_noa_checkpoints_finalized,
+                            no_pricing_calculation_votes,
+                            "end-of-publish gate STUCK after the epoch locked to close: the \
+                             false condition(s) above are blocking advance (a persistent \
+                             reconfiguration/session-output stall — see issue #1736)",
+                        );
+                    }
+                } else {
+                    // Not committed to closing yet (normal mid-epoch) — don't
+                    // accumulate a stall against the gate.
+                    consecutive_unsatisfied = 0;
+                }
+            } else {
+                consecutive_unsatisfied = 0;
+                if let Err(err) = end_of_publish_sender.send(Some(system_inner_v1.epoch)) {
+                    error!(error=?err, "failed to send end of publish epoch to the channel");
+                }
             }
         }
     }
