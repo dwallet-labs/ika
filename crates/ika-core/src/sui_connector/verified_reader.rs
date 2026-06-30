@@ -21,8 +21,9 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use sui_light_client::proof::base::{
     Proof, ProofContents, ProofContentsVerifier, ProofTarget, ProofVerifier,
 };
@@ -57,6 +58,16 @@ use tracing::warn;
 /// `ika-network`) so a legitimate full page passes, but bounds a byzantine peer
 /// that ignores its own cap and over-stuffs the response.
 const MAX_VERIFIED_PAGE_ENTRIES: usize = 1024;
+
+/// How long the singleton-anchor cache-first read may serve a snapshot before it
+/// forces a verified network re-read to re-confirm it. Bounds anchor staleness
+/// so an anchor whose update the pusher skipped (a pruned checkpoint, never
+/// re-folded for a rare singleton like the system inner) can't be served stale
+/// indefinitely and wedge the epoch (#1736). Kept well above the executor's
+/// ~120ms anchor poll so the cache absorbs the vast majority of reads — at most
+/// one network re-read per anchor per interval, far below the per-tick reach-back
+/// rate that the cache-first anchor path exists to avoid.
+const ANCHOR_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(thiserror::Error, Debug)]
 pub enum ReaderError {
@@ -154,6 +165,12 @@ pub struct OcsVerifiedReader {
     /// is too stale (e.g. a stalled pusher), so `try_cache_hit` falls through
     /// to the network instead of serving frozen state. `None` disables it.
     staleness_bound: Option<u64>,
+    /// Per-singleton-anchor wall-clock of the last verified network re-read.
+    /// `verified_anchor_object` serves the cached snapshot only while the last
+    /// refresh is within `ANCHOR_REFRESH_INTERVAL`; past that it forces a network
+    /// re-read so a stale anchor (an update the pusher skipped, never re-folded)
+    /// can't be served indefinitely (#1736).
+    anchor_refreshed_at: Mutex<HashMap<ObjectID, Instant>>,
     /// Committee-signed changeset index, on a mirrored / peer-only node. When
     /// present, a verified read additionally proves *currency* against it: the
     /// inclusion proof authenticates `X@V` at its last-modifying checkpoint `M`,
@@ -184,6 +201,7 @@ impl OcsVerifiedReader {
             cache_first,
             observed_upstream_head: AtomicU64::new(0),
             staleness_bound,
+            anchor_refreshed_at: Mutex::new(HashMap::new()),
             changeset_index: None,
         }
     }
@@ -212,6 +230,18 @@ impl OcsVerifiedReader {
             self.observe_verify_latency("object_cache_hit", started);
             return Ok(hit);
         }
+        self.verified_object_over_network(id, started).await
+    }
+
+    /// The network half of [`Self::verified_object`]: pull + verify from the
+    /// provider with no cache-first short-circuit (a `NotFound` still falls back
+    /// to the cached snapshot on a direct node). [`Self::verified_anchor_object`]
+    /// calls this directly to force a refresh past `try_cache_hit`.
+    async fn verified_object_over_network(
+        &self,
+        id: ObjectID,
+        started: Instant,
+    ) -> Result<VerifiedObject, ReaderError> {
         let resp = match self.provider.verified_object(id).await {
             Ok(resp) => resp,
             // The network reach-back failed because the object's defining
@@ -263,16 +293,50 @@ impl OcsVerifiedReader {
     /// only: mirror nodes have no local verified cache (`cache_first` is false)
     /// and keep the per-read-verified path.
     async fn verified_anchor_object(&self, id: ObjectID) -> Result<VerifiedObject, ReaderError> {
-        if self.cache_first
-            && let Some(hit) = self.cache_fallback(id)
-        {
-            self.metrics
-                .cache_read_total
-                .with_label_values(&["anchor"])
-                .inc();
-            return Ok(hit);
+        // Serve the committee-verified cached snapshot, but only while it is
+        // within `ANCHOR_REFRESH_INTERVAL` of its last verified network re-read.
+        // Past that, force a network re-read (below): a rare singleton like the
+        // system inner whose update the pusher skipped past a pruned checkpoint
+        // is never re-folded, so without this bound the stale snapshot would be
+        // served forever and wedge the epoch (#1736). The interval keeps this off
+        // the hot path — the ~120ms executor polls serve cache between refreshes —
+        // so it can't relatch the per-tick reach-back feedback loop the
+        // cache-first anchor path exists to avoid.
+        if self.cache_first && !self.anchor_refresh_due(id) {
+            if let Some(hit) = self.cache_fallback(id) {
+                self.metrics
+                    .cache_read_total
+                    .with_label_values(&["anchor"])
+                    .inc();
+                return Ok(hit);
+            }
         }
-        self.verified_object(id).await
+        // Refresh due, cache miss, or mirror node: take the verified network path
+        // DIRECTLY (not `verified_object`, whose `try_cache_hit` would just
+        // re-serve the same stale snapshot — its tripwire keys off the pusher's
+        // processed head, which stays current even when one anchor update was
+        // skipped). On success, stamp the refresh so subsequent reads serve cache.
+        let result = self.verified_object_over_network(id, Instant::now()).await;
+        if result.is_ok() {
+            self.anchor_refreshed_at.lock().insert(id, Instant::now());
+        }
+        result
+    }
+
+    /// Whether the cached anchor `id` is due for a forced verified network
+    /// re-read. The first sight of an anchor starts its clock and is NOT due (so
+    /// the cache is served immediately, never reaching the network on a fresh
+    /// cache); thereafter it is due once `ANCHOR_REFRESH_INTERVAL` elapses since
+    /// the last refresh.
+    fn anchor_refresh_due(&self, id: ObjectID) -> bool {
+        let mut refreshed_at = self.anchor_refreshed_at.lock();
+        match refreshed_at.get(&id) {
+            Some(at) => at.elapsed() >= ANCHOR_REFRESH_INTERVAL,
+            None => {
+                refreshed_at.insert(id, Instant::now());
+                false
+            }
+        }
     }
 
     /// Batch counterpart of [`Self::verified_object`]: one provider
@@ -1498,6 +1562,86 @@ mod tests {
             reader.record_high_water(id, SequenceNumber::from(5u64)),
             Err(ReaderError::StaleVersion { .. })
         ));
+    }
+
+    /// The singleton-anchor read bounds its own staleness: it serves the cached
+    /// snapshot within `ANCHOR_REFRESH_INTERVAL`, but once that elapses it forces
+    /// a verified network re-read — so an anchor whose update the pusher skipped
+    /// past a pruned checkpoint (never re-folded) cannot be served stale forever
+    /// and wedge the epoch (#1736). The within-interval assertion shows the stale
+    /// snapshot IS served (the wedge condition the escape must bound); the
+    /// past-interval assertion shows the escape refreshes it.
+    #[tokio::test]
+    async fn anchor_read_refreshes_from_network_after_the_interval() {
+        let (committee, keys) = SuiCommittee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let tables = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                tables,
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let metrics = OcsMetrics::new_for_testing();
+
+        // The fullnode holds the FRESH anchor (v6@seq 50); the local cache holds a
+        // STALE snapshot (v5@seq 42) — the version whose update was never re-folded.
+        let id = ObjectID::from_single_byte(0x55);
+        let fresh = test_object(id, 6, address_owner(0x02));
+        let (net_summary, net_proof) = sign_inclusion(&committee, &keys, 50, &[&fresh], &fresh);
+        let reader = OcsVerifiedReader::new(
+            StagedProvider::object(object_response(fresh, net_summary, net_proof, 50)),
+            committees,
+            metrics.clone(),
+            None, // freshness disabled
+            Arc::new(VerifiedStateCache::new()),
+            true, // cache_first (sui-state-direct)
+            None,
+        );
+
+        let stale = test_object(id, 5, address_owner(0x02));
+        let (summary, proof) = sign_inclusion(&committee, &keys, 42, &[&stale], &stale);
+        reader.cache.absorb_entries(
+            &summary,
+            &[VerifiedObjectEntry {
+                object: stale,
+                checkpoint_seq: 42,
+                proof,
+                dynamic_field_name_type: String::new(),
+                dynamic_field_name_bcs: Vec::new(),
+            }],
+        );
+
+        // First read starts the clock and serves the cached snapshot (no network).
+        let first = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(first.object.version(), SequenceNumber::from(5u64));
+        // A second read WITHIN the interval still serves the stale cache — exactly
+        // the indefinite-stale serving the escape must bound.
+        let within = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(
+            within.object.version(),
+            SequenceNumber::from(5u64),
+            "within the interval the stale cache is served"
+        );
+
+        // Age the refresh clock past the interval (deterministic — no sleep).
+        {
+            let mut refreshed_at = reader.anchor_refreshed_at.lock();
+            let aged = Instant::now()
+                .checked_sub(ANCHOR_REFRESH_INTERVAL + Duration::from_secs(1))
+                .expect("monotonic clock far enough along to back-date");
+            refreshed_at.insert(id, aged);
+        }
+
+        // Now due: the read forces a verified network re-read and returns the FRESH
+        // anchor — the stale cache is no longer served.
+        let refreshed = reader.verified_anchor_object(id).await.unwrap();
+        assert_eq!(
+            refreshed.object.version(),
+            SequenceNumber::from(6u64),
+            "past the interval the anchor refreshes from the network"
+        );
     }
 
     // ===== End-to-end crypto-fixture tests =====
