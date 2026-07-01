@@ -1,34 +1,28 @@
 // Copyright (c) dWallet Labs, Ltd.
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 
-//! Per-epoch task that installs a consensus-pubkey provider on the
-//! current `AuthorityPerEpochStore`, mapping each committee member's
+//! Per-epoch task that installs a `JoinerPubkeyProvider` on the current
+//! `AuthorityPerEpochStore`, mapping each next-epoch committee member's
 //! `AuthorityName` to its Ed25519 consensus pubkey (fetched from the
 //! members' on-chain `StakingPool.validator_info`).
 //!
-//! Two flavors share this machinery — they differ only in which
-//! committee they read and which provider slot they install into:
-//!
-//! - **Active committee** (`new_for_active_committee`): feeds
-//!   `ConsensusPubkeyProvider`, used by handoff-signature verification
-//!   (`process_handoff_signature`) to look up the current committee's
-//!   signers.
-//! - **Next-epoch committee** (`new_for_next_epoch_committee`): feeds
-//!   `JoinerPubkeyProvider`, used by the relay path
-//!   (`verify_joiner_announcement`) to verify a joiner's signature.
+//! It feeds `JoinerPubkeyProvider`, used by the relay path
+//! (`verify_joiner_announcement`) to verify a joiner's signature. Joiners
+//! aren't in the active committee yet, so — unlike handoff-signature
+//! verification, which reads consensus keys straight off the `Committee` —
+//! their keys can't come from the committee and need this side channel.
 //!
 //! The consensus pubkey is fixed at validator registration, but the
-//! *membership* (esp. the next-epoch committee) changes mid-epoch at
-//! reconfiguration, and the provider must reflect a newly-published
-//! next committee promptly — otherwise a joiner's relayed announcement
-//! is rejected as `UnregisteredJoiner` until the next poll. So the
-//! fetch cadence is modest (5s) and the task retries on transport
-//! failure rather than aborting. Without a provider installed, the
-//! corresponding verification drops every message (handoff sigs as
-//! `UnknownSigner`; relayed announcements as `UnregisteredJoiner`).
+//! next-epoch *membership* changes mid-epoch at reconfiguration, and the
+//! provider must reflect a newly-published next committee promptly —
+//! otherwise a joiner's relayed announcement is rejected as
+//! `UnregisteredJoiner` until the next poll. So the fetch cadence is
+//! modest (5s) and the task retries on transport failure rather than
+//! aborting. Without a provider installed, relayed announcements drop as
+//! `UnregisteredJoiner`.
 
 use crate::authority::authority_per_epoch_store::AuthorityPerEpochStore;
-use crate::validator_metadata::{StaticConsensusPubkeyProvider, StaticJoinerPubkeyProvider};
+use crate::validator_metadata::StaticJoinerPubkeyProvider;
 use fastcrypto::ed25519::Ed25519PublicKey;
 use ika_sui_client::{SuiClient, SuiClientInner};
 use ika_types::committee::{Committee, EpochId, StakeUnit};
@@ -49,16 +43,6 @@ type MemberSelector = fn(&SystemInnerV1) -> Vec<ObjectID>;
 /// the epoch store, behind the appropriate provider slot.
 type ProviderInstaller = fn(&AuthorityPerEpochStore, Vec<(AuthorityName, Ed25519PublicKey)>);
 
-fn select_active_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
-    system_inner
-        .validator_set
-        .active_committee
-        .members
-        .iter()
-        .map(|m| m.validator_id)
-        .collect()
-}
-
 fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
     system_inner
         .validator_set
@@ -68,57 +52,15 @@ fn select_next_epoch_committee(system_inner: &SystemInnerV1) -> Vec<ObjectID> {
         .unwrap_or_default()
 }
 
-/// Fetches the **previous** committee's `AuthorityName -> Ed25519
-/// consensus pubkey` pairs from chain.
-///
-/// Reads the prior-committee member ids from
-/// `validator_set.previous_committee` and resolves each member's
-/// `StakingPool.validator_info` by object id. Resolving by object id is
-/// what lets this recover signers that have *departed* the active set
-/// since they signed the handoff cert: their StakingPool object still
-/// exists on chain (only the active-committee membership dropped them),
-/// so a bootstrapping validator can verify their handoff signatures even
-/// though the current active-validator set no longer carries their keys.
-pub async fn fetch_previous_committee_consensus_pubkeys<C: SuiClientInner>(
-    sui_client: &SuiClient<C>,
-) -> anyhow::Result<Vec<(AuthorityName, Ed25519PublicKey)>> {
-    let (_, system_inner) = sui_client
-        .get_system_inner()
-        .await
-        .map_err(|e| anyhow::anyhow!("get_system_inner failed: {e}"))?;
-    let SystemInner::V1(system_inner) = system_inner;
-    let validator_ids: Vec<ObjectID> = system_inner
-        .validator_set
-        .previous_committee
-        .members
-        .iter()
-        .map(|m| m.validator_id)
-        .collect();
-    if validator_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
-    staking_pools
-        .iter()
-        .map(|pool| {
-            let verified = pool
-                .validator_info
-                .verify()
-                .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
-            let name: AuthorityName = (&verified.protocol_pubkey).into();
-            Ok((name, verified.consensus_pubkey.clone()))
-        })
-        .collect()
-}
-
 /// Chain-reads the **previous** committee as a quorum-checkable
 /// `Committee`, for a joiner that never locally observed/persisted that
-/// epoch (so its `committee_store` has no entry for it). The source is
-/// `validator_set.previous_committee` — the same field
-/// `fetch_previous_committee_consensus_pubkeys` reads — and the membership
-/// is decoded with `read_bls_committee`. The class-groups / PVSS maps are
-/// left empty: handoff-cert verification (`verify_certified_handoff_attestation`)
-/// only needs membership, voting power, and the quorum threshold.
+/// epoch (so its `committee_store` has no entry for it). The membership
+/// is decoded with `read_bls_committee`; each member's consensus key is
+/// fetched and carried on the committee so its prior-epoch handoff
+/// signatures verify by name. The class-groups / PVSS maps are left empty:
+/// handoff-cert verification (`verify_certified_handoff_attestation`) only
+/// needs membership, voting power, the quorum threshold, and the consensus
+/// keys.
 ///
 /// `previous_committee` is implicitly the committee of `on_chain_epoch -
 /// 1`. This returns it **only** when that equals `expected_prior_epoch`,
@@ -143,14 +85,34 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         );
     }
     let bls_committee = &system_inner.validator_set.previous_committee;
+    if bls_committee.members.is_empty() {
+        anyhow::bail!("validator_set.previous_committee is empty");
+    }
+    // Resolving by object id is what lets this recover signers that have
+    // *departed* the active set since they signed the handoff cert: their
+    // StakingPool object still exists on chain, so a bootstrapping
+    // validator can verify their handoff signatures even though the
+    // current active-validator set no longer carries their keys.
+    let validator_ids: Vec<ObjectID> = bls_committee
+        .members
+        .iter()
+        .map(|m| m.validator_id)
+        .collect();
+    let staking_pools = sui_client.get_validators_info_by_ids(validator_ids).await?;
+    let mut consensus_keys: HashMap<AuthorityName, Ed25519PublicKey> = HashMap::new();
+    for pool in &staking_pools {
+        let verified = pool
+            .validator_info
+            .verify()
+            .map_err(|code| anyhow::anyhow!("validator info verify failed: code {code}"))?;
+        let name: AuthorityName = (&verified.protocol_pubkey).into();
+        consensus_keys.insert(name, verified.consensus_pubkey.clone());
+    }
     let voting_rights: Vec<(AuthorityName, StakeUnit)> = system_inner
         .read_bls_committee(bls_committee)
         .into_iter()
         .map(|(_, (name, stake))| (name, stake))
         .collect();
-    if voting_rights.is_empty() {
-        anyhow::bail!("validator_set.previous_committee is empty");
-    }
     Ok(Committee::new(
         expected_prior_epoch,
         voting_rights,
@@ -158,18 +120,10 @@ pub async fn fetch_previous_committee<C: SuiClientInner>(
         // membership, voting power, and the quorum threshold. The off-chain
         // PVSS / VSS keys are not on `Committee` at all.
         HashMap::new(),
+        consensus_keys,
         bls_committee.quorum_threshold,
         bls_committee.validity_threshold,
     ))
-}
-
-fn install_consensus_provider(
-    epoch_store: &AuthorityPerEpochStore,
-    entries: Vec<(AuthorityName, Ed25519PublicKey)>,
-) {
-    epoch_store.install_consensus_pubkey_provider(Box::new(
-        StaticConsensusPubkeyProvider::from_iter(entries),
-    ));
 }
 
 fn install_joiner_provider(
@@ -197,23 +151,6 @@ impl<C> PubkeyProviderUpdater<C>
 where
     C: SuiClientInner + 'static,
 {
-    /// Installs a `ConsensusPubkeyProvider` from the current
-    /// (active) committee — for handoff-signature verification.
-    pub fn new_for_active_committee(
-        epoch_store: Weak<AuthorityPerEpochStore>,
-        epoch_id: EpochId,
-        sui_client: Arc<SuiClient<C>>,
-    ) -> Self {
-        Self::new(
-            epoch_store,
-            epoch_id,
-            sui_client,
-            select_active_committee,
-            install_consensus_provider,
-            "ConsensusPubkeyProvider (active committee)",
-        )
-    }
-
     /// Installs a `JoinerPubkeyProvider` from the next-epoch
     /// committee — for joiner-announcement relay verification.
     pub fn new_for_next_epoch_committee(
@@ -272,10 +209,9 @@ where
         }
         // Throttle the failure-path warn: a fullnode RPC outage would
         // otherwise repeat the identical line every poll tick for the
-        // outage's duration (two updater instances run per epoch). Warn
-        // on the first failure and every 12th thereafter (~1/minute at
-        // the 5s production cadence), debug in between, and log recovery
-        // once so the outage's end is visible.
+        // outage's duration. Warn on the first failure and every 12th
+        // thereafter (~1/minute at the 5s production cadence), debug in
+        // between, and log recovery once so the outage's end is visible.
         let mut consecutive_refresh_failures: u64 = 0;
         loop {
             // Exit once the epoch store this updater serves has been

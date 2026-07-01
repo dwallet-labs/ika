@@ -657,6 +657,11 @@ where
                             .map(|(_, (name, stake))| (*name, *stake))
                             .collect(),
                         bundles.class_groups.clone(),
+                        // Empty: this assembled committee feeds only the
+                        // reconfiguration MPC input, which never reads consensus
+                        // keys. Handoff verification uses the epoch store's
+                        // committee (`get_ika_committee`), which carries them.
+                        HashMap::new(),
                         quorum_threshold,
                         validity_threshold,
                     );
@@ -803,6 +808,9 @@ where
                     .map(|(_, (name, stake))| (*name, *stake))
                     .collect(),
                 class_group_encryption_keys_and_proofs,
+                // Empty: the assembled committee feeds only the reconfiguration
+                // MPC input, which never reads consensus keys.
+                HashMap::new(),
                 quorum_threshold,
                 validity_threshold,
             ),

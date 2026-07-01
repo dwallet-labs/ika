@@ -801,6 +801,12 @@ impl NodeConfig {
         self.protocol_key_pair().public().into()
     }
 
+    /// The node's own `AuthorityName` (committee identity): its BLS protocol
+    /// public key.
+    pub fn authority_name(&self) -> AuthorityPublicKeyBytes {
+        self.protocol_public_key()
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.db_path.join("live")
     }
