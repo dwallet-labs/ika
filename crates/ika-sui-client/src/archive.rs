@@ -30,6 +30,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use object_store::ObjectStore;
 use sui_storage::object_store::util::{build_object_store, end_of_epoch_data, fetch_checkpoint};
 use sui_types::messages_checkpoint::{
@@ -52,6 +53,27 @@ pub enum ArchiveError {
         #[source]
         source: anyhow::Error,
     },
+}
+
+/// Read-only source of Sui end-of-epoch checkpoints over an object store. A
+/// trait so the committee ratchet / cold-bootstrap can be unit-tested with an
+/// in-memory archive. Everything returned is UNVERIFIED — the caller BLS-verifies
+/// each summary against the committee chain (rooted at the genesis committee).
+#[async_trait]
+pub trait CheckpointArchive: Send + Sync {
+    /// Enumerate the end-of-epoch checkpoint sequence numbers (`epochs.json`).
+    /// An untrusted hint for *where* the end-of-epoch checkpoints are; the
+    /// caller verifies each fetched checkpoint cryptographically.
+    async fn enumerate_end_of_epoch_seqs(
+        &self,
+    ) -> Result<Vec<CheckpointSequenceNumber>, ArchiveError>;
+
+    /// Fetch a checkpoint by sequence number, returning its (still-unverified)
+    /// certified summary and contents.
+    async fn fetch_checkpoint(
+        &self,
+        seq: CheckpointSequenceNumber,
+    ) -> Result<(CertifiedCheckpointSummary, CheckpointContents), ArchiveError>;
 }
 
 /// A read-only client over a Sui checkpoint object store.
@@ -80,13 +102,11 @@ impl SuiCheckpointArchive {
     pub fn url(&self) -> &str {
         &self.url
     }
+}
 
-    /// Enumerate the end-of-epoch checkpoint sequence numbers from `epochs.json`.
-    ///
-    /// UNTRUSTED: a hint for where the end-of-epoch checkpoints live. The caller
-    /// verifies each fetched checkpoint cryptographically; this list cannot be
-    /// trusted to be complete or correctly ordered.
-    pub async fn enumerate_end_of_epoch_seqs(
+#[async_trait]
+impl CheckpointArchive for SuiCheckpointArchive {
+    async fn enumerate_end_of_epoch_seqs(
         &self,
     ) -> Result<Vec<CheckpointSequenceNumber>, ArchiveError> {
         end_of_epoch_data(&self.url, self.options.clone())
@@ -97,10 +117,7 @@ impl SuiCheckpointArchive {
             })
     }
 
-    /// Fetch a checkpoint by sequence number, returning its (still-unverified)
-    /// certified summary and contents. The caller MUST BLS-verify the summary
-    /// against the committee chain before trusting any of it.
-    pub async fn fetch_checkpoint(
+    async fn fetch_checkpoint(
         &self,
         seq: CheckpointSequenceNumber,
     ) -> Result<(CertifiedCheckpointSummary, CheckpointContents), ArchiveError> {
