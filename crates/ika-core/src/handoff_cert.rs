@@ -154,6 +154,15 @@ impl ConsensusPubkeyProvider for StaticConsensusPubkeyProvider {
     }
 }
 
+/// A `Committee` is itself a consensus-pubkey provider: it carries each
+/// member's consensus key, so handoff verification reads the keys straight
+/// from the committee it verifies against — no side channel to populate.
+impl ConsensusPubkeyProvider for Committee {
+    fn consensus_pubkey(&self, signer: &AuthorityName) -> Option<Ed25519PublicKey> {
+        self.consensus_key(signer).cloned()
+    }
+}
+
 /// Outcome of verifying a single `HandoffSignatureMessage`. Anything
 /// other than `Accept` is non-fatal — the caller drops the message
 /// and waits for the next one.

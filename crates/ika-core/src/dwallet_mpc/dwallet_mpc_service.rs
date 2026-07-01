@@ -2424,7 +2424,7 @@ impl DWalletMPCService {
         epoch_start_system: &EpochStartSystem,
         config: &NodeConfig,
     ) -> DwalletMPCResult<()> {
-        let authority_name = config.protocol_public_key();
+        let authority_name = config.authority_name();
         let Some(onchain_validator) = epoch_start_system
             .get_ika_validators()
             .into_iter()

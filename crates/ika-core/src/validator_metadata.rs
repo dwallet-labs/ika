@@ -2033,6 +2033,8 @@ mod tests {
         let consensus_pubs: Vec<Ed25519PublicKey> =
             consensus_kps.iter().map(|kp| kp.public().clone()).collect();
         let voting_rights: Vec<(AuthorityName, u64)> = names.iter().map(|n| (*n, 1u64)).collect();
+        let consensus_keys: std::collections::HashMap<AuthorityName, Ed25519PublicKey> =
+            names.iter().copied().zip(consensus_pubs).collect();
         // quorum_threshold = 2f+1 over 3f+1; for size=4, f=1, q=3.
         let q = (2 * size / 3) as u64 + 1;
         let v = (size / 3) as u64 + 1;
@@ -2040,11 +2042,11 @@ mod tests {
             5,
             voting_rights,
             std::collections::HashMap::new(),
+            consensus_keys.clone(),
             q,
             v,
         ));
-        let provider =
-            StaticConsensusPubkeyProvider::from_iter(names.iter().copied().zip(consensus_pubs));
+        let provider = StaticConsensusPubkeyProvider::from_iter(consensus_keys);
         (committee, names, consensus_kps, provider)
     }
 
@@ -2137,6 +2139,7 @@ mod tests {
         let committee = Arc::new(Committee::new(
             5,
             voting_rights,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             3,
             2,

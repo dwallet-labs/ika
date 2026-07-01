@@ -13,7 +13,6 @@ use anemo::PeerId;
 use anemo::types::{PeerAffinity, PeerInfo};
 use consensus_config::{Authority, Committee as ConsensusCommittee};
 use dwallet_mpc_types::dwallet_mpc::{MPCDataTrait, VersionedMPCData};
-use fastcrypto::traits::ToFromBytes;
 use ika_protocol_config::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 use sui_types::base_types::{EpochId, ObjectID};
@@ -204,10 +203,25 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
             })
             .collect();
 
+        // The name is the BLS-derived label; carry each validator's consensus
+        // Ed25519 key as committee data so consensus-key-signed messages
+        // (handoff certs) can be verified by name without a side provider.
+        let consensus_keys = self
+            .active_validators
+            .iter()
+            .map(|validator| {
+                (
+                    validator.authority_name(),
+                    validator.consensus_pubkey.clone(),
+                )
+            })
+            .collect();
+
         Committee::new(
             self.epoch,
             voting_rights,
             class_groups_public_keys_and_proofs,
+            consensus_keys,
             self.quorum_threshold,
             self.validity_threshold,
         )
@@ -218,12 +232,12 @@ impl EpochStartSystemTrait for EpochStartSystemV1 {
         let mut authorities = vec![];
         for (i, (name, stake)) in ika_committee.members().enumerate() {
             let active_validator = &self.active_validators[i];
-            if name.0 != active_validator.protocol_pubkey.as_bytes() {
+            if *name != active_validator.authority_name() {
                 error!(
                     "Mismatched authority order between Ika and Mysticeti! Index {}, Mysticeti authority {:?}\nIka authority name {:?}",
                     i,
                     name,
-                    active_validator.protocol_pubkey.as_bytes()
+                    active_validator.authority_name()
                 );
             }
             authorities.push(Authority {
