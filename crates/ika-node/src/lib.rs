@@ -270,7 +270,7 @@ impl IkaNode {
     /// Start the node in a specific mode with validation.
     /// This method validates that the configuration matches the expected mode.
     pub async fn start_with_mode(
-        mut config: NodeConfig,
+        config: NodeConfig,
         registry_service: RegistryService,
         _software_version: &'static str,
         mode: NodeMode,
