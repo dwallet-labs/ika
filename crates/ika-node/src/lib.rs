@@ -306,33 +306,37 @@ impl IkaNode {
 
         let sui_client_metrics = SuiClientMetrics::new(&registry_service.default_registry());
 
-        let mut ika_dwallet_2pc_mpc_package_id_v2 = config
+        // Genesis-root the chain before resolving the on-chain identity: when a
+        // Sui genesis blob is configured, load + verify it and DERIVE the chain
+        // from its checkpoint digest, then require the declared
+        // `sui_chain_identifier` to match. This roots the compiled-in ika
+        // identity (resolved next) in the cryptographically-verified genesis,
+        // not the operator's declared chain, and fails fast on a mismatch — e.g.
+        // a config that declares `Custom` but supplies a real mainnet/testnet
+        // genesis blob (which the load-and-verify alone would accept).
+        if let Some(genesis_path) = config.sui_connector_config.sui_genesis.clone() {
+            let boot = ika_sui_client::genesis::load_and_verify_sui_genesis(
+                &genesis_path,
+                config.sui_connector_config.sui_chain_identifier,
+            )
+            .map_err(|e| anyhow!("verify Sui genesis blob {}: {e}", genesis_path.display()))?;
+            let derived = boot.chain();
+            if derived != config.sui_connector_config.sui_chain_identifier {
+                anyhow::bail!(
+                    "configured sui_chain_identifier is {} but the genesis blob is for {}",
+                    config.sui_connector_config.sui_chain_identifier,
+                    derived
+                );
+            }
+        }
+
+        // Fill any omitted on-chain ika ids (packages + objects) from the
+        // binary's compiled-in per-chain identity, keyed off the now
+        // genesis-verified Sui chain; explicit config values always win.
+        // Subsumes the old per-chain dwallet-v2 hardcode.
+        config
             .sui_connector_config
-            .ika_dwallet_2pc_mpc_package_id_v2;
-
-        // Testnet V2
-        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
-            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
-                == ObjectID::from_str(
-                    "0xf02f5960c94fce1899a3795b5d11fd076bc70a8d0e20a2b19923d990ed490730",
-                )?
-        {
-            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
-                "0x6573a6c13daf26a64eb8a37d3c7a4391b353031e223072ca45b1ff9366f59293",
-            )?)
-        }
-
-        // Mainnet V2
-        if ika_dwallet_2pc_mpc_package_id_v2.is_none()
-            && config.sui_connector_config.ika_dwallet_2pc_mpc_package_id
-                == ObjectID::from_str(
-                    "0xdd24c62739923fbf582f49ef190b4a007f981ca6eb209ca94f3a8eaf7c611317",
-                )?
-        {
-            ika_dwallet_2pc_mpc_package_id_v2 = Some(ObjectID::from_str(
-                "0x23b5bd96051923f800c3a2150aacdcdd8d39e1df2dce4dac69a00d2d8c7f7e77",
-            )?)
-        }
+            .resolve_ika_on_chain_identity()?;
 
         let ika_network_config = IkaNetworkConfig {
             packages: IkaPackageConfig {
@@ -341,7 +345,9 @@ impl IkaNode {
                 ika_dwallet_2pc_mpc_package_id: config
                     .sui_connector_config
                     .ika_dwallet_2pc_mpc_package_id,
-                ika_dwallet_2pc_mpc_package_id_v2,
+                ika_dwallet_2pc_mpc_package_id_v2: config
+                    .sui_connector_config
+                    .ika_dwallet_2pc_mpc_package_id_v2,
                 ika_system_package_id: config.sui_connector_config.ika_system_package_id,
             },
             objects: IkaObjectsConfig {
