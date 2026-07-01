@@ -238,3 +238,112 @@ async fn stale_epoch_network_key_data_is_not_spawned() {
         "current-epoch key data must spawn an instantiation"
     );
 }
+
+/// The canonical network DKG output migrates V2->V3 exactly once — when the
+/// cert-pinned reconfiguration output becomes V3 and the validator mirrors the
+/// reconstructed full output. For that one epoch the overlay's DKG digest moves
+/// past the PRIOR epoch's V2 cert. An ALREADY-adopted key must survive that
+/// mismatch (keeping its adopted value), not be dropped — mirroring how a moved
+/// reconfiguration output is tolerated. (An unadopted key contradicting the cert
+/// is still rejected; covered by the empty-overlay test above.)
+#[tokio::test]
+async fn already_adopted_key_survives_dkg_output_migration() {
+    let _ = tracing_subscriber::fmt().with_test_writer().try_init();
+    let (
+        mut dwallet_mpc_services,
+        _sui_data_senders,
+        _sent_consensus_messages_collectors,
+        epoch_stores,
+        _notify_services,
+        _network_owned_address_sign_request_senders,
+        _network_owned_address_sign_output_receivers,
+    ) = utils::create_dwallet_mpc_services(1);
+    let service = dwallet_mpc_services.first_mut().unwrap();
+    let epoch_id = service.epoch;
+    let prior_epoch = epoch_id - 1;
+
+    let key_id = ObjectID::random();
+    let network_key_id = NetworkKeyId([0x42; 32]);
+    crate::network_key_id_mapping::register(key_id, network_key_id);
+
+    let v2_dkg_output = b"v2 anchor network dkg output".to_vec();
+    let reconfiguration_output = b"v3 network reconfiguration output".to_vec();
+
+    // The prior epoch's cert pins the V2 DKG digest and the reconfiguration
+    // digest (items sorted by `HandoffItemKey`: DKG < reconfiguration).
+    let attestation = HandoffAttestation {
+        epoch: prior_epoch,
+        next_committee_pubkey_set_hash: [0u8; 32],
+        items: vec![
+            (
+                HandoffItemKey::NetworkDkgOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&v2_dkg_output),
+            ),
+            (
+                HandoffItemKey::NetworkReconfigurationOutput {
+                    key_id: network_key_id,
+                },
+                mpc_data_blob_hash(&reconfiguration_output),
+            ),
+        ],
+    };
+    epoch_stores
+        .first()
+        .unwrap()
+        .certified_handoff_attestations
+        .lock()
+        .unwrap()
+        .insert(
+            prior_epoch,
+            CertifiedHandoffAttestation {
+                attestation,
+                signatures: vec![],
+            },
+        );
+
+    let manager = service.dwallet_mpc_manager_mut();
+
+    // First adopt: the overlay's V2 DKG output and reconfiguration output both
+    // match the prior cert, so the key is adopted.
+    let v2_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            v2_dkg_output.clone(),
+            reconfiguration_output.clone(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&v2_overlay);
+    assert!(
+        manager.adopted_network_key_data.contains_key(&key_id),
+        "the cert-matching V2 key must be adopted"
+    );
+
+    // Second adopt: the overlay's DKG output has migrated to a different (V3)
+    // value while the prior cert still pins V2. The already-adopted key must
+    // survive — kept at its adopted V2 value, not dropped, not overwritten by
+    // the mismatching overlay.
+    let v3_dkg_output = b"v3 reconstructed full network dkg output".to_vec();
+    let v3_overlay = Arc::new(HashMap::from([(
+        key_id,
+        network_key_data(
+            key_id,
+            epoch_id,
+            v3_dkg_output,
+            reconfiguration_output.clone(),
+        ),
+    )]));
+    manager.adopt_cert_verified_keys(&v3_overlay);
+    let adopted = manager
+        .adopted_network_key_data
+        .get(&key_id)
+        .expect("the already-adopted key must survive the DKG-output migration");
+    assert_eq!(
+        adopted.network_dkg_public_output, v2_dkg_output,
+        "the migration epoch keeps the prior adopted (V2) value, not the \
+         mismatching overlay"
+    );
+}

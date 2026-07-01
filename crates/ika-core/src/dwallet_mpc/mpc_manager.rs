@@ -1059,27 +1059,47 @@ impl DWalletMPCManager {
             } else if off_chain_on && cert.is_some() {
                 // Reconfigured key, off-chain mode with a prior handoff cert:
                 // the overlay carries locally-cached blobs, so anchor them
-                // against the prior epoch's cert — both the stable DKG digest
-                // and the epoch-specific reconfiguration digest must match.
+                // against the prior epoch's cert — the DKG digest and the
+                // epoch-specific reconfiguration digest must match.
                 if cert_dkg_digest != Some(&local_dkg_digest) {
-                    // Same anomaly as above for a reconfigured key's
-                    // stable DKG digest.
-                    if self
-                        .warned_cert_digest_mismatches
-                        .insert((*key_id, local_dkg_digest))
-                    {
-                        warn!(
-                            ?key_id,
-                            cert_dkg_digest = ?cert_dkg_digest,
-                            local_dkg_digest = ?local_dkg_digest,
-                            "local network-key DKG output digest does not match the prior \
-                             epoch's handoff cert — skipping adoption"
-                        );
+                    // The DKG digest is stable WITHIN a representation but
+                    // migrates once, V2->V3: when the cert-pinned
+                    // reconfiguration output becomes V3 and this validator
+                    // flips its mirror to the reconstructed V3 output, the
+                    // overlay's DKG digest moves past the PRIOR epoch's V2 cert
+                    // for one epoch. As with the reconfiguration digest below,
+                    // that mismatch is the expected defer-to-next-epoch when the
+                    // key is ALREADY adopted (the prior value stays installed,
+                    // and the output-quorum byte-equality tally guards against a
+                    // genuinely divergent output); only an UNADOPTED key
+                    // contradicting the cert is the security-relevant anomaly
+                    // worth a warn.
+                    if !self.adopted_network_key_data.contains_key(key_id) {
+                        if self
+                            .warned_cert_digest_mismatches
+                            .insert((*key_id, local_dkg_digest))
+                        {
+                            warn!(
+                                ?key_id,
+                                cert_dkg_digest = ?cert_dkg_digest,
+                                local_dkg_digest = ?local_dkg_digest,
+                                "local network-key DKG output digest does not match the prior \
+                                 epoch's handoff cert and the key has no adopted value — \
+                                 skipping adoption, the key stays uninstantiated"
+                            );
+                        } else {
+                            debug!(
+                                ?key_id,
+                                "local network-key DKG output still contradicts the handoff \
+                                 cert (key unadopted) — skipping adoption"
+                            );
+                        }
                     } else {
                         debug!(
                             ?key_id,
-                            "local network-key DKG output still contradicts the handoff \
-                             cert — skipping adoption"
+                            "overlay DKG output does not match the prior epoch's cert \
+                             (expected once during the V2->V3 canonical migration) — \
+                             keeping the adopted value"
                         );
                     }
                     continue;
@@ -1605,11 +1625,18 @@ impl DWalletMPCManager {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
     ) {
-        let network_dkg_output_bytes = match self
+        let network_key_identity_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
         {
-            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            // Use the key's flip-invariant NetworkKeyId as the session-identifier
+            // basis; fall back to the network DKG output bytes only for a
+            // malformed key with no derivable id (deterministic, so still
+            // committee-uniform).
+            Ok(key_data) => key_data
+                .network_key_id()
+                .map(|id| id.0.to_vec())
+                .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
@@ -1632,7 +1659,7 @@ impl DWalletMPCManager {
             curve,
             signature_algorithm,
             dwallet_network_encryption_key_id,
-            &network_dkg_output_bytes,
+            &network_key_identity_bytes,
         );
 
         let session_identifier = request.session_identifier;
@@ -1680,11 +1707,15 @@ impl DWalletMPCManager {
             return false;
         };
         let hash_scheme_group: group::HashScheme = hash_scheme.into();
-        let network_dkg_output_bytes = match self
+        let network_key_identity_bytes = match self
             .network_keys
             .get_network_encryption_key_public_data(&dwallet_network_encryption_key_id)
         {
-            Ok(key_data) => key_data.network_dkg_output().as_bytes().to_vec(),
+            // Flip-invariant NetworkKeyId basis (see `instantiate_internal_presign_session`).
+            Ok(key_data) => key_data
+                .network_key_id()
+                .map(|id| id.0.to_vec())
+                .unwrap_or_else(|_| key_data.network_dkg_output().as_bytes().to_vec()),
             Err(e) => {
                 error!(
                     ?dwallet_network_encryption_key_id,
@@ -1778,7 +1809,7 @@ impl DWalletMPCManager {
             signature_algorithm,
             hash_scheme_group,
             dwallet_network_encryption_key_id,
-            &network_dkg_output_bytes,
+            &network_key_identity_bytes,
             message.clone(),
             wrapped_presign,
         );
@@ -2288,16 +2319,60 @@ impl DWalletMPCManager {
                         if let Some(key_data) = key_data {
                             if self.epoch_store.off_chain_validator_metadata_enabled()
                                 && !key_data.network_dkg_public_output.is_empty()
-                                && let Err(e) = self.epoch_store.cache_network_dkg_output(
-                                    key_id,
-                                    &key_data.network_dkg_public_output,
-                                )
                             {
-                                warn!(
-                                    error = ?e,
-                                    ?key_id,
-                                    "failed to cache DKG output digest from adopted data"
-                                );
+                                // Mirror the CANONICAL DKG output. Once the
+                                // cert-pinned reconfiguration output is V3, the
+                                // instantiation carries a reconstructed full V3
+                                // output; mirror that in place of the V2 anchor
+                                // so the handoff digest, the overlay, and joiners
+                                // all migrate to V3 together. One-shot: after the
+                                // flip the overlay resolves V3, `reconstruct`
+                                // returns None, and this falls back to the (now
+                                // V3) anchor. Epoch-aligned because the
+                                // reconstruction comes from the cert-pinned
+                                // reconfiguration output, identical committee-wide.
+                                let canonical_dkg_output = match key
+                                    .reconstructed_full_network_dkg_output()
+                                {
+                                    Some(reconstructed_v3) => match bcs::to_bytes(reconstructed_v3)
+                                    {
+                                        Ok(bytes) => bytes,
+                                        Err(e) => {
+                                            warn!(
+                                                error = ?e,
+                                                ?key_id,
+                                                "failed to serialize reconstructed V3 network \
+                                                 DKG output for the canonical mirror; falling \
+                                                 back to the V2 anchor"
+                                            );
+                                            key_data.network_dkg_public_output.clone()
+                                        }
+                                    },
+                                    None => key_data.network_dkg_public_output.clone(),
+                                };
+                                if let Err(e) = self
+                                    .epoch_store
+                                    .cache_network_dkg_output(key_id, &canonical_dkg_output)
+                                {
+                                    warn!(
+                                        error = ?e,
+                                        ?key_id,
+                                        "failed to cache DKG output digest from adopted data"
+                                    );
+                                }
+                                // Surface the canonical DKG-output version for
+                                // observability of the V2->V3 migration: it
+                                // reads 3 once this validator mirrors the
+                                // reconstructed full output.
+                                let canonical_version: i64 =
+                                    if key.reconstructed_full_network_dkg_output().is_some() {
+                                        3
+                                    } else {
+                                        key.network_dkg_output().version() as i64
+                                    };
+                                self.dwallet_mpc_metrics
+                                    .network_encryption_key_canonical_dkg_output_version
+                                    .set(canonical_version);
                             }
                             // Snapshot the data we just instantiated so
                             // the next poll skips this key unless a

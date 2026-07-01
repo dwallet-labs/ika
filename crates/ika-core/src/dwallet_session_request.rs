@@ -50,7 +50,7 @@ impl DWalletSessionRequest {
         curve: DWalletCurve,
         signature_algorithm: DWalletSignatureAlgorithm,
         dwallet_network_encryption_key_id: ObjectID,
-        network_dkg_output: &[u8],
+        network_key_identity: &[u8],
     ) -> Self {
         let mut transcript = Transcript::new(b"Internal Presign session identifier preimage");
         transcript.append_u64(b"epoch", epoch);
@@ -62,7 +62,11 @@ impl DWalletSessionRequest {
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
         );
-        transcript.append_message(b"network dkg output", network_dkg_output);
+        // Bind to the key's reconfiguration- and V2->V3-flip-invariant identity
+        // (its NetworkKeyId) rather than the raw network DKG output bytes, which
+        // flip when the canonical output migrates V2->V3 — so the identifier
+        // stays stable across that migration.
+        transcript.append_message(b"network key identity", network_key_identity);
 
         // Generate a session identifier preimage in a deterministic way
         // (internally, it uses a hash function to pseudo-randomly generate it).
@@ -105,7 +109,7 @@ impl DWalletSessionRequest {
         signature_algorithm: DWalletSignatureAlgorithm,
         hash_scheme: HashScheme,
         dwallet_network_encryption_key_id: ObjectID,
-        network_dkg_output: &[u8],
+        network_key_identity: &[u8],
         message: Vec<u8>,
         presign: SerializedWrappedMPCPublicOutput,
     ) -> Self {
@@ -120,7 +124,9 @@ impl DWalletSessionRequest {
             b"network encryption key id",
             dwallet_network_encryption_key_id.as_ref(),
         );
-        transcript.append_message(b"network dkg output", network_dkg_output);
+        // See `new_internal_presign`: bind to the flip-invariant NetworkKeyId,
+        // not the migrating network DKG output bytes.
+        transcript.append_message(b"network key identity", network_key_identity);
 
         // Generate a session identifier preimage in a deterministic way
         let mut session_identifier_preimage: [u8; SessionIdentifier::LENGTH] =

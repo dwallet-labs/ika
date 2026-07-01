@@ -126,6 +126,11 @@ async fn v118_atomic_upgrade_then_committee_churn() {
         .join_validator_mirrored(new.clone())
         .wait_for_epoch(4)
         .expect_committee_size(5)
+        // The 1.1.8-origin V2 network key migrates to the full V3 output at the
+        // first v4 reshare (epoch 3->4). Assert every member of the new 5-member
+        // committee — INCLUDING the mirrored joiner, which installed the key by
+        // the cert-pinned digest — reports the migrated V3 canonical output.
+        .expect_network_dkg_output_version_at_least(3)
         // The new 5-member committee runs a full lifecycle against the reshared
         // 1.1.8-origin network key.
         .run_workload("v4-with-joiner")

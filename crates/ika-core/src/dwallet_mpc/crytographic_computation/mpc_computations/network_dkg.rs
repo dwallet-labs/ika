@@ -967,6 +967,60 @@ mod network_key_id_derivation_tool {
     }
 }
 
+/// Reconstructs the full-shape (V3) network DKG output in memory from a V2
+/// (backward-compatible) DKG output and a full V3 reconfiguration output.
+///
+/// The V2 DKG output is a `decentralized_party::dkg::PublicOutputCore` and
+/// lacks the trailing `threshold_encryption_to_sharing_output` that the full V3
+/// `decentralized_party::dkg::PublicOutput` carries; that field is produced
+/// only by the threshold-encryption-to-sharing sub-protocol, which the
+/// backward-compatible reconfiguration predates. Once a full V3 reconfiguration
+/// output is available it supplies that field, and the full V3 DKG output is
+/// reconstructed by combining the V2 output's reconfiguration-invariant
+/// class-group DKG output (`PublicOutputCore::class_group_dkg_output`) with the
+/// V3 reconfiguration output (`PublicOutput::new_from_reconfiguration_output`,
+/// the inverse of `class_group_dkg_output`).
+///
+/// Returns `Some(V3)` only when `network_dkg_output` is V2 AND a V3
+/// reconfiguration output is available; `None` otherwise. The reconstruction is
+/// a pure (RNG-free) function of its inputs, so every validator holding the same
+/// V2 DKG output and the same quorum-agreed V3 reconfiguration output derives
+/// byte-identical V3 bytes.
+fn reconstruct_full_network_dkg_output(
+    network_dkg_output: &VersionedNetworkDkgOutput,
+    latest_network_reconfiguration_public_output: Option<
+        &VersionedDecryptionKeyReconfigurationOutput,
+    >,
+) -> DwalletMPCResult<Option<VersionedNetworkDkgOutput>> {
+    let (
+        VersionedNetworkDkgOutput::V2(dkg_public_output_core_bytes),
+        Some(VersionedDecryptionKeyReconfigurationOutput::V3(reconfiguration_output_bytes)),
+    ) = (
+        network_dkg_output,
+        latest_network_reconfiguration_public_output,
+    )
+    else {
+        return Ok(None);
+    };
+
+    let dkg_public_output_core: dkg::PublicOutputCore =
+        bcs::from_bytes(dkg_public_output_core_bytes)?;
+    let class_group_dkg_output = dkg_public_output_core.class_group_dkg_output();
+
+    let reconfiguration_output: twopc_mpc::decentralized_party::reconfiguration::PublicOutput =
+        bcs::from_bytes(reconfiguration_output_bytes)?;
+
+    let full_network_dkg_output = dkg::PublicOutput::new_from_reconfiguration_output(
+        class_group_dkg_output,
+        reconfiguration_output,
+    )
+    .map_err(DwalletMPCError::from)?;
+
+    Ok(Some(VersionedNetworkDkgOutput::V3(bcs::to_bytes(
+        &full_network_dkg_output,
+    )?)))
+}
+
 /// Builds the `NetworkEncryptionKeyPublicData` from per-curve DKG data.
 pub(crate) fn build_network_encryption_key_public_data(
     epoch: u64,
@@ -1001,13 +1055,19 @@ pub(crate) fn build_network_encryption_key_public_data(
         class_groups::Curve25519DecryptionKeySharePublicParameters,
     >,
     noa_dkg_data: &AllCurvesNetworkOwnedAddressDkgData,
-) -> NetworkEncryptionKeyPublicData {
-    NetworkEncryptionKeyPublicData {
+) -> DwalletMPCResult<NetworkEncryptionKeyPublicData> {
+    let reconstructed_full_network_dkg_output = reconstruct_full_network_dkg_output(
+        &network_dkg_output,
+        latest_network_reconfiguration_public_output.as_ref(),
+    )?;
+
+    Ok(NetworkEncryptionKeyPublicData {
         epoch,
         dkg_at_epoch,
         state,
         latest_network_reconfiguration_public_output,
         network_dkg_output,
+        reconstructed_full_network_dkg_output,
         secp256k1_protocol_public_parameters,
         secp256k1_decryption_key_share_public_parameters,
         secp256r1_protocol_public_parameters,
@@ -1024,7 +1084,7 @@ pub(crate) fn build_network_encryption_key_public_data(
         secp256r1_network_owned_address_public_key: noa_dkg_data.secp256r1.public_key.clone(),
         curve25519_network_owned_address_public_key: noa_dkg_data.curve25519.public_key.clone(),
         ristretto_network_owned_address_public_key: noa_dkg_data.ristretto.public_key.clone(),
-    }
+    })
 }
 
 /// Times one instantiation sub-call, logs its duration at info level, and
@@ -1124,23 +1184,21 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 )
             })?;
 
-            Ok::<NetworkEncryptionKeyPublicData, DwalletMPCError>(
-                build_network_encryption_key_public_data(
-                    epoch,
-                    dkg_at_epoch,
-                    NetworkDecryptionKeyPublicOutputType::NetworkDkg,
-                    None,
-                    mpc_public_output.clone(),
-                    secp256k1_protocol_public_parameters,
-                    secp256k1_decryption_key_share_public_parameters,
-                    secp256r1_protocol_public_parameters,
-                    secp256r1_decryption_key_share_public_parameters,
-                    ristretto_protocol_public_parameters,
-                    ristretto_decryption_key_share_public_parameters,
-                    curve25519_protocol_public_parameters,
-                    curve25519_decryption_key_share_public_parameters,
-                    &noa_dkg_data,
-                ),
+            build_network_encryption_key_public_data(
+                epoch,
+                dkg_at_epoch,
+                NetworkDecryptionKeyPublicOutputType::NetworkDkg,
+                None,
+                mpc_public_output.clone(),
+                secp256k1_protocol_public_parameters,
+                secp256k1_decryption_key_share_public_parameters,
+                secp256r1_protocol_public_parameters,
+                secp256r1_decryption_key_share_public_parameters,
+                ristretto_protocol_public_parameters,
+                ristretto_decryption_key_share_public_parameters,
+                curve25519_protocol_public_parameters,
+                curve25519_decryption_key_share_public_parameters,
+                &noa_dkg_data,
             )
         }};
     }
@@ -1160,5 +1218,63 @@ fn instantiate_dwallet_mpc_network_encryption_key_public_data_from_dkg_public_ou
                 bcs::from_bytes(public_output_bytes)?;
             build_from_public_output!(public_output)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reconstruct_full_network_dkg_output;
+    use dwallet_mpc_types::dwallet_mpc::{
+        VersionedDecryptionKeyReconfigurationOutput, VersionedNetworkDkgOutput,
+    };
+
+    /// The reconstruction must fire ONLY for a V2 DKG output paired with a full
+    /// V3 reconfiguration output. Every other combination returns `None` without
+    /// touching the crypto decoders (so dummy bytes are fine here). The `Some`
+    /// path needs a real V2 DKG output + V3 reconfiguration output and is
+    /// exercised end-to-end by the v4 reconfiguration integration path.
+    #[test]
+    fn reconstruct_full_network_dkg_output_gating() {
+        use VersionedDecryptionKeyReconfigurationOutput as Reconfiguration;
+        use VersionedNetworkDkgOutput as Dkg;
+
+        // Natively-V3 DKG output: already full shape, no reconstruction.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V3(vec![]),
+                Some(&Reconfiguration::V3(vec![])),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        // V2 DKG output but no reconfiguration output yet (e.g. fresh DKG).
+        assert!(
+            reconstruct_full_network_dkg_output(&Dkg::V2(vec![]), None)
+                .unwrap()
+                .is_none()
+        );
+
+        // V2 DKG output with a V2 (core-only) reconfiguration output: the
+        // trailing threshold-encryption-to-sharing field is absent, so the full
+        // V3 DKG output cannot be reconstructed.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V2(vec![]),
+                Some(&Reconfiguration::V2(vec![])),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        // V1 is never produced anymore.
+        assert!(
+            reconstruct_full_network_dkg_output(
+                &Dkg::V1(vec![]),
+                Some(&Reconfiguration::V3(vec![])),
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }

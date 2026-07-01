@@ -16,8 +16,18 @@ next epoch inherits.
   different successor committee).
 - `items` — `(HandoffItemKey, digest)` pairs, sorted strictly ascending
   by key:
-  - `NetworkDkgOutput { key_id }` — stable across the encryption key's
-    lifetime (the DKG output is a one-time deterministic computation).
+  - `NetworkDkgOutput { key_id }` — the canonical network DKG output.
+    Stable across epochs WITHIN a representation, with exactly one
+    consensus-deterministic transition over the key's lifetime: a
+    mainnet-v1.1.8-origin key's DKG output is a V2 (backward-compatible)
+    `PublicOutputCore` and migrates ONCE to the full V3
+    `decentralized_party::dkg::PublicOutput` at the first v4 reshare
+    (when the cert-pinned reconfiguration output first becomes V3, every
+    validator reconstructs the full V3 output and flips its perpetual
+    digest mirror — see `dev-docs/plans/network-dkg-anchor-v2-to-v3-migration.md`).
+    The flip is epoch-uniform because it is driven by the cert-pinned
+    reconfiguration output, identical committee-wide. A natively-v4 key
+    is V3 from the start and never migrates.
   - `NetworkReconfigurationOutput { key_id }` — this epoch's
     reconfiguration output. Its digest MUST come from the epoch-keyed
     perpetual slice (`network_reconfiguration_output_digest_by_epoch_and_key`,
@@ -118,7 +128,14 @@ next epoch inherits.
    network-key outputs are adopted into the instantiation set only if
    their digests match the prior epoch's certificate
    (`adopt_cert_verified_keys`): a reconfigured key must match BOTH its
-   stable DKG digest and its epoch-specific reconfiguration digest. A
+   DKG digest and its epoch-specific reconfiguration digest. The DKG
+   digest migrates once (V2->V3, above): at that single boundary an
+   ALREADY-ADOPTED key whose overlay DKG digest has moved past the prior
+   epoch's (V2) certificate is the expected defer — it keeps its adopted
+   value rather than being dropped, exactly as a moved reconfiguration
+   output is tolerated; only an UNADOPTED key contradicting the
+   certificate is the security-relevant anomaly (the output-quorum
+   byte-equality tally remains the guard against a divergent output). A
    certificate READ ERROR skips adoption for the tick (retry) — it must
    not be conflated with the genuinely-absent-certificate case, which
    exists only at the v3→v4 boundary and falls back to the chain copy.
