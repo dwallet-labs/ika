@@ -881,8 +881,11 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
         // This is identical across validators regardless of when each one
         // processed the output locally — unlike the old per-epoch table,
         // which a late output crossing the epoch boundary mis-filed,
-        // diverging the attestation. DKG output is stable across epochs,
-        // so the perpetual-merged getter is correct for it.
+        // diverging the attestation. The DKG output migrates at most once
+        // (V2->V3 at the first v4 reshare flips the perpetual digest mirror);
+        // the perpetual-merged getter returns whichever representation the
+        // mirror currently holds, identical across validators, so it is
+        // correct for it.
         let reconfig = to_network_key_id_keyed(
             store.get_network_reconfiguration_output_digests_for_epoch(epoch)?,
         )?;

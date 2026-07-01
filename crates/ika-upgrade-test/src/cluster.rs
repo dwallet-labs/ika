@@ -450,6 +450,21 @@ macro_rules! retry_on_object_contention {
     }};
 }
 
+/// Parses a label-less prometheus gauge line (`<metric> <value>`) into a u64.
+/// Returns `None` if the metric is absent. Requires a space after the name so a
+/// prefix collision with another metric (`<metric>_other`) does not match.
+fn parse_labelless_gauge(body: &str, metric: &str) -> Option<u64> {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let rest = line.strip_prefix(metric)?;
+            if !rest.starts_with(' ') {
+                return None;
+            }
+            rest.trim().parse::<f64>().ok().map(|v| v as u64)
+        })
+}
+
 impl ClusterOfProcesses {
     /// Current on-chain ika epoch (read from the system object).
     pub async fn current_epoch(&self) -> Result<u64> {
@@ -469,6 +484,33 @@ impl ClusterOfProcesses {
             .await
             .map_err(|e| anyhow::anyhow!("get_system_inner: {e}"))?;
         Ok(inner.protocol_version)
+    }
+
+    /// The minimum canonical network DKG output version reported across all
+    /// running validators' `/metrics`. Returns 0 if a running validator has not
+    /// reported the gauge yet (or is unreachable), so a poller keeps waiting
+    /// until the whole committee has migrated. The off-chain handoff carries the
+    /// migrated version; the on-chain copy stays V2, so this metric — not a Sui
+    /// read — is how the V2->V3 migration is observed.
+    pub async fn min_canonical_network_dkg_output_version(&self) -> u64 {
+        let http = reqwest::Client::new();
+        let mut min: Option<u64> = None;
+        for proc in self.validators.iter().filter(|p| p.is_running()) {
+            let url = format!("http://127.0.0.1:{}/metrics", proc.metrics_port());
+            let version = match http.get(&url).send().await {
+                Ok(resp) => match resp.text().await {
+                    Ok(body) => parse_labelless_gauge(
+                        &body,
+                        "ika_dwallet_mpc_network_encryption_key_canonical_dkg_output_version",
+                    )
+                    .unwrap_or(0),
+                    Err(_) => 0,
+                },
+                Err(_) => 0,
+            };
+            min = Some(min.map_or(version, |m| m.min(version)));
+        }
+        min.unwrap_or(0)
     }
 
     /// Block until the on-chain ika epoch counter reaches `target`.
