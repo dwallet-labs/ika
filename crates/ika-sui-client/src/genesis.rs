@@ -238,6 +238,29 @@ pub fn compiled_in_chain_identifier(chain: SuiChainIdentifier) -> Option<ChainId
     }
 }
 
+/// The inverse of [`compiled_in_chain_identifier`]: derive which chain a genesis
+/// checkpoint digest belongs to by matching it against the compiled-in
+/// mainnet/testnet identifiers. `Custom` if it matches neither (localnet /
+/// private net). This is how a node learns its chain from the *verified* genesis
+/// blob rather than from the operator-declared config.
+pub fn chain_of_chain_identifier(id: ChainIdentifier) -> SuiChainIdentifier {
+    if id == get_mainnet_chain_identifier() {
+        SuiChainIdentifier::Mainnet
+    } else if id == get_testnet_chain_identifier() {
+        SuiChainIdentifier::Testnet
+    } else {
+        SuiChainIdentifier::Custom
+    }
+}
+
+impl SuiGenesisBootstrap {
+    /// The chain this genesis blob belongs to, derived from its verified
+    /// checkpoint digest (see [`chain_of_chain_identifier`]).
+    pub fn chain(&self) -> SuiChainIdentifier {
+        chain_of_chain_identifier(self.chain_identifier)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +419,22 @@ mod tests {
         assert_eq!(
             compiled_in_chain_identifier(SuiChainIdentifier::Custom),
             None
+        );
+    }
+
+    #[test]
+    fn chain_is_derived_from_the_genesis_digest() {
+        // The test fixture is a local (Custom) chain, not mainnet/testnet.
+        let boot = load_and_verify_sui_genesis(FIXTURE, SuiChainIdentifier::Custom).unwrap();
+        assert_eq!(boot.chain(), SuiChainIdentifier::Custom);
+        // The compiled-in constants map back to their chains.
+        assert_eq!(
+            chain_of_chain_identifier(get_mainnet_chain_identifier()),
+            SuiChainIdentifier::Mainnet
+        );
+        assert_eq!(
+            chain_of_chain_identifier(get_testnet_chain_identifier()),
+            SuiChainIdentifier::Testnet
         );
     }
 }
