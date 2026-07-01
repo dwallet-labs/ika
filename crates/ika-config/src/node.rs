@@ -330,8 +330,8 @@ pub fn select_sui_transport(
                 return Err(
                     "`sui-data-source` is set but no Sui trust anchor is configured: a \
                      validator on the gRPC path has no MPC event source without one (no JSON-RPC \
-                     `query_events`, and the verified BagEventPump requires the anchor); set \
-                     sui_trusted_anchor (or sui_unsafe_genesis_committee on private nets)"
+                     `query_events`, and the verified BagEventPump requires the committee chain); \
+                     configure sui_genesis (or sui_unsafe_genesis_committee on private nets)"
                         .to_string(),
                 );
             }
@@ -432,13 +432,15 @@ pub struct SuiConnectorConfig {
     pub allow_unverified_committee_fallback: bool,
     /// When the persisted OCS committee state cannot be deserialized on boot —
     /// typically after a Sui version upgrade changed its on-disk BCS layout —
-    /// automatically wipe the committee tables and re-anchor from the configured
-    /// `sui_trusted_anchor` (digest-gated) instead of failing to boot. Default
-    /// `false`: rebuilding the trust root is normally a deliberate operator
-    /// action (clear the OCS committee tables, then restart so the next boot
-    /// re-seeds from the anchor). Requires a trust anchor to be configured. The
-    /// rebuildable verified-object cache always self-recovers regardless of this
-    /// flag; only the committee trust chain is gated by it.
+    /// automatically wipe the committee tables and re-bootstrap the committee
+    /// chain from the genesis blob (re-ratcheting forward to the current epoch)
+    /// instead of failing to boot. Default `false`: rebuilding the trust chain
+    /// is normally a deliberate operator action (clear the OCS committee tables,
+    /// then restart so the next boot re-bootstraps from genesis). Requires a
+    /// genesis blob (`sui_genesis`), or an unsafe-genesis committee on private
+    /// nets, to be configured. The rebuildable verified-object cache always
+    /// self-recovers regardless of this flag; only the committee trust chain is
+    /// gated by it.
     #[serde(default)]
     pub auto_reanchor_on_format_change: bool,
     /// The expected sui chain identifier connecting to.

@@ -27,12 +27,11 @@
 //! # Bootstrapping
 //!
 //! - If the perpetual tables already have a committee head, we resume from it.
-//! - Otherwise [`CommitteeBootstrap`] is installed:
-//!   - [`CommitteeBootstrap::EndOfEpoch`]: a digest-verified end-of-epoch
-//!     summary at epoch `E`; we persist it and head sits at `E+1`
-//!     (`committee[E+1]` is derived from it).
-//!   - [`CommitteeBootstrap::UnsafeGenesis`]: explicit `committee[0]`, stored
-//!     directly (it has no preceding summary); localnet/test only.
+//! - Otherwise [`CommitteeBootstrap::UnsafeGenesis`] installs `committee[0]`
+//!   directly: on public chains from a Sui genesis blob verified against the
+//!   compiled-in chain identifier, or on localnet/test from the chain's epoch-0
+//!   committee. The ratchet then walks the end-of-epoch checkpoint chain forward
+//!   from there.
 //! - If neither perpetual state nor bootstrap is available, [`Self::open`]
 //!   errors.
 

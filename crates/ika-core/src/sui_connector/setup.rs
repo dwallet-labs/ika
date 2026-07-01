@@ -273,10 +273,11 @@ pub async fn build_sui_connector_stack(
     // 2b. Recover from a stale persisted committee format before resolving the
     //     bootstrap plan. A Sui version upgrade can change the on-disk BCS
     //     layout of the committee / summary columns; rather than halt on boot,
-    //     either re-anchor from the pinned trust anchor (opt-in) or surface an
-    //     actionable error. The rebuildable verified-object cache recovers itself
-    //     inside `VerifiedStateCache::open`; this handles the trust chain. (A
-    //     transient RocksDB IO error is not format rot and still propagates.)
+    //     either wipe and re-bootstrap the committee chain from genesis (opt-in)
+    //     or surface an actionable error. The rebuildable verified-object cache
+    //     recovers itself inside `VerifiedStateCache::open`; this handles the
+    //     trust chain. (A transient RocksDB IO error is not format rot and still
+    //     propagates.)
     if let Err(e) = perpetual.probe_head_committee_readable() {
         match e {
             TypedStoreError::SerializationError(reason) if cfg.auto_reanchor_on_format_change => {
@@ -284,13 +285,14 @@ pub async fn build_sui_connector_stack(
                     reason,
                     "persisted Sui committee state could not be deserialized (likely a Sui \
                      version upgrade); auto_reanchor_on_format_change is set — wiping the \
-                     committee tables and re-anchoring from the configured trust anchor"
+                     committee tables and re-bootstrapping the committee chain from the genesis \
+                     blob"
                 );
                 perpetual
                     .wipe_sui_committee_state_for_format_recovery()
                     .map_err(SetupError::Ika)?;
                 // Cleared: `highest_sui_committee_epoch()` is now `None`, so the
-                // bootstrap below takes the configured-anchor path (digest-gated).
+                // bootstrap below takes the genesis-bootstrap path.
             }
             TypedStoreError::SerializationError(reason) => {
                 return Err(SetupError::PersistedCommitteeUnreadable(reason));
@@ -299,10 +301,10 @@ pub async fn build_sui_connector_stack(
         }
     }
 
-    // 3. Resolve trust anchor → fetch + verify summary → committee
-    //    store → ratchet client. The anchor digest is the trust gate;
-    //    the fetched summary's digest must match exactly. If unset,
-    //    the unsafe-genesis-committee path takes over (localnet only).
+    // 3. Resolve the bootstrap plan → the genesis blob (verified against the
+    //    compiled-in chain identifier) yields committee[0] → committee store →
+    //    ratchet client. If no genesis is configured, the
+    //    unsafe-genesis-committee path takes over (localnet only).
     let plan = resolve_bootstrap_plan(cfg, &perpetual)?;
     let bootstrap = match plan {
         BootstrapPlan::Hydrated => None,
