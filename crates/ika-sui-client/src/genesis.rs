@@ -36,6 +36,7 @@ use sui_types::effects::TransactionEffects;
 use sui_types::message_envelope::Message;
 use sui_types::messages_checkpoint::CheckpointSummary;
 use sui_types::object::Object;
+use sui_types::sui_system_state::get_sui_system_state;
 
 /// Error loading or verifying a Sui genesis blob.
 #[derive(Debug, thiserror::Error)]
@@ -105,6 +106,18 @@ fn verify_genesis(
     genesis: Genesis,
     chain: SuiChainIdentifier,
 ) -> Result<SuiGenesisBootstrap, GenesisError> {
+    // Fail closed with an error before touching the panicking accessors.
+    // `Genesis::{checkpoint, committee}` both `.expect()`/`.unwrap()` on a
+    // structurally-decodable-but-inconsistent blob, and the binary aborts on
+    // panic (`panic = "abort"`), so a bad blob would crash the node with a
+    // backtrace instead of a diagnosable error. Sui (an upstream pin) exposes
+    // no non-panicking accessor, so guard the reachable source — a missing or
+    // unreadable system-state object, which is where `committee()` panics.
+    // (A blob that additionally carries an invalid checkpoint *signature* still
+    // aborts inside `checkpoint()`; there is no way to verify that over the
+    // upstream API without the raw certificate. It is fail-closed either way.)
+    require_readable_system_state(genesis.objects())?;
+
     // The genesis checkpoint digest IS the chain identifier.
     let checkpoint = genesis.checkpoint();
     let summary = checkpoint.data();
@@ -138,6 +151,18 @@ fn verify_genesis(
         committee: genesis.committee(),
         chain_identifier,
     })
+}
+
+/// Fail closed if the genesis blob has no readable Sui system-state object.
+/// `Genesis::committee()` (and `checkpoint()`, which reads the committee to
+/// verify the cert) `.expect()` on it, so checking it first turns the common
+/// corrupt-blob abort into a returnable [`GenesisError`].
+fn require_readable_system_state(objects: &[Object]) -> Result<(), GenesisError> {
+    get_sui_system_state(&objects)
+        .map(|_| ())
+        .map_err(|source| GenesisError::InconsistentBlob {
+            detail: format!("system-state object is missing or unreadable: {source}"),
+        })
 }
 
 /// Re-establish the hash chain from the (digest-verified) genesis checkpoint
@@ -255,6 +280,29 @@ mod tests {
         summary.content_digest = CheckpointContentsDigest::random();
         let err = verify_committee_binding(&genesis, &summary)
             .expect_err("a summary that does not commit the contents must be rejected");
+        assert!(
+            matches!(err, GenesisError::InconsistentBlob { .. }),
+            "expected InconsistentBlob, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_blob_with_no_readable_system_state_object() {
+        // The panic guard: `Genesis::committee()` aborts (panic = "abort") on a
+        // blob with no system-state object. Prove the guard returns a clean
+        // error first — the fixture has one, a blob stripped of it does not.
+        let genesis = Genesis::load(FIXTURE).expect("fixture loads");
+        require_readable_system_state(genesis.objects())
+            .expect("the real genesis has a readable system-state object");
+
+        let without_system_state: Vec<Object> = genesis
+            .objects()
+            .iter()
+            .filter(|object| object.id() != SUI_SYSTEM_STATE_OBJECT_ID)
+            .cloned()
+            .collect();
+        let err = require_readable_system_state(&without_system_state)
+            .expect_err("a blob missing its system-state object must be rejected");
         assert!(
             matches!(err, GenesisError::InconsistentBlob { .. }),
             "expected InconsistentBlob, got {err:?}"
