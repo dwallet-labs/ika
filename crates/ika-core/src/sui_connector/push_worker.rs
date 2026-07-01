@@ -18,7 +18,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ika_network::proof_provider::VerifiedObjectEntry;
 use ika_sui_client::transport::SuiTransport;
@@ -26,12 +26,13 @@ use ika_types::messages_dwallet_mpc::IkaPackageConfig;
 use sui_light_client::proof::ocs::ModifiedObjectTree;
 use sui_types::TypeTag;
 use sui_types::base_types::ObjectID;
+use sui_types::digests::CheckpointArtifactsDigest;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::{
     CertifiedCheckpointSummary, CheckpointArtifacts, CheckpointSequenceNumber,
 };
 use sui_types::object::Object;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::authority::authority_perpetual_tables::AuthorityPerpetualTables;
 use crate::sui_connector::committee_store::{CommitteeStore, CommitteeTransition};
@@ -377,7 +378,77 @@ impl IkaCheckpointPusher {
             return Ok(None);
         }
 
+        // Verify the checkpoint against its committee BEFORE folding anything
+        // into the cache, so a direct node caches committee-attested state
+        // rather than whatever its own fullnode served.
+        let summary = &data.checkpoint_summary;
+        if let Err(e) = self.verify_before_fold(summary, &tree, !objects_with_proofs.is_empty()) {
+            error!(
+                security_critical = true,
+                seq = *summary.sequence_number(),
+                epoch = summary.epoch(),
+                error = %e,
+                "refusing to fold a checkpoint that failed committee verification — \
+                 own fullnode served state that does not verify against the committee"
+            );
+            return Err(e);
+        }
+
         Ok(Some((data.checkpoint_summary.clone(), objects_with_proofs)))
+    }
+
+    /// Verify a checkpoint against its committee BEFORE its objects are folded
+    /// into the cache, so a direct node trusts committee-attested state rather
+    /// than whatever its own fullnode served — a compromised or buggy fullnode
+    /// cannot seed the cache with forged objects. These are the same two checks
+    /// [`OcsVerifiedReader`]'s network read path performs, hoisted to fold time
+    /// (once per checkpoint, off the read hot path):
+    ///
+    ///   1. the checkpoint summary carries a valid committee quorum signature;
+    ///   2. when objects are being folded, the locally-built modified-objects
+    ///      tree root matches the committee-signed checkpoint-artifacts digest —
+    ///      binding every inclusion proof derived from that tree to
+    ///      committee-attested state (a real tree root means the proofs the
+    ///      pusher built from it are over genuine objects).
+    ///
+    /// A failure means the fullnode served state that does not verify against
+    /// the committee: the caller refuses to fold it (propagating the error, so
+    /// the cursor stays put and a transient missing-committee self-heals on the
+    /// next poll) rather than caching unverified state.
+    fn verify_before_fold(
+        &self,
+        summary: &CertifiedCheckpointSummary,
+        tree: &ModifiedObjectTree,
+        folding_objects: bool,
+    ) -> anyhow::Result<()> {
+        let started = Instant::now();
+        self.committees
+            .verify_summary(summary.clone())
+            .map_err(|e| {
+                anyhow::anyhow!("checkpoint summary failed committee verification: {e}")
+            })?;
+        if folding_objects {
+            let signed = summary.data().checkpoint_artifacts_digest().map_err(|e| {
+                anyhow::anyhow!("summary carries no checkpoint-artifacts digest: {e}")
+            })?;
+            let local = CheckpointArtifactsDigest::from_artifact_digests(vec![tree.tree_root])
+                .map_err(|e| anyhow::anyhow!("computing artifacts digest from local tree: {e}"))?;
+            if local != *signed {
+                anyhow::bail!(
+                    "checkpoint-artifacts digest mismatch — the fullnode's modified-objects \
+                     tree does not match the committee-signed digest"
+                );
+            }
+        }
+        // Record only the success path's cost: a rejection (the early returns
+        // above) is a security event surfaced by the caller's log, not a
+        // steady-state latency sample. `_count` then equals the checkpoints
+        // committee-verified before folding, `_sum` the CPU the verify added
+        // to the fold loop.
+        self.metrics
+            .pusher_fold_verify_seconds
+            .observe(started.elapsed().as_secs_f64());
+        Ok(())
     }
 }
 
@@ -417,15 +488,18 @@ fn type_touches_ika(t: &TypeTag, ika: &HashSet<ObjectID>) -> bool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use ika_sui_client::transport::{DynamicFieldPage, ExecutedTransaction, TransportError};
-    use sui_types::base_types::{SequenceNumber, TransactionDigest};
+    use sui_types::base_types::{ObjectDigest, SequenceNumber, TransactionDigest};
     use sui_types::committee::{Committee, ProtocolVersion};
     use sui_types::crypto::AuthorityKeyPair;
     use sui_types::digests::CheckpointDigest;
     use sui_types::gas::GasCostSummary;
-    use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSummary, EndOfEpochData};
+    use sui_types::messages_checkpoint::{
+        CheckpointCommitment, CheckpointContents, CheckpointSummary, EndOfEpochData,
+    };
+    use sui_types::object::Owner;
 
     use crate::sui_connector::committee_store::CommitteeBootstrap;
     use crate::sui_connector::verified_state_cache::{
@@ -909,6 +983,163 @@ mod tests {
         assert_eq!(
             perpetual.get_sui_pusher_last_seq().unwrap(),
             Some(latest_seq)
+        );
+    }
+
+    /// A non-end-of-epoch, committee-signed summary at `seq` carrying exactly
+    /// `commitment` (used to plant a correct or a deliberately-wrong
+    /// checkpoint-artifacts digest).
+    fn signed_summary_with_commitment(
+        committee: &Committee,
+        keys: &[AuthorityKeyPair],
+        seq: CheckpointSequenceNumber,
+        commitment: CheckpointCommitment,
+    ) -> CertifiedCheckpointSummary {
+        let contents = CheckpointContents::new_with_digests_only_for_tests(vec![]);
+        let summary = CheckpointSummary {
+            epoch: committee.epoch(),
+            sequence_number: seq,
+            network_total_transactions: 0,
+            content_digest: *contents.digest(),
+            previous_digest: None,
+            epoch_rolling_gas_cost_summary: GasCostSummary::default(),
+            timestamp_ms: 0,
+            checkpoint_commitments: vec![commitment],
+            end_of_epoch_data: None,
+            version_specific_data: Vec::new(),
+        };
+        CertifiedCheckpointSummary::new_from_keypairs_for_testing(summary, keys, committee)
+    }
+
+    /// The modified-objects tree over a single object plus its
+    /// `CheckpointArtifactsDigest`, mirroring what the pusher builds from a
+    /// fetched checkpoint.
+    fn tree_and_digest_over(object: &Object) -> (ModifiedObjectTree, CheckpointArtifactsDigest) {
+        let (id, version, digest) = object.compute_object_reference();
+        let states: BTreeMap<ObjectID, (SequenceNumber, ObjectDigest)> =
+            std::iter::once((id, (version, digest))).collect();
+        let artifacts = CheckpointArtifacts::from_object_states(states);
+        let tree = ModifiedObjectTree::new(&artifacts).unwrap();
+        let artifacts_digest = artifacts.digest().unwrap();
+        (tree, artifacts_digest)
+    }
+
+    /// A direct node must never fold state its own fullnode failed to prove
+    /// against the committee. A foldable (end-of-epoch) checkpoint whose summary
+    /// is signed by the WRONG committee is rejected at fold time: `advance()`
+    /// surfaces the error, the committee head does not move, and nothing is
+    /// cached. Without the fold-time committee check a compromised fullnode
+    /// could seed the cache with forged state that cache-first reads serve
+    /// unverified. (The honest counterpart is
+    /// `pusher_eagerly_captures_end_of_epoch_committee`, which folds the same
+    /// shape when it IS correctly signed.)
+    #[tokio::test]
+    async fn pusher_refuses_to_fold_a_checkpoint_that_fails_committee_verification() {
+        let (committee, _keys) = Committee::new_simple_test_committee_of_size(4);
+        // A different committee at the same epoch (0): its authorities are not
+        // in the store's committee[0], so any summary it signs fails
+        // verification. A different size guarantees a disjoint authority set
+        // (the test-committee constructor is deterministic per size).
+        let (foreign_committee, foreign_keys) = Committee::new_simple_test_committee_of_size(7);
+
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        assert_eq!(committees.head_epoch(), 0);
+
+        // An end-of-epoch checkpoint at epoch 0 signed by the foreign committee.
+        let forged = end_of_epoch_checkpoint(&foreign_committee, &foreign_keys, 100);
+        let latest = forged.checkpoint_summary.clone();
+        let cache: SharedVerifiedStateCache = Arc::new(VerifiedStateCache::new());
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest,
+            checkpoints: HashMap::from([(100u64, forged)]),
+            eoe_seqs: HashMap::new(),
+        });
+        perpetual.put_sui_pusher_last_seq(99).unwrap();
+
+        let mut pusher = pusher_over_with_cache(
+            perpetual.clone(),
+            committees.clone(),
+            transport,
+            cache.clone(),
+            OcsMetrics::new_for_testing(),
+        )
+        .await;
+
+        // The fold-time committee check rejects it: advance() returns the error
+        // rather than caching unverified state.
+        assert!(
+            pusher.advance().await.is_err(),
+            "a checkpoint that fails committee verification must not be folded"
+        );
+        // The committee head never advanced past the unverifiable transition,
+        // the cursor stayed put (the error halts it before the cursor write), so
+        // a later honest checkpoint at the same seq is reprocessed, and nothing
+        // was cached.
+        assert_eq!(committees.head_epoch(), 0);
+        assert_eq!(perpetual.get_sui_pusher_last_seq().unwrap(), Some(99));
+        assert!(cache.is_empty());
+    }
+
+    /// The second fold-time check: even with a valid committee signature, the
+    /// locally-built modified-objects tree must match the committee-signed
+    /// checkpoint-artifacts digest before any object is folded — otherwise a
+    /// fullnode could serve a genuine summary alongside a forged object tree.
+    /// An honest summary (committing to THIS tree's digest) is accepted; one
+    /// committing to a different tree's digest is rejected.
+    #[tokio::test]
+    async fn fold_verify_rejects_an_artifacts_digest_that_does_not_match_the_tree() {
+        let (committee, keys) = Committee::new_simple_test_committee();
+        let dir = tempfile::tempdir().unwrap();
+        let perpetual = Arc::new(AuthorityPerpetualTables::open(dir.path(), None));
+        let committees = Arc::new(
+            CommitteeStore::open(
+                perpetual.clone(),
+                Some(CommitteeBootstrap::UnsafeGenesis(committee.clone())),
+            )
+            .unwrap(),
+        );
+        let transport: Arc<dyn SuiTransport> = Arc::new(MockTransport {
+            latest: end_of_epoch_checkpoint(&committee, &keys, 1).checkpoint_summary,
+            checkpoints: HashMap::new(),
+            eoe_seqs: HashMap::new(),
+        });
+        let pusher = pusher_over(perpetual, committees, transport).await;
+
+        // The tree the pusher would build for this checkpoint, and its digest.
+        let object = Object::with_id_owner_version_for_testing(
+            ObjectID::random(),
+            SequenceNumber::from(1),
+            Owner::AddressOwner(ObjectID::random().into()),
+        );
+        let (tree, artifacts_digest) = tree_and_digest_over(&object);
+
+        // Honest: the summary commits to THIS tree's artifacts digest → folds.
+        let honest = signed_summary_with_commitment(&committee, &keys, 1, artifacts_digest.into());
+        assert!(
+            pusher.verify_before_fold(&honest, &tree, true).is_ok(),
+            "a summary committing to the matching tree digest must fold"
+        );
+
+        // Forged: a valid signature, but the summary commits to a DIFFERENT
+        // tree's digest, so the binding to THIS tree fails → rejected.
+        let other = Object::with_id_owner_version_for_testing(
+            ObjectID::random(),
+            SequenceNumber::from(7),
+            Owner::AddressOwner(ObjectID::random().into()),
+        );
+        let (_other_tree, wrong_digest) = tree_and_digest_over(&other);
+        let forged = signed_summary_with_commitment(&committee, &keys, 1, wrong_digest.into());
+        assert!(
+            pusher.verify_before_fold(&forged, &tree, true).is_err(),
+            "a summary whose committed digest does not match the folded tree must be rejected"
         );
     }
 }
