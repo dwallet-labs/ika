@@ -3366,11 +3366,13 @@ impl IkaNode {
                             .items
                             .iter()
                             .filter_map(|(item, digest)| match item {
-                                HandoffItemKey::NetworkReconfigurationOutput { key_id }
-                                    if local_reconfiguration_digests.get(key_id)
-                                        != Some(digest) =>
-                                {
-                                    Some(*key_id)
+                                HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
+                                    // Cert keys by NetworkKeyId; local digests by
+                                    // ObjectID — translate via the temporary map.
+                                    let object_id =
+                                        ika_core::network_key_id_mapping::object_id_for(key_id)?;
+                                    (local_reconfiguration_digests.get(&object_id) != Some(digest))
+                                        .then_some(object_id)
                                 }
                                 _ => None,
                             })
@@ -3458,10 +3460,20 @@ async fn install_joiner_network_key_outputs(
             HandoffItemKey::NetworkReconfigurationOutput { key_id } => (*key_id, true),
             HandoffItemKey::ValidatorMpcData { .. } => continue,
         };
+        // The cert is keyed by NetworkKeyId; the local digest tables and
+        // caches are keyed by ObjectID. Translate via the temporary map; an
+        // unmapped key is unknown to this joiner and can't be cached locally.
+        let Some(object_id) = ika_core::network_key_id_mapping::object_id_for(&key_id) else {
+            debug!(
+                ?key_id,
+                "no ObjectID mapping for cert network key; skipping"
+            );
+            continue;
+        };
         let held_locally = if is_reconfiguration {
-            local_reconfiguration_digests.get(&key_id) == Some(expected_digest)
+            local_reconfiguration_digests.get(&object_id) == Some(expected_digest)
         } else {
-            local_dkg_digests.get(&key_id) == Some(expected_digest)
+            local_dkg_digests.get(&object_id) == Some(expected_digest)
         };
         if held_locally {
             continue;
@@ -3493,7 +3505,7 @@ async fn install_joiner_network_key_outputs(
                 ?key_id,
                 "could not fetch a cert-matching network-key output from any peer this pass"
             );
-            missing_key_ids.push(key_id);
+            missing_key_ids.push(object_id);
             continue;
         };
         let cached = if is_reconfiguration {
@@ -3501,13 +3513,17 @@ async fn install_joiner_network_key_outputs(
             // epoch whose reconfiguration output the cert certifies —
             // not the joiner's wall-clock epoch, matching the producer
             // side's session-epoch keying.
-            epoch_store.cache_network_reconfiguration_output(key_id, cert.attestation.epoch, &bytes)
+            epoch_store.cache_network_reconfiguration_output(
+                object_id,
+                cert.attestation.epoch,
+                &bytes,
+            )
         } else {
-            epoch_store.cache_network_dkg_output(key_id, &bytes)
+            epoch_store.cache_network_dkg_output(object_id, &bytes)
         };
         if let Err(e) = cached {
             warn!(?key_id, error = ?e, "failed to cache fetched joiner network-key output");
-            missing_key_ids.push(key_id);
+            missing_key_ids.push(object_id);
         }
     }
     missing_key_ids
@@ -3602,7 +3618,10 @@ fn all_cert_reconfiguration_outputs_held_locally(
         .iter()
         .all(|(item, cert_digest)| match item {
             HandoffItemKey::NetworkReconfigurationOutput { key_id } => {
-                local_reconfiguration_digests.get(key_id) == Some(cert_digest)
+                // Cert keys by NetworkKeyId; local digests by ObjectID.
+                ika_core::network_key_id_mapping::object_id_for(key_id).is_some_and(|object_id| {
+                    local_reconfiguration_digests.get(&object_id) == Some(cert_digest)
+                })
             }
             HandoffItemKey::NetworkDkgOutput { .. } | HandoffItemKey::ValidatorMpcData { .. } => {
                 true
@@ -3613,17 +3632,22 @@ fn all_cert_reconfiguration_outputs_held_locally(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dwallet_mpc_types::dwallet_mpc::NetworkKeyId;
     use ika_types::handoff::{CertifiedHandoffAttestation, HandoffAttestation, HandoffItemKey};
 
     fn key_id(index: u8) -> ObjectID {
         ObjectID::new([index; 32])
     }
 
+    fn network_key_id(index: u8) -> NetworkKeyId {
+        NetworkKeyId([index | 0x80; 32])
+    }
+
     /// Builds a cert whose only items are `NetworkReconfigurationOutput`s for
     /// the given `(key_id, digest)` pairs. Signatures are irrelevant to the
     /// readiness predicate, so they are left empty.
     fn cert_with_reconfiguration_items(
-        items: Vec<(ObjectID, [u8; 32])>,
+        items: Vec<(NetworkKeyId, [u8; 32])>,
     ) -> CertifiedHandoffAttestation {
         CertifiedHandoffAttestation {
             attestation: HandoffAttestation {
@@ -3645,9 +3669,13 @@ mod tests {
 
     #[test]
     fn all_cert_reconfiguration_outputs_held_locally_cases() {
+        // The cert is keyed by NetworkKeyId; the local slice by ObjectID.
+        // Register the mappings so the predicate can translate.
+        ika_core::network_key_id_mapping::register(key_id(0), network_key_id(0));
+        ika_core::network_key_id_mapping::register(key_id(1), network_key_id(1));
         // Cert certifies one reconfiguration output; the local slice holds a
         // matching digest → ready.
-        let cert = cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32])]);
+        let cert = cert_with_reconfiguration_items(vec![(network_key_id(0), [1u8; 32])]);
         let held = BTreeMap::from([(key_id(0), [1u8; 32])]);
         assert!(all_cert_reconfiguration_outputs_held_locally(&cert, &held));
 
@@ -3666,8 +3694,10 @@ mod tests {
 
         // Two certified outputs, only one held locally → not ready (EVERY item
         // the cert certifies must be held + matching).
-        let cert_two =
-            cert_with_reconfiguration_items(vec![(key_id(0), [1u8; 32]), (key_id(1), [2u8; 32])]);
+        let cert_two = cert_with_reconfiguration_items(vec![
+            (network_key_id(0), [1u8; 32]),
+            (network_key_id(1), [2u8; 32]),
+        ]);
         let one = BTreeMap::from([(key_id(0), [1u8; 32])]);
         assert!(!all_cert_reconfiguration_outputs_held_locally(
             &cert_two, &one
@@ -3687,7 +3717,9 @@ mod tests {
                 epoch: 7,
                 next_committee_pubkey_set_hash: [0u8; 32],
                 items: vec![(
-                    HandoffItemKey::NetworkDkgOutput { key_id: key_id(0) },
+                    HandoffItemKey::NetworkDkgOutput {
+                        key_id: network_key_id(0),
+                    },
                     [5u8; 32],
                 )],
             },

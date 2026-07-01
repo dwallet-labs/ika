@@ -6770,6 +6770,7 @@ dependencies = [
  "axum 0.8.8",
  "bin-version",
  "clap",
+ "dwallet-mpc-types",
  "futures",
  "hex",
  "humantime",
