@@ -22,6 +22,7 @@
 //! root — the swarm/operator is responsible for supplying a trusted blob, the
 //! same trust placement Sui's own nodes use for a local genesis.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use ika_config::node::SuiChainIdentifier;
@@ -29,9 +30,12 @@ use ika_types::digests::{
     ChainIdentifier, get_mainnet_chain_identifier, get_testnet_chain_identifier,
 };
 use sui_config::genesis::Genesis;
-use sui_types::base_types::ObjectID;
+use sui_types::base_types::{ObjectID, ObjectRef};
 use sui_types::committee::Committee;
+use sui_types::effects::TransactionEffects;
 use sui_types::message_envelope::Message;
+use sui_types::messages_checkpoint::CheckpointSummary;
+use sui_types::object::Object;
 
 /// Error loading or verifying a Sui genesis blob.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +58,11 @@ pub enum GenesisError {
         got: String,
         expected: String,
     },
+    #[error(
+        "Sui genesis blob is internally inconsistent — committee[0] is not \
+         committed by the verified genesis checkpoint digest: {detail}"
+    )]
+    InconsistentBlob { detail: String },
 }
 
 /// The verified bootstrap material extracted from a Sui genesis blob: the
@@ -98,11 +107,12 @@ fn verify_genesis(
 ) -> Result<SuiGenesisBootstrap, GenesisError> {
     // The genesis checkpoint digest IS the chain identifier.
     let checkpoint = genesis.checkpoint();
-    let genesis_digest = checkpoint.data().digest();
+    let summary = checkpoint.data();
+    let genesis_digest = summary.digest();
     let chain_identifier = ChainIdentifier::from(ObjectID::new(genesis_digest.into_inner()));
 
     // Verify the blob against the binary's compiled-in 32-byte root for the
-    // public chains. A swapped/forged blob is caught here.
+    // public chains. A swapped/forged summary is caught here.
     if let Some(expected) = compiled_in_chain_identifier(chain) {
         if chain_identifier != expected {
             return Err(GenesisError::ChainMismatch {
@@ -113,10 +123,83 @@ fn verify_genesis(
         }
     }
 
+    // Bind committee[0] to that verified digest. The check above only pins the
+    // checkpoint *summary*; the committee is read from the blob's system-state
+    // object, which the summary does not itself contain. Without re-tying that
+    // object back to the summary, an attacker could pair the real genesis
+    // summary (so the digest matches the compiled-in constant) with a forged
+    // validator set — plus a checkpoint cert re-signed by that forged committee
+    // — and we would hand back a forged committee[0], forging the whole OCS
+    // trust chain. Re-establish the summary -> contents -> effects -> objects
+    // hash chain so committee[0] is committed by the same 32 bytes.
+    verify_committee_binding(&genesis, summary)?;
+
     Ok(SuiGenesisBootstrap {
         committee: genesis.committee(),
         chain_identifier,
     })
+}
+
+/// Re-establish the hash chain from the (digest-verified) genesis checkpoint
+/// summary down to every genesis object, so the committee read from the genesis
+/// system-state object is committed by the summary digest — i.e. by the
+/// compiled-in chain identifier — rather than merely present in an unverified
+/// field of the blob. Mirrors Sui's light-client verifier: verify the contents
+/// against the summary, the transaction effects against the contents, then each
+/// object against those effects.
+fn verify_committee_binding(
+    genesis: &Genesis,
+    summary: &CheckpointSummary,
+) -> Result<(), GenesisError> {
+    // summary -> checkpoint contents
+    let contents = genesis.checkpoint_contents();
+    if summary.content_digest != *contents.digest() {
+        return Err(GenesisError::InconsistentBlob {
+            detail: "checkpoint contents digest does not match the summary's content_digest"
+                .to_string(),
+        });
+    }
+
+    // checkpoint contents -> genesis transaction effects
+    let genesis_execution = genesis.effects().execution_digests();
+    if !contents.iter().any(|digests| *digests == genesis_execution) {
+        return Err(GenesisError::InconsistentBlob {
+            detail: "the genesis transaction effects are not listed in the checkpoint contents"
+                .to_string(),
+        });
+    }
+
+    // genesis transaction effects -> every genesis object (so the system-state
+    // object the committee is read from is one of them, bound by digest)
+    verify_objects_committed_by_effects(genesis.effects(), genesis.objects())
+}
+
+/// Every object in the blob must be committed, by `ObjectRef` digest, by the
+/// genesis transaction effects. This is the link that rejects a forged
+/// system-state object — and thus a forged committee: the forged object's
+/// digest will not match the effects the verified summary commits to.
+fn verify_objects_committed_by_effects(
+    effects: &TransactionEffects,
+    objects: &[Object],
+) -> Result<(), GenesisError> {
+    let changed: HashMap<ObjectID, ObjectRef> = effects
+        .all_changed_objects()
+        .into_iter()
+        .map(|(object_ref, _owner, _write_kind)| (object_ref.0, object_ref))
+        .collect();
+    for object in objects {
+        let object_ref = object.compute_object_reference();
+        if changed.get(&object_ref.0) != Some(&object_ref) {
+            return Err(GenesisError::InconsistentBlob {
+                detail: format!(
+                    "genesis object {} is not committed by the verified genesis effects",
+                    object_ref.0,
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// The binary's compiled-in Sui chain identifier (= genesis checkpoint digest)
@@ -133,6 +216,9 @@ pub fn compiled_in_chain_identifier(chain: SuiChainIdentifier) -> Option<ChainId
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui_types::SUI_SYSTEM_STATE_OBJECT_ID;
+    use sui_types::base_types::SuiAddress;
+    use sui_types::messages_checkpoint::CheckpointContentsDigest;
 
     // A real Sui genesis blob (a local test chain, not mainnet/testnet),
     // vendored from the pinned Sui upstream's light-client test fixtures.
@@ -153,6 +239,57 @@ mod tests {
             boot.chain_identifier,
             ChainIdentifier::default(),
             "the chain identifier is the genesis checkpoint digest"
+        );
+    }
+
+    #[test]
+    fn committee_binding_rejects_a_summary_that_does_not_commit_the_contents() {
+        // The honest fixture binds (proven above). Prove the binding is not
+        // vacuous: corrupt the summary so its content_digest no longer commits
+        // to the checkpoint contents, and the binding must reject rather than
+        // return a committee[0] that isn't tied to the verified digest. This is
+        // the first link of the chain that stops a real-summary + forged-
+        // committee blob from being accepted.
+        let genesis = Genesis::load(FIXTURE).expect("fixture loads");
+        let mut summary = genesis.checkpoint().data().clone();
+        summary.content_digest = CheckpointContentsDigest::random();
+        let err = verify_committee_binding(&genesis, &summary)
+            .expect_err("a summary that does not commit the contents must be rejected");
+        assert!(
+            matches!(err, GenesisError::InconsistentBlob { .. }),
+            "expected InconsistentBlob, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn committee_binding_rejects_a_forged_system_state_object() {
+        // The forged-committee attack at the object level: keep the real
+        // summary/contents/effects, but swap the system-state object (id 0x5) —
+        // part of the object set `committee[0]` is read from — for a forged one.
+        // Its `ObjectRef` digest no longer matches the effects the verified
+        // summary commits to, so the binding must reject; an attacker cannot
+        // pair the real genesis digest with a committee of their choosing. (The
+        // committee's inner dynamic-field object is bound by the same check.)
+        let genesis = Genesis::load(FIXTURE).expect("fixture loads");
+
+        // Sanity: the untampered object set binds cleanly, so a rejection below
+        // is caused by the forgery and not by a check that rejects everything.
+        verify_objects_committed_by_effects(genesis.effects(), genesis.objects())
+            .expect("the real genesis objects are all committed by the effects");
+
+        let mut objects: Vec<Object> = genesis.objects().to_vec();
+        let system_state = objects
+            .iter_mut()
+            .find(|object| object.id() == SUI_SYSTEM_STATE_OBJECT_ID)
+            .expect("a genesis blob always has a system-state object");
+        *system_state =
+            Object::with_id_owner_for_testing(SUI_SYSTEM_STATE_OBJECT_ID, SuiAddress::ZERO);
+
+        let err = verify_objects_committed_by_effects(genesis.effects(), &objects)
+            .expect_err("a forged system-state object must be rejected");
+        assert!(
+            matches!(err, GenesisError::InconsistentBlob { .. }),
+            "expected InconsistentBlob, got {err:?}"
         );
     }
 
