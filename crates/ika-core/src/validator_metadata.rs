@@ -30,7 +30,7 @@
 //! byte-identical results.
 
 use dwallet_classgroups_types::ValidatorMPCSecrets;
-use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, VersionedMPCData};
+use dwallet_mpc_types::dwallet_mpc::{MPCDataV1, NetworkKeyId, VersionedMPCData};
 use dwallet_rng::RootSeed;
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey, Ed25519Signature};
 use fastcrypto::traits::{Signer, VerifyingKey};
@@ -765,8 +765,8 @@ pub fn compute_effective_reconfig_input_set(
 /// finalize.
 pub fn compute_handoff_items(
     validator_mpc_data: &BTreeMap<AuthorityName, [u8; 32]>,
-    network_dkg_outputs: &BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
-    network_reconfiguration_outputs: &BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
+    network_dkg_outputs: &BTreeMap<NetworkKeyId, [u8; 32]>,
+    network_reconfiguration_outputs: &BTreeMap<NetworkKeyId, [u8; 32]>,
 ) -> Vec<(HandoffItemKey, [u8; 32])> {
     let mut items = Vec::with_capacity(
         validator_mpc_data.len()
@@ -795,6 +795,31 @@ pub fn compute_handoff_items(
     }
     items.sort_by(|left, right| left.0.cmp(&right.0));
     items
+}
+
+/// Translates a network-key digest map keyed by Sui `ObjectID` (the
+/// local/chain handle) to one keyed by the content-derived `NetworkKeyId`
+/// the handoff cert uses, via the temporary
+/// [`crate::network_key_id_mapping`]. Errors on any key whose
+/// `NetworkKeyId` is unknown so the caller defers signing rather than
+/// emitting an attestation that diverges from peers (the map is identical
+/// across honest validators: seeded constants + register-at-instantiation).
+fn to_network_key_id_keyed(
+    by_object_id: BTreeMap<sui_types::base_types::ObjectID, [u8; 32]>,
+) -> IkaResult<BTreeMap<NetworkKeyId, [u8; 32]>> {
+    by_object_id
+        .into_iter()
+        .map(|(object_id, digest)| {
+            crate::network_key_id_mapping::network_key_id_for(&object_id)
+                .map(|network_key_id| (network_key_id, digest))
+                .ok_or_else(|| {
+                    IkaError::Unknown(format!(
+                        "no NetworkKeyId mapping for network key {object_id} \
+                         while building handoff items"
+                    ))
+                })
+        })
+        .collect()
 }
 
 /// Per-feature contributor that produces its slice of items for the
@@ -846,7 +871,10 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
         };
         let effective =
             store.get_effective_reconfig_input_set(next_committee_pubkeys.iter().copied())?;
-        let dkg = store.get_network_dkg_output_digests()?;
+        // Translate the locally-stored ObjectID-keyed digests into the
+        // content-derived NetworkKeyId the handoff cert is keyed by, via
+        // the temporary ObjectID<->NetworkKeyId map.
+        let dkg = to_network_key_id_keyed(store.get_network_dkg_output_digests()?)?;
         // Reconfiguration is epoch-specific: source it from the
         // epoch-keyed slice for *this handoff's* epoch, written under the
         // reconfiguration session's own (consensus-deterministic) epoch.
@@ -855,7 +883,9 @@ impl HandoffItemsBuilder for MpcDataHandoffItemsBuilder {
         // which a late output crossing the epoch boundary mis-filed,
         // diverging the attestation. DKG output is stable across epochs,
         // so the perpetual-merged getter is correct for it.
-        let reconfig = store.get_network_reconfiguration_output_digests_for_epoch(epoch)?;
+        let reconfig = to_network_key_id_keyed(
+            store.get_network_reconfiguration_output_digests_for_epoch(epoch)?,
+        )?;
         Ok(compute_handoff_items(&effective, &dkg, &reconfig))
     }
 }
@@ -1781,8 +1811,8 @@ mod tests {
     fn build_handoff_attestation_sorts_items() {
         let kp = random_committee_key_pairs_of_size(1).remove(0);
         let validator = name_of(&kp);
-        let key_id_a = ObjectID::random();
-        let key_id_b = ObjectID::random();
+        let key_id_a = NetworkKeyId([0xA1; 32]);
+        let key_id_b = NetworkKeyId([0xB2; 32]);
         // Pass items in non-canonical order; build_handoff_attestation
         // must return them sorted so all signers' bytes match.
         let items = vec![
@@ -1814,7 +1844,7 @@ mod tests {
 
     #[test]
     fn build_handoff_attestation_rejects_duplicate_keys() {
-        let key_id = ObjectID::random();
+        let key_id = NetworkKeyId([0xC3; 32]);
         let items = vec![
             (HandoffItemKey::NetworkDkgOutput { key_id }, [0x11; 32]),
             (HandoffItemKey::NetworkDkgOutput { key_id }, [0x22; 32]),
@@ -2337,8 +2367,8 @@ mod tests {
         // sources and confirm the output canonicalizes.
         let kp = random_committee_key_pairs_of_size(1).remove(0);
         let validator = name_of(&kp);
-        let key_id_a = ObjectID::random();
-        let key_id_b = ObjectID::random();
+        let key_id_a = NetworkKeyId([0x01; 32]);
+        let key_id_b = NetworkKeyId([0x02; 32]);
         let (smaller, bigger) = if key_id_a < key_id_b {
             (key_id_a, key_id_b)
         } else {
@@ -2764,8 +2794,8 @@ mod tests {
     #[test]
     fn compute_handoff_items_empty_inputs_yield_empty_list() {
         let empty: BTreeMap<AuthorityName, [u8; 32]> = BTreeMap::new();
-        let empty_obj: BTreeMap<ObjectID, [u8; 32]> = BTreeMap::new();
-        let items = compute_handoff_items(&empty, &empty_obj, &empty_obj);
+        let empty_keys: BTreeMap<NetworkKeyId, [u8; 32]> = BTreeMap::new();
+        let items = compute_handoff_items(&empty, &empty_keys, &empty_keys);
         assert!(items.is_empty());
     }
 
