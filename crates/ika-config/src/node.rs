@@ -194,28 +194,6 @@ impl fmt::Display for SuiChainIdentifier {
     }
 }
 
-/// Returns the binary's compiled-in trusted anchor digest for a given
-/// chain, if any. Production validators paste a fresh anchor in their
-/// node config; this is the fallback for testnet/devnet release builds
-/// shipped with a known-good digest.
-///
-/// Mainnet: `None` until Sui mainnet enables
-/// `include_checkpoint_artifacts_digest_in_summary` (currently on
-/// protocol v121, the flag lands in v122). When that ships, CI
-/// regenerates this with a real digest.
-///
-/// Testnet/Devnet: `None` for now — to be filled in by release tooling
-/// that queries the upstream Sui RPC for a recent end-of-epoch
-/// checkpoint and bakes the digest here. Operators use the
-/// `sui_trusted_anchor` config field to provide their own digest in the
-/// meantime.
-pub fn compiled_in_trusted_anchor(
-    _chain: SuiChainIdentifier,
-) -> Option<sui_types::digests::CheckpointDigest> {
-    // TODO(release-eng): generate per-chain digests via CI from a known-good Sui RPC.
-    None
-}
-
 /// Where this validator gets Sui state from.
 ///
 /// `SuiStateDirect` runs against a Sui fullnode reachable over gRPC, and
@@ -261,6 +239,21 @@ pub enum SuiDataSource {
 
 fn default_true() -> bool {
     true
+}
+
+/// A Sui checkpoint **archive** used as a verified fallback source of
+/// end-of-epoch checkpoints (object store: `epochs.json` + `{seq}.binpb.zst`).
+/// Everything fetched is BLS-verified against the committee chain, so the
+/// archive is an untrusted availability source — never a trust source.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct SuiCheckpointArchiveConfig {
+    /// Object-store URL: `https://`, `s3://`, `gs://`, or `file://`.
+    pub url: String,
+    /// Backend credentials/flags, e.g. `("aws-region", "us-west-2")` or
+    /// `("no-sign-request", "true")`.
+    #[serde(default)]
+    pub options: Vec<(String, String)>,
 }
 
 /// The Sui read-transport a node boots, decided by [`select_sui_transport`]
@@ -337,8 +330,8 @@ pub fn select_sui_transport(
                 return Err(
                     "`sui-data-source` is set but no Sui trust anchor is configured: a \
                      validator on the gRPC path has no MPC event source without one (no JSON-RPC \
-                     `query_events`, and the verified BagEventPump requires the anchor); set \
-                     sui_trusted_anchor (or sui_unsafe_genesis_committee on private nets)"
+                     `query_events`, and the verified BagEventPump requires the committee chain); \
+                     configure sui_genesis (or sui_unsafe_genesis_committee on private nets)"
                         .to_string(),
                 );
             }
@@ -400,32 +393,33 @@ pub struct SuiConnectorConfig {
     /// don't implement the service to error fast).
     #[serde(default)]
     pub sui_state_mirror_peers: Vec<String>,
-    /// Trust anchor: digest of an end-of-epoch
-    /// `CertifiedCheckpointSummary`. At boot the validator looks the
-    /// summary up by digest, asserts `summary.digest() == this`,
-    /// extracts `committee[E+1]` from `end_of_epoch_data`, and
-    /// installs it. The value is the digest of an end-of-epoch
-    /// `CertifiedCheckpointSummary`; obtain it from a trusted Sui fullnode
-    /// (the last checkpoint of a recent epoch).
-    ///
-    /// Ignored when the perpetual `sui_committees` table already
-    /// contains entries (we've already verified past this point). To
-    /// force re-anchoring, wipe the perpetual
-    /// `sui_committees`/`sui_committee_head` columns first.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sui_trusted_anchor: Option<sui_types::digests::CheckpointDigest>,
     /// Genesis bootstrap committee for chains that haven't reached
     /// their first end-of-epoch yet (brand-new localnets, fresh-init
-    /// testnet). Used as `committee[0]`. Mutually exclusive with
-    /// `sui_trusted_anchor`; startup errors if both are set.
+    /// testnet). Used as `committee[0]`. `sui_genesis` takes priority over
+    /// this when both are set.
     ///
-    /// **UNSAFE for production.** Bypasses the digest-anchored trust
-    /// model — the operator pins the committee directly, with no
-    /// digest cross-check. Production deployments should always use
-    /// `sui_trusted_anchor`. The `unsafe_` prefix is the universal
-    /// convention for "this opt-out skips a safety property."
+    /// **UNSAFE for production.** Bypasses the genesis-blob trust root — the
+    /// operator pins the committee directly, with no cross-check against the
+    /// compiled-in chain identifier. Production deployments should always use
+    /// `sui_genesis`. The `unsafe_` prefix is the universal convention for
+    /// "this opt-out skips a safety property."
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sui_unsafe_genesis_committee: Option<sui_types::committee::Committee>,
+    /// Path to a Sui **genesis blob** — the genesis-rooted OCS trust root. On
+    /// boot the node loads this blob, recomputes its genesis checkpoint digest,
+    /// verifies it against the compiled-in chain identifier for
+    /// `sui_chain_identifier`, and bootstraps `committee[0]` from it (the OCS
+    /// ratchet then walks the end-of-epoch chain forward). The trust root is
+    /// the 32-byte compiled-in chain identifier; the blob is verified against
+    /// it, never trusted wholesale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_genesis: Option<PathBuf>,
+    /// Optional Sui checkpoint archive used as a *verified fallback* source of
+    /// end-of-epoch checkpoints when the upstream fullnode has pruned them (and
+    /// for cold genesis bootstrap). Verified, never trusted — see
+    /// [`SuiCheckpointArchiveConfig`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sui_checkpoint_archive: Option<SuiCheckpointArchiveConfig>,
     /// When the committee ratchet reaches an end-of-epoch checkpoint that the
     /// upstream has pruned, it cannot BLS-verify the `committee[E] →
     /// committee[E+1]` transition. If this is `true` it falls back to fetching
@@ -438,13 +432,15 @@ pub struct SuiConnectorConfig {
     pub allow_unverified_committee_fallback: bool,
     /// When the persisted OCS committee state cannot be deserialized on boot —
     /// typically after a Sui version upgrade changed its on-disk BCS layout —
-    /// automatically wipe the committee tables and re-anchor from the configured
-    /// `sui_trusted_anchor` (digest-gated) instead of failing to boot. Default
-    /// `false`: rebuilding the trust root is normally a deliberate operator
-    /// action (clear the OCS committee tables, then restart so the next boot
-    /// re-seeds from the anchor). Requires a trust anchor to be configured. The
-    /// rebuildable verified-object cache always self-recovers regardless of this
-    /// flag; only the committee trust chain is gated by it.
+    /// automatically wipe the committee tables and re-bootstrap the committee
+    /// chain from the genesis blob (re-ratcheting forward to the current epoch)
+    /// instead of failing to boot. Default `false`: rebuilding the trust chain
+    /// is normally a deliberate operator action (clear the OCS committee tables,
+    /// then restart so the next boot re-bootstraps from genesis). Requires a
+    /// genesis blob (`sui_genesis`), or an unsafe-genesis committee on private
+    /// nets, to be configured. The rebuildable verified-object cache always
+    /// self-recovers regardless of this flag; only the committee trust chain is
+    /// gated by it.
     #[serde(default)]
     pub auto_reanchor_on_format_change: bool,
     /// The expected sui chain identifier connecting to.

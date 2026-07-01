@@ -8,24 +8,18 @@
 //!
 //! Requires Sui localnet running. Default ports.
 
-use ika_sui_client::anchor::{fetch_genesis_committee, fetch_last_eoe_checkpoint_digest};
+use ika_sui_client::anchor::fetch_genesis_committee;
 
 #[tokio::test]
 #[ignore]
-async fn fetch_anchor_from_localnet() {
+async fn fetch_genesis_committee_from_localnet() {
     let url = "http://127.0.0.1:9000";
-    match fetch_last_eoe_checkpoint_digest(url).await {
-        Ok(digest) => println!("last_eoe_checkpoint_digest = {digest}"),
-        Err(e) => {
-            println!("no end-of-epoch yet ({e}); falling back to genesis committee");
-            let committee = fetch_genesis_committee(url)
-                .await
-                .expect("localnet must serve genesis committee");
-            println!(
-                "genesis committee: epoch={} size={}",
-                committee.epoch,
-                committee.num_members()
-            );
-        }
-    }
+    let committee = fetch_genesis_committee(url)
+        .await
+        .expect("localnet must serve genesis committee");
+    println!(
+        "genesis committee: epoch={} size={}",
+        committee.epoch,
+        committee.num_members()
+    );
 }

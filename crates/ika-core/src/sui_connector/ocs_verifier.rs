@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
+use ika_sui_client::archive::SuiCheckpointArchive;
 use ika_sui_client::transport::{SuiTransport, TransportError};
 
 use crate::sui_connector::committee_store::{
@@ -39,11 +40,11 @@ pub enum OcsError {
     #[error("checkpoint {0} is not end-of-epoch")]
     NotEndOfEpoch(CheckpointSequenceNumber),
     #[error(
-        "proof chain broken at epoch {epoch}: the end-of-epoch checkpoint is pruned upstream so \
-         the next committee cannot be BLS-verified; re-anchor closer to the current epoch (set \
-         sui_trusted_anchor AND clear the node's OCS committee tables — perpetual state otherwise \
-         wins over the configured anchor), or set allow_unverified_committee_fallback to accept \
-         degraded trust"
+        "proof chain broken at epoch {epoch}: the end-of-epoch checkpoint is pruned upstream (and \
+         absent from any configured checkpoint archive) so the next committee cannot be \
+         BLS-verified; configure a `sui_checkpoint_archive` that retains this epoch's \
+         end-of-epoch checkpoint, or set allow_unverified_committee_fallback to accept degraded \
+         trust"
     )]
     ProofChainBroken { epoch: u64 },
     #[error(
@@ -93,6 +94,12 @@ pub struct OcsVerifyingClient {
     /// the un-verified fallback re-roots the proof chain on the endpoint's
     /// word (see `OcsError::ProofChainBroken`).
     allow_unverified_committee_fallback: bool,
+    /// Verified fallback source for end-of-epoch checkpoints the upstream
+    /// fullnode has pruned: fetch the end-of-epoch checkpoint from a Sui
+    /// checkpoint archive (or configured mirror), BLS-verify it against
+    /// `committee[head]`, and install — trust unchanged. Tried *before* the
+    /// degraded unverified fallback. `None` until wired (see `with_archive`).
+    archive: Option<Arc<SuiCheckpointArchive>>,
     /// Coalesces concurrent ratchet calls to one: the periodic ratchet, the
     /// boot ratchet, and the reactive (`missing_committee`) push ratchet all
     /// share this. A caller that finds a ratchet already in flight returns
@@ -113,8 +120,18 @@ impl OcsVerifyingClient {
             committees,
             metrics,
             allow_unverified_committee_fallback,
+            archive: None,
             ratchet_lock: Mutex::new(()),
         }
+    }
+
+    /// Attach a verified end-of-epoch checkpoint archive used as a fallback when
+    /// the upstream fullnode has pruned an end-of-epoch checkpoint. Everything
+    /// fetched from it is BLS-verified before install, so the archive is an
+    /// untrusted availability source — never a trust source.
+    pub fn with_archive(mut self, archive: Option<Arc<SuiCheckpointArchive>>) -> Self {
+        self.archive = archive;
+        self
     }
 
     pub fn transport(&self) -> &Arc<dyn SuiTransport> {
@@ -166,6 +183,63 @@ impl OcsVerifyingClient {
             let data = match self.transport.get_full_checkpoint(last_seq).await {
                 Ok(d) => d,
                 Err(TransportError::NotFound(reason)) => {
+                    // Verified fallback first: the end-of-epoch checkpoint was
+                    // pruned upstream, but a checkpoint archive may still retain
+                    // it. Fetch + BLS-verify against committee[head] + install —
+                    // identical trust to the primary path. The archive is
+                    // untrusted: a forged/corrupt summary fails verification here
+                    // (hard error, fail-closed), while a mere fetch miss falls
+                    // through to the next fallback.
+                    if let Some(archive) = &self.archive {
+                        match archive.fetch_checkpoint(last_seq).await {
+                            Ok((summary, _contents)) => {
+                                match self.committees.install_next_from_summary(&summary) {
+                                    Ok(CommitteeTransition::Installed(epoch)) => {
+                                        info!(
+                                            epoch,
+                                            last_seq,
+                                            "ratcheted Sui committee (verified archive fallback)"
+                                        );
+                                        continue;
+                                    }
+                                    Ok(CommitteeTransition::NotNextTransition) => {
+                                        return Err(OcsError::NotEndOfEpoch(last_seq));
+                                    }
+                                    Err(CommitteeTransitionError::MissingCommittee(e)) => {
+                                        return Err(OcsError::MissingCommittee(e));
+                                    }
+                                    Err(
+                                        CommitteeTransitionError::BadSignature { error, .. }
+                                        | CommitteeTransitionError::Extract { error, .. },
+                                    ) => {
+                                        return Err(OcsError::BadCheckpointSig(last_seq, error));
+                                    }
+                                    Err(CommitteeTransitionError::EpochMismatch {
+                                        expected,
+                                        got,
+                                    }) => {
+                                        return Err(OcsError::RatchetEpochMismatch {
+                                            requested: expected,
+                                            returned: got,
+                                        });
+                                    }
+                                    Err(CommitteeTransitionError::Store(e)) => {
+                                        return Err(e.into());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    head,
+                                    last_seq,
+                                    target,
+                                    error = %e,
+                                    "ratchet: end-of-epoch checkpoint pruned upstream and the \
+                                     verified archive fallback also failed; trying next fallback"
+                                );
+                            }
+                        }
+                    }
                     if !self.allow_unverified_committee_fallback {
                         error!(
                             head,
