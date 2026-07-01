@@ -1329,6 +1329,32 @@ impl IkaTestClusterBuilder {
         } else {
             None
         };
+        // Genesis-rooted OCS bootstrap: serialize the in-process Sui genesis to a
+        // blob and point every validator's `sui_genesis` at it, so they load
+        // committee[0] from the verified genesis blob (chain-id check skipped on
+        // the Custom localnet chain) and ratchet forward — exercising the
+        // genesis bootstrap path end-to-end. `sui_genesis` takes priority over
+        // the unsafe-genesis committee in `resolve_bootstrap_plan`.
+        let ocs_sui_genesis_path = if self.ocs_genesis_anchor {
+            static OCS_GENESIS_BLOB_SEQ: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let seq = OCS_GENESIS_BLOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let genesis = test_cluster.get_genesis();
+            let path = std::env::temp_dir().join(format!(
+                "ika_ocs_sui_genesis_{}_{}.blob",
+                std::process::id(),
+                seq
+            ));
+            std::fs::write(
+                &path,
+                bcs::to_bytes(&genesis)
+                    .map_err(|e| anyhow::anyhow!("serialize Sui genesis blob: {e}"))?,
+            )
+            .map_err(|e| anyhow::anyhow!("write Sui genesis blob {}: {e}", path.display()))?;
+            Some(path)
+        } else {
+            None
+        };
 
         // OCS read topology: when a direct/mirror split is requested, the first
         // `direct_count` validators read Sui directly (and serve the relay) and
@@ -1376,6 +1402,9 @@ impl IkaTestClusterBuilder {
                     .with_supported_protocol_versions(supported_versions);
                 if let Some(committee) = &ocs_genesis_committee {
                     builder = builder.with_unsafe_genesis_committee(committee.clone());
+                }
+                if let Some(path) = &ocs_sui_genesis_path {
+                    builder = builder.with_sui_genesis(path.clone());
                 }
                 // Validators at index >= direct_count read through the relay.
                 if let Some(direct_count) = direct_count
