@@ -493,16 +493,34 @@ tripwire trips. Cache-served anchors are counted
 
 The cache is authoritatively populated *only* by the node's own folder —
 it does not ingest peer state. Mirrored and peer-only validators have no
-such folder; they read with `cache_first = false`, pulling each object
-over the relay and re-verifying it per read.
+such folder; they read with `cache_first = false`, so **non-anchor** reads
+pull each object over the relay and re-verify it per read.
 
-> The committee-attested **currency mechanism** a cached mirror read would
-> need is now built and live on the per-read *pull* path (the
-> changeset-stream currency gate, under *Freshness and rollback protection*).
-> What remains future is the cache-*first* optimization itself — letting
-> mirrored/peer-only nodes serve a read from a local fold instead of
-> re-pulling every read — see
-> [`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
+The **singleton anchors are the exception**, mirroring the direct
+`verified_anchor_object` fast path above. A mirrored/peer-only node
+shadow-populates its cache with every verified read, and
+`verified_anchor_object` serves that shadow-cached anchor when — and only
+when — the committee-signed **changeset-stream currency gate** (under
+*Freshness and rollback protection*) returns `Current` for the cached
+version, i.e. positively attests it is still the id's latest. The **same
+`ANCHOR_REFRESH_INTERVAL` (2 s) TTL** the direct path uses is the hard
+staleness bound: it forces a verified network re-read every interval, so a
+*stalled* changeset stream — which would freeze the verdict at `Current`
+and otherwise serve the anchor stale forever — cannot wedge the epoch
+(#1736). `Unknown`/`Stale`/`NotLive` verdicts, and every non-anchor read,
+stay on the per-read-verified relay path. `currency == Current` is thus
+*necessary but not sufficient*: it only attests freshness up to the
+changeset index's contiguous head, which may lag the relay head, so the
+TTL re-read is what caps that gap. Mirror cache-served anchors are counted
+`ika_ocs_cache_read_total{outcome="mirror_anchor"}`.
+
+This is the direct/mirror **currency symmetry**: a direct node's
+cache-first rests on its complete, contiguous local fold; a mirror's rests
+on the changeset index's version+digest currency signal *plus* the TTL
+bound — two attestations of the same "still current" property. Extending
+the cache-first serve beyond the singleton anchors to *all* slowly-changing
+mirror reads remains future work — see
+[`../plans/ocs-changeset-stream-mirror-currency.md`](../plans/ocs-changeset-stream-mirror-currency.md).
 
 ## Key invariants
 
